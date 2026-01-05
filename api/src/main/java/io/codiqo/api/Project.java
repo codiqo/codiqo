@@ -1,16 +1,18 @@
 package io.codiqo.api;
 
 import java.io.File;
-import java.nio.file.Path;
 import java.util.Collection;
+import java.util.Optional;
 
 public interface Project {
     String getName();
     String getDescription();
     String getVersion();
-    Path getBaseDirectory();
+    File getBaseDirectory();
+    String getOutputDirectory();
     Collection<File> getCompileSourceRoots();
     Collection<File> getCompileClasspathElements();
     Collection<File> getTestCompileSourceRoots();
     Collection<File> getTestClasspathElements();
+    Optional<File> coverage();
 }

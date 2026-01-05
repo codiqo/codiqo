@@ -1,6 +1,5 @@
-package io.codiqo.api.pmd;
+package io.codiqo.api.cpd;
 
-import java.nio.file.Path;
 import java.util.Collection;
 
 import io.codiqo.api.DuplicateMark;
@@ -10,7 +9,6 @@ public interface DuplicationMatch extends Comparable<PmdDuplicationMatch> {
     int getTokenCount();
     int getLineCount();
     Collection<DuplicateMark> getLocations();
-    Collection<Path> getPaths();
     boolean isCrossFile();
     CodeBlockInfo getBlock();
 }

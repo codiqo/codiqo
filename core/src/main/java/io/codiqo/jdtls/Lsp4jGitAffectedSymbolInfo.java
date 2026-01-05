@@ -1,6 +1,6 @@
 package io.codiqo.jdtls;
 
-import java.nio.file.Path;
+import java.io.File;
 import java.util.List;
 import java.util.Optional;
 
@@ -22,7 +22,7 @@ import lombok.Setter;
 @Setter
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class Lsp4jGitAffectedSymbolInfo implements AffectedSymbolInfo {
-    private Path path;
+    private File file;
     private DocumentSymbol symbol;
     private SourceLocation location;
     private List<CallHierarchyIncomingCall> incomingCalls = Lists.newLinkedList();
@@ -52,7 +52,7 @@ public class Lsp4jGitAffectedSymbolInfo implements AffectedSymbolInfo {
         return new ToStringBuilder(this, ToStringStyle.NO_CLASS_NAME_STYLE)
                 .append("kind", getSymbol().getKind().name())
                 .append("name", getSymbol().getName())
-                .append("location", getPath())
+                .append("location", getFile())
                 .build();
     }
 }

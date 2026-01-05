@@ -41,17 +41,17 @@ import io.codiqo.api.LanguageSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.SourceLocation;
+import io.codiqo.api.coverage.CodeBlockCoverage;
+import io.codiqo.api.cpd.CopyPasteDetectionSummary;
+import io.codiqo.api.cpd.DuplicationMatch;
+import io.codiqo.api.cpd.PmdDuplicationMark;
+import io.codiqo.api.cpd.PmdDuplicationMatch;
 import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
-import io.codiqo.api.pmd.CopyPasteDetectionSummary;
-import io.codiqo.api.pmd.DuplicationMatch;
-import io.codiqo.api.pmd.PmdDuplicationMark;
-import io.codiqo.api.pmd.PmdDuplicationMatch;
-import io.codiqo.core.java.AbstractJavaPmdDeclarationInfo;
-import io.codiqo.core.java.JavaCodeBlockMetrics;
+import io.codiqo.api.metrics.CodeBlockMetrics;
 import io.codiqo.core.java.JavaLanguageSpec;
 import lombok.SneakyThrows;
 import net.sourceforge.pmd.PMDConfiguration;
@@ -103,7 +103,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     @SneakyThrows
     public IndexingSummary index(CommitAnalysis analysis) {
         IndexingSummaryBuilder builder = IndexingSummary.builder();
-        Multimap<Path, CodeBlockInfo> blocks = MultimapBuilder.hashKeys().linkedHashSetValues().build();
+        Multimap<File, CodeBlockInfo> blocks = MultimapBuilder.hashKeys().linkedHashSetValues().build();
         List<Path> totalFiles = Lists.newArrayList();
         List<Path> ignoredFiles = Lists.newArrayList();
         List<Path> skippedFiles = Lists.newArrayList();
@@ -133,20 +133,21 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                 @SneakyThrows
                 public FileVisitResult visitFile(Path path, BasicFileAttributes attrs) {
                     if (indexed.contains(path)) {
-                        if (FilenameUtils.isExtension(path.toFile().getName(), extensions)) {
-                            try (FileInputStream input = new FileInputStream(path.toFile())) {
+                        File file = path.toFile();
+                        if (FilenameUtils.isExtension(file.getName(), extensions)) {
+                            try (FileInputStream input = new FileInputStream(file)) {
                                 String source = IOUtils.toString(input, StandardCharsets.UTF_8);
                                 forEach(new Consumer<LanguageSpec>() {
                                     @Override
                                     public void accept(LanguageSpec processor) {
-                                        if (FilenameUtils.isExtension(path.toFile().getName(), processor.lang().getExtensions())) {
-                                            processor.parse(path, source).forEach(new Consumer<CodeBlockInfo>() {
+                                        if (FilenameUtils.isExtension(file.getName(), processor.lang().getExtensions())) {
+                                            processor.parse(file, source).forEach(new Consumer<CodeBlockInfo>() {
                                                 @Override
                                                 public void accept(CodeBlockInfo block) {
-                                                    blocks.put(path, block);
+                                                    blocks.put(file, block);
 
                                                     for (FileAnalysis fileAnalysis : analysis.getFiles()) {
-                                                        if (fileAnalysis.getPath().equals(path)) {
+                                                        if (fileAnalysis.getFile().equals(file)) {
                                                             for (AffectedSymbolInfo symbolInfo : fileAnalysis.getPotentiallyAffectedSymbols()) {
                                                                 if (symbolInfo.getLocation().equals(block.getLocation())) {
                                                                     block.accept(symbolInfo);
@@ -190,6 +191,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                     stopWatch.toString());
 
             return builder
+                    .projects(args.getProjects())
                     .blocks(blocks)
                     .totalSymbols(totalSymbols.toInteger())
                     .totalFiles(totalFiles)
@@ -244,7 +246,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                                                 public PmdDuplicationMark apply(Mark mark) {
                                                     return PmdDuplicationMark.builder()
                                                             .mark(mark)
-                                                            .path(Paths.get(mark.getLocation().getFileId().getAbsolutePath()))
+                                                            .file(Paths.get(mark.getLocation().getFileId().getAbsolutePath()).toFile())
                                                             .sourceCodeSlice(report.getSourceCodeSlice(mark).toString())
                                                             .location(SourceLocation.builder()
                                                                     .startLine(mark.getLocation().getStartLine())
@@ -313,7 +315,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                             public void accept(RuleViolation violation) {
                                 Range<Integer> markRange = Range.closed(violation.getLocation().getStartLine(), violation.getLocation().getEndLine());
                                 for (FileAnalysis fileAnalysis : analysis.getFiles()) {
-                                    if (Paths.get(violation.getFileId().getAbsolutePath()).equals(fileAnalysis.getPath())) {
+                                    if (violation.getFileId().getAbsolutePath().equals(fileAnalysis.getFile().getAbsolutePath())) {
                                         for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
                                             Range<Integer> symbolRange = Range.closed(symbol.getLocation().getStartLine(), symbol.getLocation().getEndLine());
                                             if (symbolRange.encloses(markRange)) {
@@ -327,7 +329,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                                                                 violation.getEndLine(),
                                                                 violation.getEndColumn(),
                                                                 violation.getDescription());
-                                                        block.addPmdViolation(violation);
+                                                        block.pmdViolation(violation);
                                                     }
                                                 });
                                             }
@@ -346,6 +348,35 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         });
     }
     @Override
+    public void captureCoverage(IndexingSummary summary, CommitAnalysis analysis) {
+        forEach(new Consumer<LanguageSpec>() {
+            @Override
+            public void accept(LanguageSpec processor) {
+                processor.captureCoverage(summary, analysis);
+
+                for (FileAnalysis fileAnalysis : analysis.getFiles()) {
+                    for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
+                        symbol.block().ifPresent(new Consumer<CodeBlockInfo>() {
+                            @Override
+                            public void accept(CodeBlockInfo block) {
+                                block.coverage().subscribe(new Consumer<CodeBlockCoverage>() {
+                                    @Override
+                                    public void accept(CodeBlockCoverage info) {
+                                        if (fileAnalysis.isTestFile()) {
+                                            log.info("ignoring coverage for method %s from %s", block, fileAnalysis.getFile());
+                                        } else {
+                                            log.info("analyzed coverage for %s : %s", block, info);
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                    }
+                }
+            }
+        });
+    }
+    @Override
     public void captureComplexity(IndexingSummary summary, CommitAnalysis analysis) {
         forEach(new Consumer<LanguageSpec>() {
             @Override
@@ -356,14 +387,12 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                         symbol.block().ifPresent(new Consumer<CodeBlockInfo>() {
                             @Override
                             public void accept(CodeBlockInfo block) {
-                                if (block instanceof AbstractJavaPmdDeclarationInfo) {
-                                    ((AbstractJavaPmdDeclarationInfo) block).metrics().subscribe(new Consumer<JavaCodeBlockMetrics>() {
-                                        @Override
-                                        public void accept(JavaCodeBlockMetrics metrics) {
-                                            log.info("analyzed complexity for %s : %s", block, metrics);
-                                        }
-                                    });
-                                }
+                                block.metrics().subscribe(new Consumer<CodeBlockMetrics>() {
+                                    @Override
+                                    public void accept(CodeBlockMetrics info) {
+                                        log.info("analyzed complexity for %s : %s", block, info);
+                                    }
+                                });
                             }
                         });
                     }

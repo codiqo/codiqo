@@ -1,6 +1,6 @@
 package io.codiqo.core.diff;
 
-import java.nio.file.Path;
+import java.io.File;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
@@ -38,27 +38,27 @@ public class GitCommitAnalysis implements CommitAnalysis {
     private String encoding;
     private int filesChanged;
     private Set<FileAnalysis> files = Sets.newLinkedHashSet();
-    private final Supplier<Set<Path>> paths = Suppliers.memoize(new Supplier<Set<Path>>() {
+    private final Supplier<Set<File>> destinations = Suppliers.memoize(new Supplier<Set<File>>() {
         @Override
-        public Set<Path> get() {
-            return getFiles().stream().map(new Function<FileAnalysis, Path>() {
+        public Set<File> get() {
+            return getFiles().stream().map(new Function<FileAnalysis, File>() {
                 @Override
-                public Path apply(FileAnalysis file) {
-                    return file.getPath();
+                public File apply(FileAnalysis file) {
+                    return file.getFile();
                 }
             }).collect(ImmutableSet.toImmutableSet());
         }
     });
 
     @Override
-    public Set<Path> paths() {
-        return paths.get();
+    public Set<File> files() {
+        return destinations.get();
     }
     @Override
-    public boolean isPresent(Path path, CodeBlockInfo block) {
-        if (paths().contains(path)) {
+    public boolean isPresent(File destination, CodeBlockInfo block) {
+        if (files().contains(destination)) {
             for (FileAnalysis fileAnalysis : getFiles()) {
-                if (path.equals(fileAnalysis.getPath())) {
+                if (destination.equals(fileAnalysis.getFile())) {
                     for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
                         if (symbol.block().isPresent()) {
                             if (symbol.block().get().equals(block)) {

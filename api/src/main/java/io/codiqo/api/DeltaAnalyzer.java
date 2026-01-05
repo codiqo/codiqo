@@ -1,7 +1,7 @@
 package io.codiqo.api;
 
 import java.io.Closeable;
-import java.nio.file.Path;
+import java.io.File;
 import java.util.Collection;
 import java.util.List;
 
@@ -19,7 +19,7 @@ public interface DeltaAnalyzer extends Closeable {
     CommitAnalysis analyzeCommit(RevCommit commit);
 
     FileAnalysis analyzeFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit parent, RevCommit current);
-    void analyzeSymbols(FileAnalysis analysis, Path path, Collection<Integer> modifiedLines);
+    void analyzeSymbols(FileAnalysis analysis, File file, Collection<Integer> modifiedLines);
 
     String getFileContentFromCommit(RevCommit commit, String filePath);
     String getFileContentAtRevision(String filePath, String revisionId);

@@ -471,6 +471,11 @@
                 <version>${jgit.version}</version>
             </dependency>
             <dependency>
+                <groupId>org.jacoco</groupId>
+                <artifactId>org.jacoco.core</artifactId>
+                <version>${jacoco.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>net.sourceforge.pmd</groupId>
                 <artifactId>pmd-core</artifactId>
                 <version>${pmd.version}</version>
@@ -915,71 +920,6 @@
                 <version>${swagger.parser.version}</version>
             </dependency>
             <dependency>
-                <groupId>org.apache.httpcomponents</groupId>
-                <artifactId>httpmime</artifactId>
-                <version>${httpclient.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.apache.httpcomponents</groupId>
-                <artifactId>httpcore</artifactId>
-                <version>${httpcore.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.apache.httpcomponents</groupId>
-                <artifactId>httpclient</artifactId>
-                <version>${httpclient.version}</version>
-                <exclusions>
-                    <exclusion>
-                        <artifactId>commons-logging</artifactId>
-                        <groupId>commons-logging</groupId>
-                    </exclusion>
-                </exclusions>
-            </dependency>
-            <dependency>
-                <groupId>org.apache.httpcomponents</groupId>
-                <artifactId>httpasyncclient</artifactId>
-                <version>${httpasyncclient.version}</version>
-                <exclusions>
-                    <exclusion>
-                        <artifactId>commons-logging</artifactId>
-                        <groupId>commons-logging</groupId>
-                    </exclusion>
-                </exclusions>
-            </dependency>
-            <dependency>
-                <groupId>org.apache.httpcomponents</groupId>
-                <artifactId>httpcore-nio</artifactId>
-                <version>${httpcore.version}</version>
-                <exclusions>
-                    <exclusion>
-                        <artifactId>commons-logging</artifactId>
-                        <groupId>commons-logging</groupId>
-                    </exclusion>
-                </exclusions>
-            </dependency>
-            <dependency>
-                <groupId>org.apache.httpcomponents.core5</groupId>
-                <artifactId>httpcore5</artifactId>
-                <version>${httpcore5.version}</version>
-                <exclusions>
-                    <exclusion>
-                        <artifactId>commons-logging</artifactId>
-                        <groupId>commons-logging</groupId>
-                    </exclusion>
-                </exclusions>
-            </dependency>
-            <dependency>
-                <groupId>org.apache.httpcomponents.client5</groupId>
-                <artifactId>httpclient5</artifactId>
-                <version>${httpclient5.version}</version>
-                <exclusions>
-                    <exclusion>
-                        <artifactId>commons-logging</artifactId>
-                        <groupId>commons-logging</groupId>
-                    </exclusion>
-                </exclusions>
-            </dependency>
-            <dependency>
                 <groupId>io.sentry</groupId>
                 <artifactId>sentry</artifactId>
                 <version>${sentry.version}</version>
@@ -1141,6 +1081,9 @@
                     <artifactId>maven-dependency-plugin</artifactId>
                     <version>${version.dependency.plugin}</version>
                     <configuration>
+                        <ignoredDependencies>
+                            <ignoredDependency>org.codehaus.plexus:plexus-utils</ignoredDependency>
+                        </ignoredDependencies>
                         <ignoredNonTestScopedDependencies>
                             <ignoredNonTestScopedDependency>*</ignoredNonTestScopedDependency>
                         </ignoredNonTestScopedDependencies>

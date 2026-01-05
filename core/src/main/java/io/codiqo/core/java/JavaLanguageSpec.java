@@ -4,9 +4,11 @@ import java.io.File;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -15,23 +17,36 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.io.FilenameUtils;
 import org.eclipse.lsp4j.CallHierarchyIncomingCall;
 import org.eclipse.lsp4j.CallHierarchyItem;
 import org.eclipse.lsp4j.DocumentSymbol;
 import org.eclipse.lsp4j.Position;
-import org.eclipse.lsp4j.Range;
 import org.eclipse.lsp4j.SymbolKind;
+import org.jacoco.core.analysis.Analyzer;
+import org.jacoco.core.analysis.CoverageBuilder;
+import org.jacoco.core.analysis.IBundleCoverage;
+import org.jacoco.core.analysis.ICounter;
+import org.jacoco.core.analysis.ILine;
+import org.jacoco.core.analysis.IPackageCoverage;
+import org.jacoco.core.analysis.ISourceFileCoverage;
+import org.jacoco.core.data.ExecutionDataStore;
+import org.jacoco.core.tools.ExecFileLoader;
 import org.slf4j.event.Level;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 
+import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.LanguageSpec;
 import io.codiqo.api.Project;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.SourceLocation;
+import io.codiqo.api.diff.AffectedSymbolInfo;
+import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
@@ -99,21 +114,20 @@ public class JavaLanguageSpec implements LanguageSpec {
         return rules;
     }
     @Override
-    public void identifyAffectedSymbols(FileAnalysis analysis, Object untyped, Path path, Collection<Integer> modifiedLines) {
+    public void identifyAffectedSymbols(FileAnalysis analysis, Object untyped, File destination, Collection<Integer> modifiedLines) {
         DocumentSymbol symbol = (DocumentSymbol) untyped;
         if (CollectionUtils.isNotEmpty(symbol.getChildren())) {
             for (DocumentSymbol child : symbol.getChildren()) {
                 if (SYMBOLS.contains(child.getKind())) {
-                    Range range = child.getRange();
-                    Position start = range.getStart();
-                    Position end = range.getEnd();
+                    Position start = child.getRange().getStart();
+                    Position end = child.getRange().getEnd();
                     int startLine = start.getLine();
                     int endLine = end.getLine();
 
                     boolean isAffected = modifiedLines.stream().anyMatch(line -> line >= startLine && line <= endLine);
                     if (isAffected) {
                         Lsp4jGitAffectedSymbolInfo info = new Lsp4jGitAffectedSymbolInfo();
-                        info.setPath(path);
+                        info.setFile(destination);
                         info.setSymbol(child);
                         info.setLocation(SourceLocation.builder()
                                 .startLine(startLine + BigDecimal.ONE.intValue())
@@ -128,9 +142,9 @@ public class JavaLanguageSpec implements LanguageSpec {
                         CallHierarchyItem item = new CallHierarchyItem();
                         item.setName(child.getName());
                         item.setKind(child.getKind());
-                        item.setUri(path.toUri().toString());
-                        item.setRange(range);
-                        item.setSelectionRange(range);
+                        item.setUri(destination.toPath().toUri().toString());
+                        item.setRange(child.getRange());
+                        item.setSelectionRange(child.getRange());
 
                         try {
                             CompletableFuture<List<CallHierarchyIncomingCall>> future = importer.callHierarchyIncomingCalls(item);
@@ -141,7 +155,7 @@ public class JavaLanguageSpec implements LanguageSpec {
                         } catch (Exception err) {
                             log.error(String.format("failed to fetch incoming calls for symbol %s in file %s: %s",
                                     child.getName(),
-                                    path,
+                                    destination.getAbsolutePath(),
                                     err.getMessage()),
                                     err);
                         }
@@ -155,20 +169,20 @@ public class JavaLanguageSpec implements LanguageSpec {
                 // ~ recursively check nested types (inner classes, etc.)
                 //
                 if (TYPES.contains(child.getKind())) {
-                    identifyAffectedSymbols(analysis, child, path, modifiedLines);
+                    identifyAffectedSymbols(analysis, child, destination, modifiedLines);
                 }
             }
         }
     }
     @Override
     @SneakyThrows
-    public List<CodeBlockInfo> parse(Path path, String source) {
+    public List<CodeBlockInfo> parse(File destination, String source) {
         ImmutableList.Builder<CodeBlockInfo> builder = ImmutableList.builder();
 
         LanguagePropertyBundle bundle = language.newPropertyBundle();
         bundle.setProperty(JavaLanguageProperties.FIRST_CLASS_LOMBOK, true);
 
-        args.owningProject(path).ifPresent(new Consumer<Project>() {
+        args.owningProject(destination).ifPresent(new Consumer<Project>() {
             @Override
             public void accept(Project project) {
                 Set<String> jars = Sets.newLinkedHashSet();
@@ -187,13 +201,14 @@ public class JavaLanguageSpec implements LanguageSpec {
                     }
                 });
                 bundle.setProperty(JvmLanguagePropertyBundle.AUX_CLASSPATH, jars.stream().collect(Collectors.joining(File.pathSeparator)));
-                log.log(Level.DEBUG, "configured auxiliary classpath resource: %s %s, elements: %s", project.getName(), path, jars);
+                log.log(Level.DEBUG, "configured auxiliary classpath resource: %s %s, elements: %s", project.getName(), destination, jars);
             }
         });
 
-        try (TextFile file = TextFile.forCharSeq(source, FileId.fromPath(path), language.getDefaultVersion())) {
+        try (TextFile file = TextFile.forCharSeq(source, FileId.fromPath(destination.toPath()), language.getDefaultVersion())) {
             try (TextDocument doc = TextDocument.create(file)) {
-                try (LanguageProcessorRegistry registry = LanguageProcessorRegistry.create(LanguageRegistry.singleton(language), ImmutableMap.of(language, bundle), log)) {
+                try (LanguageProcessorRegistry registry = LanguageProcessorRegistry.create(LanguageRegistry.singleton(language),
+                        ImmutableMap.of(language, bundle), log)) {
                     Parser pmd = registry.getProcessor(language).services().getParser();
                     SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
                     ParserTask task = new ParserTask(doc, errorReporter, registry);
@@ -219,7 +234,7 @@ public class JavaLanguageSpec implements LanguageSpec {
                                         if (executable instanceof ASTMethodDeclaration) {
                                             ASTMethodDeclaration node = (ASTMethodDeclaration) executable;
                                             builder.add(JavaPmdMethodInfo.builder()
-                                                    .path(path)
+                                                    .file(destination)
                                                     .location(location)
                                                     .type(type)
                                                     .node(node)
@@ -228,7 +243,7 @@ public class JavaLanguageSpec implements LanguageSpec {
                                         } else if (executable instanceof ASTConstructorDeclaration) {
                                             ASTConstructorDeclaration node = (ASTConstructorDeclaration) executable;
                                             builder.add(JavaPmdConstructorInfo.builder()
-                                                    .path(path)
+                                                    .file(destination)
                                                     .location(location)
                                                     .type(type)
                                                     .node(node)
@@ -245,6 +260,91 @@ public class JavaLanguageSpec implements LanguageSpec {
         }
 
         return builder.build();
+    }
+    @Override
+    public void captureCoverage(IndexingSummary summary, CommitAnalysis analysis) {
+        ExecFileLoader loader = new ExecFileLoader();
+        summary.getProjects().forEach(new Consumer<Project>() {
+            @Override
+            public void accept(Project project) {
+                project.coverage().ifPresent(new Consumer<File>() {
+                    @Override
+                    @SneakyThrows
+                    public void accept(File exec) {
+                        loader.load(exec);
+                    }
+                });
+            }
+        });
+
+        ExecutionDataStore data = loader.getExecutionDataStore();
+        CoverageBuilder coverageBuilder = new CoverageBuilder();
+        Analyzer analyzer = new Analyzer(data, coverageBuilder);
+
+        summary.getProjects().forEach(new Consumer<Project>() {
+            @Override
+            public void accept(Project project) {
+                project.coverage().ifPresent(new Consumer<File>() {
+                    @Override
+                    @SneakyThrows
+                    public void accept(File exec) {
+                        File output = new File(project.getOutputDirectory());
+                        if (output.exists()) {
+                            analyzer.analyzeAll(output);
+                        }
+                    }
+                });
+            }
+        });
+
+        IBundleCoverage bundle = coverageBuilder.getBundle(ID);
+
+        Map<File, ISourceFileCoverage> coverages = Maps.newHashMap();
+        for (Project project : summary.getProjects()) {
+            for (File sourceRoot : project.getCompileSourceRoots()) {
+                Path normalized = sourceRoot.toPath().toAbsolutePath().normalize();
+                for (IPackageCoverage pkg : bundle.getPackages()) {
+                    for (ISourceFileCoverage source : pkg.getSourceFiles()) {
+                        Path sourcePath = Paths.get(source.getPackageName(), source.getName());
+                        File resolved = normalized.resolve(sourcePath).normalize().toFile();
+                        coverages.put(resolved, source);
+                    }
+                }
+            }
+        }
+
+        for (FileAnalysis fileAnalysis : analysis.getFiles()) {
+            if (FilenameUtils.isExtension(fileAnalysis.getFile().getName(), lang().getExtensions())) {
+                ISourceFileCoverage source = coverages.get(fileAnalysis.getFile());
+                if (Objects.nonNull(source)) {
+                    log.info("analyzing coverage for file: " + fileAnalysis.getFile());
+
+                    for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
+                        symbol.block().ifPresent(new Consumer<CodeBlockInfo>() {
+                            @Override
+                            public void accept(CodeBlockInfo block) {
+                                int startLine = symbol.getLocation().getStartLine();
+                                int endLine = symbol.getLocation().getEndLine();
+
+                                for (int lineNum = startLine; lineNum <= endLine; lineNum++) {
+                                    ILine line = source.getLine(lineNum);
+                                    block.lineCoverage(lineNum, line);
+                                    switch (line.getStatus()) {
+                                        case ICounter.EMPTY:
+                                        case ICounter.NOT_COVERED:
+                                            break;
+                                        case ICounter.FULLY_COVERED:
+                                        case ICounter.PARTLY_COVERED:
+                                        default:
+                                            break;
+                                    }
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+        }
     }
     @Override
     public int hashCode() {

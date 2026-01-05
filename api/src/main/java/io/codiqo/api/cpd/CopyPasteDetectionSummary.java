@@ -1,7 +1,7 @@
-package io.codiqo.api.pmd;
+package io.codiqo.api.cpd;
 
+import java.io.File;
 import java.math.BigDecimal;
-import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.Collection;
 import java.util.Deque;
@@ -32,19 +32,19 @@ public class CopyPasteDetectionSummary {
     public CopyPasteDetectionSummary(int total, Set<DuplicationMatch> matches, IndexingSummary summary, CommitAnalysis analysis) {
         this.total = total;
 
-        Set<Path> diff = analysis.paths();
+        Set<File> diff = analysis.files();
         Map<CodeBlockInfo, Set<CodeBlockInfo>> graph = Maps.newHashMap();
 
         matches.forEach(new Consumer<DuplicationMatch>() {
             @Override
             public void accept(DuplicationMatch match) {
                 for (DuplicateMark mark : match.getLocations()) {
-                    if (diff.contains(mark.getPath())) {
+                    if (diff.contains(mark.getFile())) {
                         Range<Integer> markRange = Range.closed(mark.getLocation().getStartLine(), mark.getLocation().getEndLine());
                         Set<CodeBlockInfo> affectedBlocks = Sets.newLinkedHashSet();
 
                         for (FileAnalysis fileAnalysis : analysis.getFiles()) {
-                            if (mark.getPath().equals(fileAnalysis.getPath())) {
+                            if (mark.getFile().equals(fileAnalysis.getFile())) {
                                 for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
                                     Range<Integer> symbolRange = Range.closed(symbol.getLocation().getStartLine(), symbol.getLocation().getEndLine());
                                     if (symbolRange.encloses(markRange)) {
@@ -70,7 +70,7 @@ public class CopyPasteDetectionSummary {
                             }
 
                             Range<Integer> sourceMarkRange = Range.closed(sourceMark.getLocation().getStartLine(), sourceMark.getLocation().getEndLine());
-                            Collection<CodeBlockInfo> blocks = summary.getBlocks().get(sourceMark.getPath());
+                            Collection<CodeBlockInfo> blocks = summary.getBlocks().get(sourceMark.getFile());
 
                             if (CollectionUtils.isNotEmpty(blocks)) {
                                 for (CodeBlockInfo sourceBlock : blocks) {
@@ -82,7 +82,7 @@ public class CopyPasteDetectionSummary {
                                     if (blockRange.encloses(sourceMarkRange)) {
                                         sourceMark.accept(sourceBlock);
 
-                                        if (analysis.isPresent(sourceMark.getPath(), sourceBlock)) {
+                                        if (analysis.isPresent(sourceMark.getFile(), sourceBlock)) {
                                             for (CodeBlockInfo affected : affectedBlocks) {
                                                 graph.computeIfAbsent(affected, k -> Sets.newLinkedHashSet()).add(sourceBlock);
                                                 graph.computeIfAbsent(sourceBlock, k -> Sets.newLinkedHashSet()).add(affected);

@@ -41,6 +41,7 @@ import com.google.common.collect.Lists;
 import io.codiqo.api.DeltaAnalyzer;
 import io.codiqo.api.LanguageProcessors;
 import io.codiqo.api.LanguageSpec;
+import io.codiqo.api.Project;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.diff.FileAnalysis;
@@ -229,10 +230,28 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
     @Override
     @SneakyThrows
     public GitFileAnalysis analyzeFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit parent, RevCommit current) {
-        String path = diff.getChangeType() == DiffEntry.ChangeType.DELETE ? diff.getOldPath() : diff.getNewPath();
 
+        String path = diff.getChangeType() == DiffEntry.ChangeType.DELETE ? diff.getOldPath() : diff.getNewPath();
+        File destination = repo.getWorkTree().toPath().resolve(path).toFile();
         GitFileAnalysis toReturn = new GitFileAnalysis();
-        toReturn.setPath(repo.getWorkTree().toPath().resolve(path));
+
+        args.owningProject(destination).ifPresent(new Consumer<Project>() {
+            @Override
+            public void accept(Project project) {
+                for (File dir : project.getTestCompileSourceRoots()) {
+                    if (dir.isDirectory()) {
+                        Path dirPath = dir.toPath().toAbsolutePath().normalize();
+                        Path filePath = destination.toPath().toAbsolutePath().normalize();
+
+                        if (filePath.startsWith(dirPath)) {
+                            toReturn.setTestFile(true);
+                        }
+                    }
+                }
+            }
+        });
+
+        toReturn.setFile(destination);
         toReturn.setChangeType(diff.getChangeType());
         if (diff.getChangeType() != DiffEntry.ChangeType.ADD) {
             String contentBefore = getFileContentFromCommit(parent, diff.getOldPath());
@@ -284,13 +303,13 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
 
         if (diff.getChangeType() != DiffEntry.ChangeType.DELETE) {
             Path resolve = repo.getWorkTree().toPath().resolve(diff.getNewPath());
-            analyzeSymbols(toReturn, resolve, modifiedLines);
+            analyzeSymbols(toReturn, resolve.toFile(), modifiedLines);
         }
 
         return toReturn;
     }
     @Override
-    public void analyzeSymbols(FileAnalysis analysis, Path path, Collection<Integer> modifiedLines) {
+    public void analyzeSymbols(FileAnalysis analysis, File destination, Collection<Integer> modifiedLines) {
         StopWatch stopWatch = StopWatch.createStarted();
         registry.forEach(new Consumer<LanguageSpec>() {
             @Override
@@ -298,7 +317,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
             public void accept(LanguageSpec processor) {
                 if (processor instanceof JavaLanguageSpec) {
                     JavaLanguageSpec importer = (JavaLanguageSpec) processor;
-                    CompletableFuture<List<DocumentSymbol>> future = importer.documentSymbol(path.toUri().toString());
+                    CompletableFuture<List<DocumentSymbol>> future = importer.documentSymbol(destination.toURI().toString());
                     Collection<DocumentSymbol> symbols = future.get(args.getImportTimeout().getSeconds(), TimeUnit.SECONDS);
                     symbols.stream().filter(new Predicate<DocumentSymbol>() {
                         @Override
@@ -308,11 +327,11 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
                     }).forEach(new Consumer<DocumentSymbol>() {
                         @Override
                         public void accept(DocumentSymbol symbol) {
-                            processor.identifyAffectedSymbols(analysis, symbol, path, modifiedLines);
+                            processor.identifyAffectedSymbols(analysis, symbol, destination, modifiedLines);
                             stopWatch.stop();
                             log.log(Level.DEBUG, "analyzed file: %s(%s), modified lines: %d, affected symbols: %d, took: %s",
                                     analysis.getChangeType(),
-                                    path,
+                                    destination.getAbsolutePath(),
                                     modifiedLines.size(),
                                     analysis.getPotentiallyAffectedSymbols().size(),
                                     stopWatch);

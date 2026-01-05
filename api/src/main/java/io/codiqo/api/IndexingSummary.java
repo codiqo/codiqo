@@ -1,6 +1,8 @@
 package io.codiqo.api;
 
+import java.io.File;
 import java.nio.file.Path;
+import java.util.Collection;
 import java.util.List;
 
 import org.apache.commons.lang3.builder.ReflectionToStringBuilder;
@@ -17,7 +19,8 @@ import lombok.Getter;
 @Builder
 @Getter
 public class IndexingSummary {
-    private Multimap<Path, CodeBlockInfo> blocks;
+    private Collection<Project> projects;
+    private Multimap<File, CodeBlockInfo> blocks;
     private List<Path> totalFiles;
     private List<Path> skippedFiles;
     private List<Path> ignoredFiles;

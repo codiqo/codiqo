@@ -5,7 +5,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.function.Function;
 
@@ -13,6 +16,7 @@ import javax.inject.Inject;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.maven.execution.MavenSession;
+import org.apache.maven.model.Plugin;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -20,6 +24,7 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
+import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
@@ -53,16 +58,22 @@ import lombok.SneakyThrows;
 public class AnalyzeCommitMojo extends AbstractMojo {
     @Inject
     private RepositorySystem repositorySystem;
+
     @Inject
     private MavenSession mavenSession;
+
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
     private MavenProject project;
+
     @Parameter(defaultValue = "${reactorProjects}", readonly = true)
     private List<MavenProject> reactorProjects;
+
     @Parameter(defaultValue = "${project.remoteProjectRepositories}", readonly = true)
     private List<RemoteRepository> remoteRepos;
+
     @Parameter(property = "commitId", required = true)
     private String commitId;
+
     private final Function<Artifact, List<Path>> dependencyResolver = new Function<Artifact, List<Path>>() {
         @Override
         @SneakyThrows
@@ -110,7 +121,24 @@ public class AnalyzeCommitMojo extends AbstractMojo {
                     wrapper.setName(reactor.getName());
                     wrapper.setDescription(reactor.getDescription());
                     wrapper.setVersion(reactor.getVersion());
-                    wrapper.setBaseDirectory(reactor.getBasedir().toPath());
+                    wrapper.setBaseDirectory(reactor.getBasedir());
+                    wrapper.setOutputDirectory(reactor.getBuild().getOutputDirectory());
+
+                    //
+                    // ~ try to find coverage executable and if present assume the coverage data is available
+                    //
+                    Plugin jacoco = project.getBuild().getPluginsAsMap().get("org.jacoco:jacoco-maven-plugin");
+                    if (Objects.nonNull(jacoco)) {
+                        Xpp3Dom config = (Xpp3Dom) jacoco.getConfiguration();
+                        if (config != null) {
+                            Xpp3Dom destFile = config.getChild("destFile");
+                            Path binary = Paths.get(reactor.getBuild().getDirectory(), Objects.nonNull(destFile) ? destFile.getValue() : "jacoco.exec");
+                            File file = binary.toFile();
+                            if (file.exists()) {
+                                wrapper.setCoverage(Optional.of(file));
+                            }
+                        }
+                    }
 
                     for (String element : reactor.getTestClasspathElements()) {
                         File file = new File(element);
@@ -136,8 +164,6 @@ public class AnalyzeCommitMojo extends AbstractMojo {
                             wrapper.getCompileSourceRoots().add(file);
                         }
                     }
-
-                    getLog().info("registered project: " + wrapper.getName());
                     args.getProjects().add(wrapper);
                 }
             }
@@ -155,6 +181,7 @@ public class AnalyzeCommitMojo extends AbstractMojo {
                     registry.detectCopyPaste(index, analysis);
                     registry.captureComplexity(index, analysis);
                     registry.captureViolations(index, analysis);
+                    registry.captureCoverage(index, analysis);
                 }
             }
         } catch (IOException err) {

@@ -1,5 +1,6 @@
 package io.codiqo.api;
 
+import java.io.File;
 import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -42,9 +43,9 @@ public class RunArgs {
     @Nullable
     private final Collection<Path> agents = Lists.newArrayList();
 
-    public Optional<Project> owningProject(Path filePath) {
+    public Optional<Project> owningProject(File filePath) {
         for (Project proj : projects) {
-            if (filePath.startsWith(proj.getBaseDirectory())) {
+            if (filePath.toPath().startsWith(proj.getBaseDirectory().toPath())) {
                 return Optional.of(proj);
 
             }
