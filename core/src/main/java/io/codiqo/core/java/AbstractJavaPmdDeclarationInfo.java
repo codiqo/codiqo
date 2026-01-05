@@ -1,16 +1,21 @@
 package io.codiqo.core.java;
 
-import java.nio.file.Path;
+import java.io.File;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import org.apache.commons.lang3.builder.EqualsBuilder;
+import org.jacoco.core.analysis.ILine;
 
 import com.google.common.base.Supplier;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import io.codiqo.api.code.SourceLocation;
+import io.codiqo.api.coverage.CodeBlockCoverage;
 import io.codiqo.api.diff.AffectedSymbolInfo;
+import io.codiqo.api.metrics.CodeBlockMetrics;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
@@ -31,15 +36,23 @@ import reactor.core.publisher.Mono;
 public abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
     private ASTTypeDeclaration type;
     private ASTExecutableDeclaration node;
-    private Path path;
+    private File file;
     private String body;
     private SourceLocation location;
     @Builder.Default
     private List<RuleViolation> pmdViolations = Lists.newArrayList();
+    @Builder.Default
+    private Map<Integer, ILine> lineCoverage = Maps.newHashMap();
     private Optional<AffectedSymbolInfo> affectedSymbol = Optional.empty();
-    private final Mono<JavaCodeBlockMetrics> metrics = Mono.fromSupplier(new Supplier<JavaCodeBlockMetrics>() {
+    private final Mono<CodeBlockCoverage> coverage = Mono.fromSupplier(new Supplier<CodeBlockCoverage>() {
         @Override
-        public JavaCodeBlockMetrics get() {
+        public CodeBlockCoverage get() {
+            return CodeBlockCoverage.from(lineCoverage);
+        }
+    });
+    private final Mono<CodeBlockMetrics> metrics = Mono.fromSupplier(new Supplier<CodeBlockMetrics>() {
+        @Override
+        public CodeBlockMetrics get() {
             int lines = MetricsUtil.computeMetric(JavaMetrics.LINES_OF_CODE, node, MetricOptions.emptyOptions());
             int cyclo = MetricsUtil.computeMetric(JavaMetrics.CYCLO, node, MetricOptions.emptyOptions());
             int cognitive = MetricsUtil.computeMetric(JavaMetrics.COGNITIVE_COMPLEXITY, node, MetricOptions.emptyOptions());
@@ -47,7 +60,7 @@ public abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInf
             long npath = MetricsUtil.computeMetric(JavaMetrics.NPATH_COMP, node, MetricOptions.emptyOptions());
             int fanOut = MetricsUtil.computeMetric(JavaMetrics.FAN_OUT, node, MetricOptions.emptyOptions());
 
-            return new JavaCodeBlockMetrics() {
+            return new CodeBlockMetrics() {
                 @Override
                 public JavaCodeBlockInfo block() {
                     return AbstractJavaPmdDeclarationInfo.this;
@@ -95,8 +108,12 @@ public abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInf
         this.affectedSymbol = Optional.of(info);
     }
     @Override
-    public void addPmdViolation(RuleViolation violation) {
-        this.pmdViolations.add(violation);
+    public void pmdViolation(RuleViolation violation) {
+        pmdViolations.add(violation);
+    }
+    @Override
+    public void lineCoverage(int lineNumber, ILine line) {
+        lineCoverage.put(lineNumber, line);
     }
     @Override
     public boolean hasMethodCalls() {
@@ -111,8 +128,12 @@ public abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInf
         return affectedSymbol;
     }
     @Override
-    public Mono<JavaCodeBlockMetrics> metrics() {
+    public Mono<CodeBlockMetrics> metrics() {
         return metrics;
+    }
+    @Override
+    public Mono<CodeBlockCoverage> coverage() {
+        return coverage;
     }
     @Override
     public boolean equals(Object o) {

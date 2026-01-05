@@ -1,6 +1,6 @@
-package io.codiqo.api.pmd;
+package io.codiqo.api.cpd;
 
-import java.nio.file.Path;
+import java.io.File;
 import java.util.Optional;
 
 import io.codiqo.api.DuplicateMark;
@@ -13,7 +13,7 @@ import net.sourceforge.pmd.cpd.Mark;
 @Getter
 @Builder
 public class PmdDuplicationMark implements DuplicateMark {
-    private final Path path;
+    private final File file;
     private final Mark mark;
     private final String sourceCodeSlice;
     private final SourceLocation location;

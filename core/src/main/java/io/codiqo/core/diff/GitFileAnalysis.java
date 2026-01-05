@@ -1,6 +1,6 @@
 package io.codiqo.core.diff;
 
-import java.nio.file.Path;
+import java.io.File;
 import java.util.Set;
 
 import org.apache.commons.lang3.builder.EqualsBuilder;
@@ -22,7 +22,7 @@ import net.sourceforge.pmd.lang.Language;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @ToString
 public class GitFileAnalysis implements FileAnalysis {
-    private Path path;
+    private File file;
     private Language language;
     private DiffEntry.ChangeType changeType;
     private String diffText;
@@ -34,11 +34,12 @@ public class GitFileAnalysis implements FileAnalysis {
     private GitStructuredDiff structuredDiff;
     @ToString.Exclude
     private Set<AffectedSymbolInfo> potentiallyAffectedSymbols = Sets.newLinkedHashSet();
+    private boolean testFile;
 
     @Override
     public int hashCode() {
         return new HashCodeBuilder()
-                .append(path)
+                .append(file)
                 .append(changeType)
                 .append(diffText)
                 .toHashCode();
@@ -49,7 +50,7 @@ public class GitFileAnalysis implements FileAnalysis {
         if (o == null || getClass() != o.getClass()) { return false; }
         GitFileAnalysis that = (GitFileAnalysis) o;
         return new EqualsBuilder()
-                .append(path, that.path)
+                .append(file, that.file)
                 .append(changeType, that.changeType)
                 .append(diffText, that.diffText)
                 .isEquals();

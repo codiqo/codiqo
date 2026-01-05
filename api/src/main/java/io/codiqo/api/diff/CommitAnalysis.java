@@ -1,6 +1,6 @@
 package io.codiqo.api.diff;
 
-import java.nio.file.Path;
+import java.io.File;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
@@ -24,6 +24,6 @@ public interface CommitAnalysis {
     String getEncoding();
     int getFilesChanged();
     Set<FileAnalysis> getFiles();
-    Set<Path> paths();
-    boolean isPresent(Path path, CodeBlockInfo block);
+    Set<File> files();
+    boolean isPresent(File file, CodeBlockInfo block);
 }

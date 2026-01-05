@@ -1,11 +1,12 @@
-package io.codiqo.api.pmd;
+package io.codiqo.api.cpd;
 
 import java.math.BigDecimal;
-import java.nio.file.Path;
 import java.util.Collection;
-import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.builder.CompareToBuilder;
+
+import com.google.common.base.Supplier;
+import com.google.common.base.Suppliers;
 
 import io.codiqo.api.DuplicateMark;
 import io.codiqo.api.code.CodeBlockInfo;
@@ -21,14 +22,16 @@ public class PmdDuplicationMatch implements DuplicationMatch {
     private final int lineCount;
     private final Collection<DuplicateMark> locations;
     private final CodeBlockInfo block;
+    private final Supplier<Boolean> crossFile = Suppliers.memoize(new Supplier<Boolean>() {
+        @Override
+        public Boolean get() {
+            return locations.stream().map(DuplicateMark::getFile).distinct().count() > BigDecimal.ONE.intValue();
+        }
+    });
 
     @Override
-    public Collection<Path> getPaths() {
-        return locations.stream().map(DuplicateMark::getPath).distinct().collect(Collectors.toList());
-    }
-    @Override
     public boolean isCrossFile() {
-        return getPaths().size() > BigDecimal.ONE.intValue();
+        return crossFile.get();
     }
     @Override
     public int compareTo(PmdDuplicationMatch o) {

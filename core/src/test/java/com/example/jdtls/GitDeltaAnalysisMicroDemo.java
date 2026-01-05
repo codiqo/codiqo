@@ -45,6 +45,7 @@ public class GitDeltaAnalysisMicroDemo {
                     CommitAnalysis analysis = analyzer.analyze(run.getCommitId());
                     IndexingSummary index = registry.index(analysis);
                     registry.detectCopyPaste(index, analysis);
+                    registry.captureCoverage(index, analysis);
                     registry.captureComplexity(index, analysis);
                     registry.captureViolations(index, analysis);
                 }
