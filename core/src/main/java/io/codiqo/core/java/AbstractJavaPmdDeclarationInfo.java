@@ -5,13 +5,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import org.apache.commons.lang3.builder.EqualsBuilder;
 import org.jacoco.core.analysis.ILine;
 
+import com.google.common.base.Objects;
 import com.google.common.base.Supplier;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
+import edu.umd.cs.findbugs.BugInstance;
 import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.coverage.CodeBlockCoverage;
 import io.codiqo.api.diff.AffectedSymbolInfo;
@@ -41,6 +42,8 @@ public abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInf
     private SourceLocation location;
     @Builder.Default
     private List<RuleViolation> pmdViolations = Lists.newArrayList();
+    @Builder.Default
+    private List<BugInstance> spotbugs = Lists.newArrayList();
     @Builder.Default
     private Map<Integer, ILine> lineCoverage = Maps.newHashMap();
     private Optional<AffectedSymbolInfo> affectedSymbol = Optional.empty();
@@ -112,6 +115,10 @@ public abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInf
         pmdViolations.add(violation);
     }
     @Override
+    public void spotbug(BugInstance violation) {
+        spotbugs.add(violation);
+    }
+    @Override
     public void lineCoverage(int lineNumber, ILine line) {
         lineCoverage.put(lineNumber, line);
     }
@@ -136,15 +143,12 @@ public abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInf
         return coverage;
     }
     @Override
-    public boolean equals(Object o) {
-        if (this == o) { return true; }
-        if (o == null || getClass() != o.getClass()) { return false; }
-        AbstractJavaPmdDeclarationInfo that = (AbstractJavaPmdDeclarationInfo) o;
-        return new EqualsBuilder().append(node, that.node).isEquals();
-    }
-    @Override
     public int hashCode() {
         return node.hashCode();
+    }
+    @Override
+    public boolean equals(Object other) {
+        return Objects.equal(node, ((AbstractJavaPmdDeclarationInfo) other).node);
     }
     @Override
     public String toString() {

@@ -4,32 +4,42 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
-import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.commons.lang3.time.StopWatch;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.DiffFormatter;
 import org.eclipse.jgit.diff.Edit;
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectLoader;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Ref;
-import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.patch.FileHeader;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
-import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.treewalk.CanonicalTreeParser;
+import org.eclipse.jgit.treewalk.EmptyTreeIterator;
+import org.eclipse.jgit.treewalk.FileTreeIterator;
 import org.eclipse.jgit.treewalk.TreeWalk;
 import org.eclipse.jgit.treewalk.filter.PathFilter;
 import org.eclipse.jgit.util.io.DisabledOutputStream;
@@ -55,110 +65,104 @@ import io.codiqo.core.diff.GitFileRevisionInfo;
 import io.codiqo.core.diff.GitStructuredDiff;
 import io.codiqo.core.java.JavaLanguageSpec;
 import lombok.SneakyThrows;
-import net.sourceforge.pmd.lang.Language;
-import net.sourceforge.pmd.lang.LanguageRegistry;
 
 public class JGitDeltaAnalyzer implements DeltaAnalyzer {
     private final Log log;
     private final LanguageProcessors registry;
-    private final Repository repo;
     private final RunArgs args;
 
-    @SneakyThrows
     public JGitDeltaAnalyzer(LogFactory logFactory, LanguageProcessors registry, RunArgs args) {
         this.log = logFactory.getLogger(getClass());
         this.registry = Objects.requireNonNull(registry);
         this.args = Objects.requireNonNull(args);
-        this.repo = new FileRepositoryBuilder()
-                .setGitDir(new File(args.getRepo().toFile(), ".git"))
-                .readEnvironment()
-                .findGitDir()
-                .build();
     }
     @Override
-    @SneakyThrows
-    public CommitAnalysis analyze(String commitId) {
-        ObjectId commit = repo.resolve(Objects.requireNonNull(commitId));
-        try (RevWalk revWalk = new RevWalk(repo)) {
-            RevCommit revCommit = revWalk.parseCommit(commit);
-            return analyzeCommit(revCommit);
-        }
-    }
-    @Override
-    @SneakyThrows
-    public CommitAnalysis analyzeHead() {
-        ObjectId head = repo.resolve("HEAD");
-        try (RevWalk revWalk = new RevWalk(repo)) {
-            RevCommit commit = revWalk.parseCommit(head);
-            return analyzeCommit(commit);
-        }
-    }
-    @Override
-    @SneakyThrows
-    public String getFileContentAtRevision(String filePath, String revisionId) {
-        ObjectId revId = repo.resolve(revisionId);
-        if (Objects.isNull(revId)) {
-            return null;
+    public CommitAnalysis analyze() throws Exception {
+        if (StringUtils.isNotEmpty(args.getCommitId())) {
+            ObjectId commit = args.getGit().resolve(args.getCommitId());
+            try (RevWalk revWalk = new RevWalk(args.getGit())) {
+                RevCommit revCommit = revWalk.parseCommit(commit);
+                return analyzeCommit(revCommit);
+            }
         }
 
-        try (RevWalk revWalk = new RevWalk(repo)) {
+        try (Git git = Git.wrap(args.getGit())) {
+            Status status = git.status().call();
+            return analyzeUncommitted(status);
+        }
+    }
+    @Override
+    public Optional<String> getFileContentAtRevision(String filePath, String revisionId) throws Exception {
+        ObjectId revId = args.getGit().resolve(revisionId);
+        if (Objects.isNull(revId)) {
+            return Optional.empty();
+        }
+
+        try (RevWalk revWalk = new RevWalk(args.getGit())) {
             RevCommit commit = revWalk.parseCommit(revId);
             return getFileContentFromCommit(commit, filePath);
         }
     }
     @Override
-    @SneakyThrows
-    public List<FileRevisionInfo> getFileHistory(String filePath, int maxRevisions) {
+    public List<FileRevisionInfo> getFileHistory(String filePath, int maxRevisions) throws Exception {
         List<FileRevisionInfo> toReturn = Lists.newArrayList();
 
-        try (RevWalk revWalk = new RevWalk(repo)) {
-            ObjectId head = repo.resolve("HEAD");
+        try (RevWalk revWalk = new RevWalk(args.getGit())) {
+            ObjectId head = args.getGit().resolve("HEAD");
             revWalk.markStart(revWalk.parseCommit(head));
             revWalk.setTreeFilter(PathFilter.create(filePath));
 
-            int count = 0;
+            MutableInt count = new MutableInt();
             for (RevCommit commit : revWalk) {
-                if (count >= maxRevisions) {
+                if (count.intValue() >= maxRevisions) {
                     break;
                 }
 
-                String content = getFileContentFromCommit(commit, filePath);
-                if (Objects.nonNull(content)) {
-                    GitFileRevisionInfo info = new GitFileRevisionInfo();
-                    info.setRevisionId(commit.getName());
-                    info.setAuthor(commit.getAuthorIdent().getName());
-                    info.setTimestamp(Instant.ofEpochSecond(commit.getCommitTime()));
-                    info.setMessage(commit.getShortMessage());
-                    info.setContent(content);
-                    toReturn.add(info);
-                    count++;
-                }
+                getFileContentFromCommit(commit, filePath).ifPresent(new Consumer<String>() {
+                    @Override
+                    public void accept(String content) {
+                        GitFileRevisionInfo info = new GitFileRevisionInfo();
+                        info.setRevisionId(commit.getName());
+                        info.setAuthor(commit.getAuthorIdent().getName());
+                        info.setTimestamp(Instant.ofEpochSecond(commit.getCommitTime()));
+                        info.setMessage(commit.getShortMessage());
+                        info.setContent(content);
+                        toReturn.add(info);
+                        count.increment();
+                    }
+                });
             }
         }
 
         return toReturn;
     }
     @Override
-    @SneakyThrows
-    public String getFileContentFromCommit(RevCommit commit, String filePath) {
-        try (TreeWalk treeWalk = TreeWalk.forPath(repo, filePath, commit.getTree())) {
-            if (Objects.isNull(treeWalk)) {
-                return null;
+    public Optional<String> getFileContentFromCommit(RevCommit commit, String filePath) throws Exception {
+        try (TreeWalk treeWalk = TreeWalk.forPath(args.getGit(), filePath, commit.getTree())) {
+            if (Objects.nonNull(treeWalk)) {
+                ObjectId blobId = treeWalk.getObjectId(BigInteger.ZERO.intValue());
+                ObjectLoader loader = args.getGit().open(blobId);
+                byte[] bytes = loader.getBytes();
+                return Optional.of(new String(bytes, StandardCharsets.UTF_8));
             }
-
-            ObjectId blobId = treeWalk.getObjectId(BigInteger.ZERO.intValue());
-            ObjectLoader loader = repo.open(blobId);
-            byte[] bytes = loader.getBytes();
-            return new String(bytes, StandardCharsets.UTF_8);
         }
+
+        return Optional.empty();
     }
     @Override
-    @SneakyThrows
-    public CommitAnalysis analyzeCommit(RevCommit commit) {
+    public Optional<String> getFileContentFromWorkingTree(String filePath) throws Exception {
+        Path path = args.getGit().getWorkTree().toPath().resolve(filePath);
+        if (Files.exists(path) && Files.isRegularFile(path)) {
+            return Optional.of(FileUtils.readFileToString(path.toFile(), StandardCharsets.UTF_8));
+        }
+
+        return Optional.empty();
+    }
+    @Override
+    public CommitAnalysis analyzeCommit(RevCommit commit) throws Exception {
         GitCommitAnalysis toReturn = new GitCommitAnalysis();
 
         toReturn.setCommitId(commit.getName());
-        toReturn.setCommitIdShort(commit.abbreviate(8).name());
         toReturn.setMessage(commit.getFullMessage());
 
         toReturn.setAuthor(commit.getAuthorIdent().getName());
@@ -173,20 +177,10 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         for (int i = 0; i < commit.getParentCount(); i++) {
             toReturn.getParentIds().add(commit.getParent(i).getName());
         }
-
-        if (Objects.nonNull(commit.getEncoding())) {
-            toReturn.setEncoding(commit.getEncoding().name());
-        }
-
-        byte[] rawGpgSig = commit.getRawGpgSignature();
-        if (Objects.nonNull(rawGpgSig) && rawGpgSig.length > 0) {
-            toReturn.setGpgSignature("signed");
-        }
-
-        for (Ref ref : Git.wrap(repo).branchList().setContains(commit.getName()).call()) {
+        for (Ref ref : Git.wrap(args.getGit()).branchList().setContains(commit.getName()).call()) {
             String branchName = ref.getName();
-            if (branchName.startsWith("refs/heads/")) {
-                branchName = branchName.substring("refs/heads/".length());
+            if (branchName.startsWith(Constants.R_HEADS)) {
+                branchName = branchName.substring(Constants.R_HEADS.length());
             }
             toReturn.getBranches().add(branchName);
         }
@@ -196,13 +190,13 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         }
 
         RevCommit parent = commit.getParent(BigInteger.ZERO.intValue());
-        try (ObjectReader reader = repo.newObjectReader()) {
-            try (DiffFormatter formatter = new DiffFormatter(DisabledOutputStream.INSTANCE)) {
-                try (RevWalk walk = new RevWalk(repo)) {
+        try (RevWalk walk = new RevWalk(args.getGit())) {
+            try (ObjectReader reader = args.getGit().newObjectReader()) {
+                try (DiffFormatter formatter = new DiffFormatter(DisabledOutputStream.INSTANCE)) {
                     RevCommit fullCommit = walk.parseCommit(commit.getId());
                     RevCommit fullParent = walk.parseCommit(parent.getId());
 
-                    formatter.setRepository(repo);
+                    formatter.setRepository(args.getGit());
                     formatter.setDetectRenames(true);
 
                     CanonicalTreeParser oldTree = new CanonicalTreeParser();
@@ -228,14 +222,259 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         return toReturn;
     }
     @Override
-    @SneakyThrows
-    public GitFileAnalysis analyzeFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit parent, RevCommit current) {
+    public CommitAnalysis analyzeUncommitted(Status status) throws Exception {
+        GitCommitAnalysis toReturn = new GitCommitAnalysis();
 
+        toReturn.setCommitId(UUID.randomUUID().toString());
+        toReturn.setMessage("Uncommitted changes analysis at " + LocalDateTime.now().toString() + " by " + System.getProperty("user.name"));
+
+        toReturn.setAuthor(System.getProperty("user.name"));
+        toReturn.setAuthorTimestamp(LocalDateTime.now().toInstant(ZoneOffset.UTC));
+
+        toReturn.setCommitter(toReturn.getAuthor());
+        toReturn.setCommitTimestamp(toReturn.getAuthorTimestamp());
+
+        toReturn.setMergeCommit(false);
+        toReturn.getBranches().add(args.getGit().getBranch());
+
+        ObjectId headId = args.getGit().resolve(Constants.HEAD);
+        if (Objects.isNull(headId)) {
+            return analyzeUncommittedNoHead(status);
+        }
+
+        toReturn.getParentIds().add(headId.getName());
+
+        try (RevWalk walk = new RevWalk(args.getGit())) {
+            try (ObjectReader reader = args.getGit().newObjectReader()) {
+                try (DiffFormatter formatter = new DiffFormatter(DisabledOutputStream.INSTANCE)) {
+                    RevCommit headCommit = walk.parseCommit(headId);
+                    formatter.setRepository(args.getGit());
+                    formatter.setDetectRenames(true);
+
+                    CanonicalTreeParser oldTree = new CanonicalTreeParser();
+                    oldTree.reset(reader, headCommit.getTree().getId());
+
+                    FileTreeIterator workingTree = new FileTreeIterator(args.getGit());
+                    List<DiffEntry> diffs = formatter.scan(oldTree, workingTree);
+
+                    log.log(Level.DEBUG, "analyzing uncommitted changes with " + diffs.size() + " diffs");
+
+                    for (DiffEntry diff : diffs) {
+                        FileAnalysis fileAnalysis = analyzeUncommittedFileDiff(diff, formatter, headCommit);
+                        if (Objects.nonNull(fileAnalysis)) {
+                            toReturn.getFiles().add(fileAnalysis);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (args.isIncludeUntracked()) {
+            for (String untrackedFile : status.getUntracked()) {
+                analyzeUntrackedFile(untrackedFile).ifPresent(new Consumer<FileAnalysis>() {
+                    @Override
+                    public void accept(FileAnalysis fileAnalysis) {
+                        toReturn.getFiles().add(fileAnalysis);
+                    }
+                });
+            }
+        }
+
+        toReturn.setFilesChanged(toReturn.getFiles().size());
+        return toReturn;
+    }
+    @Override
+    public CommitAnalysis analyzeUncommittedNoHead(Status status) throws Exception {
+        GitCommitAnalysis toReturn = new GitCommitAnalysis();
+
+        toReturn.setCommitId(UUID.randomUUID().toString());
+        toReturn.setMessage("Initial uncommitted changes (no commits yet)");
+        toReturn.setAuthor(System.getProperty("user.name"));
+        toReturn.setAuthorTimestamp(LocalDateTime.now().toInstant(ZoneOffset.UTC));
+        toReturn.setCommitter(toReturn.getAuthor());
+        toReturn.setCommitTimestamp(toReturn.getAuthorTimestamp());
+        toReturn.setMergeCommit(false);
+
+        for (String addedFile : status.getAdded()) {
+            analyzeUntrackedFile(addedFile).ifPresent(new Consumer<FileAnalysis>() {
+                @Override
+                public void accept(FileAnalysis fileAnalysis) {
+                    toReturn.getFiles().add(fileAnalysis);
+                }
+            });
+        }
+
+        if (args.isIncludeUntracked()) {
+            for (String untrackedFile : status.getUntracked()) {
+                analyzeUntrackedFile(untrackedFile).ifPresent(new Consumer<FileAnalysis>() {
+                    @Override
+                    public void accept(FileAnalysis fileAnalysis) {
+                        toReturn.getFiles().add(fileAnalysis);
+                    }
+                });
+            }
+        }
+
+        toReturn.setFilesChanged(toReturn.getFiles().size());
+        return toReturn;
+    }
+    @Override
+    public FileAnalysis analyzeUncommittedFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit headCommit) throws Exception {
         String path = diff.getChangeType() == DiffEntry.ChangeType.DELETE ? diff.getOldPath() : diff.getNewPath();
-        File destination = repo.getWorkTree().toPath().resolve(path).toFile();
+        File destination = args.getGit().getWorkTree().toPath().resolve(path).toFile();
         GitFileAnalysis toReturn = new GitFileAnalysis();
 
-        args.owningProject(destination).ifPresent(new Consumer<Project>() {
+        args.owner(destination).ifPresent(new Consumer<Project>() {
+            @Override
+            public void accept(Project project) {
+                for (File dir : project.getTestCompileSourceRoots()) {
+                    if (dir.isDirectory()) {
+                        Path dirPath = dir.toPath().toAbsolutePath().normalize();
+                        Path filePath = destination.toPath().toAbsolutePath().normalize();
+
+                        if (filePath.startsWith(dirPath)) {
+                            toReturn.setTestFile(true);
+                        }
+                    }
+                }
+            }
+        });
+
+        toReturn.setFile(destination);
+        toReturn.setChangeType(diff.getChangeType());
+
+        if (diff.getChangeType() != DiffEntry.ChangeType.ADD) {
+            getFileContentFromCommit(headCommit, diff.getOldPath()).ifPresent(toReturn::setContentBefore);
+        }
+
+        if (diff.getChangeType() != DiffEntry.ChangeType.DELETE) {
+            getFileContentFromWorkingTree(diff.getNewPath()).ifPresent(toReturn::setContentAfter);
+        }
+
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream();DiffFormatter printer = new DiffFormatter(output)) {
+            printer.setRepository(args.getGit());
+            printer.format(diff);
+            output.flush();
+            toReturn.setDiffText(output.toString(StandardCharsets.UTF_8.name()));
+        }
+
+        FileHeader fileHeader = formatter.toFileHeader(diff);
+
+        GitStructuredDiff structuredDiff = new GitStructuredDiff();
+        structuredDiff.setOldPath(diff.getOldPath());
+        structuredDiff.setNewPath(diff.getNewPath());
+        structuredDiff.setChangeType(diff.getChangeType());
+        toReturn.setStructuredDiff(structuredDiff);
+
+        Collection<Integer> modifiedLines = Lists.newArrayList();
+        for (Edit edit : fileHeader.toEditList()) {
+            int beginB = edit.getBeginB();
+            int endB = edit.getEndB();
+            for (int line = beginB; line < endB; line++) {
+                modifiedLines.add(line);
+            }
+
+            GitDiffHunk hunk = new GitDiffHunk();
+            hunk.setOldStartLine(edit.getBeginA());
+            hunk.setOldEndLine(edit.getEndA());
+            hunk.setNewStartLine(edit.getBeginB());
+            hunk.setNewEndLine(edit.getEndB());
+            hunk.setType(edit.getType());
+            structuredDiff.getHunks().add(hunk);
+        }
+
+        if (diff.getChangeType() != DiffEntry.ChangeType.DELETE) {
+            Path resolve = args.getGit().getWorkTree().toPath().resolve(diff.getNewPath());
+            analyzeSymbols(toReturn, resolve.toFile(), modifiedLines);
+        }
+
+        return toReturn;
+    }
+    @Override
+    public Optional<FileAnalysis> analyzeUntrackedFile(String filePath) throws Exception {
+        File destination = args.getGit().getWorkTree().toPath().resolve(filePath).toFile();
+        if (destination.exists() && destination.isFile()) {
+            GitFileAnalysis toReturn = new GitFileAnalysis();
+
+            args.owner(destination).ifPresent(new Consumer<Project>() {
+                @Override
+                public void accept(Project project) {
+                    for (File dir : project.getTestCompileSourceRoots()) {
+                        if (dir.isDirectory()) {
+                            Path dirPath = dir.toPath().toAbsolutePath().normalize();
+                            Path destPath = destination.toPath().toAbsolutePath().normalize();
+
+                            if (destPath.startsWith(dirPath)) {
+                                toReturn.setTestFile(true);
+                            }
+                        }
+                    }
+                }
+            });
+
+            toReturn.setFile(destination);
+            toReturn.setChangeType(DiffEntry.ChangeType.ADD);
+
+            String content = FileUtils.readFileToString(destination, StandardCharsets.UTF_8);
+            toReturn.setContentAfter(content);
+            toReturn.setContentBefore(null);
+
+            try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+                try (DiffFormatter formatter = new DiffFormatter(output)) {
+                    formatter.setRepository(args.getGit());
+                    formatter.setPathFilter(PathFilter.create(filePath));
+
+                    FileTreeIterator workingTreeIter = new FileTreeIterator(args.getGit());
+                    List<DiffEntry> entries = formatter.scan(new EmptyTreeIterator(), workingTreeIter);
+
+                    if (CollectionUtils.isNotEmpty(entries)) {
+                        DiffEntry diff = entries.get(0);
+                        formatter.format(diff);
+                        output.flush();
+                        toReturn.setDiffText(output.toString(StandardCharsets.UTF_8.name()));
+
+                        FileHeader fileHeader = formatter.toFileHeader(diff);
+
+                        GitStructuredDiff structuredDiff = new GitStructuredDiff();
+                        structuredDiff.setOldPath(diff.getOldPath());
+                        structuredDiff.setNewPath(diff.getNewPath());
+                        structuredDiff.setChangeType(diff.getChangeType());
+                        toReturn.setStructuredDiff(structuredDiff);
+
+                        Collection<Integer> modifiedLines = Lists.newArrayList();
+                        for (Edit edit : fileHeader.toEditList()) {
+                            int beginB = edit.getBeginB();
+                            int endB = edit.getEndB();
+                            for (int line = beginB; line < endB; line++) {
+                                modifiedLines.add(line);
+                            }
+
+                            GitDiffHunk hunk = new GitDiffHunk();
+                            hunk.setOldStartLine(edit.getBeginA());
+                            hunk.setOldEndLine(edit.getEndA());
+                            hunk.setNewStartLine(edit.getBeginB());
+                            hunk.setNewEndLine(edit.getEndB());
+                            hunk.setType(edit.getType());
+                            structuredDiff.getHunks().add(hunk);
+                        }
+
+                        analyzeSymbols(toReturn, destination, modifiedLines);
+                    }
+                }
+            }
+
+            return Optional.of(toReturn);
+        }
+
+        return Optional.empty();
+    }
+    @Override
+    public GitFileAnalysis analyzeFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit parent, RevCommit current) throws Exception {
+        String path = diff.getChangeType() == DiffEntry.ChangeType.DELETE ? diff.getOldPath() : diff.getNewPath();
+        File destination = args.getGit().getWorkTree().toPath().resolve(path).toFile();
+        GitFileAnalysis toReturn = new GitFileAnalysis();
+
+        args.owner(destination).ifPresent(new Consumer<Project>() {
             @Override
             public void accept(Project project) {
                 for (File dir : project.getTestCompileSourceRoots()) {
@@ -254,25 +493,17 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         toReturn.setFile(destination);
         toReturn.setChangeType(diff.getChangeType());
         if (diff.getChangeType() != DiffEntry.ChangeType.ADD) {
-            String contentBefore = getFileContentFromCommit(parent, diff.getOldPath());
-            toReturn.setContentBefore(contentBefore);
+            getFileContentFromCommit(parent, diff.getOldPath()).ifPresent(toReturn::setContentBefore);
         }
         if (diff.getChangeType() != DiffEntry.ChangeType.DELETE) {
-            String contentAfter = getFileContentFromCommit(current, diff.getNewPath());
-            toReturn.setContentAfter(contentAfter);
+            getFileContentFromCommit(current, diff.getNewPath()).ifPresent(toReturn::setContentAfter);
         }
         try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             try (DiffFormatter printer = new DiffFormatter(output)) {
-                printer.setRepository(repo);
+                printer.setRepository(args.getGit());
                 printer.format(diff);
                 output.flush();
                 toReturn.setDiffText(output.toString(StandardCharsets.UTF_8.name()));
-            }
-        }
-        for (Language lang : LanguageRegistry.PMD) {
-            if (FilenameUtils.isExtension(path, lang.getExtensions())) {
-                toReturn.setLanguage(lang);
-                break;
             }
         }
 
@@ -302,7 +533,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         }
 
         if (diff.getChangeType() != DiffEntry.ChangeType.DELETE) {
-            Path resolve = repo.getWorkTree().toPath().resolve(diff.getNewPath());
+            Path resolve = args.getGit().getWorkTree().toPath().resolve(diff.getNewPath());
             analyzeSymbols(toReturn, resolve.toFile(), modifiedLines);
         }
 
@@ -310,7 +541,6 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
     }
     @Override
     public void analyzeSymbols(FileAnalysis analysis, File destination, Collection<Integer> modifiedLines) {
-        StopWatch stopWatch = StopWatch.createStarted();
         registry.forEach(new Consumer<LanguageSpec>() {
             @Override
             @SneakyThrows
@@ -327,6 +557,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
                     }).forEach(new Consumer<DocumentSymbol>() {
                         @Override
                         public void accept(DocumentSymbol symbol) {
+                            StopWatch stopWatch = StopWatch.createStarted();
                             processor.identifyAffectedSymbols(analysis, symbol, destination, modifiedLines);
                             stopWatch.stop();
                             log.log(Level.DEBUG, "analyzed file: %s(%s), modified lines: %d, affected symbols: %d, took: %s",
@@ -340,9 +571,5 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
                 }
             }
         });
-    }
-    @Override
-    public void close() {
-        repo.close();
     }
 }

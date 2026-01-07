@@ -23,7 +23,6 @@ import lombok.Data;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class GitCommitAnalysis implements CommitAnalysis {
     private String commitId;
-    private String commitIdShort;
     private String message;
     private String author;
     private String authorEmail;
@@ -34,8 +33,6 @@ public class GitCommitAnalysis implements CommitAnalysis {
     private List<String> parentIds = Lists.newArrayList();
     private List<String> branches = Lists.newArrayList();
     private boolean mergeCommit;
-    private String gpgSignature;
-    private String encoding;
     private int filesChanged;
     private Set<FileAnalysis> files = Sets.newLinkedHashSet();
     private final Supplier<Set<File>> destinations = Suppliers.memoize(new Supplier<Set<File>>() {

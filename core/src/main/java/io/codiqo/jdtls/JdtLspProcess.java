@@ -1,9 +1,9 @@
 package io.codiqo.jdtls;
 
 import java.io.Closeable;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -12,9 +12,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -34,8 +31,6 @@ import org.zeroturnaround.process.Processes;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
-import com.google.common.io.Resources;
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
@@ -56,7 +51,7 @@ public class JdtLspProcess implements Closeable {
             "linux-x86_64", "config_linux",
             "linux-aarch_64", "config_linux_arm",
             "windows-x86_64", "config_win");
-    public static final Supplier<HttpUrl.Builder> BASE_URL = new Supplier<HttpUrl.Builder>() {
+    public static final Supplier<HttpUrl.Builder> BASE_URL = new Supplier<>() {
         @Override
         public HttpUrl.Builder get() {
             return new HttpUrl.Builder().scheme("https").host("download.eclipse.org").addPathSegment("jdtls").addPathSegment("milestones");
@@ -73,7 +68,6 @@ public class JdtLspProcess implements Closeable {
 
     @Delegate
     private final Sinks.Many<Integer> processor = Sinks.many().multicast().directBestEffort();
-    private final ExecutorService monitor = Executors.newSingleThreadExecutor(new ThreadFactoryBuilder().setDaemon(true).build());
     private final Log log;
     private final JavaProcess process;
 
@@ -117,8 +111,13 @@ public class JdtLspProcess implements Closeable {
                         .orElseThrow(() -> new IllegalStateException("could not find 'equinox' launcher jar"));
             }
 
+            String java = SystemUtils.IS_OS_WINDOWS ? "java.exe" : "java";
+            if (Objects.nonNull(args.getJavaHome())) {
+                java = args.getJavaHome().toPath().resolve("bin").resolve(java).toFile().getAbsolutePath();
+            }
+
             List<String> cmd = Lists.newArrayList();
-            cmd.add(args.getJavaExecutable());
+            cmd.add(java);
             cmd.addAll(ImmutableList.of("-server", "-Xlog:disable"));
             cmd.addAll(ImmutableList.of("-XX:+UnlockExperimentalVMOptions", "-XX:+UnlockDiagnosticVMOptions", "-XX:+UseStringDeduplication"));
             cmd.addAll(
@@ -172,14 +171,8 @@ public class JdtLspProcess implements Closeable {
                             "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
                             "--add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED"));
 
-            URL resource = Resources.getResource("codiqo-dependency-versions.properties");
-            try (InputStream stream = resource.openStream()) {
-                Properties versions = new Properties();
-                versions.load(stream);
-
-                for (Path agent : args.getAgents()) {
-                    cmd.add("-javaagent:" + agent.toFile().getAbsolutePath());
-                }
+            for (File file : args.getAgents()) {
+                cmd.add("-javaagent:" + file.getAbsolutePath());
             }
 
             cmd.add("-Djdt.core.sharedIndexLocation=" + CACHE.toFile().getAbsolutePath());
@@ -213,20 +206,10 @@ public class JdtLspProcess implements Closeable {
             Process fork = builder.start();
             this.process = Processes.newJavaProcess(fork);
 
-            CompletableFuture.supplyAsync(new Supplier<Integer>() {
+            fork.onExit().thenAccept(new Consumer<Process>() {
                 @Override
-                public Integer get() {
-                    try {
-                        fork.waitFor();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    }
-                    return fork.exitValue();
-                }
-            }, monitor).thenAccept(new Consumer<Integer>() {
-                @Override
-                public void accept(Integer exitCode) {
-                    EmitResult result = processor.tryEmitNext(exitCode);
+                public void accept(Process p) {
+                    EmitResult result = processor.tryEmitNext(p.exitValue());
                     if (result.isSuccess()) {
 
                     }
@@ -255,9 +238,7 @@ public class JdtLspProcess implements Closeable {
         } catch (InterruptedException err) {
             throw new IOException(err.getMessage(), err);
         } finally {
-            if (Objects.nonNull(monitor)) {
-                monitor.shutdownNow();
-            }
+
         }
     }
 }

@@ -15,15 +15,18 @@ import com.google.common.collect.Lists;
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.diff.AffectedSymbolInfo;
+import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.Setter;
 
 @Getter
 @Setter
 @JsonInclude(JsonInclude.Include.NON_NULL)
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class Lsp4jGitAffectedSymbolInfo implements AffectedSymbolInfo {
-    private File file;
+    @EqualsAndHashCode.Include
     private DocumentSymbol symbol;
+    private File file;
     private SourceLocation location;
     private List<CallHierarchyIncomingCall> incomingCalls = Lists.newLinkedList();
     private Optional<CodeBlockInfo> block = Optional.empty();
@@ -35,17 +38,6 @@ public class Lsp4jGitAffectedSymbolInfo implements AffectedSymbolInfo {
     @Override
     public Optional<CodeBlockInfo> block() {
         return block;
-    }
-    @Override
-    public int hashCode() {
-        return symbol.hashCode();
-    }
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) { return true; }
-        if (o == null || getClass() != o.getClass()) { return false; }
-        Lsp4jGitAffectedSymbolInfo that = (Lsp4jGitAffectedSymbolInfo) o;
-        return symbol.equals(that.symbol);
     }
     @Override
     public String toString() {

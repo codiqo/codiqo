@@ -32,23 +32,7 @@
         </developer>
     </developers>
     <properties>
-        <maven.compiler.source>24</maven.compiler.source>
-        <maven.compiler.target>${maven.compiler.source}</maven.compiler.target>
         <docker.platforms>linux/arm64,linux/amd64</docker.platforms>
-        <coverage.exclusions>
-            <![CDATA[
-            **/test/**,
-            **/di/**,
-            **/model/**,
-            **/config/**,
-            **/configuration/**,
-            **/*DiModule*,
-            **/*Bean*,
-            **/*Configurer*,
-            **/*Autoconfigurator*,
-            **/*Properties*,
-            /generated-sources]]>
-        </coverage.exclusions>
         <!-- -->
         <!-- SCM -->
         <!-- -->
@@ -59,8 +43,8 @@
         <!-- -->
         <!-- JDK requirements -->
         <!-- -->
-        <maven.compiler.target>1.8</maven.compiler.target>
-        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <maven.compiler.source>11</maven.compiler.source>
         <!-- -->
         <!-- CORE -->
         <!-- -->
@@ -83,6 +67,9 @@
         <jarchivelib.version>1.2.0</jarchivelib.version>
         <lsp4j.version>0.15.0</lsp4j.version>
         <pmd.version>7.19.0</pmd.version>
+        <spotbugs.version>4.9.3</spotbugs.version>
+        <findbugs.sec.version>1.14.0</findbugs.sec.version>
+        <findbugs.contrib.version>7.6.11</findbugs.contrib.version>
         <jacoco.version>0.8.14</jacoco.version>
         <classgraph.version>4.8.184</classgraph.version>
         <graalvm.version>25.0.1</graalvm.version>
@@ -100,8 +87,9 @@
         <commons-math3.version>3.6.1</commons-math3.version>
         <bouncycastle.version>1.83</bouncycastle.version>
         <aether.version>2.0.13</aether.version>
-        <maven.version>3.9.11</maven.version>
         <maven.plugin-annotations.version>3.15.2</maven.plugin-annotations.version>
+        <maven.version>3.9.11</maven.version>
+        <maven.invoker.version>3.3.0</maven.invoker.version>
         <scala.binary.version>2.13</scala.binary.version>
         <scala.version>${scala.binary.version}.18</scala.version>
         <sentry.version>8.29.0</sentry.version>
@@ -306,6 +294,11 @@
                 <version>${aether.version}</version>
             </dependency>
             <dependency>
+                <groupId>org.apache.maven.shared</groupId>
+                <artifactId>maven-invoker</artifactId>
+                <version>${maven.invoker.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>org.apache.maven</groupId>
                 <artifactId>maven-model</artifactId>
                 <version>${maven.version}</version>
@@ -474,6 +467,21 @@
                 <groupId>org.jacoco</groupId>
                 <artifactId>org.jacoco.core</artifactId>
                 <version>${jacoco.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.spotbugs</groupId>
+                <artifactId>spotbugs</artifactId>
+                <version>${spotbugs.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.h3xstream.findsecbugs</groupId>
+                <artifactId>findsecbugs-plugin</artifactId>
+                <version>${findbugs.sec.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.mebigfatguy.fb-contrib</groupId>
+                <artifactId>fb-contrib</artifactId>
+                <version>${findbugs.contrib.version}</version>
             </dependency>
             <dependency>
                 <groupId>net.sourceforge.pmd</groupId>
@@ -1082,7 +1090,9 @@
                     <version>${version.dependency.plugin}</version>
                     <configuration>
                         <ignoredDependencies>
-                            <ignoredDependency>org.codehaus.plexus:plexus-utils</ignoredDependency>
+                            <ignoredDependency>org.eclipse.sisu:*</ignoredDependency>
+                            <ignoredDependency>org.codehaus.plexus:*</ignoredDependency>
+                            <ignoredDependency>org.apache.maven.shared:*</ignoredDependency>
                         </ignoredDependencies>
                         <ignoredNonTestScopedDependencies>
                             <ignoredNonTestScopedDependency>*</ignoredNonTestScopedDependency>
@@ -1266,9 +1276,6 @@
                 </executions>
                 <configuration>
                     <propertyName>jacoco.agent.argLine</propertyName>
-                    <excludes>
-                        <exclude>${coverage.exclusions}</exclude>
-                    </excludes>
                 </configuration>
             </plugin>
             <plugin>

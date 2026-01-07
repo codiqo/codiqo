@@ -2,8 +2,7 @@ package io.codiqo.api;
 
 import java.io.File;
 import java.lang.reflect.Field;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.lang.reflect.Modifier;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.Objects;
@@ -14,6 +13,7 @@ import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Option.Builder;
 import org.apache.commons.cli.Options;
 import org.eclipse.jgit.annotations.Nullable;
+import org.eclipse.jgit.lib.Repository;
 
 import com.google.common.base.CaseFormat;
 import com.google.common.collect.Lists;
@@ -22,28 +22,33 @@ import lombok.Data;
 
 @Data
 public class RunArgs {
-    private Path repo;
     private String commitId;
-    @Nullable
-    private final String javaExecutable = "java";
-    @Nullable
-    private final Duration importTimeout = Duration.ofMinutes(15);
-    @Nullable
-    private final Duration connectTimeout = Duration.ofSeconds(30);
-    @Nullable
-    private final Duration readTimeout = Duration.ofMinutes(1);
-    @Nullable
-    private final int maxRequests = Short.MAX_VALUE;
-    @Nullable
-    private final int maxRequestsPerHost = Byte.MAX_VALUE;
-    @Nullable
-    private final int cpdMinimumTileSize = Byte.MAX_VALUE / 2;
-    @Nullable
-    private final Collection<Project> projects = Lists.newArrayList();
-    @Nullable
-    private final Collection<Path> agents = Lists.newArrayList();
+    private boolean includeUntracked = true;
 
-    public Optional<Project> owningProject(File filePath) {
+    @Nullable
+    private File javaHome;
+    @Nullable
+    private File mavenHome;
+    @Nullable
+    private Duration importTimeout = Duration.ofMinutes(15);
+    @Nullable
+    private Duration connectTimeout = Duration.ofSeconds(30);
+    @Nullable
+    private Duration readTimeout = Duration.ofMinutes(1);
+    @Nullable
+    private int maxRequests = Short.MAX_VALUE;
+    @Nullable
+    private int maxRequestsPerHost = Byte.MAX_VALUE;
+    @Nullable
+    private int cpdMinimumTileSize = Byte.MAX_VALUE / 2;
+    @Nullable
+    private transient Collection<Project> projects = Lists.newArrayList();
+    @Nullable
+    private transient Collection<File> agents = Lists.newArrayList();
+    @Nullable
+    private transient Repository git;
+
+    public Optional<Project> owner(File filePath) {
         for (Project proj : projects) {
             if (filePath.toPath().startsWith(proj.getBaseDirectory().toPath())) {
                 return Optional.of(proj);
@@ -57,6 +62,10 @@ public class RunArgs {
         Field[] fields = RunArgs.class.getDeclaredFields();
         for (Field field : fields) {
             field.setAccessible(true);
+            if (Modifier.isTransient(field.getModifiers())) {
+                continue;
+            }
+
             String camel = field.getName();
             String kebab = CaseFormat.LOWER_CAMEL.to(CaseFormat.LOWER_HYPHEN, camel);
             Builder builder = Option.builder().longOpt(kebab).hasArg();
@@ -69,6 +78,11 @@ public class RunArgs {
         RunArgs toReturn = new RunArgs();
         Field[] fields = RunArgs.class.getDeclaredFields();
         for (Field field : fields) {
+            field.setAccessible(true);
+            if (Modifier.isTransient(field.getModifiers())) {
+                continue;
+            }
+
             String camel = field.getName();
             String kebab = CaseFormat.LOWER_CAMEL.to(CaseFormat.LOWER_HYPHEN, camel);
             if (cmd.hasOption(kebab)) {
@@ -79,8 +93,8 @@ public class RunArgs {
                     field.set(toReturn, Integer.parseInt(value));
                 } else if (field.getType().equals(Duration.class)) {
                     field.set(toReturn, Duration.parse(value));
-                } else if (field.getType().equals(Path.class)) {
-                    field.set(toReturn, Paths.get(value));
+                } else if (field.getType().equals(File.class)) {
+                    field.set(toReturn, new File(value));
                 }
             }
         }

@@ -41,14 +41,10 @@ public class GitDeltaAnalysisMicroDemo {
             try (LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, run, fetch)) {
                 registry.load().block();
 
-                try (DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, registry, run)) {
-                    CommitAnalysis analysis = analyzer.analyze(run.getCommitId());
-                    IndexingSummary index = registry.index(analysis);
-                    registry.detectCopyPaste(index, analysis);
-                    registry.captureCoverage(index, analysis);
-                    registry.captureComplexity(index, analysis);
-                    registry.captureViolations(index, analysis);
-                }
+                DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, registry, run);
+                CommitAnalysis analysis = analyzer.analyze();
+                IndexingSummary index = registry.index(analysis);
+                registry.collectAndCapture(index, analysis);
             }
         }
     }

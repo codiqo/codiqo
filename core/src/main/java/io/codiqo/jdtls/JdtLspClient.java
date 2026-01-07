@@ -3,7 +3,6 @@ package io.codiqo.jdtls;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.Serializable;
-import java.lang.management.ManagementFactory;
 import java.net.Socket;
 import java.nio.file.Path;
 import java.util.Map;
@@ -98,7 +97,6 @@ import org.eclipse.lsp4j.services.LanguageServer;
 import org.slf4j.event.Level;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
@@ -176,11 +174,9 @@ public class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Suppl
     @SuppressWarnings("deprecation")
     @SneakyThrows
     public InitializeResult initialize() {
-        Path projectRoot = args.getRepo();
+        Path projectRoot = args.getGit().getWorkTree().toPath();
 
-        String jvm = ManagementFactory.getRuntimeMXBean().getName();
-        Splitter splitter = Splitter.on("@").trimResults().omitEmptyStrings();
-        int pid = Integer.parseInt(splitter.splitToList(jvm).iterator().next());
+        int pid = (int) ProcessHandle.current().pid();
 
         InitializeParams params = new InitializeParams();
         params.setRootPath(projectRoot.toString());

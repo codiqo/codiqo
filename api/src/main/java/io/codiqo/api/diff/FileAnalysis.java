@@ -8,7 +8,6 @@ import org.eclipse.jgit.diff.DiffEntry;
 import net.sourceforge.pmd.lang.Language;
 
 public interface FileAnalysis {
-    Language getLanguage();
     File getFile();
     DiffEntry.ChangeType getChangeType();
     String getContentBefore();
@@ -16,4 +15,5 @@ public interface FileAnalysis {
     String getDiffText();
     Set<AffectedSymbolInfo> getPotentiallyAffectedSymbols();
     boolean isTestFile();
+    boolean isExtension(Language lang);
 }
