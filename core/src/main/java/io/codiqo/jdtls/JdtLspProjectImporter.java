@@ -2,7 +2,6 @@ package io.codiqo.jdtls;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.math.BigInteger;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.List;
@@ -52,6 +51,9 @@ import reactor.core.publisher.Sinks.EmitResult;
 import reactor.core.scheduler.Schedulers;
 
 public class JdtLspProjectImporter implements LanguageServerProjectImporter, Lsp4jQuery, Closeable {
+    public static final int EXIT_OK = 0;
+    public static final int EXIT_SIGTERM = 143;
+
     private final Sinks.Many<Integer> processor = Sinks.many().replay().latest();
     private final Sinks.Many<JdtLspClient> client = Sinks.many().replay().latest();
     private final AtomicReference<JdtLspClient> curr = new AtomicReference<>();
@@ -74,11 +76,18 @@ public class JdtLspProjectImporter implements LanguageServerProjectImporter, Lsp
         this.jdt.asFlux().subscribe(new Consumer<Integer>() {
             @Override
             public void accept(Integer exitCode) {
-                if (exitCode != BigInteger.ZERO.intValue()) {
-                    EmitResult result = processor.tryEmitNext(exitCode);
-                    if (result.isSuccess()) {
-                        log.error("JDT LSP process exited with code: " + exitCode);
-                        client.tryEmitError(new IllegalStateException("JDT LSP process exited with code: " + exitCode));
+                switch (exitCode) {
+                    case EXIT_OK:
+                    case EXIT_SIGTERM: {
+                        break;
+                    }
+                    default: {
+                        EmitResult result = processor.tryEmitNext(exitCode);
+                        if (result.isSuccess()) {
+                            log.error("JDT LSP process exited with code: " + exitCode);
+                            client.tryEmitError(new IllegalStateException("JDT LSP process exited with code: " + exitCode));
+                        }
+                        break;
                     }
                 }
             }
@@ -124,7 +133,7 @@ public class JdtLspProjectImporter implements LanguageServerProjectImporter, Lsp
                     InitializeResult result = c.initialize();
                     future.get(args.getImportTimeout().getSeconds(), TimeUnit.SECONDS);
                     stopWatch.stop();
-                    log.info("JDT loaded project: %s in: %s ", args.getRepo(), stopWatch);
+                    log.info("JDT loaded project: %s in: %s ", args.getGit().getWorkTree(), stopWatch);
                     return Mono.just(result);
                 } catch (Throwable err) {
                     return Mono.error(err);

@@ -27,7 +27,7 @@ import lombok.Data;
 public class CopyPasteDetectionSummary {
     private int total;
     private Map<CodeBlockInfo, Set<CodeBlockInfo>> existing = Maps.newLinkedHashMap();
-    private Set<Set<CodeBlockInfo>> sameCommit = Sets.newLinkedHashSet();
+    private Set<Set<CodeBlockInfo>> same = Sets.newLinkedHashSet();
 
     public CopyPasteDetectionSummary(int total, Set<DuplicationMatch> matches, IndexingSummary summary, CommitAnalysis analysis) {
         this.total = total;
@@ -127,7 +127,7 @@ public class CopyPasteDetectionSummary {
             }
 
             if (component.size() > BigDecimal.ONE.intValue()) {
-                sameCommit.add(component);
+                same.add(component);
             }
         }
     }

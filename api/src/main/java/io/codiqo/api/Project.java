@@ -9,7 +9,7 @@ public interface Project {
     String getDescription();
     String getVersion();
     File getBaseDirectory();
-    String getOutputDirectory();
+    File getOutputDirectory();
     Collection<File> getCompileSourceRoots();
     Collection<File> getCompileClasspathElements();
     Collection<File> getTestCompileSourceRoots();

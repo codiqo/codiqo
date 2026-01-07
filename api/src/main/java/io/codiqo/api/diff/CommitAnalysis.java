@@ -9,7 +9,6 @@ import io.codiqo.api.code.CodeBlockInfo;
 
 public interface CommitAnalysis {
     String getCommitId();
-    String getCommitIdShort();
     String getMessage();
     String getAuthor();
     String getAuthorEmail();
@@ -20,8 +19,6 @@ public interface CommitAnalysis {
     List<String> getParentIds();
     List<String> getBranches();
     boolean isMergeCommit();
-    String getGpgSignature();
-    String getEncoding();
     int getFilesChanged();
     Set<FileAnalysis> getFiles();
     Set<File> files();
