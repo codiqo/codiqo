@@ -1,4 +1,4 @@
-package io.codiqo.core;
+package io.codiqo.util;
 
 import java.io.Closeable;
 import java.io.IOException;

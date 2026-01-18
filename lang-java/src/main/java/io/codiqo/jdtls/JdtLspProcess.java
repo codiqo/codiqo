@@ -13,7 +13,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
@@ -35,28 +34,20 @@ import com.google.common.collect.Lists;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
-import io.codiqo.core.Fetch;
-import io.codiqo.core.OSDetector;
-import lombok.SneakyThrows;
+import io.codiqo.util.Fetch;
 import lombok.experimental.Delegate;
 import okhttp3.HttpUrl;
 import reactor.core.publisher.Sinks;
 import reactor.core.publisher.Sinks.EmitResult;
 
 public class JdtLspProcess implements Closeable {
-    public static final String VERSION = "1.54.0";
     public static final Map<String, String> JDTLS_CONFIG = ImmutableMap.of(
             "osx-x86_64", "config_mac",
             "osx-aarch_64", "config_mac_arm",
             "linux-x86_64", "config_linux",
             "linux-aarch_64", "config_linux_arm",
             "windows-x86_64", "config_win");
-    public static final Supplier<HttpUrl.Builder> BASE_URL = new Supplier<>() {
-        @Override
-        public HttpUrl.Builder get() {
-            return new HttpUrl.Builder().scheme("https").host("download.eclipse.org").addPathSegment("jdtls").addPathSegment("milestones");
-        }
-    };
+    public static final Supplier<HttpUrl.Builder> BASE_URL = () -> new HttpUrl.Builder().scheme("https").host("download.eclipse.org").addPathSegment("jdtls").addPathSegment("milestones");
     public static final Path CACHE = FileSystems.getDefault().getPath(System.getProperty("user.home"), ".cache", "jdtls");
     static {
         try {
@@ -71,8 +62,7 @@ public class JdtLspProcess implements Closeable {
     private final Log log;
     private final JavaProcess process;
 
-    @SneakyThrows
-    public JdtLspProcess(LogFactory logFactory, RunArgs args, Fetch fetch, int port) {
+    public JdtLspProcess(LogFactory logFactory, RunArgs args, Fetch fetch, int port) throws IOException {
         this.log = logFactory.getLogger(getClass());
 
         Properties lookup = new Properties();
@@ -81,14 +71,14 @@ public class JdtLspProcess implements Closeable {
 
         try (InputStream io = BASE_URL
                 .get()
-                .addPathSegment(VERSION)
+                .addPathSegment(args.getJdtlsVersion())
                 .addPathSegment("latest.txt")
                 .build()
                 .url()
                 .openStream()) {
             String os = JDTLS_CONFIG.get(lookup.getProperty("os.detected.classifier"));
             String latest = StringUtils.trim(IOUtils.toString(io, StandardCharsets.UTF_8));
-            Path path = fetch.download(logFactory, BASE_URL.get().addPathSegment(VERSION).addPathSegment(latest).build().url());
+            Path path = fetch.download(logFactory, BASE_URL.get().addPathSegment(args.getJdtlsVersion()).addPathSegment(latest).build().url());
             Archiver archiver = ArchiverFactory.createArchiver(FileType.get(path.toFile()));
             Path tempDir = Files.createTempDirectory("jdtls");
             tempDir.toFile().deleteOnExit();
@@ -113,7 +103,7 @@ public class JdtLspProcess implements Closeable {
 
             String java = SystemUtils.IS_OS_WINDOWS ? "java.exe" : "java";
             if (Objects.nonNull(args.getJavaHome())) {
-                java = args.getJavaHome().toPath().resolve("bin").resolve(java).toFile().getAbsolutePath();
+                java = args.getJavaHome().toPath().normalize().resolve("bin").resolve(java).toFile().getAbsolutePath();
             }
 
             List<String> cmd = Lists.newArrayList();
@@ -206,13 +196,10 @@ public class JdtLspProcess implements Closeable {
             Process fork = builder.start();
             this.process = Processes.newJavaProcess(fork);
 
-            fork.onExit().thenAccept(new Consumer<Process>() {
-                @Override
-                public void accept(Process p) {
-                    EmitResult result = processor.tryEmitNext(p.exitValue());
-                    if (result.isSuccess()) {
+            fork.onExit().thenAccept(p -> {
+                EmitResult result = processor.tryEmitNext(p.exitValue());
+                if (result.isSuccess()) {
 
-                    }
                 }
             });
             stopWatch.stop();
@@ -239,6 +226,28 @@ public class JdtLspProcess implements Closeable {
             throw new IOException(err.getMessage(), err);
         } finally {
 
+        }
+    }
+
+    private static class OSDetector extends kr.motd.maven.os.Detector {
+        private final Log log;
+        private final Properties properties = new Properties();
+
+        public OSDetector(LogFactory logFactory) {
+            this.log = logFactory.getLogger(getClass());
+            super.detect(properties, ImmutableList.of());
+        }
+        @Override
+        protected void log(String message) {
+            log.info(message);
+        }
+        @Override
+        protected void logProperty(String name, String value) {
+            log.info(name + ": " + value);
+        }
+        @Override
+        public void detect(Properties props, List<String> classifierWithLikes) {
+            props.putAll(properties);
         }
     }
 }

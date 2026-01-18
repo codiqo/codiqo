@@ -9,7 +9,6 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -42,8 +41,7 @@ import io.codiqo.api.LanguageServerProjectImporter;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
-import io.codiqo.core.Fetch;
-import lombok.SneakyThrows;
+import io.codiqo.util.Fetch;
 import reactor.core.Disposable;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
@@ -64,8 +62,7 @@ public class JdtLspProjectImporter implements LanguageServerProjectImporter, Lsp
     private final ServerSocket serverSocket;
     private Disposable disposable;
 
-    @SneakyThrows
-    public JdtLspProjectImporter(LogFactory logFactory, RunArgs args, Fetch fetch) {
+    public JdtLspProjectImporter(LogFactory logFactory, RunArgs args, Fetch fetch) throws IOException {
         this.log = logFactory.getLogger(getClass());
         this.args = Objects.requireNonNull(args);
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -73,74 +70,61 @@ public class JdtLspProjectImporter implements LanguageServerProjectImporter, Lsp
         }
         this.serverSocket = new ServerSocket(port);
         this.jdt = new JdtLspProcess(logFactory, args, fetch, port);
-        this.jdt.asFlux().subscribe(new Consumer<Integer>() {
-            @Override
-            public void accept(Integer exitCode) {
-                switch (exitCode) {
-                    case EXIT_OK:
-                    case EXIT_SIGTERM: {
-                        break;
+        this.jdt.asFlux().subscribe(exitCode -> {
+            switch (exitCode) {
+                case EXIT_OK:
+                case EXIT_SIGTERM: {
+                    break;
+                }
+                default: {
+                    EmitResult result = processor.tryEmitNext(exitCode);
+                    if (result.isSuccess()) {
+                        log.error("JDT LSP process exited with code: " + exitCode);
+                        client.tryEmitError(new IllegalStateException("JDT LSP process exited with code: " + exitCode));
                     }
-                    default: {
-                        EmitResult result = processor.tryEmitNext(exitCode);
-                        if (result.isSuccess()) {
-                            log.error("JDT LSP process exited with code: " + exitCode);
-                            client.tryEmitError(new IllegalStateException("JDT LSP process exited with code: " + exitCode));
-                        }
-                        break;
-                    }
+                    break;
                 }
             }
         });
-        this.disposable = Mono.defer(new Supplier<Mono<Socket>>() {
-            @Override
-            public Mono<Socket> get() {
-                try {
-                    return Mono.just(serverSocket.accept());
-                } catch (IOException err) {
-                    return serverSocket.isClosed() ? Mono.empty() : Mono.error(err);
-                }
+        this.disposable = Mono.defer((Supplier<Mono<Socket>>) () -> {
+            try {
+                return Mono.just(serverSocket.accept());
+            } catch (IOException err) {
+                return serverSocket.isClosed() ? Mono.empty() : Mono.error(err);
             }
-        }).subscribeOn(Schedulers.boundedElastic()).subscribe(new Consumer<Socket>() {
-            @Override
-            public void accept(Socket accept) {
+        }).subscribeOn(Schedulers.boundedElastic()).subscribe(accept -> {
+            try {
                 JdtLspClient toSet = new JdtLspClient(logFactory, args, accept);
                 EmitResult result = client.tryEmitNext(toSet);
                 if (result.isSuccess()) {
                     log.info("JDT LSP client connected on port :" + port);
                     curr.set(toSet);
                 }
+            } catch (IOException err) {
+                client.tryEmitError(err);
             }
-        }, new Consumer<Throwable>() {
-            @Override
-            public void accept(Throwable err) {
-                log.error(err.getMessage(), err);
-            }
-        });
+        }, err -> log.error(err.getMessage(), err));
     }
     @Override
     public Mono<?> load() {
-        return Mono.defer(new Supplier<Mono<? extends InitializeResult>>() {
-            @Override
-            public Mono<InitializeResult> get() {
-                StopWatch stopWatch = StopWatch.createStarted();
-                CompletableFuture<StatusReport> future = new CompletableFuture<>();
-                Disposable subscription = null;
+        return Mono.defer(() -> {
+            StopWatch stopWatch = StopWatch.createStarted();
+            CompletableFuture<StatusReport> future = new CompletableFuture<>();
+            Disposable subscription = null;
 
-                try {
-                    JdtLspClient c = getClient();
-                    subscription = c.asFlux().subscribe(future::complete, future::completeExceptionally);
-                    InitializeResult result = c.initialize();
-                    future.get(args.getImportTimeout().getSeconds(), TimeUnit.SECONDS);
-                    stopWatch.stop();
-                    log.info("JDT loaded project: %s in: %s ", args.getGit().getWorkTree(), stopWatch);
-                    return Mono.just(result);
-                } catch (Throwable err) {
-                    return Mono.error(err);
-                } finally {
-                    if (Objects.nonNull(subscription)) {
-                        subscription.dispose();
-                    }
+            try {
+                JdtLspClient c = getClient();
+                subscription = c.asFlux().subscribe(future::complete, future::completeExceptionally);
+                InitializeResult result = c.initialize();
+                future.get(args.getImportTimeout().getSeconds(), TimeUnit.SECONDS);
+                stopWatch.stop();
+                log.info("JDT loaded project: %s in: %s ", args.getGit().getWorkTree(), stopWatch);
+                return Mono.just(result);
+            } catch (Throwable err) {
+                return Mono.error(err);
+            } finally {
+                if (Objects.nonNull(subscription)) {
+                    subscription.dispose();
                 }
             }
         }).subscribeOn(Schedulers.boundedElastic());

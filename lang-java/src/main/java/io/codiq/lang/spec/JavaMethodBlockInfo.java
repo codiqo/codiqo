@@ -1,4 +1,4 @@
-package io.codiqo.core.java;
+package io.codiq.lang.spec;
 
 import net.sourceforge.pmd.lang.java.ast.ASTMethodDeclaration;
 

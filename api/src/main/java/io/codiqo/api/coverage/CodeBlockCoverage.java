@@ -88,7 +88,7 @@ public class CodeBlockCoverage {
         return sb.toString();
     }
     public static CodeBlockCoverage from(Map<Integer, ILine> coverageByLine) {
-        if (MapUtils.isNotEmpty(coverageByLine)) {
+        if (MapUtils.isEmpty(coverageByLine)) {
             return NONE;
         }
 

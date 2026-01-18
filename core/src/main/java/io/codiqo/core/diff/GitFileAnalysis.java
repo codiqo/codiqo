@@ -1,6 +1,7 @@
 package io.codiqo.core.diff;
 
 import java.io.File;
+import java.util.Optional;
 import java.util.Set;
 
 import org.apache.commons.io.FilenameUtils;
@@ -8,11 +9,12 @@ import org.apache.commons.lang3.builder.EqualsBuilder;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
 import org.eclipse.jgit.diff.DiffEntry;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
 import com.google.common.collect.Sets;
 
+import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.diff.FileAnalysis;
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
@@ -20,10 +22,12 @@ import net.sourceforge.pmd.lang.Language;
 
 @Setter
 @Getter
-@JsonInclude(JsonInclude.Include.NON_NULL)
 @ToString
 public class GitFileAnalysis implements FileAnalysis {
+    private String oldPath;
+    private String newPath;
     private File file;
+    private Language language;
     private DiffEntry.ChangeType changeType;
     private String diffText;
     @ToString.Exclude
@@ -35,10 +39,20 @@ public class GitFileAnalysis implements FileAnalysis {
     @ToString.Exclude
     private Set<AffectedSymbolInfo> potentiallyAffectedSymbols = Sets.newLinkedHashSet();
     private boolean testFile;
+    @Getter(AccessLevel.NONE)
+    private Optional<ProjectSpec> project = Optional.empty();
 
     @Override
     public boolean isExtension(Language lang) {
         return FilenameUtils.isExtension(file.getName(), lang.getExtensions());
+    }
+    @Override
+    public void accept(ProjectSpec spec) {
+        project = Optional.of(spec);
+    }
+    @Override
+    public Optional<ProjectSpec> project() {
+        return project;
     }
     @Override
     public int hashCode() {

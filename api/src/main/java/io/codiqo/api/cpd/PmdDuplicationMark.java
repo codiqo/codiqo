@@ -13,21 +13,13 @@ import net.sourceforge.pmd.cpd.Mark;
 @Getter
 @Builder
 public class PmdDuplicationMark implements DuplicateMark {
-    private final File file;
     private final Mark mark;
+    private final File file;
     private final String sourceCodeSlice;
     private final SourceLocation location;
     @Builder.Default
     private Optional<CodeBlockInfo> block = Optional.empty();
 
-    @Override
-    public void accept(CodeBlockInfo info) {
-        block = Optional.of(info);
-    }
-    @Override
-    public Optional<CodeBlockInfo> block() {
-        return block;
-    }
     @Override
     public int hashCode() {
         return mark.hashCode();
@@ -39,5 +31,13 @@ public class PmdDuplicationMark implements DuplicateMark {
     @Override
     public String toString() {
         return mark.toString();
+    }
+    @Override
+    public void accept(CodeBlockInfo info) {
+        this.block = Optional.of(info);
+    }
+    @Override
+    public Optional<CodeBlockInfo> block() {
+        return block;
     }
 }
