@@ -1,5 +1,7 @@
 package com.turbospaces.jdtls;
 
+import java.util.Objects;
+
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.DefaultParser;
@@ -16,9 +18,9 @@ import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.core.DefaultLanguageProcessors;
-import io.codiqo.core.Fetch;
 import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.core.logging.SlfLogFactory;
+import io.codiqo.util.Fetch;
 
 public class GitDeltaAnalysisMicroDemo {
     public static void main(String[] args) throws Exception {
@@ -45,6 +47,10 @@ public class GitDeltaAnalysisMicroDemo {
                 CommitAnalysis analysis = analyzer.analyze();
                 IndexingSummary index = registry.index(analysis);
                 registry.collectAndCapture(index, analysis);
+            }
+        } finally {
+            if (Objects.nonNull(run.getGit())) {
+                run.getGit().close();
             }
         }
     }

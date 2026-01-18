@@ -8,6 +8,7 @@ import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
 
 import io.codiqo.api.RunArgs;
+import io.github.classgraph.ScanResult;
 
 @Mojo(name = "analyze-uncommitted-changes",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
@@ -18,16 +19,18 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
     private boolean includeUntracked;
 
     @Parameter(defaultValue = "${reactorProjects}", readonly = true)
-    protected List<MavenProject> reactorProjects;
+    protected List<MavenProject> reactors;
 
     @Override
     protected void doPrepare(RunArgs args) throws Exception {
         super.doPrepare(args);
+
         args.setIncludeUntracked(includeUntracked);
     }
     @Override
     protected void doExecute(RunArgs args) throws Exception {
-        captureProjects(args, reactorProjects);
-        super.doExecute(args);
+        try (ScanResult scan = scanProjects(args, reactors)) {
+            super.doExecute(args);
+        }
     }
 }

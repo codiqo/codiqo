@@ -9,6 +9,7 @@ import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.DiffFormatter;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.treewalk.CanonicalTreeParser;
 
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.diff.FileAnalysis;
@@ -23,11 +24,12 @@ public interface DeltaAnalyzer {
     FileAnalysis analyzeFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit parent, RevCommit current) throws Exception;
     FileAnalysis analyzeUncommittedFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit headCommit) throws Exception;
     Optional<FileAnalysis> analyzeUntrackedFile(String filePath) throws Exception;
+    FileAnalysis analyzeUncommittedFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit headCommit, CanonicalTreeParser oldTree) throws Exception;
 
     Optional<String> getFileContentFromCommit(RevCommit commit, String filePath) throws Exception;
     Optional<String> getFileContentFromWorkingTree(String filePath) throws Exception;
     Optional<String> getFileContentAtRevision(String filePath, String revisionId) throws Exception;
     List<FileRevisionInfo> getFileHistory(String filePath, int maxRevisions) throws Exception;
 
-    void analyzeSymbols(FileAnalysis analysis, File file, Collection<Integer> modifiedLines);
+    void analyzeSymbols(FileAnalysis analysis, File file, Collection<Integer> modifiedLines) throws Exception;
 }

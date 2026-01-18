@@ -4,9 +4,10 @@ import java.io.File;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.time.Duration;
-import java.util.Collection;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
@@ -14,17 +15,32 @@ import org.apache.commons.cli.Option.Builder;
 import org.apache.commons.cli.Options;
 import org.eclipse.jgit.annotations.Nullable;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 
 import com.google.common.base.CaseFormat;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 
 import lombok.Data;
 
 @Data
 public class RunArgs {
     private String commitId;
-    private boolean includeUntracked = true;
 
+    @Nullable
+    private String jdtlsVersion = "1.55.0";
+    @Nullable
+    private boolean includeUntracked = true;
+    @Nullable
+    private boolean dumpAnalysis = true;
+    @Nullable
+    private boolean ignoreCoverage = false;
+    @Nullable
+    private boolean ignoreComplexity = false;
+    @Nullable
+    private boolean ignoreCpd = false;
+    @Nullable
+    private boolean ignoreDiagnostics = false;
     @Nullable
     private File javaHome;
     @Nullable
@@ -42,20 +58,18 @@ public class RunArgs {
     @Nullable
     private int cpdMinimumTileSize = Byte.MAX_VALUE / 2;
     @Nullable
-    private transient Collection<Project> projects = Lists.newArrayList();
+    private transient List<ProjectSpec> projects = Lists.newArrayList();
     @Nullable
-    private transient Collection<File> agents = Lists.newArrayList();
+    private transient List<File> agents = Lists.newArrayList();
     @Nullable
-    private transient Repository git;
+    private Repository git;
+    @Nullable
+    private String defaultBranch;
+    @Nullable
+    private transient Set<String> remoteUrls = Sets.newHashSet();
 
-    public Optional<Project> owner(File filePath) {
-        for (Project proj : projects) {
-            if (filePath.toPath().startsWith(proj.getBaseDirectory().toPath())) {
-                return Optional.of(proj);
-
-            }
-        }
-        return Optional.empty();
+    public Optional<ProjectSpec> owner(File filePath) {
+        return projects.stream().filter(proj -> proj.contains(filePath)).findAny();
     }
     public static Options options() {
         Options toReturn = new Options();
@@ -95,6 +109,8 @@ public class RunArgs {
                     field.set(toReturn, Duration.parse(value));
                 } else if (field.getType().equals(File.class)) {
                     field.set(toReturn, new File(value));
+                } else if (field.getType().equals(Repository.class)) {
+                    field.set(toReturn, new FileRepositoryBuilder().setGitDir(new File(value, ".git")).readEnvironment().findGitDir().build());
                 }
             }
         }

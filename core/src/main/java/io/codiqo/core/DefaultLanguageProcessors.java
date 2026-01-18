@@ -16,11 +16,12 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.SortedSet;
-import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.commons.lang3.time.StopWatch;
@@ -34,6 +35,7 @@ import com.google.common.collect.Multimap;
 import com.google.common.collect.MultimapBuilder;
 import com.google.common.collect.Sets;
 
+import io.codiq.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.IndexingSummary.IndexingSummaryBuilder;
 import io.codiqo.api.LanguageProcessors;
@@ -41,9 +43,8 @@ import io.codiqo.api.LanguageSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.SourceLocation;
-import io.codiqo.api.coverage.CodeBlockCoverage;
-import io.codiqo.api.cpd.CopyPasteDetectionSummary;
 import io.codiqo.api.cpd.DuplicationMatch;
+import io.codiqo.api.cpd.PMDCopyPasteDetectionSummary;
 import io.codiqo.api.cpd.PmdDuplicationMark;
 import io.codiqo.api.cpd.PmdDuplicationMatch;
 import io.codiqo.api.diff.AffectedSymbolInfo;
@@ -51,11 +52,10 @@ import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
-import io.codiqo.api.metrics.CodeBlockMetrics;
 import io.codiqo.core.java.JavaLanguageSpec;
+import io.codiqo.util.Fetch;
 import lombok.SneakyThrows;
 import net.sourceforge.pmd.cpd.CPDConfiguration;
-import net.sourceforge.pmd.cpd.CPDReport;
 import net.sourceforge.pmd.cpd.CpdAnalysis;
 import net.sourceforge.pmd.cpd.Mark;
 import net.sourceforge.pmd.cpd.Match;
@@ -70,17 +70,31 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     private final List<LanguageSpec> processors;
     private final Set<String> extensions = Sets.newHashSet();
 
-    public DefaultLanguageProcessors(LogFactory logFactory, RunArgs args, Fetch fetch) {
+    public DefaultLanguageProcessors(LogFactory logFactory, RunArgs args, Fetch fetch) throws IOException {
         this.log = logFactory.getLogger(getClass());
         this.args = Objects.requireNonNull(args);
         this.processors = Lists.newArrayList(new JavaLanguageSpec(logFactory, args, fetch));
 
-        forEach(new Consumer<LanguageSpec>() {
-            @Override
-            public void accept(LanguageSpec processor) {
-                extensions.addAll(processor.lang().getExtensions());
+        forEach(processor -> extensions.addAll(processor.lang().getExtensions()));
+    }
+    @Override
+    public void collectAndCapture(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
+        captureCopyPaste(summary, analysis);
+        captureCoverage(summary, analysis);
+        captureViolations(summary, analysis);
+        captureComplexity(summary, analysis);
+        for (FileAnalysis fileAnalysis : analysis) {
+            for (AffectedSymbolInfo affectedSymbolInfo : fileAnalysis.getPotentiallyAffectedSymbols()) {
+                affectedSymbolInfo.block().ifPresent(block -> {
+                    if (block instanceof JavaCodeBlockInfo) {
+                        JavaCodeBlockInfo java = (JavaCodeBlockInfo) block;
+                        java.getMethodCalls().forEach(outbound -> {
+
+                        });
+                    }
+                });
             }
-        });
+        }
     }
     @Override
     public Collection<String> extensions() {
@@ -92,24 +106,11 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     }
     @Override
     public Mono<?> load() {
-        return Mono.zip(processors.stream()
-                .map(new Function<LanguageSpec, Mono<?>>() {
-                    @Override
-                    public Mono<?> apply(LanguageSpec processor) {
-                        return processor.load();
-                    }
-                })
-                .collect(ImmutableList.toImmutableList()), new Function<Object[], Object>() {
-                    @Override
-                    public Object apply(Object[] objects) {
-                        return processors.size();
-                    }
-                });
+        return Mono.zip(processors.stream().map(LanguageSpec::load).collect(ImmutableList.toImmutableList()), objects -> processors.size());
     }
     @Override
-    @SneakyThrows
-    public IndexingSummary index(CommitAnalysis analysis) {
-        IndexingSummaryBuilder builder = IndexingSummary.builder();
+    public IndexingSummary index(CommitAnalysis analysis) throws IOException {
+        IndexingSummaryBuilder toReturn = IndexingSummary.builder();
         Multimap<File, CodeBlockInfo> blocks = MultimapBuilder.hashKeys().linkedHashSetValues().build();
         List<Path> totalFiles = Lists.newArrayList();
         List<Path> ignoredFiles = Lists.newArrayList();
@@ -119,50 +120,64 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
 
         File projectRoot = args.getGit().getWorkTree();
         try (Repository repo = new FileRepositoryBuilder().setGitDir(new File(projectRoot, ".git")).readEnvironment().findGitDir().build()) {
-            DirCache dirCache = repo.readDirCache();
+            toReturn.projectRoot(projectRoot);
+
+            /**
+             * gather all attached files in the repository
+             */
             Set<Path> indexed = Sets.newLinkedHashSet();
+            DirCache dirCache = repo.readDirCache();
             int entryCount = dirCache.getEntryCount();
             for (int i = 0; i < entryCount; i++) {
-                indexed.add(projectRoot.toPath().resolve(dirCache.getEntry(i).getPathString()));
+                indexed.add(projectRoot.toPath().normalize().resolve(dirCache.getEntry(i).getPathString()));
             }
 
             StopWatch stopWatch = StopWatch.createStarted();
-            Files.walkFileTree(projectRoot.toPath(), new SimpleFileVisitor<Path>() {
+            Files.walkFileTree(projectRoot.toPath(), new SimpleFileVisitor<>() {
                 @Override
-                @SneakyThrows
                 public FileVisitResult visitFile(Path path, BasicFileAttributes attrs) {
                     if (indexed.contains(path)) {
                         File file = path.toFile();
+                        /**
+                         * quick opt in / out by extensions
+                         */
                         if (FilenameUtils.isExtension(file.getName(), extensions)) {
-                            try (FileInputStream input = new FileInputStream(file)) {
-                                String source = IOUtils.toString(input, StandardCharsets.UTF_8);
-                                forEach(new Consumer<LanguageSpec>() {
-                                    @Override
-                                    public void accept(LanguageSpec processor) {
-                                        processor.parse(file, source).forEach(new Consumer<CodeBlockInfo>() {
-                                            @Override
-                                            public void accept(CodeBlockInfo block) {
-                                                blocks.put(file, block);
-
-                                                for (FileAnalysis fileAnalysis : analysis.getFiles()) {
-                                                    if (fileAnalysis.getFile().equals(file)) {
-                                                        for (AffectedSymbolInfo symbolInfo : fileAnalysis.getPotentiallyAffectedSymbols()) {
-                                                            if (symbolInfo.getLocation().equals(block.getLocation())) {
-                                                                block.accept(symbolInfo);
-                                                                symbolInfo.accept(block);
-                                                                break;
+                            try {
+                                forEach(processor -> {
+                                    /**
+                                     * parse all interested code blocks from the all files (supposed to be quick i.e. AST tree walk)
+                                     */
+                                    try {
+                                        if (FilenameUtils.isExtension(file.getName(), processor.lang().getExtensions())) {
+                                            try (FileInputStream input = new FileInputStream(file)) {
+                                                String source = IOUtils.toString(input, StandardCharsets.UTF_8);
+                                                processor.parse(file, source).forEach(block -> {
+                                                    blocks.put(file, block);
+                                                    /**
+                                                     * link code blocks to affected blocks for later analysis (i.e. violations, coverage, complexity, etc.)
+                                                     */
+                                                    for (FileAnalysis fileAnalysis : analysis) {
+                                                        if (fileAnalysis.getFile().equals(file)) {
+                                                            for (AffectedSymbolInfo symbolInfo : fileAnalysis.getPotentiallyAffectedSymbols()) {
+                                                                if (symbolInfo.getLocation().equals(block.getLocation())) {
+                                                                    block.accept(symbolInfo);
+                                                                    symbolInfo.accept(block);
+                                                                    break;
+                                                                }
                                                             }
                                                         }
                                                     }
-                                                }
 
-                                                if (block.isTrivial()) {
-                                                    skippedTrivial.incrementAndGet();
-                                                } else {
-                                                    totalSymbols.incrementAndGet();
-                                                }
+                                                    if (block.isTrivial()) {
+                                                        skippedTrivial.incrementAndGet();
+                                                    } else {
+                                                        totalSymbols.incrementAndGet();
+                                                    }
+                                                });
                                             }
-                                        });
+                                        }
+                                    } catch (IOException err) {
+                                        ExceptionUtils.wrapAndThrow(err);
                                     }
                                 });
                             } finally {
@@ -187,172 +202,140 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                     skippedTrivial.toInteger(),
                     stopWatch.toString());
 
-            return builder
+            return toReturn
                     .projects(args.getProjects())
                     .blocks(blocks)
-                    .totalSymbols(totalSymbols.toInteger())
                     .totalFiles(totalFiles)
                     .skippedFiles(skippedFiles)
                     .ignoredFiles(ignoredFiles)
                     .skippedTrivial(skippedTrivial.toInteger())
+                    .totalNonTrivial(totalSymbols.toInteger())
                     .took(stopWatch)
                     .build();
         }
     }
     @Override
-    public void captureCopyPaste(IndexingSummary summary, CommitAnalysis analysis) {
-        forEach(new Consumer<LanguageSpec>() {
-            @Override
-            @SneakyThrows
-            public void accept(LanguageSpec processor) {
-                if (processor.supportsCpd()) {
-                    SortedSet<DuplicationMatch> matches = Sets.newTreeSet();
-                    MutableInt totalDuplications = new MutableInt();
-                    MutableBoolean toApply = new MutableBoolean();
+    public void captureCopyPaste(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
+        for (LanguageSpec processor : processors) {
+            if (Boolean.FALSE.equals(args.isIgnoreCpd())) {
+                SortedSet<DuplicationMatch> matches = Sets.newTreeSet();
+                MutableBoolean toApply = new MutableBoolean();
 
-                    CPDConfiguration cfg = new CPDConfiguration(LanguageRegistry.singleton(processor.lang()));
-                    cfg.setReporter(log);
-                    cfg.setDefaultLanguageVersion(processor.lang().getDefaultVersion());
-                    cfg.setFailOnViolation(false);
-                    cfg.setFailOnError(true);
-                    cfg.setIgnoreLiterals(true);
-                    cfg.setIgnoreIdentifiers(true);
-                    cfg.setMinimumTileSize(args.getCpdMinimumTileSize());
-                    cfg.setSourceEncoding(StandardCharsets.UTF_8);
+                CPDConfiguration cfg = new CPDConfiguration(LanguageRegistry.singleton(processor.lang()));
+                cfg.setReporter(log);
+                cfg.setDefaultLanguageVersion(processor.lang().getDefaultVersion());
+                cfg.setFailOnViolation(false);
+                cfg.setFailOnError(true);
+                cfg.setIgnoreLiterals(true);
+                cfg.setIgnoreIdentifiers(true);
+                cfg.setMinimumTileSize(args.getCpdMinimumTileSize());
+                cfg.setSourceEncoding(StandardCharsets.UTF_8);
 
-                    try (CpdAnalysis cpd = CpdAnalysis.create(cfg)) {
-                        summary.getTotalFiles().forEach(new Consumer<Path>() {
-                            @Override
-                            public void accept(Path path) {
-                                if (FilenameUtils.isExtension(path.toFile().getName(), processor.lang().getExtensions())) {
-                                    if (cpd.files().addFile(path)) {
-                                        toApply.setTrue();
-                                    }
-                                }
+                try (CpdAnalysis cpd = CpdAnalysis.create(cfg)) {
+                    /**
+                     * add all relevant files to CPD by extension
+                     */
+                    summary.getTotalFiles().forEach(path -> {
+                        if (FilenameUtils.isExtension(path.toFile().getName(), processor.lang().getExtensions())) {
+                            if (cpd.files().addFile(path)) {
+                                toApply.setTrue();
                             }
-                        });
-
-                        if (toApply.isTrue()) {
-                            cpd.performAnalysis(new Consumer<CPDReport>() {
-                                @Override
-                                public void accept(CPDReport report) {
-                                    totalDuplications.setValue(report.getMatches().size());
-                                    for (Match match : report.getMatches()) {
-                                        matches.add(PmdDuplicationMatch.builder()
-                                                .tokenCount(match.getTokenCount())
-                                                .lineCount(match.getLineCount())
-                                                .locations(match.getMarkSet().stream().map(new Function<Mark, PmdDuplicationMark>() {
-                                                    @Override
-                                                    @SneakyThrows
-                                                    public PmdDuplicationMark apply(Mark mark) {
-                                                        return PmdDuplicationMark.builder()
-                                                                .mark(mark)
-                                                                .file(Paths.get(mark.getLocation().getFileId().getAbsolutePath()).toFile())
-                                                                .sourceCodeSlice(report.getSourceCodeSlice(mark).toString())
-                                                                .location(SourceLocation.builder()
-                                                                        .startLine(mark.getLocation().getStartLine())
-                                                                        .endLine(mark.getLocation().getEndLine())
-                                                                        .startColumn(mark.getLocation().getStartColumn())
-                                                                        .endColumn(mark.getLocation().getEndColumn())
-                                                                        .build())
-                                                                .build();
-                                                    }
-                                                }).collect(ImmutableList.toImmutableList())).build());
-                                    }
-                                }
-                            });
-
-                            CopyPasteDetectionSummary toReturn = new CopyPasteDetectionSummary(totalDuplications.intValue(), matches, summary, analysis);
-                            toReturn.getExisting().forEach(new java.util.function.BiConsumer<CodeBlockInfo, Set<CodeBlockInfo>>() {
-                                @Override
-                                public void accept(CodeBlockInfo affected, Set<CodeBlockInfo> sources) {
-                                    log.info("copy paste from existing code: %s copied from %s", affected, sources);
-                                }
-                            });
-                            toReturn.getSame().forEach(new Consumer<Set<CodeBlockInfo>>() {
-                                @Override
-                                public void accept(Set<CodeBlockInfo> group) {
-                                    log.info("copy paste within same commit: duplicated blocks %s", group);
-                                }
-                            });
                         }
+                    });
+
+                    /**
+                     * could be so that CPD is not supported for this language
+                     */
+                    if (toApply.isTrue()) {
+                        toApply.setValue(processor.supportsCpd());
+                    }
+
+                    if (toApply.isTrue()) {
+                        cpd.performAnalysis(report -> {
+                            for (Match match : report.getMatches()) {
+                                matches.add(PmdDuplicationMatch.builder()
+                                        .match(match)
+                                        .tokenCount(match.getTokenCount())
+                                        .lineCount(match.getLineCount())
+                                        .marks(match.getMarkSet().stream().map(new Function<Mark, PmdDuplicationMark>() {
+                                            @Override
+                                            @SneakyThrows
+                                            public PmdDuplicationMark apply(Mark mark) {
+                                                return PmdDuplicationMark.builder()
+                                                        .mark(mark)
+                                                        .file(Paths.get(mark.getLocation().getFileId().getAbsolutePath()).toFile())
+                                                        .sourceCodeSlice(report.getSourceCodeSlice(mark).toString())
+                                                        .location(SourceLocation.builder()
+                                                                .startLine(mark.getLocation().getStartLine())
+                                                                .endLine(mark.getLocation().getEndLine())
+                                                                .startColumn(mark.getLocation().getStartColumn())
+                                                                .endColumn(mark.getLocation().getEndColumn())
+                                                                .build())
+                                                        .build();
+                                            }
+                                        }).collect(ImmutableList.toImmutableList())).build());
+                            }
+
+                            PMDCopyPasteDetectionSummary toAccept = new PMDCopyPasteDetectionSummary(
+                                    report.getNumberOfTokensPerFile()
+                                            .entrySet()
+                                            .stream()
+                                            .collect(Collectors.toMap(it -> Paths.get(it.getKey().getAbsolutePath()).toFile(), it -> it.getValue())),
+                                    matches,
+                                    summary,
+                                    analysis);
+                            analysis.cpd().add(toAccept);
+                            toAccept.copyPasteFrom().forEach((block, sources) -> log.info("CPD from existing code: %s copied from %s", block, sources));
+                            toAccept.copyPasteNew().forEach(group -> log.info("CPD within same commit: %s", group));
+                        });
                     }
                 }
             }
-        });
+        }
     }
     @Override
-    public void captureViolations(IndexingSummary summary, CommitAnalysis analysis) {
-        forEach(new Consumer<LanguageSpec>() {
-            @Override
-            public void accept(LanguageSpec processor) {
+    public void captureViolations(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
+        if (Boolean.FALSE.equals(args.isIgnoreDiagnostics())) {
+            for (LanguageSpec processor : processors) {
                 processor.captureViolations(summary, analysis);
-
-                for (FileAnalysis fileAnalysis : analysis.getFiles()) {
+                for (FileAnalysis fileAnalysis : analysis) {
                     for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
-                        symbol.block().ifPresent(new Consumer<CodeBlockInfo>() {
-                            @Override
-                            public void accept(CodeBlockInfo block) {
+                        symbol.block().ifPresent(block -> {
 
-                            }
                         });
                     }
                 }
             }
-        });
+        }
     }
     @Override
-    public void captureCoverage(IndexingSummary summary, CommitAnalysis analysis) {
-        forEach(new Consumer<LanguageSpec>() {
-            @Override
-            public void accept(LanguageSpec processor) {
+    public void captureCoverage(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
+        if (Boolean.FALSE.equals(args.isIgnoreCoverage())) {
+            for (LanguageSpec processor : processors) {
                 processor.captureCoverage(summary, analysis);
-
-                for (FileAnalysis fileAnalysis : analysis.getFiles()) {
+                for (FileAnalysis fileAnalysis : analysis) {
                     for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
-                        symbol.block().ifPresent(new Consumer<CodeBlockInfo>() {
-                            @Override
-                            public void accept(CodeBlockInfo block) {
-                                block.coverage().subscribe(new Consumer<CodeBlockCoverage>() {
-                                    @Override
-                                    public void accept(CodeBlockCoverage info) {
-                                        if (fileAnalysis.isTestFile()) {
-                                            log.info("ignoring coverage of test method %s from %s", block, fileAnalysis.getFile());
-                                        } else {
-                                            log.info("capturing coverage of %s : %s", block, info);
-                                        }
-                                    }
-                                });
+                        symbol.block().ifPresent(block -> block.coverage().subscribe(info -> {
+                            if (fileAnalysis.isTestFile()) {
+                                log.info("ignoring coverage of test method %s from %s", block, fileAnalysis.getFile());
+                            } else {
+                                log.info("capturing coverage of %s : %s", block, info);
                             }
-                        });
+                        }));
                     }
                 }
             }
-        });
+        }
     }
     @Override
-    public void captureComplexity(IndexingSummary summary, CommitAnalysis analysis) {
-        forEach(new Consumer<LanguageSpec>() {
-            @Override
-            @SneakyThrows
-            public void accept(LanguageSpec processor) {
-                for (FileAnalysis fileAnalysis : analysis.getFiles()) {
-                    for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
-                        symbol.block().ifPresent(new Consumer<CodeBlockInfo>() {
-                            @Override
-                            public void accept(CodeBlockInfo block) {
-                                block.metrics().subscribe(new Consumer<CodeBlockMetrics>() {
-                                    @Override
-                                    public void accept(CodeBlockMetrics info) {
-                                        log.info("capturing complexity of %s : %s", block, info);
-                                    }
-                                });
-                            }
-                        });
-                    }
+    public void captureComplexity(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
+        if (Boolean.FALSE.equals(args.isIgnoreComplexity())) {
+            for (FileAnalysis fileAnalysis : analysis) {
+                for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
+                    symbol.block().ifPresent(block -> block.metrics().subscribe(info -> log.info("capturing complexity of %s : %s", block, info)));
                 }
             }
-        });
+        }
     }
     @Override
     public void close() throws IOException {
