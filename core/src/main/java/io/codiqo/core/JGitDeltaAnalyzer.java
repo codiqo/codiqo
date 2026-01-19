@@ -89,7 +89,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         }
     }
     @Override
-    public Optional<String> getFileContentAtRevision(String filePath, String revisionId) throws Exception {
+    public Optional<String> fileContentAtRevision(String filePath, String revisionId) throws Exception {
         ObjectId revId = args.getGit().resolve(revisionId);
         if (Objects.isNull(revId)) {
             return Optional.empty();
@@ -97,7 +97,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
 
         try (RevWalk revWalk = new RevWalk(args.getGit())) {
             RevCommit commit = revWalk.parseCommit(revId);
-            return getFileContentFromCommit(commit, filePath);
+            return fileContentFromCommit(commit, filePath);
         }
     }
     @Override
@@ -115,7 +115,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
                     break;
                 }
 
-                getFileContentFromCommit(commit, filePath).ifPresent(content -> {
+                fileContentFromCommit(commit, filePath).ifPresent(content -> {
                     GitFileRevisionInfo info = new GitFileRevisionInfo();
                     info.setRevisionId(commit.getName());
                     info.setAuthor(commit.getAuthorIdent().getName());
@@ -131,7 +131,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         return toReturn;
     }
     @Override
-    public Optional<String> getFileContentFromCommit(RevCommit commit, String filePath) throws Exception {
+    public Optional<String> fileContentFromCommit(RevCommit commit, String filePath) throws Exception {
         try (TreeWalk treeWalk = TreeWalk.forPath(args.getGit(), filePath, commit.getTree())) {
             if (Objects.nonNull(treeWalk)) {
                 ObjectId blobId = treeWalk.getObjectId(BigInteger.ZERO.intValue());
@@ -144,7 +144,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         return Optional.empty();
     }
     @Override
-    public Optional<String> getFileContentFromWorkingTree(String filePath) throws Exception {
+    public Optional<String> fileContentFromWorkingTree(String filePath) throws Exception {
         Path path = args.getGit().getWorkTree().toPath().resolve(filePath);
         if (Files.exists(path) && Files.isRegularFile(path)) {
             return Optional.of(FileUtils.readFileToString(path.toFile(), StandardCharsets.UTF_8));
@@ -324,23 +324,28 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         toReturn.setChangeType(diff.getChangeType());
 
         if (diff.getChangeType() != DiffEntry.ChangeType.ADD) {
-            getFileContentFromCommit(head, diff.getOldPath()).ifPresent(toReturn::setContentBefore);
+            fileContentFromCommit(head, diff.getOldPath()).ifPresent(toReturn::setContentBefore);
         }
 
         if (diff.getChangeType() != DiffEntry.ChangeType.DELETE) {
-            getFileContentFromWorkingTree(diff.getNewPath()).ifPresent(toReturn::setContentAfter);
+            fileContentFromWorkingTree(diff.getNewPath()).ifPresent(toReturn::setContentAfter);
         }
 
         try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             try (Git git = Git.wrap(args.getGit())) {
-                git.diff()
-                        .setOldTree(old)
-                        .setNewTree(new FileTreeIterator(args.getGit()))
-                        .setPathFilter(PathFilter.create(path))
-                        .setOutputStream(output)
-                        .call();
+                try (ObjectReader reader = args.getGit().newObjectReader()) {
+                    CanonicalTreeParser oldTreeIter = new CanonicalTreeParser();
+                    oldTreeIter.reset(reader, head.getTree().getId());
+
+                    git.diff()
+                            .setOldTree(oldTreeIter)
+                            .setNewTree(new FileTreeIterator(args.getGit()))
+                            .setPathFilter(PathFilter.create(path))
+                            .setOutputStream(output)
+                            .call();
+                }
             }
-            toReturn.setDiffText(output.toString(StandardCharsets.UTF_8.name()));
+            toReturn.setDiffText(output.toString(StandardCharsets.UTF_8));
         }
 
         FileHeader fileHeader = formatter.toFileHeader(diff);
@@ -459,10 +464,10 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         toReturn.setFile(destination);
         toReturn.setChangeType(diff.getChangeType());
         if (diff.getChangeType() != DiffEntry.ChangeType.ADD) {
-            getFileContentFromCommit(parent, diff.getOldPath()).ifPresent(toReturn::setContentBefore);
+            fileContentFromCommit(parent, diff.getOldPath()).ifPresent(toReturn::setContentBefore);
         }
         if (diff.getChangeType() != DiffEntry.ChangeType.DELETE) {
-            getFileContentFromCommit(current, diff.getNewPath()).ifPresent(toReturn::setContentAfter);
+            fileContentFromCommit(current, diff.getNewPath()).ifPresent(toReturn::setContentAfter);
         }
         try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             try (DiffFormatter printer = new DiffFormatter(output)) {

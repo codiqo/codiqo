@@ -1,5 +1,6 @@
 package io.codiqo.maven;
 
+import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -83,11 +84,17 @@ import org.eclipse.lsp4j.SymbolTag;
 import org.jacoco.core.analysis.ICounter;
 import org.jacoco.core.analysis.ILine;
 
+import com.fasterxml.jackson.annotation.JsonInclude.Include;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.util.StdDateFormat;
+import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.common.io.Resources;
-import com.google.gson.Gson;
 
 import edu.umd.cs.findbugs.BugInstance;
 import edu.umd.cs.findbugs.Priorities;
@@ -108,7 +115,6 @@ import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.api.logging.LogFactory;
-import io.codiqo.client.JSON;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CallerModel;
 import io.codiqo.client.model.ClientInfoModel;
@@ -189,6 +195,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
     @Parameter(property = "codiqo.mavenHome")
     protected File mavenHome;
+
+    @Parameter(property = "codiqo.preferYaml", defaultValue = "true")
+    protected boolean preferYaml = true;
 
     @Parameter(property = "codiqo.importTimeoutMinutes", defaultValue = "15")
     protected long importTimeoutMinutes;
@@ -325,7 +334,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     }
     protected ScanResult scanProjects(RunArgs args, Collection<MavenProject> projects) {
         Set<URI> jars = Sets.newLinkedHashSet();
-        Set<String> ids = Sets.newLinkedHashSet();
         projects.stream()
                 .filter(reactor -> BooleanUtils.negate(NON_CODE_PACKAGINGS.contains(reactor.getPackaging())))
                 .filter(reactor -> CollectionUtils.isEmpty(reactor.getModules())).filter(new Predicate<>() {
@@ -403,7 +411,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                         }
                     });
 
-                    ids.add(toReturn.getId());
                     args.getProjects().add(toReturn);
                 });
 
@@ -420,7 +427,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             }
         });
 
-        getLog().info(String.format("configured projects for analysis: %s in %s, classes: %d", ids, stopWatch, scan.getAllClasses().size()));
+        getLog().info(String.format("configured maven projects in %s, classgraph classes: %d", stopWatch, scan.getAllClasses().size()));
 
         return scan;
     }
@@ -600,7 +607,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     submissionModel.setDependencies(dependencyRegistryModel);
 
                     /**
-                     * Project Info
+                     * project info
                      */
                     ProjectModel projectModel = new ProjectModel();
                     projectModel.setId(project.getId());
@@ -658,7 +665,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                             });
 
                     /**
-                     * Modules
+                     * modules
                      */
                     args.getProjects().forEach(spec -> {
                         if (spec instanceof MavenProjectWrapper) {
@@ -671,7 +678,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                             mavenModuleModel.setArtifactId(mavenSpec.getArtifactId());
                             mavenModuleModel.setVersion(mavenSpec.getVersion());
                             mavenModuleModel.setPackaging(mavenSpec.getPackaging());
-                            mavenSpec.getParent().ifPresent(parentId -> mavenModuleModel.setParent(parentId));
+                            mavenSpec.parent().ifPresent(parentId -> mavenModuleModel.setParent(parentId));
 
                             ModuleModel moduleModel = new ModuleModel();
                             moduleModel.setMaven(mavenModuleModel);
@@ -696,7 +703,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     submissionModel.setProject(projectModel);
 
                     /**
-                     * Commit Info
+                     * commit info
                      */
                     CommitModel commitModel = new CommitModel();
                     commitModel.setSha(analysis.getCommitId());
@@ -710,7 +717,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     submissionModel.setCommit(commitModel);
 
                     /**
-                     * Client Info
+                     * client info
                      */
                     ClientInfoModel clientModel = new ClientInfoModel();
                     clientModel.setBuildTool(BuildToolEnum.MAVEN);
@@ -719,7 +726,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     submissionModel.setClient(clientModel);
 
                     /**
-                     * File Changes
+                     * file changes
                      */
                     for (FileAnalysis fileAnalysis : analysis) {
                         FileChangeModel fileChangeModel = new FileChangeModel();
@@ -768,7 +775,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                                     codeUnitModel.setJava(infoModel);
 
                                     /**
-                                     * Symbol Kind and Incoming Calls from LSP4J
+                                     * symbol Kind and Incoming Calls from LSP4J
                                      */
                                     if (affectedSymbol instanceof Lsp4jAffectedSymbolInfo) {
                                         Lsp4jAffectedSymbolInfo lsp4jSymbol = (Lsp4jAffectedSymbolInfo) affectedSymbol;
@@ -783,8 +790,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                                         }
 
                                         /**
-                                         * Incoming Calls (CALLERS) - Critical for LLM blast radius analysis
-                                         * This shows who calls this method, essential for risk scoring
+                                         * incoming Calls (CALLERS) - Critical for LLM blast radius analysis.
+                                         * this shows who calls this method, essential for risk scoring.
                                          */
                                         for (CallHierarchyIncomingCall incomingCall : lsp4jSymbol.getIncomingCalls()) {
                                             CallHierarchyItem from = incomingCall.getFrom();
@@ -849,7 +856,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                                     }
 
                                     /**
-                                     * Coverage (JaCoCo)
+                                     * coverage (JaCoCo)
                                      */
                                     javaBlock.coverage().subscribe(cov -> {
                                         if (cov.hasCoverageData()) {
@@ -899,7 +906,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                                     });
 
                                     /**
-                                     * Method References (out bound calls)
+                                     * method references (out bound calls)
                                      */
                                     for (JBinaryMethodSig methodCall : javaBlock.getMethodCalls()) {
                                         BinarySignatureData signatureData = methodCall.toBinarySignature();
@@ -924,7 +931,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                                     }
 
                                     /**
-                                     * SpotBugs diagnostics
+                                     * spotBugs diagnostics
                                      */
                                     for (BugInstance bug : javaBlock.getSpotbugs()) {
                                         DiagnosticModel diagnosticModel = new DiagnosticModel();
@@ -978,7 +985,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                                     }
 
                                     /**
-                                     * Constructor/method specific handling
+                                     * constructor/method(s) specific handling
                                      */
                                     if (javaBlock instanceof JavaConstructorBlockInfo) {
                                         ASTConstructorDeclaration constructor = ((JavaConstructorBlockInfo) javaBlock).getConstructor();
@@ -1000,7 +1007,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                                     }
 
                                     /**
-                                     * Metrics
+                                     * metrics
                                      */
                                     javaBlock.metrics().subscribe(metrics -> {
                                         MetricsModel metricsModel = new MetricsModel();
@@ -1020,7 +1027,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     }
 
                     /**
-                     * Code base Index
+                     * code base index
                      */
                     CodebaseIndexModel indexModel = new CodebaseIndexModel();
                     indexModel.setTotalFiles(index.getTotalFiles().size());
@@ -1040,6 +1047,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                             locationModel.setEndColumn(affectedSymbol.getLocation().getEndColumn());
                             refModel.setLocation(locationModel);
                             refModel.setPath(fileAnalysis.getNewPath());
+                            affectedSymbol.block();
+                            args.owner(fileAnalysis.getFile()).ifPresent(spec -> refModel.setModule(spec.getId()));
                             affectedSymbol.block().ifPresent(block -> {
                                 refModel.setSignature(block.getSignature());
                             });
@@ -1049,7 +1058,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     submissionModel.setIndex(indexModel);
 
                     /**
-                     * Duplication Report
+                     * duplication report
                      */
                     DuplicationReportModel duplicationReportModel = new DuplicationReportModel();
                     duplicationReportModel.setTool(DuplicationReportModel.ToolEnum.PMD_CPD);
@@ -1095,17 +1104,27 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
                     submissionModel.setDuplication(duplicationReportModel);
 
-                    Gson gson = JSON.getGson();
+                    ObjectMapper mapper = preferYaml ? new YAMLMapper() : new ObjectMapper();
+                    mapper.setDateFormat(new StdDateFormat().withColonInTimeZone(true));
+                    mapper.registerModule(new JavaTimeModule());
+                    mapper.setDefaultPropertyInclusion(Include.NON_NULL);
+                    mapper.setDateFormat(new StdDateFormat());
+                    mapper.disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
+                    mapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+
                     if (args.isDumpAnalysis()) {
-                        gson = gson.newBuilder().setPrettyPrinting().create();
+                        mapper.enable(SerializationFeature.INDENT_OUTPUT);
                     }
 
-                    String json = gson.toJson(submissionModel);
                     if (args.isDumpAnalysis()) {
-                        File file = Files.createTempFile("codiqo-submission-", ".json").toFile();
+                        String extension = preferYaml ? "yaml" : "json";
+                        File file = Files.createTempFile("codiqo-submission-", "." + extension).toFile();
+                        String output = mapper.writeValueAsString(submissionModel);
                         try (FileOutputStream stream = new FileOutputStream(file)) {
-                            stream.write(json.getBytes(StandardCharsets.UTF_8));
-                            stream.flush();
+                            try (BufferedOutputStream bufferedStream = new BufferedOutputStream(stream)) {
+                                bufferedStream.write(output.getBytes(StandardCharsets.UTF_8));
+                                bufferedStream.flush();
+                            }
                         }
                         getLog().info("analysis submission written to " + file.getAbsolutePath());
                     }

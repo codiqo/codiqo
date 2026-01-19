@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.net.URL;
 import java.nio.file.Path;
 import java.util.Collection;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -20,6 +21,7 @@ import io.codiqo.api.MavenProjectSpec;
 import io.github.classgraph.ClassInfo;
 import io.github.classgraph.ClassInfoList;
 import io.github.classgraph.ScanResult;
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -31,7 +33,10 @@ class MavenProjectWrapper implements MavenProjectSpec {
     private String artifactId;
     private String name;
     private String packaging;
+    @Getter(AccessLevel.NONE)
     private Optional<String> parent = Optional.empty();
+    @Getter(AccessLevel.NONE)
+    private Optional<Date> latestModified = Optional.empty();
     private String description;
     private String version;
     private File baseDirectory;
@@ -66,6 +71,18 @@ class MavenProjectWrapper implements MavenProjectSpec {
     @Override
     public boolean contains(File filePath) {
         return filePath.toPath().normalize().startsWith(getBaseDirectory().toPath().normalize());
+    }
+    @Override
+    public void setLatestModified(Date date) {
+        this.latestModified = Optional.of(date);
+    }
+    @Override
+    public Optional<Date> latestModified() {
+        return latestModified;
+    }
+    @Override
+    public Optional<String> parent() {
+        return parent;
     }
     @Override
     public List<URL> getClasspathURLs() {

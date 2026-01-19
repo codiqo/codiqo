@@ -8,10 +8,14 @@ import java.math.BigDecimal;
 import java.net.JarURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Date;
 import java.util.EnumSet;
 import java.util.Enumeration;
 import java.util.List;
@@ -21,6 +25,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -38,6 +43,7 @@ import org.eclipse.lsp4j.SymbolKind;
 import org.jacoco.core.analysis.Analyzer;
 import org.jacoco.core.analysis.CoverageBuilder;
 import org.jacoco.core.analysis.IBundleCoverage;
+import org.jacoco.core.analysis.IClassCoverage;
 import org.jacoco.core.analysis.ICounter;
 import org.jacoco.core.analysis.ILine;
 import org.jacoco.core.analysis.IPackageCoverage;
@@ -47,6 +53,7 @@ import org.jacoco.core.tools.ExecFileLoader;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Range;
 import com.google.common.collect.Sets;
@@ -512,78 +519,126 @@ public class JavaLanguageSpec implements LanguageSpec {
     @Override
     public void captureCoverage(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
         ExecFileLoader loader = new ExecFileLoader();
-        MutableBoolean toApply = new MutableBoolean();
-        summary.getProjects().forEach(project -> project.coverage().ifPresent(new Consumer<>() {
-            @Override
-            @SneakyThrows
-            public void accept(File exec) {
-                loader.load(exec);
-                toApply.setTrue();
+        List<File> outputDirectories = Lists.newArrayList();
+
+        for (ProjectSpec project : summary.getProjects()) {
+            Optional<File> coverage = project.coverage();
+            if (coverage.isPresent()) {
+                /**
+                 * we have to ensure the coverage file is not older than the project's latest modified time, otherwise we have to abort
+                 */
+                File file = coverage.get();
+                BasicFileAttributes attrs = Files.readAttributes(file.toPath(), BasicFileAttributes.class);
+                FileTime fileTime = attrs.lastModifiedTime();
+                if (Objects.nonNull(fileTime)) {
+                    Optional<Date> lm = project.latestModified();
+                    if (lm.isPresent()) {
+                        Date latestModified = lm.get();
+                        log.info("checking coverage file %s modified time %s against project's latest modified time %s",
+                                file.getAbsolutePath(),
+                                fileTime.toInstant(),
+                                latestModified.toInstant());
+                        if (fileTime.toInstant().isBefore(latestModified.toInstant())) {
+                            throw new IOException(String.format(
+                                    "coverage file %s modified time %s is before project's latest modified time %s indicating the coverage data may be stale, please rebuild the project and rerun the tests",
+                                    file.getAbsolutePath(),
+                                    fileTime.toInstant(),
+                                    latestModified.toInstant()));
+                        }
+                    }
+                }
+                loader.load(file);
+                outputDirectories.add(project.getOutputDirectory());
             }
-        }));
-
-        if (toApply.isTrue()) {
-            ExecutionDataStore data = loader.getExecutionDataStore();
-            CoverageBuilder coverageBuilder = new CoverageBuilder();
-            Analyzer analyzer = new Analyzer(data, coverageBuilder);
-
-            summary.getProjects().forEach(project -> project.coverage().ifPresent(new Consumer<>() {
-                @Override
-                @SneakyThrows
-                public void accept(File exec) {
-                    if (project.getOutputDirectory().exists()) {
-                        int count = analyzer.analyzeAll(project.getOutputDirectory());
-                        log.info("analyzed %d classes from %s", count, exec.getAbsolutePath());
-                    }
-                }
-            }));
-
-            IBundleCoverage bundle = coverageBuilder.getBundle(language.getName());
-            Map<File, ISourceFileCoverage> coverages = Maps.newConcurrentMap();
-            summary.getProjects().forEach(project -> {
-                if (project instanceof MavenProjectSpec) {
-                    MavenProjectSpec mvn = (MavenProjectSpec) project;
-                    for (File sourceRoot : mvn.getCompileSourceRoots()) {
-                        Path normalized = sourceRoot.toPath().normalize().toAbsolutePath();
-                        for (IPackageCoverage pkg : bundle.getPackages()) {
-                            for (ISourceFileCoverage source : pkg.getSourceFiles()) {
-                                Path sourcePath = Paths.get(source.getPackageName(), source.getName());
-                                File resolved = normalized.resolve(sourcePath).normalize().toFile();
-                                coverages.put(resolved, source);
-                            }
-                        }
-                    }
-                }
-            });
-
-            analysis.forEach(fileAnalysis -> {
-                if (fileAnalysis.isExtension(lang())) {
-                    ISourceFileCoverage source = coverages.get(fileAnalysis.getFile());
-                    if (Objects.nonNull(source)) {
-                        for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
-                            symbol.block().ifPresent(block -> {
-                                int startLine = symbol.getLocation().getStartLine();
-                                int endLine = symbol.getLocation().getEndLine();
-
-                                for (int lineNum = startLine; lineNum <= endLine; lineNum++) {
-                                    ILine line = source.getLine(lineNum);
-                                    ((JavaCodeBlockInfo) block).lineCoverage(lineNum, line);
-                                    switch (line.getStatus()) {
-                                        case ICounter.EMPTY:
-                                        case ICounter.NOT_COVERED:
-                                            break;
-                                        case ICounter.FULLY_COVERED:
-                                        case ICounter.PARTLY_COVERED:
-                                        default:
-                                            break;
-                                    }
-                                }
-                            });
-                        }
-                    }
-                }
-            });
         }
+
+        ExecutionDataStore data = loader.getExecutionDataStore();
+        CoverageBuilder coverageBuilder = new CoverageBuilder();
+        Analyzer analyzer = new Analyzer(data, coverageBuilder);
+
+        int totalAnalyzed = 0;
+        for (File outputDir : outputDirectories) {
+            int count = analyzer.analyzeAll(outputDir);
+            totalAnalyzed += count;
+            log.info("analyzed JaCoCo coverage for %d classes from %s", count, outputDir.getAbsolutePath());
+        }
+
+        /**
+         * well this is crucial - if there are any class id mismatches between the execution data and the compiled classes,
+         * we can not trust the coverage results at all, so we have to fail the analysis here.
+         * otherwise risk assessment might be completely off which is unacceptable whatsoever.
+         */
+        Collection<IClassCoverage> noMatch = coverageBuilder.getNoMatchClasses();
+        if (CollectionUtils.isNotEmpty(noMatch)) {
+            log.error("class id mismatch: %d classes have execution data that doesn't match compiled classes", noMatch.size());
+            noMatch.stream().forEach(cls -> log.error("  - %s", cls.getName()));
+            throw new IOException("coverage analysis failed due to class id mismatches in total " + noMatch.size() + " classes");
+        }
+
+        int totalLines = 0;
+        int coveredLines = 0;
+        IBundleCoverage bundle = coverageBuilder.getBundle(language.getName());
+        for (IPackageCoverage pkg : bundle.getPackages()) {
+            for (IClassCoverage cls : pkg.getClasses()) {
+                totalLines += cls.getLineCounter().getTotalCount();
+                coveredLines += cls.getLineCounter().getCoveredCount();
+            }
+        }
+        log.info("bundle '%s': %d/%d lines covered (%d packages, %d classes analyzed)",
+                bundle.getName(),
+                coveredLines,
+                totalLines,
+                bundle.getPackages().size(),
+                totalAnalyzed);
+
+        Map<File, ISourceFileCoverage> coverages = Maps.newConcurrentMap();
+
+        summary.getProjects().forEach(project -> {
+            if (project instanceof MavenProjectSpec) {
+                MavenProjectSpec mvn = (MavenProjectSpec) project;
+                for (File sourceRoot : mvn.getCompileSourceRoots()) {
+                    Path normalized = sourceRoot.toPath().normalize().toAbsolutePath();
+                    for (IPackageCoverage pkg : bundle.getPackages()) {
+                        for (ISourceFileCoverage source : pkg.getSourceFiles()) {
+                            Path sourcePath = Paths.get(source.getPackageName(), source.getName());
+                            File resolved = normalized.resolve(sourcePath).normalize().toFile();
+                            coverages.put(resolved, source);
+                        }
+                    }
+                }
+            }
+        });
+
+        AtomicInteger matched = new AtomicInteger();
+        AtomicInteger unmatched = new AtomicInteger();
+        AtomicInteger linesWithCoverage = new AtomicInteger();
+
+        analysis.forEach(fileAnalysis -> {
+            if (fileAnalysis.isExtension(lang())) {
+                ISourceFileCoverage source = coverages.get(fileAnalysis.getFile());
+                if (Objects.nonNull(source)) {
+                    matched.incrementAndGet();
+                    for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
+                        symbol.block().ifPresent(block -> {
+                            int startLine = symbol.getLocation().getStartLine();
+                            int endLine = symbol.getLocation().getEndLine();
+
+                            for (int lineNum = startLine; lineNum <= endLine; lineNum++) {
+                                ILine line = source.getLine(lineNum);
+                                ((JavaCodeBlockInfo) block).lineCoverage(lineNum, line);
+                                if (line.getStatus() == ICounter.FULLY_COVERED || line.getStatus() == ICounter.PARTLY_COVERED) {
+                                    linesWithCoverage.incrementAndGet();
+                                }
+                            }
+                        });
+                    }
+                } else {
+                    unmatched.incrementAndGet();
+                }
+            }
+        });
+
+        log.info("coverage analysis: %d files affected matched, %d unmatched, %d lines with coverage", matched.get(), unmatched.get(), linesWithCoverage.get());
     }
     @Override
     public int hashCode() {

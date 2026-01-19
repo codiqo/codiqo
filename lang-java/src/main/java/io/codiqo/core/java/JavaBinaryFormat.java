@@ -16,7 +16,7 @@ import net.sourceforge.pmd.lang.java.types.JTypeVisitor;
 import net.sourceforge.pmd.lang.java.types.JWildcardType;
 
 @UtilityClass
-public class JavaBinaryFormat {
+class JavaBinaryFormat {
     public static final String CONSTRUCTOR_NAME = "<init>";
     public static final String OBJECT_DESCRIPTOR = "Ljava/lang/Object;";
 

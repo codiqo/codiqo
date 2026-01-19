@@ -26,9 +26,9 @@ public interface DeltaAnalyzer {
     Optional<FileAnalysis> analyzeUntrackedFile(String filePath) throws Exception;
     FileAnalysis analyzeUncommittedFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit headCommit, CanonicalTreeParser oldTree) throws Exception;
 
-    Optional<String> getFileContentFromCommit(RevCommit commit, String filePath) throws Exception;
-    Optional<String> getFileContentFromWorkingTree(String filePath) throws Exception;
-    Optional<String> getFileContentAtRevision(String filePath, String revisionId) throws Exception;
+    Optional<String> fileContentFromCommit(RevCommit commit, String filePath) throws Exception;
+    Optional<String> fileContentFromWorkingTree(String filePath) throws Exception;
+    Optional<String> fileContentAtRevision(String filePath, String revisionId) throws Exception;
     List<FileRevisionInfo> getFileHistory(String filePath, int maxRevisions) throws Exception;
 
     void analyzeSymbols(FileAnalysis analysis, File file, Collection<Integer> modifiedLines) throws Exception;

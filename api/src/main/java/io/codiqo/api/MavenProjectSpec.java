@@ -18,7 +18,7 @@ public interface MavenProjectSpec extends ProjectSpec {
     String getGroupId();
     String getArtifactId();
     String getPackaging();
-    Optional<String> getParent();
+    Optional<String> parent();
     Map<String, String> getProperties();
     BiMap<Artifact, File> getArtifacts();
     Collection<File> getCompileSourceRoots();

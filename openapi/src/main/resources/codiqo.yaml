@@ -1455,6 +1455,8 @@ components:
         Uses `signature` as the primary identifier (matches CodeUnitModel.signature).
       required: [signature]
       properties:
+        module:
+          type: string
         signature:
           type: string
           description: Unique signature of the code unit

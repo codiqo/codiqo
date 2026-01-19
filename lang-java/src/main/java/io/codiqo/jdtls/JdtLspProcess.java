@@ -40,7 +40,7 @@ import okhttp3.HttpUrl;
 import reactor.core.publisher.Sinks;
 import reactor.core.publisher.Sinks.EmitResult;
 
-public class JdtLspProcess implements Closeable {
+class JdtLspProcess implements Closeable {
     public static final Map<String, String> JDTLS_CONFIG = ImmutableMap.of(
             "osx-x86_64", "config_mac",
             "osx-aarch_64", "config_mac_arm",

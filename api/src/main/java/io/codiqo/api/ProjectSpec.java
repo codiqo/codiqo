@@ -2,6 +2,7 @@ package io.codiqo.api;
 
 import java.io.Closeable;
 import java.io.File;
+import java.util.Date;
 import java.util.Optional;
 
 public interface ProjectSpec extends Closeable {
@@ -14,4 +15,6 @@ public interface ProjectSpec extends Closeable {
     Optional<File> coverage();
     boolean isTestResource(File destination);
     boolean contains(File filePath);
+    Optional<Date> latestModified();
+    void setLatestModified(Date date);
 }

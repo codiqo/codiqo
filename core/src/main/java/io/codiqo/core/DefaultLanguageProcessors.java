@@ -10,10 +10,13 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.util.Collection;
+import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.function.Function;
@@ -143,6 +146,18 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                          */
                         if (FilenameUtils.isExtension(file.getName(), extensions)) {
                             try {
+                                args.owner(file).ifPresent(prj -> {
+                                    Optional<Date> opt = prj.latestModified();
+                                    FileTime fileTime = attrs.lastModifiedTime();
+                                    if (Objects.nonNull(fileTime)) {
+                                        Date date = Date.from(fileTime.toInstant());
+                                        if (opt.isEmpty()) {
+                                            prj.setLatestModified(date);
+                                        } else if (opt.get().before(date)) {
+                                            prj.setLatestModified(date);
+                                        }
+                                    }
+                                });
                                 forEach(processor -> {
                                     /**
                                      * parse all interested code blocks from the all files (supposed to be quick i.e. AST tree walk)
