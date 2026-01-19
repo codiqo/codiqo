@@ -32,6 +32,8 @@ public class RunArgs {
     @Nullable
     private boolean includeUntracked = true;
     @Nullable
+    private boolean autoBuild = false;
+    @Nullable
     private boolean dumpAnalysis = true;
     @Nullable
     private boolean ignoreCoverage = false;

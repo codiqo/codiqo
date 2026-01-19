@@ -105,51 +105,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 import reactor.core.publisher.Sinks.EmitResult;
 
-public class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<LanguageServer>, Closeable {
-    public static final String GUESS_OFF = "off";
-    public static final String GUESS_INSERT_PARAMETER_NAMES = "insertParameterNames";
-    public static final String GUESS_INSERT_BEST_GUESSED_ARGUMENTS = "insertBestGuessedArguments";
-
-    public static final String MATCH_CASE_OFF = "off";
-    public static final String MATCH_CASE_FIRST_LETTER = "firstLetter";
-
-    public static final String INLAY_NONE = "none";
-    public static final String INLAY_LITERALS = "literals";
-    public static final String INLAY_ALL = "all";
-
-    public static final String ENCODING_IGNORE = "ignore";
-    public static final String ENCODING_WARNING = "warning";
-    public static final String ENCODING_SETDEFAULT = "setDefault";
-
-    public static final String INSERTION_LAST_MEMBER = "lastMember";
-    public static final String INSERTION_BEFORE_CURSOR = "beforeCursor";
-
-    public static final String ADD_FINAL_NONE = "none";
-    public static final String ADD_FINAL_ALL = "all";
-    public static final String ADD_FINAL_VARIABLES = "variables";
-    public static final String ADD_FINAL_FIELDS = "fields";
-
-    public static final String TOSTRING_STRING_CONCATENATION = "STRING_CONCATENATION";
-    public static final String TOSTRING_STRING_BUILDER = "STRING_BUILDER";
-    public static final String TOSTRING_STRING_BUILDER_CHAINED = "STRING_BUILDER_CHAINED";
-    public static final String TOSTRING_STRING_FORMAT = "STRING_FORMAT";
-
-    public static final String IMPL_CODELENS_NONE = "none";
-    public static final String IMPL_CODELENS_ALL = "all";
-    public static final String IMPL_CODELENS_INTERFACE_ONLY = "interfaceOnly";
-
-    public static final String SEVERITY_IGNORE = "ignore";
-    public static final String SEVERITY_WARNING = "warning";
-    public static final String SEVERITY_ERROR = "error";
-
-    public static final String LAUNCH_MODE_STANDARD = "Standard";
-    public static final String LAUNCH_MODE_LIGHTWEIGHT = "LightWeight";
-    public static final String LAUNCH_MODE_HYBRID = "Hybrid";
-
-    public static final String BUILD_CONFIG_INTERACTIVE = "interactive";
-    public static final String BUILD_CONFIG_AUTOMATIC = "automatic";
-    public static final String BUILD_CONFIG_DISABLED = "disabled";
-
+class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<LanguageServer>, Closeable {
     private final Sinks.Many<StatusReport> processor = Sinks.many().multicast().directBestEffort();
     private final ExecutorService executor = Executors.newCachedThreadPool();
     private final Log log;
@@ -372,17 +328,17 @@ public class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Suppl
         jdt.put("ls", ls);
 
         java.put("jdt", jdt);
-        java.put("errors", ImmutableMap.of("incompleteClasspath", ImmutableMap.of("severity", SEVERITY_WARNING)));
+        java.put("errors", ImmutableMap.of("incompleteClasspath", ImmutableMap.of("severity", "warning")));
 
         Map<String, Object> configuration = Maps.newHashMap();
         configuration.put("checkProjectSettingsExclusions", false);
-        configuration.put("updateBuildConfiguration", BUILD_CONFIG_AUTOMATIC);
+        configuration.put("updateBuildConfiguration", "automatic");
         configuration.put("workspaceCacheLimit", 90);
         configuration.put("runtimes", ImmutableList.of());
 
         Map<String, Object> mavenConfig = Maps.newHashMap();
-        mavenConfig.put("notCoveredPluginExecutionSeverity", SEVERITY_WARNING);
-        mavenConfig.put("defaultMojoExecutionAction", SEVERITY_IGNORE);
+        mavenConfig.put("notCoveredPluginExecutionSeverity", "warning");
+        mavenConfig.put("defaultMojoExecutionAction", "ignore");
         mavenConfig.put("lifecycleMappings", null);
         configuration.put("maven", mavenConfig);
         java.put("configuration", configuration);
@@ -417,7 +373,7 @@ public class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Suppl
         java.put("signatureHelp", ImmutableMap.of("enabled", true, "description", ImmutableMap.of("enabled", true)));
 
         java.put("referencesCodeLens", ImmutableMap.of("enabled", true));
-        java.put("implementationsCodeLens", IMPL_CODELENS_ALL);
+        java.put("implementationsCodeLens", "all");
 
         Map<String, Object> format = Maps.newHashMap();
         format.put("enabled", true);
@@ -431,19 +387,19 @@ public class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Suppl
 
         Map<String, Object> project = Maps.newHashMap();
         project.put("referencedLibraries", ImmutableList.of("lib/**/*.jar"));
-        project.put("importOnFirstTimeStartup", BUILD_CONFIG_AUTOMATIC);
+        project.put("importOnFirstTimeStartup", "automatic");
         project.put("importHint", true);
         project.put("resourceFilters", ImmutableList.of("node_modules", "\\.git"));
-        project.put("encoding", ENCODING_IGNORE);
+        project.put("encoding", "ignore");
         project.put("sourcePaths", ImmutableList.of());
         project.put("outputPath", null);
         java.put("project", project);
 
-        java.put("autobuild", ImmutableMap.of("enabled", true));
+        java.put("autobuild", ImmutableMap.of("enabled", args.isAutoBuild()));
         java.put("maxConcurrentBuilds", Runtime.getRuntime().availableProcessors());
         java.put("selectionRange", ImmutableMap.of("enabled", true));
 
-        java.put("server", ImmutableMap.of("launchMode", LAUNCH_MODE_STANDARD));
+        java.put("server", ImmutableMap.of("launchMode", "Standard"));
         java.put("imports", ImmutableMap.of("gradle", ImmutableMap.of("wrapper", ImmutableMap.of("checksums", ImmutableList.of()))));
         java.put("typeHierarchy", ImmutableMap.of("lazyLoad", false));
         java.put("templates", ImmutableMap.of("fileHeader", ImmutableList.of(), "typeComment", ImmutableList.of()));
@@ -452,18 +408,18 @@ public class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Suppl
 
         java.put("quickfix", ImmutableMap.of("showAt", "line"));
         java.put("codeAction", ImmutableMap.of("sortMembers", ImmutableMap.of("avoidVolatileChanges", true)));
-        java.put("inlayHints", ImmutableMap.of("parameterNames", ImmutableMap.of("enabled", INLAY_LITERALS, "exclusions", ImmutableList.of())));
+        java.put("inlayHints", ImmutableMap.of("parameterNames", ImmutableMap.of("enabled", "literals", "exclusions", ImmutableList.of())));
 
         Map<String, Object> codeGeneration = Maps.newHashMap();
         codeGeneration.put("generateComments", false);
         codeGeneration.put("useBlocks", false);
-        codeGeneration.put("insertionLocation", INSERTION_LAST_MEMBER);
-        codeGeneration.put("addFinalForNewDeclaration", ADD_FINAL_NONE);
+        codeGeneration.put("insertionLocation", "lastMember");
+        codeGeneration.put("addFinalForNewDeclaration", "none");
 
         codeGeneration.put("hashCodeEquals", ImmutableMap.of("useJava7Objects", true, "useInstanceof", true, "generateComments", false));
 
         codeGeneration.put("toString", ImmutableMap.of(
-                "codeStyle", TOSTRING_STRING_CONCATENATION,
+                "codeStyle", "STRING_CONCATENATION",
                 "template", "${object.className} [${member.name()}=${member.value}, ${otherMembers}]",
                 "skipNullValues", false,
                 "listArrayContents", true,
@@ -512,13 +468,13 @@ public class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Suppl
                         "jdk.*",
                         "org.graalvm.*",
                         "io.micrometer.shaded.*"));
-        completions.put("guessMethodArguments", GUESS_INSERT_PARAMETER_NAMES);
+        completions.put("guessMethodArguments", "insertParameterNames");
         completions.put("importOrder", ImmutableList.of("java", "javax", "org", "com"));
         completions.put("maxResults", 0);
         completions.put("postfix", ImmutableMap.of("enabled", true));
         completions.put("chain", ImmutableMap.of("enabled", false));
         completions.put("lazyResolveTextEdit", ImmutableMap.of("enabled", true));
-        completions.put("matchCase", MATCH_CASE_OFF);
+        completions.put("matchCase", "off");
         completions.put("collapseCompletionItems", false);
         java.put("completion", completions);
 
