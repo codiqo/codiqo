@@ -353,9 +353,11 @@ public class JavaLanguageSpec implements LanguageSpec {
 
         try (PmdAnalysis pmd = PmdAnalysis.create(cfg)) {
             MutableBoolean toApply = new MutableBoolean();
-            for (FileAnalysis fileAnalysis : analysis) {
-                if (fileAnalysis.isExtension(language)) {
-                    if (pmd.files().addFile(fileAnalysis.getFile().toPath().normalize())) {
+
+            // Add ALL source files from the indexed blocks (module-level analysis)
+            for (File sourceFile : summary.getBlocks().keySet()) {
+                if (FilenameUtils.isExtension(sourceFile.getName(), language.getExtensions())) {
+                    if (pmd.files().addFile(sourceFile.toPath().normalize())) {
                         toApply.setTrue();
                     }
                 }
@@ -366,21 +368,22 @@ public class JavaLanguageSpec implements LanguageSpec {
                 List<RuleViolation> violations = report.getViolations();
                 violations.forEach(violation -> {
                     Range<Integer> markRange = Range.closed(violation.getLocation().getStartLine(), violation.getLocation().getEndLine());
-                    for (FileAnalysis fileAnalysis : analysis) {
-                        if (violation.getFileId().getAbsolutePath().equals(fileAnalysis.getFile().getAbsolutePath())) {
-                            for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
-                                Range<Integer> symbolRange = Range.closed(symbol.getLocation().getStartLine(), symbol.getLocation().getEndLine());
-                                if (symbolRange.encloses(markRange)) {
-                                    symbol.block().ifPresent(block -> {
-                                        log.info("detected PMD violation for %s : line(%d:%d-%d:%d)  %s",
-                                                block,
-                                                violation.getBeginLine(),
-                                                violation.getBeginColumn(),
-                                                violation.getEndLine(),
-                                                violation.getEndColumn(),
-                                                violation.getDescription());
-                                        block.pmdViolation(violation);
-                                    });
+
+                    // Match violations against ALL indexed blocks (module-level)
+                    for (File sourceFile : summary.getBlocks().keySet()) {
+                        if (violation.getFileId().getAbsolutePath().equals(sourceFile.getAbsolutePath())) {
+                            Collection<CodeBlockInfo> blocks = summary.getBlocks().get(sourceFile);
+                            for (CodeBlockInfo block : blocks) {
+                                Range<Integer> blockRange = Range.closed(block.getLocation().getStartLine(), block.getLocation().getEndLine());
+                                if (blockRange.encloses(markRange)) {
+                                    log.info("detected PMD violation for %s : line(%d:%d-%d:%d)  %s",
+                                            block,
+                                            violation.getBeginLine(),
+                                            violation.getBeginColumn(),
+                                            violation.getEndLine(),
+                                            violation.getEndColumn(),
+                                            violation.getDescription());
+                                    block.pmdViolation(violation);
                                 }
                             }
                         }
@@ -389,45 +392,44 @@ public class JavaLanguageSpec implements LanguageSpec {
             }
         }
 
+        // Create SpotBugs projects from ALL indexed modules (not just affected files)
         Map<ProjectSpec, edu.umd.cs.findbugs.Project> projects = Maps.newHashMap();
-        for (FileAnalysis fileAnalysis : analysis) {
-            if (fileAnalysis.isExtension(language)) {
-                args.owner(fileAnalysis.getFile()).ifPresent(project -> {
-                    if (project instanceof MavenProjectSpec) {
-                        MavenProjectSpec mvn = (MavenProjectSpec) project;
-                        projects.computeIfAbsent(project, new Function<>() {
-                            @Override
-                            @SneakyThrows
-                            public edu.umd.cs.findbugs.Project apply(ProjectSpec target) {
-                                edu.umd.cs.findbugs.Project spotbugs = new edu.umd.cs.findbugs.Project();
-                                spotbugs.setProjectName(target.getName());
-                                spotbugs.addFile(target.getOutputDirectory().getAbsolutePath());
+        for (ProjectSpec project : summary.getProjects()) {
+            if (project instanceof MavenProjectSpec) {
+                if (project.getOutputDirectory().exists()) {
+                    MavenProjectSpec mvn = (MavenProjectSpec) project;
+                    projects.computeIfAbsent(project, new Function<>() {
+                        @Override
+                        @SneakyThrows
+                        public edu.umd.cs.findbugs.Project apply(ProjectSpec target) {
+                            edu.umd.cs.findbugs.Project spotbugs = new edu.umd.cs.findbugs.Project();
+                            spotbugs.setProjectName(target.getName());
+                            spotbugs.addFile(target.getOutputDirectory().getAbsolutePath());
 
-                                mvn.getCompileClasspathElements().stream().forEach(new Consumer<>() {
-                                    @Override
-                                    public void accept(File element) {
-                                        spotbugs.addAuxClasspathEntry(element.getAbsolutePath());
-                                    }
-                                });
-                                mvn.getTestClasspathElements().stream().forEach(new Consumer<>() {
-                                    @Override
-                                    public void accept(File element) {
-                                        spotbugs.addAuxClasspathEntry(element.getAbsolutePath());
-                                    }
-                                });
-
-                                for (File dir : mvn.getCompileSourceRoots()) {
-                                    spotbugs.addSourceDirs(Collections.singletonList(dir.getAbsolutePath()));
+                            mvn.getCompileClasspathElements().stream().forEach(new Consumer<>() {
+                                @Override
+                                public void accept(File element) {
+                                    spotbugs.addAuxClasspathEntry(element.getAbsolutePath());
                                 }
-                                for (File dir : mvn.getTestCompileSourceRoots()) {
-                                    spotbugs.addSourceDirs(Collections.singletonList(dir.getAbsolutePath()));
+                            });
+                            mvn.getTestClasspathElements().stream().forEach(new Consumer<>() {
+                                @Override
+                                public void accept(File element) {
+                                    spotbugs.addAuxClasspathEntry(element.getAbsolutePath());
                                 }
+                            });
 
-                                return spotbugs;
+                            for (File dir : mvn.getCompileSourceRoots()) {
+                                spotbugs.addSourceDirs(Collections.singletonList(dir.getAbsolutePath()));
                             }
-                        });
-                    }
-                });
+                            for (File dir : mvn.getTestCompileSourceRoots()) {
+                                spotbugs.addSourceDirs(Collections.singletonList(dir.getAbsolutePath()));
+                            }
+
+                            return spotbugs;
+                        }
+                    });
+                }
             }
         }
 
@@ -486,23 +488,23 @@ public class JavaLanguageSpec implements LanguageSpec {
                             for (BugInstance bug : bugCollection) {
                                 SourceLineAnnotation sourceLine = bug.getPrimarySourceLineAnnotation();
                                 Range<Integer> markRange = Range.closed(sourceLine.getStartLine(), sourceLine.getEndLine());
-                                for (FileAnalysis fileAnalysis : analysis) {
-                                    if (fileAnalysis.getFile().toPath().normalize().endsWith(sourceLine.getSourcePath())) {
-                                        for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
-                                            Range<Integer> symbolRange = Range.closed(symbol.getLocation().getStartLine(), symbol.getLocation().getEndLine());
-                                            if (symbolRange.encloses(markRange)) {
-                                                symbol.block().ifPresent(new Consumer<>() {
-                                                    @Override
-                                                    public void accept(CodeBlockInfo block) {
-                                                        log.info("detected spotbug violation for %s : line(%d-%d)  %s ( %s )",
-                                                                block,
-                                                                sourceLine.getStartLine(),
-                                                                sourceLine.getEndLine(),
-                                                                bug.getType(),
-                                                                bug.getMessage());
-                                                        ((JavaCodeBlockInfo) block).spotbug(bug);
-                                                    }
-                                                });
+
+                                // Match violations against ALL indexed blocks (module-level)
+                                for (File sourceFile : summary.getBlocks().keySet()) {
+                                    if (sourceFile.toPath().normalize().endsWith(sourceLine.getSourcePath())) {
+                                        Collection<CodeBlockInfo> blocks = summary.getBlocks().get(sourceFile);
+                                        for (CodeBlockInfo block : blocks) {
+                                            Range<Integer> blockRange = Range.closed(block.getLocation().getStartLine(), block.getLocation().getEndLine());
+                                            if (blockRange.encloses(markRange)) {
+                                                log.info("detected spotbug violation for %s : line(%d-%d)  %s ( %s )",
+                                                        block,
+                                                        sourceLine.getStartLine(),
+                                                        sourceLine.getEndLine(),
+                                                        bug.getType(),
+                                                        bug.getMessage());
+                                                if (block instanceof JavaCodeBlockInfo) {
+                                                    ((JavaCodeBlockInfo) block).spotbug(bug);
+                                                }
                                             }
                                         }
                                     }
@@ -548,8 +550,14 @@ public class JavaLanguageSpec implements LanguageSpec {
                     }
                 }
                 loader.load(file);
-                outputDirectories.add(project.getOutputDirectory());
+                if (project.getOutputDirectory().exists()) {
+                    outputDirectories.add(project.getOutputDirectory());
+                }
             }
+        }
+
+        if (CollectionUtils.isEmpty(outputDirectories)) {
+            return;
         }
 
         ExecutionDataStore data = loader.getExecutionDataStore();
@@ -608,6 +616,44 @@ public class JavaLanguageSpec implements LanguageSpec {
                 }
             }
         });
+
+        /**
+         * capture coverage for ALL code blocks in the project (not just commit-affected).
+         * this enables full project coverage metrics for quality gates and reporting.
+         */
+        AtomicInteger totalBlocksWithCoverage = new AtomicInteger();
+        AtomicInteger totalBlocksProcessed = new AtomicInteger();
+
+        summary.getBlocks().asMap().forEach((file, blocksCollection) -> {
+            if (FilenameUtils.isExtension(file.getName(), lang().getExtensions())) {
+                ISourceFileCoverage source = coverages.get(file);
+                if (Objects.nonNull(source)) {
+                    for (CodeBlockInfo block : blocksCollection) {
+                        if (block instanceof JavaCodeBlockInfo) {
+                            JavaCodeBlockInfo javaBlock = (JavaCodeBlockInfo) block;
+                            int startLine = block.getLocation().getStartLine();
+                            int endLine = block.getLocation().getEndLine();
+                            boolean hasCoverage = false;
+
+                            for (int lineNum = startLine; lineNum <= endLine; lineNum++) {
+                                ILine l = source.getLine(lineNum);
+                                javaBlock.lineCoverage(lineNum, l);
+                                if (BooleanUtils.or(new boolean[] { l.getStatus() == ICounter.FULLY_COVERED, l.getStatus() == ICounter.PARTLY_COVERED })) {
+                                    hasCoverage = true;
+                                }
+                            }
+
+                            totalBlocksProcessed.incrementAndGet();
+                            if (hasCoverage) {
+                                totalBlocksWithCoverage.incrementAndGet();
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        log.info("full project coverage: %d/%d code blocks have coverage data", totalBlocksWithCoverage.get(), totalBlocksProcessed.get());
 
         AtomicInteger matched = new AtomicInteger();
         AtomicInteger unmatched = new AtomicInteger();

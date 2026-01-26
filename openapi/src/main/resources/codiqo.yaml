@@ -26,6 +26,12 @@ info:
     - Static analysis violations
     - Whether callers are in test vs production code
     - Code duplication percentage
+    
+    ## LLM Scoring
+    - LLM makes 100% judgment (0-100 score)
+    - DIFF is the primary signal, not container metrics
+    - Bugs classified as BLOCKING/MAJOR/MINOR
+    - Quality assessment: NEW code clean, MODIFY improves
   version: 1.0
   contact:
     name: Codiqo
@@ -133,6 +139,14 @@ components:
           $ref: '#/components/schemas/CodebaseIndexModel'
         client:
           $ref: '#/components/schemas/ClientInfoModel'
+        existingTags:
+          $ref: '#/components/schemas/ExistingTagsModel'
+        projectMetrics:
+          $ref: '#/components/schemas/ProjectMetricsModel'
+        projectQuality:
+          $ref: '#/components/schemas/ProjectQualityModel'
+        fullProjectCoverage:
+          $ref: '#/components/schemas/FullProjectCoverageModel'
 
     AnalysisAcceptedModel:
       type: object
@@ -186,6 +200,308 @@ components:
         completedAt:
           type: string
           format: date-time
+        changeClassification:
+          type: string
+          enum: [trivial, low_risk, moderate_risk, high_risk, critical_risk]
+          description: LLM classification of the change type
+        bugs:
+          $ref: '#/components/schemas/BugsModel'
+        assessment:
+          $ref: '#/components/schemas/AssessmentModel'
+        requiresSeniorReview:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: |
+            0 = No review needed
+            1-3 = Optional peer review
+            4-6 = Recommended review
+            7-8 = Senior review recommended
+            9-10 = Critical review required
+        seniorReviewReasons:
+          type: array
+          items:
+            type: string
+        tags:
+          $ref: '#/components/schemas/ReviewTagsModel'
+        projectMetrics:
+          $ref: '#/components/schemas/ProjectMetricsModel'
+        projectQuality:
+          $ref: '#/components/schemas/ProjectQualityModel'
+        fullProjectCoverage:
+          $ref: '#/components/schemas/FullProjectCoverageModel'
+
+    # ==========================================================================
+    # Project Metrics & Quality (Global Level)
+    # ==========================================================================
+
+    ProjectMetricsModel:
+      type: object
+      description: |
+        Global project-level metrics aggregated across all modules.
+        Provides context for LLM scoring relative to project size.
+      properties:
+        totalLines:
+          type: integer
+          minimum: 0
+          description: Total lines of code across all modules in the project
+        totalFiles:
+          type: integer
+          minimum: 0
+          description: Total number of source files in the project
+        totalMethods:
+          type: integer
+          minimum: 0
+          description: Total number of methods across all modules
+        totalClasses:
+          type: integer
+          minimum: 0
+          description: Total number of classes across all modules
+        averageComplexity:
+          type: number
+          format: double
+          minimum: 0
+          description: Average cyclomatic complexity across all methods
+        averageCoverage:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: Average test coverage percentage across all code
+
+    ProjectQualityModel:
+      type: object
+      description: |
+        Global project-level quality metrics for the commit.
+        Aggregated across all changed files and modules.
+      properties:
+        totalPmdViolations:
+          type: integer
+          minimum: 0
+          description: Total PMD violations across all changed files
+        totalSpotbugsIssues:
+          type: integer
+          minimum: 0
+          description: Total SpotBugs issues across all changed files
+        averageCoverage:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: Average coverage percentage across all changed code units
+        cpdDuplicationPercent:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: CPD duplication percentage across all changed files
+        filesChanged:
+          type: integer
+          minimum: 0
+          description: Number of files changed in this commit
+        codeUnitsAffected:
+          type: integer
+          minimum: 0
+          description: Number of code units (methods/constructors) affected
+        averageComplexity:
+          type: number
+          format: double
+          minimum: 0
+          description: Average complexity of changed code units
+
+    # ==========================================================================
+    # Full Project Coverage (All Code Units)
+    # ==========================================================================
+
+    FullProjectCoverageModel:
+      type: object
+      description: |
+        Complete coverage metrics for ALL code units in the project,
+        not just commit-affected ones. Provides baseline for coverage gates.
+      properties:
+        totalMethods:
+          type: integer
+          minimum: 0
+          description: Total methods/constructors in the project
+        coveredMethods:
+          type: integer
+          minimum: 0
+          description: Methods with at least partial coverage
+        uncoveredMethods:
+          type: integer
+          minimum: 0
+          description: Methods with zero coverage
+        totalExecutableLines:
+          type: integer
+          minimum: 0
+          description: Total executable lines across all methods
+        coveredLines:
+          type: integer
+          minimum: 0
+          description: Lines that are covered (full or partial)
+        missedLines:
+          type: integer
+          minimum: 0
+          description: Lines that are not covered
+        totalBranches:
+          type: integer
+          minimum: 0
+          description: Total branches across all methods
+        coveredBranches:
+          type: integer
+          minimum: 0
+          description: Branches that are covered
+        missedBranches:
+          type: integer
+          minimum: 0
+          description: Branches that are not covered
+        linePercentage:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: Line coverage percentage
+        branchPercentage:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: Branch coverage percentage
+        byModule:
+          type: object
+          description: Per-module coverage breakdown
+          additionalProperties:
+            $ref: '#/components/schemas/ModuleFullCoverageModel'
+
+    ModuleFullCoverageModel:
+      type: object
+      description: Full coverage metrics for a single module
+      properties:
+        moduleId:
+          type: string
+          description: Module identifier
+        totalMethods:
+          type: integer
+          minimum: 0
+          description: Total methods in this module
+        coveredMethods:
+          type: integer
+          minimum: 0
+          description: Methods with coverage in this module
+        uncoveredMethods:
+          type: integer
+          minimum: 0
+          description: Methods without coverage in this module
+        totalExecutableLines:
+          type: integer
+          minimum: 0
+          description: Total executable lines in this module
+        coveredLines:
+          type: integer
+          minimum: 0
+          description: Covered lines in this module
+        missedLines:
+          type: integer
+          minimum: 0
+          description: Missed lines in this module
+        totalBranches:
+          type: integer
+          minimum: 0
+          description: Total branches in this module
+        coveredBranches:
+          type: integer
+          minimum: 0
+          description: Covered branches in this module
+        missedBranches:
+          type: integer
+          minimum: 0
+          description: Missed branches in this module
+        linePercentage:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: Line coverage percentage for this module
+        branchPercentage:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: Branch coverage percentage for this module
+
+    # ==========================================================================
+    # Module Quality (Per-Module Level)
+    # ==========================================================================
+
+    ModuleQualityModel:
+      type: object
+      description: |
+        Per-module quality metrics.
+        Each maven/gradle module has its own quality metrics that aggregate
+        to the global project quality.
+
+        NOTE: Fields without "InModule" suffix are commit-affected metrics (changed code only).
+        Fields with "InModule" suffix are full module metrics (all code).
+      properties:
+        totalLines:
+          type: integer
+          minimum: 0
+          description: Total lines of code in this module's changed files (commit-affected only)
+        totalMethods:
+          type: integer
+          minimum: 0
+          description: Total methods in this module's changed files (commit-affected only)
+        filesChanged:
+          type: integer
+          minimum: 0
+          description: Number of files changed in this module (commit-affected)
+        codeUnitsAffected:
+          type: integer
+          minimum: 0
+          description: Number of code units affected in this module (commit-affected)
+        pmdViolations:
+          type: integer
+          minimum: 0
+          description: PMD violations in this module's changed code (commit-affected only)
+        spotbugsIssues:
+          type: integer
+          minimum: 0
+          description: SpotBugs issues in this module's changed code (commit-affected only)
+        totalPmdViolationsInModule:
+          type: integer
+          minimum: 0
+          description: Total PMD violations across ALL code in this module (not just changed)
+        totalSpotbugsIssuesInModule:
+          type: integer
+          minimum: 0
+          description: Total SpotBugs issues across ALL code in this module (not just changed)
+        averageCoverage:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: Average coverage percentage for this module's changed code (commit-affected only)
+        averageComplexity:
+          type: number
+          format: double
+          minimum: 0
+          description: Average cyclomatic complexity for this module's changed code (commit-affected only)
+        cpdDuplicationPercent:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: CPD duplication percentage for this module
+        totalMethodsInModule:
+          type: integer
+          minimum: 0
+          description: Total methods in the entire module (not just changed)
+        totalLinesInModule:
+          type: integer
+          minimum: 0
+          description: Total lines of code in the entire module (not just changed)
+        fullCoverage:
+          $ref: '#/components/schemas/ModuleFullCoverageModel'
 
     # ==========================================================================
     # Dependencies - Top-level shared registry
@@ -217,68 +533,41 @@ components:
         Abstract dependency model supporting multiple package ecosystems.
         Common fields work across ecosystems; ecosystem-specific details in dedicated objects.
       properties:
-        # Common fields (all ecosystems)
         name:
           type: string
-          description: |
-            Human-readable package name.
-            - Maven: artifactId
-            - NPM: package name
-            - PyPI: package name
-            - Go: module path
-            - Cargo: crate name
         version:
           type: string
-          description: Resolved version string
         ecosystem:
           type: string
           enum: [maven, npm, pypi, go, cargo, nuget, other]
-          description: Package ecosystem identifier
         scope:
           type: string
-          description: |
-            Dependency scope (ecosystem-specific semantics):
-            - Maven: compile, provided, runtime, test, system
-            - NPM: dependencies, devDependencies, peerDependencies, optionalDependencies
-            - PyPI: install, dev, test, extras
-            - Go: direct, indirect
-            - Cargo: normal, dev, build
         optional:
           type: boolean
-          description: Whether this dependency is optional
           default: false
         transitive:
           type: boolean
-          description: Whether this is a transitive (indirect) dependency
           default: false
         snapshot:
           type: boolean
-          description: Whether this is a snapshot dependency
           default: false
         release:
           type: boolean
-          description: Whether this is a release dependency
           default: false
         directDependants:
           type: array
-          description: IDs of dependencies that directly depend on this one
           items:
             type: string
         licenses:
           type: array
-          description: SPDX license identifiers
           items:
             type: string
         repositoryUrl:
           type: string
           format: uri
-          description: Source repository URL
         homepage:
           type: string
           format: uri
-          description: Project homepage
-        
-        # Ecosystem-specific details
         maven:
           $ref: '#/components/schemas/MavenDependencyModel'
         npm:
@@ -292,7 +581,6 @@ components:
 
     MavenDependencyModel:
       type: object
-      description: Maven-specific dependency details
       properties:
         groupId:
           type: string
@@ -300,14 +588,11 @@ components:
           type: string
         classifier:
           type: string
-          description: Artifact classifier (e.g., "sources", "javadoc", "tests")
         type:
           type: string
-          description: Packaging type (jar, war, pom, etc.)
           default: jar
         exclusions:
           type: array
-          description: Excluded transitive dependencies
           items:
             type: object
             properties:
@@ -318,15 +603,12 @@ components:
 
     NpmDependencyModel:
       type: object
-      description: NPM-specific dependency details
       properties:
         resolved:
           type: string
           format: uri
-          description: Resolved tarball URL
         integrity:
           type: string
-          description: Subresource integrity hash (e.g., "sha512-...")
         peerDependenciesMeta:
           type: object
           additionalProperties:
@@ -336,154 +618,116 @@ components:
                 type: boolean
         engines:
           type: object
-          description: Required Node.js/npm versions
           additionalProperties:
             type: string
         bundled:
           type: boolean
-          description: Whether this is a bundled dependency
 
     PypiDependencyModel:
       type: object
-      description: PyPI-specific dependency details
       properties:
         extras:
           type: array
-          description: Installed extras (e.g., ["security", "socks"])
           items:
             type: string
         markers:
           type: string
-          description: PEP 508 environment markers
         requiresPython:
           type: string
-          description: Python version constraint
         wheel:
           type: boolean
-          description: Whether installed from wheel
         editable:
           type: boolean
-          description: Whether installed in editable/development mode
 
     GoDependencyModel:
       type: object
-      description: Go module-specific dependency details
       properties:
         module:
           type: string
-          description: Full module path
         replace:
           type: string
-          description: Replacement module (from go.mod replace directive)
         retract:
           type: array
-          description: Retracted versions
           items:
             type: string
         indirect:
           type: boolean
-          description: Whether marked as indirect in go.mod
 
     CargoDependencyModel:
       type: object
-      description: Cargo/Rust-specific dependency details
       properties:
         crate:
           type: string
-          description: Crate name
         features:
           type: array
-          description: Enabled features
           items:
             type: string
         defaultFeatures:
           type: boolean
-          description: Whether default features are enabled
           default: true
         registry:
           type: string
-          description: Registry URL (if not crates.io)
         path:
           type: string
-          description: Local path (for path dependencies)
         git:
           type: string
           format: uri
-          description: Git repository URL (for git dependencies)
         branch:
           type: string
-          description: Git branch (for git dependencies)
 
     # ==========================================================================
-    # Risk Score - The main output for LLM
+    # Risk Score
     # ==========================================================================
 
     RiskScoreModel:
       type: object
-      description: |
-        Computed risk score for the commit. Higher = more risky.
-        LLM uses this to prioritize review and suggest fixes.
       properties:
         overall:
           type: number
           format: double
           minimum: 0
           maximum: 100
-          description: Overall risk score (0-100)
         grade:
           type: string
           enum: [A, B, C, D, F]
-          description: Letter grade for quick assessment
         factors:
           $ref: '#/components/schemas/RiskFactorsModel'
         summary:
           type: string
-          description: Human-readable risk summary for LLM context
 
     RiskFactorsModel:
       type: object
-      description: Individual factors contributing to risk score
       properties:
         blastRadius:
           type: integer
           minimum: 0
-          description: Total number of callers affected by changes
         productionCallers:
           type: integer
           minimum: 0
-          description: Callers in production code (higher risk)
         testCallers:
           type: integer
           minimum: 0
-          description: Callers in test code (lower risk)
         avgComplexity:
           type: number
           format: double
-          description: Average cyclomatic complexity of changed code
         maxComplexity:
           type: integer
-          description: Maximum complexity in any single unit
         uncoveredChanges:
           type: integer
-          description: Number of changed lines without test coverage
         coveragePercent:
           type: number
           format: double
           minimum: 0
           maximum: 100
-          description: Test coverage of affected code
         diagnosticCount:
           type: integer
-          description: Static analysis issues in affected code
         criticalDiagnostics:
           type: integer
-          description: High-severity issues
         duplicatedPercentage:
           type: number
           format: double
           minimum: 0
           maximum: 100
-          description: Percentage of duplicated code
 
     # ==========================================================================
     # Analysis Summary
@@ -542,7 +786,6 @@ components:
           $ref: '#/components/schemas/CoverageCounterModel'
         delta:
           type: object
-          description: Coverage change from baseline
           properties:
             line:
               type: number
@@ -579,7 +822,6 @@ components:
           enum: [A, B, C, D, E, F]
         passed:
           type: boolean
-          description: Whether quality gates passed
 
     # ==========================================================================
     # Project & Commit
@@ -605,10 +847,18 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ModuleModel'
+        totalLines:
+          type: integer
+          description: Total lines of code in the entire project
+        totalFiles:
+          type: integer
+          description: Total number of source files
+        totalMethods:
+          type: integer
+          description: Total number of methods
 
     ModuleModel:
       type: object
-      description: Build module (Maven module, Gradle subproject, NPM workspace, etc.)
       properties:
         id:
           type: string
@@ -626,12 +876,10 @@ components:
             type: string
         dependencies:
           type: array
-          description: |
-            References to dependencies by their artifact ID.
-            IDs correspond to keys in DependencyRegistryModel.artifacts.
           items:
             type: string
-        # Ecosystem-specific module metadata
+        quality:
+          $ref: '#/components/schemas/ModuleQualityModel'
         maven:
           $ref: '#/components/schemas/MavenModuleModel'
         npm:
@@ -641,7 +889,6 @@ components:
 
     MavenModuleModel:
       type: object
-      description: Maven-specific module metadata
       properties:
         groupId:
           type: string
@@ -654,11 +901,9 @@ components:
           default: jar
         parent:
           type: string
-          description: Parent POM artifact ID reference
 
     NpmModuleModel:
       type: object
-      description: NPM-specific module metadata
       properties:
         packageName:
           type: string
@@ -673,7 +918,6 @@ components:
 
     PythonModuleModel:
       type: object
-      description: Python-specific module metadata
       properties:
         packageName:
           type: string
@@ -683,7 +927,6 @@ components:
           type: string
         buildBackend:
           type: string
-          description: Build backend (setuptools, poetry, flit, etc.)
 
     CommitModel:
       type: object
@@ -737,7 +980,6 @@ components:
           type: string
         previousPath:
           type: string
-          description: For renames
         changeType:
           type: string
           enum: [add, modify, delete, rename, copy]
@@ -749,17 +991,14 @@ components:
           default: false
         module:
           type: string
-          description: Reference to ModuleModel.id
         diff:
           type: string
-          description: Unified diff
         contentBefore:
           type: string
         contentAfter:
           type: string
         codeUnits:
           type: array
-          description: Affected methods/constructors/classes
           items:
             $ref: '#/components/schemas/CodeUnitModel'
         metrics:
@@ -794,67 +1033,42 @@ components:
           format: double
 
     # ==========================================================================
-    # Code Units - Core of the analysis
+    # Code Units
     # ==========================================================================
 
     CodeUnitModel:
       type: object
-      description: |
-        A method, constructor, or class affected by the commit.
-        Contains all information needed for LLM risk assessment.
       required: [signature, name, kind, location]
       properties:
-        # Identity
         signature:
           type: string
-          description: |
-            Unique identifier. For Java: JVM binary signature.
-            Example: "com/example/OrderService.processOrder(Lcom/example/Order;)V"
         name:
           type: string
-          description: Simple name (e.g., "processOrder")
         kind:
           $ref: '#/components/schemas/SymbolKindModel'
         location:
           $ref: '#/components/schemas/LocationModel'
-
-        # Code content
         body:
           type: string
-          description: Full source code of this unit
         modifiers:
           type: array
           items:
             type: string
-          description: "public, static, final, etc."
         documentation:
           type: string
-          description: Extracted doc comment (Javadoc, docstring, JSDoc, etc.)
         isTrivial:
           type: boolean
-          description: Getter/setter/delegator
           default: false
-
-        # Relationships
         parent:
           type: string
-          description: Signature of the containing code unit
         children:
           type: array
-          description: Signatures of nested code units
           items:
             type: string
-
-        # Java-specific
         java:
           $ref: '#/components/schemas/JavaInfoModel'
-
-        # Analysis results
         callers:
           type: array
-          description: |
-            Who calls this code unit. Critical for blast radius calculation.
-            More callers = higher risk when this code changes.
           items:
             $ref: '#/components/schemas/CallerModel'
         metrics:
@@ -865,6 +1079,18 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DiagnosticModel'
+        operation:
+          type: string
+          enum: [NEW, MODIFY, DELETE]
+          description: What happened to this code unit
+        bodyBefore:
+          type: string
+          description: Source code before change (for MODIFY)
+        unitDiff:
+          type: string
+          description: Diff of just this code unit
+        duplication:
+          $ref: '#/components/schemas/CodeUnitDuplicationModel'
 
     SymbolKindModel:
       type: string
@@ -903,18 +1129,36 @@ components:
         startOffset:
           type: integer
           minimum: 0
-          description: Byte offset from file start
         endOffset:
           type: integer
           minimum: 0
 
+    CodeUnitDuplicationModel:
+      type: object
+      properties:
+        isDuplicated:
+          type: boolean
+          default: false
+        duplicatePercent:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+        duplicateOf:
+          type: array
+          items:
+            type: string
+        changedLinesAffected:
+          type: boolean
+          description: Do changed lines fall within duplicated regions?
+          default: false
+
     # ==========================================================================
-    # Java-Specific Info
+    # Java-Specific
     # ==========================================================================
 
     JavaInfoModel:
       type: object
-      description: Java-specific metadata for the code unit
       properties:
         packageName:
           type: string
@@ -922,7 +1166,6 @@ components:
           type: string
         enclosingClass:
           type: string
-          description: For inner classes/anonymous classes
         isAnonymous:
           type: boolean
         isAbstract:
@@ -947,10 +1190,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/JavaAnnotationModel'
-        # Outbound calls (what this method calls)
         methodCalls:
           type: array
-          description: Methods this code unit invokes
           items:
             $ref: '#/components/schemas/MethodCallModel'
 
@@ -967,35 +1208,23 @@ components:
 
     MethodCallModel:
       type: object
-      description: An outbound method call from this code unit
       required: [owner, name, descriptor]
       properties:
-        # Binary-level details
         owner:
           type: string
-          description: Internal class name (e.g., java/util/List)
         name:
           type: string
-          description: Method name (e.g., "add", "<init>")
         descriptor:
           type: string
-          description: JVM method descriptor (e.g., "(Ljava/lang/Object;)Z")
         targetSignature:
           type: string
-          description: Full binary signature of the target method
         targetClass:
           type: string
         targetMethod:
           type: string
         invocationKind:
           type: string
-          enum:
-            - invokevirtual
-            - invokeinterface
-            - invokespecial
-            - invokestatic
-            - invokedynamic
-            - reference
+          enum: [invokevirtual, invokeinterface, invokespecial, invokestatic, invokedynamic, reference]
         isStatic:
           type: boolean
         isConstructor:
@@ -1004,67 +1233,35 @@ components:
           $ref: '#/components/schemas/LocationModel'
         artifact:
           type: string
-          description: |
-            Reference to dependency artifact ID containing the target.
-            Corresponds to key in DependencyRegistryModel.artifacts.
 
     # ==========================================================================
-    # Callers - Critical for LLM blast radius analysis
+    # Callers
     # ==========================================================================
 
     CallerModel:
       type: object
-      description: |
-        A method/function that calls this code unit.
-        Essential for understanding the impact of changes.
-        
-        For LLM: More callers = higher blast radius = higher risk.
-        Production callers are weighted higher than test callers.
       required: [name, kind]
       properties:
-        # Identity
         signature:
           type: string
-          description: |
-            Binary signature of the caller. Can be used to cross-reference
-            with other CodeUnits if the caller is also in the changed files.
         name:
           type: string
-          description: Simple name of the calling method
         kind:
           $ref: '#/components/schemas/SymbolKindModel'
-
-        # Location
         path:
           type: string
-          description: File path containing the caller
         location:
           $ref: '#/components/schemas/LocationModel'
-          description: Location of the caller method
-
-        # Context
         symbol:
           type: string
-          description: Full signature for display
-
-        # Classification (important for risk scoring)
         isTest:
           type: boolean
-          description: |
-            True if caller is in test code.
-            Test callers have lower risk weight than production callers.
           default: false
         isDeprecated:
           type: boolean
-          description: Caller is marked deprecated
           default: false
-
-        # Call sites within this caller
         callSites:
           type: array
-          description: |
-            Specific locations where the call occurs.
-            Multiple sites = this caller uses the affected method multiple times.
           items:
             $ref: '#/components/schemas/LocationModel'
 
@@ -1074,27 +1271,22 @@ components:
 
     MetricsModel:
       type: object
-      description: Code complexity metrics for risk assessment
       properties:
         cyclomaticComplexity:
           type: integer
           minimum: 1
-          description: McCabe complexity. Higher = more paths = more risk.
         cognitiveComplexity:
           type: integer
           minimum: 0
-          description: How hard to understand. Higher = harder to review.
         linesOfCode:
           type: integer
           minimum: 0
         logicalLinesOfCode:
           type: integer
           minimum: 0
-          description: Excludes blank/comment lines
         sourceLines:
           type: integer
           minimum: 0
-          description: Non-blank, non-comment lines
         commentLines:
           type: integer
           minimum: 0
@@ -1104,7 +1296,6 @@ components:
         nestingDepth:
           type: integer
           minimum: 0
-          description: Max nesting level
         halstead:
           $ref: '#/components/schemas/HalsteadMetricsModel'
         maintainabilityIndex:
@@ -1146,7 +1337,6 @@ components:
         estimatedTime:
           type: number
           format: double
-          description: Seconds
         estimatedBugs:
           type: number
           format: double
@@ -1157,7 +1347,6 @@ components:
 
     CoverageModel:
       type: object
-      description: Test coverage of this code unit
       properties:
         tool:
           type: string
@@ -1190,7 +1379,6 @@ components:
           minimum: 0
         lines:
           type: array
-          description: Line-by-line coverage detail
           items:
             $ref: '#/components/schemas/LineCoverageModel'
 
@@ -1222,28 +1410,19 @@ components:
           minimum: 1
         status:
           type: string
-          enum:
-            - empty           # No executable code
-            - notCovered      # Not executed
-            - partiallyCovered # Some branches covered
-            - fullyCovered    # All branches covered
-            - covered         # Alias for fullyCovered
-            - partial         # Alias for partiallyCovered
-            - missed          # Alias for notCovered
+          enum: [empty, notCovered, partiallyCovered, fullyCovered, covered, partial, missed]
         hits:
           type: integer
           minimum: 0
-          description: Execution count
         branches:
           $ref: '#/components/schemas/CoverageCounterModel'
 
     # ==========================================================================
-    # Diagnostics (Static Analysis)
+    # Diagnostics
     # ==========================================================================
 
     DiagnosticModel:
       type: object
-      description: Static analysis finding (PMD, SpotBugs, ESLint, etc.)
       required: [ruleId, severity, message]
       properties:
         tool:
@@ -1251,7 +1430,6 @@ components:
           enum: [pmd, spotbugs, checkstyle, errorprone, eslint, pylint, ruff, clippy, other]
         ruleId:
           type: string
-          description: Rule identifier
         severity:
           type: string
           enum: [error, warning, info, note, none]
@@ -1261,34 +1439,32 @@ components:
           $ref: '#/components/schemas/LocationModel'
         category:
           type: string
-          description: Bug category (e.g., CORRECTNESS, PERFORMANCE)
         cwe:
           type: array
-          description: CWE identifiers
           items:
             type: string
             pattern: '^CWE-\d+$'
         documentation:
           type: string
           format: uri
-          description: Link to rule documentation
-        # Tool-specific properties
         pmd:
           $ref: '#/components/schemas/PmdPropertiesModel'
         spotbugs:
           $ref: '#/components/schemas/SpotbugsPropertiesModel'
+        isPreExisting:
+          type: boolean
+          description: Did this issue exist before this commit?
+          default: false
 
     PmdPropertiesModel:
       type: object
       properties:
         ruleSet:
           type: string
-          description: PMD ruleset name
         priority:
           type: integer
           minimum: 1
           maximum: 5
-          description: PMD priority (1=highest)
         externalInfoUrl:
           type: string
           format: uri
@@ -1298,32 +1474,22 @@ components:
       properties:
         bugCategory:
           type: string
-          description: Bug category (e.g., CORRECTNESS, STYLE)
         bugRank:
           type: integer
           minimum: 1
           maximum: 20
-          description: Bug rank (1=most concerning)
         confidence:
           type: string
           enum: [high, medium, low]
         methodSignature:
           type: string
-          description: JVM method signature
 
     # ==========================================================================
-    # Duplication (Copy-Paste Detection)
+    # Duplication
     # ==========================================================================
 
     DuplicationReportModel:
       type: object
-      description: |
-        Copy-paste detection results.
-        
-        Structure:
-        - `clones`: All raw duplication matches from CPD tool (complete data)
-        - `clonesFromExisting`: References to affected code that was copied from existing codebase
-        - `newClones`: References to newly introduced duplicate groups (all members are in changed files)
       properties:
         tool:
           type: string
@@ -1345,127 +1511,81 @@ components:
           maximum: 100
         clones:
           type: array
-          description: |
-            All detected clone instances from CPD.
-            Each CloneModel represents a complete duplication match with all locations.
           items:
             $ref: '#/components/schemas/CloneModel'
         clonesFromExisting:
           type: array
-          description: |
-            New code in the commit that was copied from existing codebase.
-            Maps affected code unit signatures to their source signatures.
-            Use signatures to cross-reference with clones array for full location details.
           items:
             $ref: '#/components/schemas/CloneFromExistingModel'
         newClones:
           type: array
-          description: |
-            Newly introduced duplicate groups where all members are in changed files.
-            Each group contains signatures of code units that are duplicates of each other.
-            Use signatures to cross-reference with clones array for full location details.
           items:
             $ref: '#/components/schemas/NewCloneGroupModel'
 
     CloneModel:
       type: object
-      description: |
-        A single duplication match detected by CPD.
-        Contains complete information about all duplicate locations.
       required: [locations]
       properties:
         tokenCount:
           type: integer
           minimum: 1
-          description: Number of duplicated tokens
         lineCount:
           type: integer
           minimum: 1
-          description: Number of duplicated lines
         isCrossFile:
           type: boolean
-          description: Whether the duplication spans multiple files
         locations:
           type: array
           minItems: 2
-          description: All locations where this duplicated code appears
           items:
             $ref: '#/components/schemas/CloneLocationModel'
 
     CloneLocationModel:
       type: object
-      description: A single location within a clone match
       required: [path, location]
       properties:
         path:
           type: string
-          description: File path
         location:
           $ref: '#/components/schemas/LocationModel'
         codeUnitSignature:
           type: string
-          description: |
-            Binary signature of the containing code unit (if the duplicated code is within a method/constructor).
-            Can be used to cross-reference with CodeUnitModel.
         sourceSlice:
           type: string
-          description: The actual duplicated source code fragment
 
     CloneFromExistingModel:
       type: object
-      description: |
-        Represents new code that was copied from existing codebase.
-        The affected code unit is in the changed files, sources are from existing code.
       required: [affectedSignature, sourceSignatures]
       properties:
         affectedSignature:
           type: string
-          description: |
-            Binary signature of the affected code unit (in changed files).
-            Cross-reference with CodeUnitModel.signature in files[].codeUnits[].
         sourceSignatures:
           type: array
-          description: |
-            Binary signatures of source code units that the affected code was copied from.
-            These are existing code units not in the current commit's changes.
           items:
             type: string
 
     NewCloneGroupModel:
       type: object
-      description: |
-        A group of newly introduced duplicates where all members are in changed files.
-        All code units in this group are duplicates of each other.
       required: [memberSignatures]
       properties:
         memberSignatures:
           type: array
-          description: |
-            Binary signatures of all code units in this duplicate group.
-            All are in the changed files of this commit.
-            Cross-reference with CodeUnitModel.signature in files[].codeUnits[].
           minItems: 2
           items:
             type: string
 
     CodeUnitRefModel:
       type: object
-      description: |
-        Lightweight reference to a code unit.
-        Uses `signature` as the primary identifier (matches CodeUnitModel.signature).
       required: [signature]
       properties:
         module:
           type: string
         signature:
           type: string
-          description: Unique signature of the code unit
         path:
           type: string
-          description: File path (for display/navigation)
         location:
           $ref: '#/components/schemas/LocationModel'
-          description: Location within the file (for display/navigation)
 
     # ==========================================================================
     # Codebase Index
@@ -1473,7 +1593,6 @@ components:
 
     CodebaseIndexModel:
       type: object
-      description: Index of all code units in the codebase (for CPD resolution)
       properties:
         totalCodeUnits:
           type: integer
@@ -1498,8 +1617,450 @@ components:
           items:
             $ref: '#/components/schemas/CodeUnitRefModel'
 
+    BugsModel:
+      type: object
+      properties:
+        blocking:
+          type: array
+          items:
+            $ref: '#/components/schemas/BugModel'
+        major:
+          type: array
+          items:
+            $ref: '#/components/schemas/BugModel'
+        minor:
+          type: array
+          items:
+            $ref: '#/components/schemas/BugModel'
+        hasBlockingBugs:
+          type: boolean
+          default: false
+
+    BugModel:
+      type: object
+      required: [type, title, description]
+      properties:
+        type:
+          type: string
+          enum: [security, concurrency, data_corruption, logic, resource_leak, null_pointer, performance, api_misuse, architecture, other]
+        title:
+          type: string
+        description:
+          type: string
+        file:
+          type: string
+        line:
+          type: integer
+        suggestedFix:
+          type: string
+        confidence:
+          type: string
+          enum: [high, medium, low]
+        source:
+          type: string
+          enum: [llm, pmd, spotbugs]
+
+    AssessmentModel:
+      type: object
+      properties:
+        thinking:
+          type: string
+        diffAnalysis:
+          $ref: '#/components/schemas/DiffAnalysisModel'
+        riskDimensions:
+          $ref: '#/components/schemas/RiskDimensionsModel'
+        qualityAssessment:
+          $ref: '#/components/schemas/LlmQualityAssessmentModel'
+        blastRadiusAnalysis:
+          $ref: '#/components/schemas/BlastRadiusAnalysisModel'
+        staticAnalysisReview:
+          $ref: '#/components/schemas/StaticAnalysisReviewModel'
+        effortBreakdown:
+          $ref: '#/components/schemas/EffortBreakdownModel'
+        qualityMultiplier:
+          $ref: '#/components/schemas/QualityMultiplierModel'
+
+    EffortBreakdownModel:
+      type: object
+      description: Breakdown of base effort score calculation
+      properties:
+        volumeScore:
+          $ref: '#/components/schemas/VolumeScoreModel'
+        complexityMultiplier:
+          $ref: '#/components/schemas/ComplexityMultiplierModel'
+        baseEffortScore:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+
+              
+    VolumeScoreModel:
+      type: object
+      description: |
+        Volume-based effort score calculation.
+        NOTE: Files touched is intentionally excluded - code units (methods, classes) 
+        provide better granularity for productivity measurement.
+      properties:
+        linesChanged:
+          type: integer
+          minimum: 0
+          description: Total lines of code changed in the commit
+        linesPoints:
+          type: number
+          format: double
+          description: Points earned from lines changed (with relative scaling)
+        methodsModified:
+          type: integer
+          minimum: 0
+          description: Number of existing methods modified
+        methodsModifiedPoints:
+          type: number
+          format: double
+          description: Points for modifying methods (with complexity multiplier)
+        methodsAdded:
+          type: integer
+          minimum: 0
+          description: Number of new methods added
+        methodsAddedPoints:
+          type: number
+          format: double
+          description: Points for adding methods (with clean code bonus)
+        classesModified:
+          type: integer
+          minimum: 0
+          description: Number of existing classes modified
+        classesModifiedPoints:
+          type: number
+          format: double
+          description: Points for modifying classes
+        classesAdded:
+          type: integer
+          minimum: 0
+          description: Number of new classes added
+        classesAddedPoints:
+          type: number
+          format: double
+          description: Points for adding classes
+        projectSizeFactor:
+          type: number
+          format: double
+          description: |
+            Cube root normalization factor based on project size.
+            Used for relative scoring: cbrt(project_total_lines) / 100
+        modifyMultiplier:
+          type: number
+          format: double
+          description: |
+            Multiplier for modification operations.
+            Slightly higher for larger projects (harder to navigate).
+            Formula: 1.0 + min(projectSizeFactor * 0.3, 0.2)
+        addMultiplier:
+          type: number
+          format: double
+          description: |
+            Multiplier for addition operations.
+            Contribution is more significant in smaller codebases.
+            Formula: 1.0 + (0.1 / (1.0 + projectSizeFactor))
+        totalVolumeScore:
+          type: number
+          format: double
+          description: Final volume score (sum of all component scores, capped at max)
+
+    ComplexityMultiplierModel:
+      type: object
+      properties:
+        avgModifyComplexity:
+          type: number
+          format: double
+        modifyMultiplier:
+          type: number
+          format: double
+        avgNewComplexity:
+          type: number
+          format: double
+        newMultiplier:
+          type: number
+          format: double
+        combinedMultiplier:
+          type: number
+          format: double
+
+    QualityMultiplierModel:
+      type: object
+      description: Quality multiplier calculation breakdown
+      properties:
+        cpdAnalysis:
+          $ref: '#/components/schemas/CpdAnalysisModel'
+        staticAnalysis:
+          $ref: '#/components/schemas/StaticAnalysisImpactModel'
+        coverageAnalysis:
+          $ref: '#/components/schemas/CoverageAnalysisModel'
+        architectureAnalysis:
+          $ref: '#/components/schemas/ArchitectureAnalysisModel'
+        finalMultiplier:
+          type: number
+          format: double
+          minimum: 0.5
+          maximum: 1.2
+
+    CpdAnalysisModel:
+      type: object
+      properties:
+        duplicationPercent:
+          type: number
+          format: double
+        affectsChangedCode:
+          type: boolean
+        multiplierImpact:
+          type: number
+          format: double
+
+    StaticAnalysisImpactModel:
+      type: object
+      properties:
+        pmdViolationsInChanges:
+          type: integer
+          minimum: 0
+        spotbugsIssuesInChanges:
+          type: integer
+          minimum: 0
+        multiplierImpact:
+          type: number
+          format: double
+
+    CoverageAnalysisModel:
+      type: object
+      properties:
+        coveragePercent:
+          type: number
+          format: double
+        multiplierImpact:
+          type: number
+          format: double
+
+    ArchitectureAnalysisModel:
+      type: object
+      properties:
+        solidViolations:
+          type: array
+          items:
+            type: string
+        architectureIssues:
+          type: array
+          items:
+            type: string
+        multiplierImpact:
+          type: number
+          format: double
+
+    DiffAnalysisModel:
+      type: object
+      properties:
+        primaryChangeType:
+          type: string
+          enum: [log_message, comment, string_literal, import_formatting, simple_refactor, configuration, error_handling, business_logic, control_flow, data_access, api_contract, concurrency, security]
+        changesBusinessLogic:
+          type: boolean
+        changesControlFlow:
+          type: boolean
+        touchesConcurrency:
+          type: boolean
+        touchesSecurity:
+          type: boolean
+        rationale:
+          type: string
+
+    RiskDimensionsModel:
+      type: object
+      properties:
+        architectureImpact:
+          $ref: '#/components/schemas/DimensionScoreModel'
+        concurrencyRisk:
+          $ref: '#/components/schemas/DimensionScoreModel'
+        integrationSurface:
+          $ref: '#/components/schemas/DimensionScoreModel'
+        dataIntegrity:
+          $ref: '#/components/schemas/DimensionScoreModel'
+        securitySensitivity:
+          $ref: '#/components/schemas/DimensionScoreModel'
+        scalabilityImpact:
+          $ref: '#/components/schemas/DimensionScoreModel'
+        observability:
+          $ref: '#/components/schemas/DimensionScoreModel'
+        resilience:
+          $ref: '#/components/schemas/DimensionScoreModel'
+        performance:
+          $ref: '#/components/schemas/DimensionScoreModel'
+        testingCoverage:
+          $ref: '#/components/schemas/DimensionScoreModel'
+
+    DimensionScoreModel:
+      type: object
+      properties:
+        score:
+          type: integer
+          minimum: 0
+          maximum: 10
+        rationale:
+          type: string
+        qualityGateMet:
+          type: boolean
+          description: Whether the quality gate for this dimension is satisfied
+
+    LlmQualityAssessmentModel:
+      type: object
+      properties:
+        newCodeQuality:
+          $ref: '#/components/schemas/NewCodeQualityModel'
+        modifyCodeQuality:
+          $ref: '#/components/schemas/ModifyCodeQualityModel'
+        copyPasteAssessment:
+          $ref: '#/components/schemas/CopyPasteAssessmentModel'
+
+    NewCodeQualityModel:
+      type: object
+      properties:
+        methodsAdded:
+          type: integer
+          default: 0
+        avgComplexity:
+          type: number
+          format: double
+          default: 0
+        isClean:
+          type: boolean
+          default: true
+        concerns:
+          type: array
+          items:
+            type: string
+
+    ModifyCodeQualityModel:
+      type: object
+      properties:
+        methodsModified:
+          type: integer
+          default: 0
+        improvedQuality:
+          type: boolean
+          default: true
+        missedImprovementOpportunities:
+          type: array
+          items:
+            type: string
+
+    CopyPasteAssessmentModel:
+      type: object
+      properties:
+        affectsChangedLines:
+          type: boolean
+          default: false
+        touchedWithoutImproving:
+          type: boolean
+          default: false
+        copyPastePercent:
+          type: number
+          format: double
+          default: 0
+        concerns:
+          type: array
+          items:
+            type: string
+
+    BlastRadiusAnalysisModel:
+      type: object
+      properties:
+        totalCallers:
+          type: integer
+          default: 0
+        productionCallers:
+          type: integer
+          default: 0
+        testCallers:
+          type: integer
+          default: 0
+        riskLevel:
+          type: string
+          enum: [low, moderate, high, critical]
+          default: low
+        affectedModules:
+          type: array
+          items:
+            type: string
+        criticalCallers:
+          type: array
+          items:
+            type: string
+        explanation:
+          type: string
+
+    StaticAnalysisReviewModel:
+      type: object
+      properties:
+        pmdValidated:
+          type: array
+          items:
+            type: string
+        pmdFalsePositives:
+          type: array
+          items:
+            type: string
+        pmdInChangedLines:
+          type: array
+          items:
+            type: string
+        pmdPreExisting:
+          type: array
+          items:
+            type: string
+        spotbugsValidated:
+          type: array
+          items:
+            type: string
+        spotbugsFalsePositives:
+          type: array
+          items:
+            type: string
+        spotbugsInChangedLines:
+          type: array
+          items:
+            type: string
+        spotbugsPreExisting:
+          type: array
+          items:
+            type: string
+        preExistingIssues:
+          type: array
+          items:
+            type: string
+
+    ReviewTagsModel:
+      type: object
+      properties:
+        technical:
+          type: array
+          items:
+            type: string
+        functional:
+          type: array
+          items:
+            type: string
+
+    ExistingTagsModel:
+      type: object
+      properties:
+        technical:
+          type: array
+          items:
+            type: string
+        functional:
+          type: array
+          items:
+            type: string
+
     # ==========================================================================
-    # Error Response
+    # Error
     # ==========================================================================
 
     ErrorModel:
@@ -1509,7 +2070,6 @@ components:
         type:
           type: string
           format: uri
-          description: Problem type URI
         status:
           type: integer
         title:
@@ -1523,10 +2083,8 @@ components:
           format: uri
         traceId:
           type: string
-          description: Request trace ID for support
         errors:
           type: array
-          description: Validation errors
           items:
             type: object
             properties:

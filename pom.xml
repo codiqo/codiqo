@@ -102,7 +102,7 @@
         <!-- TESTING -->
         <!-- -->
         <surefire.tree-report.version>1.4.0</surefire.tree-report.version>
-        <junit.version>6.0.1</junit.version>
+        <junit.version>5.14.2</junit.version>
         <mockito.version>5.21.0</mockito.version>
         <testcontainers.version>2.0.3</testcontainers.version>
         <awaitility.version>4.3.0</awaitility.version>
@@ -474,6 +474,11 @@
                 <groupId>com.google.guava</groupId>
                 <artifactId>listenablefuture</artifactId>
                 <version>${listenablefuture.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.thymeleaf</groupId>
+                <artifactId>thymeleaf</artifactId>
+                <version>${thymeleaf.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.scala-lang</groupId>
@@ -1359,5 +1364,6 @@
         <module>lang-java</module>
         <module>maven-plugin</module>
         <module>openapi</module>
+        <module>llm</module>
     </modules>
 </project>
