@@ -111,6 +111,10 @@ The complete request data including file changes, symbol changes, diffs, and cal
 ```
 
 ---
+[# th:if="${web_search_enabled}"]
+
+**WEB SEARCH TOOL REMINDER:** You have the `WebSearchTool` available. If you need to search for dependency breaking changes, make **ONE separate tool call per query**. Each call must contain a single JSON object: `{"query": "...", "maxResults": 5}`. Do NOT combine multiple queries into one call. Only search when you lack knowledge about a specific version transition.
+[/]
 
 **Now analyze this commit using the scoring model defined in the system prompt and return your JSON assessment.**
 

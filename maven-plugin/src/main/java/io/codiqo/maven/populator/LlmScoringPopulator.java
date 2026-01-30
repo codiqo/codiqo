@@ -9,8 +9,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.Duration;
 import java.time.format.DateTimeFormatter;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -59,7 +57,21 @@ public class LlmScoringPopulator implements SubmissionPopulator {
             LlmScoringRequest request = mapper.apply(submission);
             PromptContext promptContext = buildPromptContext(submission, args);
 
-            ScoringResult result = client.score(request, promptContext, new ScoringClient.StreamingHandler() {});
+            ScoringResult result = client.score(request, promptContext, new ScoringClient.StreamingHandler() {
+                private int contentChars = 0;
+
+                @Override
+                public void onContent(String delta) {
+                    contentChars += delta.length();
+                    if (contentChars % 1000 < delta.length()) {
+                        log.info("LLM responding... (" + contentChars + " chars)");
+                    }
+                }
+                @Override
+                public void onToolCall(String toolName) {
+                    log.info("Tool call: " + toolName);
+                }
+            });
 
             stopWatch.stop();
             Duration duration = Duration.ofMillis(stopWatch.getTime());
@@ -80,14 +92,14 @@ public class LlmScoringPopulator implements SubmissionPopulator {
 
             if (args.isDumpAnalysis()) {
                 generateHtmlReport(ctx, result, request, duration);
-                dumpYamlOutput(submission, response, args);
+                dumpResultYaml(submission, result, duration, args);
             }
         } catch (Exception err) {
             ExceptionUtils.wrapAndThrow(err);
         }
     }
     private void generateHtmlReport(SubmissionContext ctx, ScoringResult result, LlmScoringRequest request, Duration duration) throws IOException {
-        HtmlReportBuilder builder = new HtmlReportBuilder();
+        HtmlReportBuilder builder = new HtmlReportBuilder(ctx.getArgs());
         AnalysisSubmissionModel submission = ctx.getSubmissionModel();
         CommitModel commit = submission.getCommit();
 
@@ -122,28 +134,21 @@ public class LlmScoringPopulator implements SubmissionPopulator {
         }
         log.info("HTML report: " + htmlFile.getAbsolutePath());
     }
-    private void dumpYamlOutput(AnalysisSubmissionModel submission, LlmScoringResponse llmResponse, RunArgs args) throws IOException {
-        Map<String, Object> combinedOutput = new LinkedHashMap<>();
-        combinedOutput.put("submission", submission);
-
+    private void dumpResultYaml(AnalysisSubmissionModel submission, ScoringResult result, Duration duration, RunArgs args) throws IOException {
         AnalysisResultModel analysisResult = new AnalysisResultModel();
+
+        analysisResult.setProject(submission.getProject());
+        analysisResult.setCommit(submission.getCommit());
+        analysisResult.setFiles(submission.getFiles());
+        analysisResult.setDependencies(submission.getDependencies());
+        analysisResult.setDuplication(submission.getDuplication());
+        analysisResult.setProjectMetrics(submission.getProjectMetrics());
+        analysisResult.setProjectQuality(submission.getProjectQuality());
+        analysisResult.setFullProjectCoverage(submission.getFullProjectCoverage());
+
         LlmResponseMapper mapper = new LlmResponseMapper();
-        mapper.mapToAnalysisResult(llmResponse, analysisResult);
-
-        Map<String, Object> llmSection = new LinkedHashMap<>();
-        llmSection.put("score", llmResponse.getScore());
-        llmSection.put("scoreCalculation", llmResponse.getScoreCalculation());
-        llmSection.put("summary", llmResponse.getSummary());
-        llmSection.put("changeClassification", llmResponse.getChangeClassification());
-        llmSection.put("requiresSeniorReview", llmResponse.getRequiresSeniorReview());
-        llmSection.put("seniorReviewReasons", llmResponse.getSeniorReviewReasons());
-
-        combinedOutput.put("llmScoring", llmSection);
-        combinedOutput.put("analysisResult", analysisResult);
-
-        Map<String, Object> metadata = new LinkedHashMap<>();
-        metadata.put("model", args.getLlmModel());
-        combinedOutput.put("metadata", metadata);
+        mapper.mapToAnalysisResult(result.getResponse(), analysisResult);
+        analysisResult.setLlmAnalysis(LlmResponseMapper.mapLlmAnalysis(result, duration, args.getLlmModel()));
 
         ObjectMapper yamlMapper = new YAMLMapper();
         yamlMapper.setDefaultPropertyInclusion(Include.NON_NULL);
@@ -155,18 +160,16 @@ public class LlmScoringPopulator implements SubmissionPopulator {
         File file;
         if (Objects.nonNull(outputDir)) {
             FileUtils.forceMkdir(outputDir);
-            file = new File(outputDir, "codiqo-llm-analysis.yaml");
+            file = new File(outputDir, "codiqo-analysis.yaml");
         } else {
-            file = Files.createTempFile("codiqo-llm-analysis-", ".yaml").toFile();
+            file = Files.createTempFile("codiqo-analysis-", ".yaml").toFile();
         }
-        String output = yamlMapper.writeValueAsString(combinedOutput);
-        try (FileOutputStream stream = new FileOutputStream(file)) {
-            try (BufferedOutputStream bufferedStream = new BufferedOutputStream(stream)) {
-                bufferedStream.write(output.getBytes(StandardCharsets.UTF_8));
-                bufferedStream.flush();
-            }
+        String output = yamlMapper.writeValueAsString(analysisResult);
+        try (BufferedOutputStream stream = new BufferedOutputStream(new FileOutputStream(file))) {
+            stream.write(output.getBytes(StandardCharsets.UTF_8));
+            stream.flush();
         }
-        log.info("YAML dump: " + file.getAbsolutePath());
+        log.info("YAML analysis: " + file.getAbsolutePath());
     }
     public static PromptContext buildPromptContext(AnalysisSubmissionModel submission, RunArgs args) {
         ProjectMetricsModel projectMetrics = submission.getProjectMetrics();
@@ -192,7 +195,6 @@ public class LlmScoringPopulator implements SubmissionPopulator {
                 .projectTotalFiles(totalFiles)
                 .projectTotalMethods(totalMethods)
                 .codeUnitsAffected(codeUnitsAffected)
-                .nativeThinking(args.isLlmNativeThinking())
                 .build();
     }
 }

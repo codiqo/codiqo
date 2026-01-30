@@ -97,9 +97,7 @@ public class RunArgs {
     @Nullable
     private Short llmMaxRetries = 3;
     @Nullable
-    private boolean llmNativeThinking = true;
-    @Nullable
-    private boolean llmEnableWebSearchTool = true;
+    private boolean llmEnableWebSearchTool = false;
     @Nullable
     private File outputDirectory;
     @Nullable
@@ -193,6 +191,30 @@ public class RunArgs {
     @Nullable
     private double testCodePenaltyWeight = 0.2;
     @Nullable
+    private int scoreThresholdHuge = 150;
+    @Nullable
+    private int scoreThresholdLarge = 90;
+    @Nullable
+    private int scoreThresholdMedium = 50;
+    @Nullable
+    private int scoreThresholdSmall = 20;
+    @Nullable
+    private int dimensionScoreCritical = 8;
+    @Nullable
+    private int dimensionScoreMajor = 6;
+    @Nullable
+    private int dimensionScoreModerate = 4;
+    @Nullable
+    private int callerThresholdHigh = 10;
+    @Nullable
+    private int callerThresholdModerate = 5;
+    @Nullable
+    private int maxClonesToShow = 10;
+    @Nullable
+    private int maxSourceLines = 30;
+    @Nullable
+    private int truncateSourceLines = 25;
+    @Nullable
     private double architectureBonusFactor = 0.01;
     @Nullable
     private double pmdPriority1Penalty = -0.05;
@@ -246,6 +268,47 @@ public class RunArgs {
     private int performanceThreshold = 7;
     @Nullable
     private int seniorReviewThreshold = 7;
+    @Nullable
+    private int seniorReviewCriticalThreshold = 8;
+    @Nullable
+    private int complexityHighDisplayThreshold = 15;
+    @Nullable
+    private int complexityModerateDisplayThreshold = 10;
+    @Nullable
+    private double similarityCriticalThreshold = 0.90;
+    @Nullable
+    private double similarityMajorThreshold = 0.75;
+    @Nullable
+    private int riskHighDimensionThreshold = 7;
+    @Nullable
+    private int riskBaseMultiplier = 7;
+    @Nullable
+    private int riskHighDimensionPenalty = 5;
+    @Nullable
+    private int riskCoreLibraryPenalty = 10;
+    @Nullable
+    private int riskBreakingChangesPenalty = 10;
+    @Nullable
+    private int riskScoreMax = 100;
+    @Nullable
+    private int riskLevelLowMax = 25;
+    @Nullable
+    private int riskLevelModerateMax = 50;
+    @Nullable
+    private int riskLevelHighMax = 75;
+    @Nullable
+    private int riskLevelVeryHighMax = 90;
+    @Nullable
+    private int coverageImpactExcellentMin = 90;
+    @Nullable
+    private int coverageImpactGoodMin = 80;
+    @Nullable
+    private int coverageImpactAcceptableMin = 70;
+    @Nullable
+    private int coverageImpactLowMin = 60;
+    @Nullable
+    private int coverageImpactPoorMin = 50;
+
     public Optional<ProjectSpec> owner(File filePath) {
         return projects.stream().filter(proj -> proj.contains(filePath)).findAny();
     }

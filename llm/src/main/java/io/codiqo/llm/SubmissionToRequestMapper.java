@@ -2,6 +2,7 @@ package io.codiqo.llm;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -52,6 +53,8 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class SubmissionToRequestMapper implements Function<AnalysisSubmissionModel, LlmScoringRequest> {
     private static final String DEV_NULL = "/dev/null";
+    private static final EnumSet<SymbolKindModel> METHOD_OR_CONSTRUCTOR = EnumSet.of(SymbolKindModel.METHOD, SymbolKindModel.CONSTRUCTOR);
+
     private final RunArgs args;
 
     @Override
@@ -71,69 +74,6 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .coverage(mapCoverage(submission))
                 .complexity(mapComplexityMetrics(files))
                 .duplication(mapDuplication(submission.getDuplication(), fileContext))
-                .build();
-    }
-    private static List<FileChange> mapFileChanges(List<FileChangeModel> files) {
-        return files.stream().map(SubmissionToRequestMapper::mapFileChange).collect(Collectors.toList());
-    }
-    private static FileChange mapFileChange(FileChangeModel file) {
-        DiffStats stats = DiffStats.fromPatch(file.getDiff());
-        return FileChange.builder()
-                .path(resolveEffectivePath(file))
-                .changeType(mapFileChangeType(file.getChangeType()))
-                .diff(file.getDiff())
-                .isTest(Boolean.TRUE.equals(file.getIsTest()))
-                .language(mapLanguage(file))
-                .linesAdded(stats.getAdded())
-                .linesDeleted(stats.getDeleted())
-                .build();
-    }
-    private static List<MethodChange> mapMethodChanges(List<FileChangeModel> files, FileContext fileContext) {
-        List<MethodChange> toReturn = Lists.newArrayList();
-        for (FileChangeModel file : files) {
-            if (CollectionUtils.isEmpty(file.getCodeUnits())) {
-                continue;
-            }
-            for (CodeUnitModel codeUnit : file.getCodeUnits()) {
-                if (isMethodOrConstructor(codeUnit.getKind())) {
-                    if (Boolean.TRUE.equals(codeUnit.getIsTrivial())) {
-                        continue;
-                    }
-                    toReturn.add(mapMethodChange(file, codeUnit, fileContext));
-                }
-            }
-        }
-        return toReturn;
-    }
-    private static MethodChange mapMethodChange(FileChangeModel file, CodeUnitModel codeUnit, FileContext fileContext) {
-        MethodChange.MethodChangeBuilder builder = MethodChange.builder()
-                .methodName(codeUnit.getName())
-                .signature(codeUnit.getSignature())
-                .file(resolveEffectivePath(file))
-                .className(extractClassName(codeUnit))
-                .operation(mapOperation(codeUnit.getOperation()))
-                .isConstructor(codeUnit.getKind() == SymbolKindModel.CONSTRUCTOR)
-                .startLine(codeUnit.getLocation().getStartLine())
-                .endLine(codeUnit.getLocation().getEndLine());
-        mapMetrics(codeUnit.getMetrics(), builder);
-        mapCallers(codeUnit.getCallers(), builder);
-        mapDiagnostics(codeUnit.getDiagnostics(), file.getPath(), fileContext, builder);
-        return builder.build();
-    }
-    private static void mapCallers(List<CallerModel> callers, MethodChange.MethodChangeBuilder builder) {
-        builder.callers(callers.stream().map(SubmissionToRequestMapper::mapCaller).collect(Collectors.toList()));
-    }
-    private static CallerInfo mapCaller(CallerModel caller) {
-        return CallerInfo.builder()
-                .callerMethod(caller.getName())
-                .file(caller.getPath())
-                .line(caller.getLocation().getStartLine())
-                .isTestCaller(Boolean.TRUE.equals(caller.getIsTest()))
-                .signature(caller.getSignature())
-                .kind(Objects.nonNull(caller.getKind()) ? caller.getKind().getValue() : null)
-                .symbol(caller.getSymbol())
-                .isDeprecated(Boolean.TRUE.equals(caller.getIsDeprecated()))
-                .callSiteCount(CollectionUtils.size(caller.getCallSites()))
                 .build();
     }
     private LlmScoringRequest.DuplicationInfo mapDuplication(DuplicationReportModel duplication, FileContext fileContext) {
@@ -279,15 +219,6 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .methodCoverages(methodCoverages)
                 .uncoveredPaths(uncoveredPaths);
     }
-    private LlmScoringRequest.CoverageInfo.RiskLevel classifyRiskLevel(double linePercent) {
-        if (linePercent < args.getCoverageCriticalThreshold()) {
-            return LlmScoringRequest.CoverageInfo.RiskLevel.CRITICAL;
-        }
-        if (linePercent < args.getCoverageHighThreshold()) {
-            return LlmScoringRequest.CoverageInfo.RiskLevel.HIGH;
-        }
-        return LlmScoringRequest.CoverageInfo.RiskLevel.MEDIUM;
-    }
     private CoverageInfo.UncoveredPath buildUncoveredPath(FileChangeModel file, CodeUnitModel codeUnit, double linePercent) {
         return CoverageInfo.UncoveredPath.builder()
                 .file(file.getPath())
@@ -296,6 +227,15 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .endLine(codeUnit.getLocation().getEndLine())
                 .riskLevel(classifyRiskLevel(linePercent))
                 .build();
+    }
+    private LlmScoringRequest.CoverageInfo.RiskLevel classifyRiskLevel(double linePercent) {
+        if (linePercent < args.getCoverageCriticalThreshold()) {
+            return LlmScoringRequest.CoverageInfo.RiskLevel.CRITICAL;
+        }
+        if (linePercent < args.getCoverageHighThreshold()) {
+            return LlmScoringRequest.CoverageInfo.RiskLevel.HIGH;
+        }
+        return LlmScoringRequest.CoverageInfo.RiskLevel.MEDIUM;
     }
     private ComplexityMetrics mapComplexityMetrics(List<FileChangeModel> files) {
         int totalCyclomatic = 0;
@@ -342,86 +282,68 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .complexityThreshold(args.getHighComplexityThreshold())
                 .build();
     }
-    private static void mapDiagnostics(List<DiagnosticModel> diagnostics, String filePath, FileContext fileContext, MethodChange.MethodChangeBuilder builder) {
-        Set<Integer> addedLines = fileContext.getAddedLinesByFile().get(filePath);
-        builder.diagnostics(diagnostics.stream()
-                .map(diag -> mapDiagnostic(diag, addedLines))
-                .collect(Collectors.toList()));
+    private static List<FileChange> mapFileChanges(List<FileChangeModel> files) {
+        return files.stream().map(SubmissionToRequestMapper::mapFileChange).collect(Collectors.toList());
     }
-    private static DiagnosticInfo mapDiagnostic(DiagnosticModel diag, Set<Integer> addedLines) {
-        int startLine = Objects.nonNull(diag.getLocation()) ? diag.getLocation().getStartLine() : 0;
-        int endLine = Objects.nonNull(diag.getLocation()) ? diag.getLocation().getEndLine() : 0;
-        boolean introducedInCommit = false;
-        if (Objects.nonNull(addedLines) && startLine > 0) {
-            for (int line = startLine; line <= Math.max(startLine, endLine); line++) {
-                if (addedLines.contains(line)) {
-                    introducedInCommit = true;
-                    break;
-                }
-            }
-        }
-        return DiagnosticInfo.builder()
-                .tool(Objects.nonNull(diag.getTool()) ? diag.getTool().getValue() : null)
-                .ruleId(diag.getRuleId())
-                .message(diag.getMessage())
-                .category(diag.getCategory())
-                .severity(mapDiagnosticSeverity(diag.getSeverity()))
-                .startLine(startLine)
-                .endLine(endLine)
-                .introducedInCommit(introducedInCommit)
+    private static FileChange mapFileChange(FileChangeModel file) {
+        DiffStats stats = DiffStats.fromPatch(file.getDiff());
+        return FileChange.builder()
+                .path(resolveEffectivePath(file))
+                .changeType(mapFileChangeType(file.getChangeType()))
+                .diff(file.getDiff())
+                .isTest(Boolean.TRUE.equals(file.getIsTest()))
+                .language(mapLanguage(file))
+                .linesAdded(stats.getAdded())
+                .linesDeleted(stats.getDeleted())
                 .build();
     }
-    private static LlmScoringRequest.DiagnosticSeverity mapDiagnosticSeverity(DiagnosticModel.SeverityEnum severity) {
-        if (Objects.isNull(severity)) {
-            return null;
-        }
-        switch (severity) {
-            case ERROR:
-                return LlmScoringRequest.DiagnosticSeverity.ERROR;
-            case WARNING:
-                return LlmScoringRequest.DiagnosticSeverity.WARNING;
-            case INFO:
-                return LlmScoringRequest.DiagnosticSeverity.INFO;
-            case NOTE:
-                return LlmScoringRequest.DiagnosticSeverity.NOTE;
-            case NONE:
-                return LlmScoringRequest.DiagnosticSeverity.NONE;
-            default:
-                throw new IllegalArgumentException("Unknown diagnostic severity: " + severity);
-        }
-    }
-    private static FileContext buildFileContext(List<FileChangeModel> files) {
-        Set<String> testFiles = Sets.newHashSet();
-        Map<String, Set<Integer>> toReturn = Maps.newHashMap();
+    private static List<MethodChange> mapMethodChanges(List<FileChangeModel> files, FileContext fileContext) {
+        List<MethodChange> toReturn = Lists.newArrayList();
         for (FileChangeModel file : files) {
-            String path = file.getPath();
-            if (Boolean.TRUE.equals(file.getIsTest())) {
-                testFiles.add(path);
+            if (CollectionUtils.isEmpty(file.getCodeUnits())) {
+                continue;
             }
-            if (Objects.nonNull(file.getDiff())) {
-                Set<Integer> addedLines = parseAddedLinesFromDiff(file.getDiff());
-                if (CollectionUtils.isNotEmpty(addedLines)) {
-                    toReturn.put(path, addedLines);
-                }
-            }
-        }
-        return new FileContext(testFiles, toReturn);
-    }
-    private static Set<Integer> parseAddedLinesFromDiff(String diff) {
-        Set<Integer> toReturn = Sets.newHashSet();
-        Patch patch = new Patch();
-        byte[] diffBytes = diff.getBytes(StandardCharsets.UTF_8);
-        patch.parse(diffBytes, 0, diffBytes.length);
-        for (FileHeader fileHeader : patch.getFiles()) {
-            for (HunkHeader hunk : fileHeader.getHunks()) {
-                for (org.eclipse.jgit.diff.Edit edit : hunk.toEditList()) {
-                    for (int i = edit.getBeginB(); i < edit.getEndB(); i++) {
-                        toReturn.add(i + 1);
+            for (CodeUnitModel codeUnit : file.getCodeUnits()) {
+                if (isMethodOrConstructor(codeUnit.getKind())) {
+                    if (Boolean.TRUE.equals(codeUnit.getIsTrivial())) {
+                        continue;
                     }
+                    toReturn.add(mapMethodChange(file, codeUnit, fileContext));
                 }
             }
         }
         return toReturn;
+    }
+    private static MethodChange mapMethodChange(FileChangeModel file, CodeUnitModel codeUnit, FileContext fileContext) {
+        MethodChange.MethodChangeBuilder builder = MethodChange.builder()
+                .methodName(codeUnit.getName())
+                .signature(codeUnit.getSignature())
+                .file(resolveEffectivePath(file))
+                .className(extractClassName(codeUnit))
+                .operation(mapOperation(codeUnit.getOperation()))
+                .isConstructor(codeUnit.getKind() == SymbolKindModel.CONSTRUCTOR)
+                .startLine(codeUnit.getLocation().getStartLine())
+                .endLine(codeUnit.getLocation().getEndLine());
+        mapMetrics(codeUnit.getMetrics(), builder);
+        mapCallers(codeUnit.getCallers(), builder);
+        mapDiagnostics(codeUnit.getDiagnostics(), file.getPath(), fileContext, builder);
+        return builder.build();
+    }
+    private static void mapCallers(List<CallerModel> callers, MethodChange.MethodChangeBuilder builder) {
+        builder.callers(callers.stream().map(SubmissionToRequestMapper::mapCaller).collect(Collectors.toList()));
+    }
+    private static CallerInfo mapCaller(CallerModel caller) {
+        return CallerInfo.builder()
+                .callerMethod(caller.getName())
+                .file(caller.getPath())
+                .line(caller.getLocation().getStartLine())
+                .isTestCaller(Boolean.TRUE.equals(caller.getIsTest()))
+                .signature(caller.getSignature())
+                .kind(Objects.nonNull(caller.getKind()) ? caller.getKind().getValue() : null)
+                .symbol(caller.getSymbol())
+                .isDeprecated(Boolean.TRUE.equals(caller.getIsDeprecated()))
+                .callSiteCount(CollectionUtils.size(caller.getCallSites()))
+                .build();
     }
     private static ChangeSummary mapChangeSummary(List<FileChangeModel> files) {
         int linesAdded = 0;
@@ -473,6 +395,96 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .packagesAffected(Lists.newArrayList(packagesAffected))
                 .build();
     }
+    private static FileContext buildFileContext(List<FileChangeModel> files) {
+        Set<String> testFiles = Sets.newHashSet();
+        Map<String, Set<Integer>> toReturn = Maps.newHashMap();
+        for (FileChangeModel file : files) {
+            String path = file.getPath();
+            if (Boolean.TRUE.equals(file.getIsTest())) {
+                testFiles.add(path);
+            }
+            if (Objects.nonNull(file.getDiff())) {
+                Set<Integer> addedLines = parseAddedLinesFromDiff(file.getDiff());
+                if (CollectionUtils.isNotEmpty(addedLines)) {
+                    toReturn.put(path, addedLines);
+                }
+            }
+        }
+        return new FileContext(testFiles, toReturn);
+    }
+    private static Set<Integer> parseAddedLinesFromDiff(String diff) {
+        Set<Integer> toReturn = Sets.newHashSet();
+        Patch patch = new Patch();
+        byte[] diffBytes = diff.getBytes(StandardCharsets.UTF_8);
+        patch.parse(diffBytes, 0, diffBytes.length);
+        for (FileHeader fileHeader : patch.getFiles()) {
+            for (HunkHeader hunk : fileHeader.getHunks()) {
+                for (org.eclipse.jgit.diff.Edit edit : hunk.toEditList()) {
+                    for (int i = edit.getBeginB(); i < edit.getEndB(); i++) {
+                        toReturn.add(i + 1);
+                    }
+                }
+            }
+        }
+        return toReturn;
+    }
+    private static void mapDiagnostics(List<DiagnosticModel> diagnostics, String filePath, FileContext fileContext, MethodChange.MethodChangeBuilder builder) {
+        Set<Integer> addedLines = fileContext.getAddedLinesByFile().get(filePath);
+        builder.diagnostics(diagnostics.stream()
+                .map(diag -> mapDiagnostic(diag, addedLines))
+                .collect(Collectors.toList()));
+    }
+    private static DiagnosticInfo mapDiagnostic(DiagnosticModel diag, Set<Integer> addedLines) {
+        int startLine = 0;
+        int endLine = 0;
+        if (Objects.nonNull(diag.getLocation())) {
+            startLine = diag.getLocation().getStartLine();
+            endLine = diag.getLocation().getEndLine();
+        }
+        boolean introducedInCommit = false;
+        if (Objects.nonNull(addedLines) && startLine > 0) {
+            for (int line = startLine; line <= Math.max(startLine, endLine); line++) {
+                if (addedLines.contains(line)) {
+                    introducedInCommit = true;
+                    break;
+                }
+            }
+        }
+        return DiagnosticInfo.builder()
+                .tool(Objects.nonNull(diag.getTool()) ? diag.getTool().getValue() : null)
+                .ruleId(diag.getRuleId())
+                .message(diag.getMessage())
+                .category(diag.getCategory())
+                .severity(mapDiagnosticSeverity(diag.getSeverity()))
+                .startLine(startLine)
+                .endLine(endLine)
+                .introducedInCommit(introducedInCommit)
+                .build();
+    }
+    private static LlmScoringRequest.DiagnosticSeverity mapDiagnosticSeverity(DiagnosticModel.SeverityEnum severity) {
+        if (Objects.isNull(severity)) {
+            return null;
+        }
+        switch (severity) {
+            case ERROR:
+                return LlmScoringRequest.DiagnosticSeverity.ERROR;
+            case WARNING:
+                return LlmScoringRequest.DiagnosticSeverity.WARNING;
+            case INFO:
+                return LlmScoringRequest.DiagnosticSeverity.INFO;
+            case NOTE:
+                return LlmScoringRequest.DiagnosticSeverity.NOTE;
+            case NONE:
+                return LlmScoringRequest.DiagnosticSeverity.NONE;
+            default:
+                throw new IllegalArgumentException("Unknown diagnostic severity: " + severity);
+        }
+    }
+    private static void mapMetrics(MetricsModel metrics, MethodChange.MethodChangeBuilder builder) {
+        builder.cyclomaticComplexity(Optional.ofNullable(metrics.getCyclomaticComplexity()).orElse(BigDecimal.ZERO.intValue()));
+        builder.cognitiveComplexity(Optional.ofNullable(metrics.getCognitiveComplexity()).orElse(BigDecimal.ZERO.intValue()));
+        builder.parameterCount(Optional.ofNullable(metrics.getParameterCount()).orElse(BigDecimal.ZERO.intValue()));
+    }
     private static void mapProjectCoverage(FullProjectCoverageModel projectCoverage, CoverageInfo.CoverageInfoBuilder builder) {
         builder.projectLineCoverage(Optional.ofNullable(projectCoverage.getLinePercentage()).orElse(BigDecimal.ZERO.doubleValue()));
         builder.projectBranchCoverage(Optional.ofNullable(projectCoverage.getBranchPercentage()).orElse(BigDecimal.ZERO.doubleValue()));
@@ -488,7 +500,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         return path;
     }
     private static boolean isMethodOrConstructor(SymbolKindModel kind) {
-        return kind == SymbolKindModel.METHOD || kind == SymbolKindModel.CONSTRUCTOR;
+        return METHOD_OR_CONSTRUCTOR.contains(kind);
     }
     private static Optional<String> extractPackageName(CodeUnitModel codeUnit) {
         return Optional.ofNullable(codeUnit.getJava()).map(JavaInfoModel::getPackageName);
@@ -541,11 +553,6 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
             default:
                 throw new IllegalArgumentException("Unknown operation: " + operation);
         }
-    }
-    private static void mapMetrics(MetricsModel metrics, MethodChange.MethodChangeBuilder builder) {
-        builder.cyclomaticComplexity(Optional.ofNullable(metrics.getCyclomaticComplexity()).orElse(BigDecimal.ZERO.intValue()));
-        builder.cognitiveComplexity(Optional.ofNullable(metrics.getCognitiveComplexity()).orElse(BigDecimal.ZERO.intValue()));
-        builder.parameterCount(Optional.ofNullable(metrics.getParameterCount()).orElse(BigDecimal.ZERO.intValue()));
     }
 
     @Getter

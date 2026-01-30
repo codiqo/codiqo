@@ -240,6 +240,18 @@ components:
           $ref: '#/components/schemas/ProjectQualityModel'
         fullProjectCoverage:
           $ref: '#/components/schemas/FullProjectCoverageModel'
+        score:
+          type: number
+          format: double
+          description: |
+            Final computed effort score.
+            Formula: baseEffort × qualityMultiplier + architectureBonus
+        scoreCalculation:
+          type: string
+          description: Human-readable formula showing the score calculation
+        llmSummary:
+          type: string
+          description: Narrative summary of the commit from LLM analysis
 
     # ==========================================================================
     # Project Metrics & Quality (Global Level)

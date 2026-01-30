@@ -97,25 +97,30 @@ import io.github.classgraph.ScanResult;
 import lombok.SneakyThrows;
 
 abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Artifact, Collection<File>> {
-    public static final Set<String> NON_CODE_PACKAGINGS = Set.of("pom", "bom");
-    public static final String JAR_EXTENSION = "jar";
-    public static final String LOMBOK_GROUP_ID = "org.projectlombok";
-    public static final String LOMBOK_ARTIFACT_ID = "lombok";
-    public static final String JACOCO_GROUP_ID = "org.jacoco";
-    public static final String JACOCO_MAVEN_PLUGIN_ARTIFACT_ID = "jacoco-maven-plugin";
-    public static final String JACOCO_MAVEN_PLUGIN_DEST_FILE = "destFile";
-    public static final String JACOCO_MAVEN_PLUGIN_DEST_FILE_DEFAULT_VALUE = "jacoco.exec";
+    private static final String ENV_PREFIX = "env:";
+    private static final Set<String> NON_CODE_PACKAGINGS = Set.of("pom", "bom");
+    private static final String JAR_EXTENSION = "jar";
+    private static final String LOMBOK_GROUP_ID = "org.projectlombok";
+    private static final String LOMBOK_ARTIFACT_ID = "lombok";
+    private static final String JACOCO_GROUP_ID = "org.jacoco";
+    private static final String JACOCO_MAVEN_PLUGIN_ARTIFACT_ID = "jacoco-maven-plugin";
+    private static final String JACOCO_MAVEN_PLUGIN_DEST_FILE = "destFile";
+    private static final String JACOCO_MAVEN_PLUGIN_DEST_FILE_DEFAULT_VALUE = "jacoco.exec";
 
     @Inject
     private RuntimeInformation runtimeInformation;
+
     @Inject
     protected RepositorySystem repositorySystem;
+
     @Inject
     protected MavenSession mavenSession;
+
     @Inject
     protected ProjectBuilder projectBuilder;
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
     protected MavenProject project;
+
     @Parameter(defaultValue = "${project.remoteProjectRepositories}", readonly = true)
     protected List<RemoteRepository> remoteRepos;
 
@@ -130,45 +135,62 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
     @Parameter(property = "codiqo.importTimeoutMinutes", defaultValue = "15")
     protected long importTimeoutMinutes;
+
     @Parameter(property = "codiqo.connectTimeoutSeconds", defaultValue = "30")
     protected long connectTimeoutSeconds;
+
     @Parameter(property = "codiqo.readTimeoutSeconds", defaultValue = "300")
     protected long readTimeoutSeconds;
+
     @Parameter(property = "codiqo.maxRequests", defaultValue = "256")
     protected int maxRequests;
+
     @Parameter(property = "codiqo.maxRequestsPerHost", defaultValue = "128")
     protected int maxRequestsPerHost;
+
     @Parameter(property = "codiqo.cpdMinimumTileSize", defaultValue = "64")
     protected int cpdMinimumTileSize;
+
     @Parameter(property = "codiqo.jdtlsVersion", defaultValue = "1.55.0")
     protected String jdtlsVersion;
+
     @Parameter(property = "codiqo.dumpAnalysis", defaultValue = "true")
     protected boolean dumpAnalysis = true;
+
     @Parameter(property = "codiqo.ignoreCoverage", defaultValue = "false")
     protected boolean ignoreCoverage = false;
+
     @Parameter(property = "codiqo.ignoreCpd", defaultValue = "false")
     protected boolean ignoreCpd = false;
+
     @Parameter(property = "codiqo.ignoreDiagnostics", defaultValue = "false")
     protected boolean ignoreDiagnostics = false;
+
     @Parameter(property = "codiqo.ignoreComplexity", defaultValue = "false")
     protected boolean ignoreComplexity = false;
+
     @Parameter(property = "codiqo.pmdMinPriority", defaultValue = "medium_high")
     protected String pmdMinPriority;
+
     @Parameter(property = "codiqo.spotbugsPriorityThreshold", defaultValue = "2")
     protected int spotbugsPriorityThreshold;
+
     @Parameter(property = "codiqo.llm.model", defaultValue = "gpt-oss:120b-cloud")
     protected String llmModel;
+
     @Parameter(property = "codiqo.llm.apiKey")
     protected String llmApiKey;
+
     @Parameter(property = "codiqo.llm.baseUrl", defaultValue = "https://ollama.com/v1")
     protected String llmBaseUrl;
+
     @Parameter(property = "codiqo.llm.temperature", defaultValue = "0.3")
     protected double llmTemperature;
+
     @Parameter(property = "codiqo.llm.maxTokens", defaultValue = "32767")
     protected int llmMaxTokens;
-    @Parameter(property = "codiqo.llm.nativeThinking", defaultValue = "true")
-    protected boolean llmNativeThinking;
-    @Parameter(property = "codiqo.llm.enableWebSearchTool", defaultValue = "true")
+
+    @Parameter(property = "codiqo.llm.enableWebSearchTool", defaultValue = "false")
     protected boolean llmEnableWebSearchTool;
 
     @Parameter(property = "codiqo.outputDirectory")
@@ -216,12 +238,11 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setLlmBaseUrl(llmBaseUrl);
         args.setLlmTemperature(llmTemperature);
         args.setLlmMaxTokens(llmMaxTokens);
-        args.setLlmNativeThinking(llmNativeThinking);
         args.setLlmEnableWebSearchTool(llmEnableWebSearchTool);
         Optional.ofNullable(outputDirectory).ifPresent(args::setOutputDirectory);
         if (StringUtils.isNotEmpty(llmApiKey)) {
-            if (llmApiKey.startsWith("env:")) {
-                String envVar = llmApiKey.substring(4);
+            if (llmApiKey.startsWith(ENV_PREFIX)) {
+                String envVar = llmApiKey.substring(ENV_PREFIX.length());
                 args.setLlmApiKey(System.getenv(envVar));
             } else {
                 args.setLlmApiKey(llmApiKey);

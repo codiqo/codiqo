@@ -314,6 +314,8 @@ public class LlmScoringResponse {
         private String file;
         private Integer line;
         private String suggestedFix;
+        private String suggestedFileFix;
+        private String suggestedBlockCode;
         private Confidence confidence;
         private BugSource source;
     }

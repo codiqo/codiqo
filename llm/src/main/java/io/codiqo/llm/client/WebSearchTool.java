@@ -15,13 +15,13 @@ import lombok.SneakyThrows;
 
 @JsonClassDescription("Search the web for information about library dependencies, breaking changes, migration guides, and technical documentation. Use this tool when you need to verify breaking changes, understand migration paths, or find documentation about library upgrades.")
 public class WebSearchTool implements Function<OllamaWebSearchClient, WebSearchTool.WebSearchResult> {
-    public static final int MAX_RESULTS = 10;
-    public static final int DEFAULT_RESULTS = 5;
+    public static final int MAX_RESULTS = 3;
+    public static final int DEFAULT_RESULTS = 2;
 
     @JsonPropertyDescription("The search query. Be specific, e.g. 'Spring Boot 3 to 4 migration breaking changes' or 'Kafka 3.x to 4.x upgrade guide'")
     public String query;
 
-    @JsonPropertyDescription("Maximum number of results to return (1-10, default 5)")
+    @JsonPropertyDescription("Maximum number of results to return (1-3, default 2)")
     public Integer maxResults;
 
     @Override

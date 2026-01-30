@@ -88,25 +88,11 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private static Context createContext(PromptContext promptContext) {
         Context ctx = new Context(Locale.ENGLISH);
         RunArgs args = promptContext.getArgs();
+
         long projectLines = promptContext.getProjectTotalLines();
-        ctx.setVariable("SIZE_FACTOR_DIVISOR", args.getSizeFactorDivisor());
-        ctx.setVariable("MODIFY_MULTIPLIER_SCALE", args.getModifyMultiplierScale());
-        ctx.setVariable("MODIFY_MULTIPLIER_CAP", args.getModifyMultiplierCap());
-        ctx.setVariable("ADD_MULTIPLIER_SCALE", args.getAddMultiplierScale());
-        ctx.setVariable("RELATIVE_ADJUSTMENT_FACTOR", args.getRelativeAdjustmentFactor());
-        ctx.setVariable("RELATIVE_ADJUSTMENT_MIN", args.getRelativeAdjustmentMin());
-        ctx.setVariable("RELATIVE_ADJUSTMENT_MAX", args.getRelativeAdjustmentMax());
-        ctx.setVariable("QUALITY_MULTIPLIER_MIN", args.getQualityMultiplierMin());
-        ctx.setVariable("QUALITY_MULTIPLIER_MAX", args.getQualityMultiplierMax());
         ctx.setVariable("STATIC_ANALYSIS_PENALTY_CAP", args.getStaticAnalysisPenaltyCap());
         ctx.setVariable("ARCHITECTURE_PENALTY_CAP", args.getArchitecturePenaltyCap());
         ctx.setVariable("QUALITY_GATE_PENALTY_CAP", args.getQualityGatePenaltyCap());
-        double sizeFactor = Math.cbrt(projectLines) / args.getSizeFactorDivisor();
-        double modifyMult = 1.0 + Math.min(sizeFactor * args.getModifyMultiplierScale(), args.getModifyMultiplierCap());
-        double addMult = 1.0 + args.getAddMultiplierScale() / (1.0 + sizeFactor);
-        ctx.setVariable("calculated_size_factor", String.format("%.3f", sizeFactor));
-        ctx.setVariable("calculated_modify_mult", String.format("%.3f", modifyMult));
-        ctx.setVariable("calculated_add_mult", String.format("%.3f", addMult));
         ctx.setVariable("lines_log_factor", args.getLinesLogFactor());
         ctx.setVariable("methods_mod_log_factor", args.getMethodsModifiedLogFactor());
         ctx.setVariable("methods_add_log_factor", args.getMethodsAddedLogFactor());
@@ -159,7 +145,25 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         ctx.setVariable("code_units_affected", promptContext.getCodeUnitsAffected());
         ctx.setVariable("technical_tags", String.join(", ", promptContext.getTechnicalTags()));
         ctx.setVariable("functional_tags", String.join(", ", promptContext.getFunctionalTags()));
-        ctx.setVariable("native_thinking", promptContext.isNativeThinking());
+        ctx.setVariable("web_search_enabled", args.isLlmEnableWebSearchTool());
+        ctx.setVariable("architecture_bonus_factor", args.getArchitectureBonusFactor());
+        ctx.setVariable("quality_multiplier_min", args.getQualityMultiplierMin());
+        ctx.setVariable("quality_multiplier_max", args.getQualityMultiplierMax());
+        ctx.setVariable("risk_high_dimension_threshold", args.getRiskHighDimensionThreshold());
+        ctx.setVariable("risk_base_multiplier", args.getRiskBaseMultiplier());
+        ctx.setVariable("risk_high_dim_penalty", args.getRiskHighDimensionPenalty());
+        ctx.setVariable("risk_core_library_penalty", args.getRiskCoreLibraryPenalty());
+        ctx.setVariable("risk_breaking_changes_penalty", args.getRiskBreakingChangesPenalty());
+        ctx.setVariable("risk_score_max", args.getRiskScoreMax());
+        ctx.setVariable("risk_level_low_max", args.getRiskLevelLowMax());
+        ctx.setVariable("risk_level_moderate_max", args.getRiskLevelModerateMax());
+        ctx.setVariable("risk_level_high_max", args.getRiskLevelHighMax());
+        ctx.setVariable("risk_level_very_high_max", args.getRiskLevelVeryHighMax());
+        ctx.setVariable("cov_excellent_min", args.getCoverageImpactExcellentMin());
+        ctx.setVariable("cov_good_min", args.getCoverageImpactGoodMin());
+        ctx.setVariable("cov_acceptable_min", args.getCoverageImpactAcceptableMin());
+        ctx.setVariable("cov_low_min", args.getCoverageImpactLowMin());
+        ctx.setVariable("cov_poor_min", args.getCoverageImpactPoorMin());
         return ctx;
     }
 }

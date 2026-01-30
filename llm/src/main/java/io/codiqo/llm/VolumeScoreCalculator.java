@@ -1,9 +1,11 @@
 package io.codiqo.llm;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.math3.util.Precision;
 
@@ -12,12 +14,19 @@ import com.google.common.collect.Sets;
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringRequest.ChangeSummary;
+import io.codiqo.llm.schema.LlmScoringRequest.DiagnosticInfo;
+import io.codiqo.llm.schema.LlmScoringRequest.DuplicationInfo;
+import io.codiqo.llm.schema.LlmScoringRequest.DuplicationInfo.CloneDetail;
+import io.codiqo.llm.schema.LlmScoringRequest.MethodChange;
 import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.Value;
 
 @RequiredArgsConstructor
 public class VolumeScoreCalculator {
+    private static final int ROUNDING_PRECISION = 2;
+    private static final int CPD_ROUNDING_PRECISION = 1;
+
     private final RunArgs args;
 
     public PreComputedScores calculate(LlmScoringRequest request, long projectTotalLines) {
@@ -43,23 +52,23 @@ public class VolumeScoreCalculator {
         StaticAnalysisPreComputed sa = calculateStaticAnalysisPenalty(request);
 
         return PreComputedScores.builder()
-                .sizeFactor(Precision.round(sizeFactor, 2))
-                .modifyMult(Precision.round(modifyMult, 2))
-                .addMult(Precision.round(addMult, 2))
-                .relativeAdj(Precision.round(relativeAdj, 2))
+                .sizeFactor(Precision.round(sizeFactor, ROUNDING_PRECISION))
+                .modifyMult(Precision.round(modifyMult, ROUNDING_PRECISION))
+                .addMult(Precision.round(addMult, ROUNDING_PRECISION))
+                .relativeAdj(Precision.round(relativeAdj, ROUNDING_PRECISION))
                 .linesChanged(linesChanged)
-                .linesScore(Precision.round(linesScore, 2))
+                .linesScore(Precision.round(linesScore, ROUNDING_PRECISION))
                 .methodsModified(changeSummary.getMethodsModified())
-                .methodsModifiedScore(Precision.round(methodsModifiedScore, 2))
+                .methodsModifiedScore(Precision.round(methodsModifiedScore, ROUNDING_PRECISION))
                 .methodsAdded(changeSummary.getMethodsAdded())
-                .methodsAddedScore(Precision.round(methodsAddedScore, 2))
+                .methodsAddedScore(Precision.round(methodsAddedScore, ROUNDING_PRECISION))
                 .classesModified(changeSummary.getClassesModified())
-                .classesModifiedScore(Precision.round(classesModifiedScore, 2))
+                .classesModifiedScore(Precision.round(classesModifiedScore, ROUNDING_PRECISION))
                 .classesAdded(changeSummary.getClassesAdded())
-                .classesAddedScore(Precision.round(classesAddedScore, 2))
-                .volumeScore(Precision.round(totalVolumeScore, 2))
+                .classesAddedScore(Precision.round(classesAddedScore, ROUNDING_PRECISION))
+                .volumeScore(Precision.round(totalVolumeScore, ROUNDING_PRECISION))
                 .defaultComplexityMultiplier(args.getDefaultComplexityMultiplier())
-                .baseEffort(Precision.round(baseEffort, 2))
+                .baseEffort(Precision.round(baseEffort, ROUNDING_PRECISION))
                 .cpdEffectivePenalty(cpd.getEffectivePenalty())
                 .cpdCategory(cpd.getCategory())
                 .cpdRecommendedImpact(cpd.getRecommendedImpact())
@@ -74,16 +83,16 @@ public class VolumeScoreCalculator {
                 .build();
     }
     public CpdPreComputed calculateCpdPenalty(LlmScoringRequest request) {
-        var dup = request.getDuplication();
-        if (Objects.isNull(dup) || Objects.isNull(dup.getCloneDetails()) || dup.getCloneDetails().isEmpty()) {
+        DuplicationInfo dup = request.getDuplication();
+        if (Objects.isNull(dup) || CollectionUtils.isEmpty(dup.getCloneDetails())) {
             return new CpdPreComputed(0, CpdCategory.CLEAN, args.getCpdCleanBonus(), 0, 0, 0);
         }
-        var clones = dup.getCloneDetails();
+        List<CloneDetail> clones = dup.getCloneDetails();
         int total = clones.size();
         int introduced = 0;
         int testOnly = 0;
         double effectivePenalty = 0;
-        for (var clone : clones) {
+        for (CloneDetail clone : clones) {
             if (clone.isAllTestCode()) {
                 testOnly++;
             }
@@ -92,7 +101,7 @@ public class VolumeScoreCalculator {
                 effectivePenalty += clone.isAllTestCode() ? args.getTestCodePenaltyWeight() : 1.0;
             }
         }
-        effectivePenalty = Precision.round(effectivePenalty, 1);
+        effectivePenalty = Precision.round(effectivePenalty, CPD_ROUNDING_PRECISION);
         CpdCategory category;
         double impact;
         if (effectivePenalty <= args.getCpdCleanThreshold()) {
@@ -117,9 +126,9 @@ public class VolumeScoreCalculator {
         Set<String> introducedErrorRules = Sets.newHashSet();
         Set<String> preExistingErrorRules = Sets.newHashSet();
         if (Objects.nonNull(request.getMethodChanges())) {
-            for (var method : request.getMethodChanges()) {
+            for (MethodChange method : request.getMethodChanges()) {
                 if (Objects.nonNull(method.getDiagnostics())) {
-                    for (var diag : method.getDiagnostics()) {
+                    for (DiagnosticInfo diag : method.getDiagnostics()) {
                         if (BooleanUtils.and(new boolean[]{diag.getSeverity() == LlmScoringRequest.DiagnosticSeverity.ERROR, Objects.nonNull(diag.getRuleId())})) {
                             if (diag.isIntroducedInCommit()) {
                                 introducedErrorRules.add(diag.getRuleId());
@@ -146,7 +155,7 @@ public class VolumeScoreCalculator {
                     args.getStaticAnalysisIntroducedPenalty() * introducedCount +
                             args.getStaticAnalysisPreExistingPenalty() * preExistingCount);
         }
-        return new StaticAnalysisPreComputed(totalCount, introducedCount, preExistingCount, category, Precision.round(impact, 2));
+        return new StaticAnalysisPreComputed(totalCount, introducedCount, preExistingCount, category, Precision.round(impact, ROUNDING_PRECISION));
     }
     private static double logScore(int count, double logFactor, double multiplier) {
         if (count > 0) {

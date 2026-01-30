@@ -1,5 +1,6 @@
 package io.codiqo.llm;
 
+import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -10,6 +11,7 @@ import org.apache.commons.collections4.CollectionUtils;
 
 import io.codiqo.client.model.AnalysisResultModel;
 import io.codiqo.client.model.ArchitectureAnalysisModel;
+import io.codiqo.client.model.LlmAnalysisModel;
 import io.codiqo.client.model.ArchitectureEffortBonusModel;
 import io.codiqo.client.model.AssessmentModel;
 import io.codiqo.client.model.BlastRadiusAnalysisModel;
@@ -29,23 +31,54 @@ import io.codiqo.client.model.SignatureChangesModel;
 import io.codiqo.client.model.StaticAnalysisFindingModel;
 import io.codiqo.client.model.StaticAnalysisImpactModel;
 import io.codiqo.client.model.StaticAnalysisReviewModel;
+import io.codiqo.client.model.TokenUsageModel;
+import io.codiqo.client.model.ToolUsageModel;
 import io.codiqo.client.model.VolumeScoreModel;
+import io.codiqo.llm.client.ScoringClient.ScoringResult;
 import io.codiqo.llm.schema.LlmScoringResponse;
 
 public class LlmResponseMapper {
     public void mapToAnalysisResult(LlmScoringResponse llmResponse, AnalysisResultModel result) {
-        result.setChangeClassification(mapChangeClassification(llmResponse.getChangeClassification()));
-        result.setRiskAssessment(mapRiskAssessment(llmResponse.getRiskAssessment()));
-        result.setBugs(mapBugs(llmResponse.getBugs()));
+        result.setChangeClassification(Optional.ofNullable(llmResponse.getChangeClassification())
+                .map(LlmResponseMapper::mapChangeClassification)
+                .orElse(AnalysisResultModel.ChangeClassificationEnum.MEDIUM));
+        if (Objects.nonNull(llmResponse.getRiskAssessment())) {
+            result.setRiskAssessment(mapRiskAssessment(llmResponse.getRiskAssessment()));
+        }
+        if (Objects.nonNull(llmResponse.getBugs())) {
+            result.setBugs(mapBugs(llmResponse.getBugs()));
+        }
         result.setRequiresSeniorReview(llmResponse.getRequiresSeniorReview());
         result.setSeniorReviewReasons(llmResponse.getSeniorReviewReasons());
-        result.setTags(mapTags(llmResponse.getTags()));
+        if (Objects.nonNull(llmResponse.getTags())) {
+            result.setTags(mapTags(llmResponse.getTags()));
+        }
         result.setAssessment(mapAssessment(llmResponse));
+        result.setScore(llmResponse.getScore());
+        result.setScoreCalculation(llmResponse.getScoreCalculation());
+        result.setLlmSummary(llmResponse.getSummary());
+    }
+    public static LlmAnalysisModel mapLlmAnalysis(ScoringResult scoringResult, Duration duration, String model) {
+        LlmAnalysisModel toReturn = new LlmAnalysisModel();
+        toReturn.setModel(model);
+        toReturn.setAnalysisTimeMs((int) duration.toMillis());
+        toReturn.setThinking(scoringResult.getThinking());
+        toReturn.setPromptLength(scoringResult.getPromptLength());
+
+        TokenUsageModel tokenUsage = new TokenUsageModel();
+        tokenUsage.setPromptTokens(scoringResult.getPromptTokens());
+        tokenUsage.setCompletionTokens(scoringResult.getCompletionTokens());
+        tokenUsage.setTotalTokens(scoringResult.getTotalTokens());
+        toReturn.setTokenUsage(tokenUsage);
+
+        if (scoringResult.usedTools()) {
+            ToolUsageModel toolUsage = new ToolUsageModel();
+            toolUsage.setToolCallsCount(scoringResult.getToolCallsMade().size());
+            toReturn.setToolUsage(toolUsage);
+        }
+        return toReturn;
     }
     private static AnalysisResultModel.ChangeClassificationEnum mapChangeClassification(LlmScoringResponse.ChangeClassification classification) {
-        if (Objects.isNull(classification)) {
-            return AnalysisResultModel.ChangeClassificationEnum.MEDIUM;
-        }
         switch (classification) {
             case TRIVIAL:
                 return AnalysisResultModel.ChangeClassificationEnum.TRIVIAL;
@@ -62,18 +95,14 @@ public class LlmResponseMapper {
         }
     }
     private static RiskAssessmentModel mapRiskAssessment(LlmScoringResponse.RiskAssessment riskAssessment) {
-        if (Objects.isNull(riskAssessment)) {
-            return null;
-        }
         RiskAssessmentModel toReturn = new RiskAssessmentModel();
         toReturn.setRiskScore(riskAssessment.getRiskScore());
-        toReturn.setRiskLevel(mapRiskLevel(riskAssessment.getRiskLevel()));
+        toReturn.setRiskLevel(Optional.ofNullable(riskAssessment.getRiskLevel())
+                .map(LlmResponseMapper::mapRiskLevel)
+                .orElse(RiskAssessmentModel.RiskLevelEnum.LOW));
         return toReturn;
     }
     private static RiskAssessmentModel.RiskLevelEnum mapRiskLevel(LlmScoringResponse.RiskLevel riskLevel) {
-        if (Objects.isNull(riskLevel)) {
-            return RiskAssessmentModel.RiskLevelEnum.LOW;
-        }
         switch (riskLevel) {
             case LOW:
                 return RiskAssessmentModel.RiskLevelEnum.LOW;
@@ -90,40 +119,37 @@ public class LlmResponseMapper {
         }
     }
     private static BugsModel mapBugs(LlmScoringResponse.Bugs bugs) {
-        if (Objects.isNull(bugs)) {
-            return null;
-        }
         BugsModel toReturn = new BugsModel();
-        toReturn.setBlocking(mapBugList(bugs.getBlocking()));
-        toReturn.setMajor(mapBugList(bugs.getMajor()));
-        toReturn.setMinor(mapBugList(bugs.getMinor()));
+        toReturn.setBlocking(Optional.ofNullable(bugs.getBlocking())
+                .map(LlmResponseMapper::mapBugList).orElse(Collections.emptyList()));
+        toReturn.setMajor(Optional.ofNullable(bugs.getMajor())
+                .map(LlmResponseMapper::mapBugList).orElse(Collections.emptyList()));
+        toReturn.setMinor(Optional.ofNullable(bugs.getMinor())
+                .map(LlmResponseMapper::mapBugList).orElse(Collections.emptyList()));
         toReturn.setHasBlockingBugs(CollectionUtils.isNotEmpty(bugs.getBlocking()));
         return toReturn;
     }
     private static List<BugModel> mapBugList(List<LlmScoringResponse.Bug> bugs) {
-        if (CollectionUtils.isEmpty(bugs)) {
-            return Collections.emptyList();
-        }
         return bugs.stream()
                 .map(LlmResponseMapper::mapBug)
                 .collect(Collectors.toList());
     }
     private static BugModel mapBug(LlmScoringResponse.Bug bug) {
         BugModel toReturn = new BugModel();
-        toReturn.setType(mapBugType(bug.getType()));
+        toReturn.setType(Optional.ofNullable(bug.getType())
+                .map(LlmResponseMapper::mapBugType).orElse(BugModel.TypeEnum.OTHER));
         toReturn.setTitle(bug.getTitle());
         toReturn.setDescription(bug.getDescription());
         toReturn.setFile(bug.getFile());
         toReturn.setLine(bug.getLine());
         toReturn.setSuggestedFix(bug.getSuggestedFix());
-        toReturn.setConfidence(mapConfidence(bug.getConfidence()));
-        toReturn.setSource(mapBugSource(bug.getSource()));
+        toReturn.setConfidence(Optional.ofNullable(bug.getConfidence())
+                .map(LlmResponseMapper::mapConfidence).orElse(BugModel.ConfidenceEnum.MEDIUM));
+        toReturn.setSource(Optional.ofNullable(bug.getSource())
+                .map(LlmResponseMapper::mapBugSource).orElse(BugModel.SourceEnum.LLM));
         return toReturn;
     }
     private static BugModel.TypeEnum mapBugType(LlmScoringResponse.BugType type) {
-        if (Objects.isNull(type)) {
-            return BugModel.TypeEnum.OTHER;
-        }
         switch (type) {
             case SECURITY:
                 return BugModel.TypeEnum.SECURITY;
@@ -146,9 +172,6 @@ public class LlmResponseMapper {
         }
     }
     private static BugModel.ConfidenceEnum mapConfidence(LlmScoringResponse.Confidence confidence) {
-        if (Objects.isNull(confidence)) {
-            return BugModel.ConfidenceEnum.MEDIUM;
-        }
         switch (confidence) {
             case HIGH:
                 return BugModel.ConfidenceEnum.HIGH;
@@ -161,9 +184,6 @@ public class LlmResponseMapper {
         }
     }
     private static BugModel.SourceEnum mapBugSource(LlmScoringResponse.BugSource source) {
-        if (Objects.isNull(source)) {
-            return BugModel.SourceEnum.LLM;
-        }
         switch (source) {
             case LLM:
                 return BugModel.SourceEnum.LLM;
@@ -176,9 +196,6 @@ public class LlmResponseMapper {
         }
     }
     private static ReviewTagsModel mapTags(LlmScoringResponse.Tags tags) {
-        if (Objects.isNull(tags)) {
-            return null;
-        }
         ReviewTagsModel toReturn = new ReviewTagsModel();
         toReturn.setTechnical(Optional.ofNullable(tags.getTechnical()).orElse(Collections.emptyList()));
         toReturn.setFunctional(Optional.ofNullable(tags.getFunctional()).orElse(Collections.emptyList()));
@@ -187,28 +204,38 @@ public class LlmResponseMapper {
     private static AssessmentModel mapAssessment(LlmScoringResponse llmResponse) {
         AssessmentModel toReturn = new AssessmentModel();
         toReturn.setThinking(llmResponse.getThinking());
-        toReturn.setEffortBreakdown(mapEffortBreakdown(llmResponse.getEffortBreakdown()));
-        toReturn.setQualityMultiplier(mapQualityMultiplier(llmResponse.getQualityMultiplier()));
-        toReturn.setArchitectureEffortBonus(mapArchitectureEffortBonus(llmResponse.getArchitectureEffortBonus()));
-        toReturn.setRiskDimensions(mapQualityDimensions(llmResponse.getQualityDimensions()));
-        toReturn.setStaticAnalysisReview(mapStaticAnalysisReview(llmResponse.getStaticAnalysisReview()));
-        toReturn.setBlastRadiusAnalysis(mapBlastRadiusAnalysis(llmResponse.getBlastRadiusAnalysis()));
+        if (Objects.nonNull(llmResponse.getEffortBreakdown())) {
+            toReturn.setEffortBreakdown(mapEffortBreakdown(llmResponse.getEffortBreakdown()));
+        }
+        if (Objects.nonNull(llmResponse.getQualityMultiplier())) {
+            toReturn.setQualityMultiplier(mapQualityMultiplier(llmResponse.getQualityMultiplier()));
+        }
+        if (Objects.nonNull(llmResponse.getArchitectureEffortBonus())) {
+            toReturn.setArchitectureEffortBonus(mapArchitectureEffortBonus(llmResponse.getArchitectureEffortBonus()));
+        }
+        if (Objects.nonNull(llmResponse.getQualityDimensions())) {
+            toReturn.setRiskDimensions(mapQualityDimensions(llmResponse.getQualityDimensions()));
+        }
+        if (Objects.nonNull(llmResponse.getStaticAnalysisReview())) {
+            toReturn.setStaticAnalysisReview(mapStaticAnalysisReview(llmResponse.getStaticAnalysisReview()));
+        }
+        if (Objects.nonNull(llmResponse.getBlastRadiusAnalysis())) {
+            toReturn.setBlastRadiusAnalysis(mapBlastRadiusAnalysis(llmResponse.getBlastRadiusAnalysis()));
+        }
         return toReturn;
     }
     private static EffortBreakdownModel mapEffortBreakdown(LlmScoringResponse.EffortBreakdown effortBreakdown) {
-        if (Objects.isNull(effortBreakdown)) {
-            return null;
-        }
         EffortBreakdownModel toReturn = new EffortBreakdownModel();
-        toReturn.setVolumeScore(mapVolumeScore(effortBreakdown.getVolumeScore()));
-        toReturn.setComplexityMultiplier(mapComplexityMultiplier(effortBreakdown.getComplexityMultiplier()));
+        if (Objects.nonNull(effortBreakdown.getVolumeScore())) {
+            toReturn.setVolumeScore(mapVolumeScore(effortBreakdown.getVolumeScore()));
+        }
+        if (Objects.nonNull(effortBreakdown.getComplexityMultiplier())) {
+            toReturn.setComplexityMultiplier(mapComplexityMultiplier(effortBreakdown.getComplexityMultiplier()));
+        }
         toReturn.setBaseEffortScore(effortBreakdown.getBaseEffortScore());
         return toReturn;
     }
     private static VolumeScoreModel mapVolumeScore(LlmScoringResponse.VolumeScore volumeScore) {
-        if (Objects.isNull(volumeScore)) {
-            return null;
-        }
         VolumeScoreModel toReturn = new VolumeScoreModel();
         toReturn.setLinesChanged(volumeScore.getLinesChanged());
         toReturn.setLinesScore(volumeScore.getLinesScore());
@@ -228,9 +255,6 @@ public class LlmResponseMapper {
         return toReturn;
     }
     private static ComplexityMultiplierModel mapComplexityMultiplier(LlmScoringResponse.ComplexityMultiplier complexityMultiplier) {
-        if (Objects.isNull(complexityMultiplier)) {
-            return null;
-        }
         ComplexityMultiplierModel toReturn = new ComplexityMultiplierModel();
         toReturn.setAvgModifyComplexity(complexityMultiplier.getAvgModifyComplexity());
         toReturn.setModifyMultiplier(complexityMultiplier.getModifyMultiplier());
@@ -240,31 +264,32 @@ public class LlmResponseMapper {
         return toReturn;
     }
     private static QualityMultiplierModel mapQualityMultiplier(LlmScoringResponse.QualityMultiplier qualityMultiplier) {
-        if (Objects.isNull(qualityMultiplier)) {
-            return null;
-        }
         QualityMultiplierModel toReturn = new QualityMultiplierModel();
-        toReturn.setCpdAnalysis(mapCpdAnalysis(qualityMultiplier.getCpdAnalysis()));
-        toReturn.setStaticAnalysis(mapStaticAnalysisImpact(qualityMultiplier.getStaticAnalysis()));
-        toReturn.setCoverageAnalysis(mapCoverageAnalysis(qualityMultiplier.getCoverageAnalysis()));
-        toReturn.setArchitectureAnalysis(mapArchitectureAnalysis(qualityMultiplier.getArchitectureAnalysis()));
-        toReturn.setQualityGateAnalysis(mapQualityGateAnalysis(qualityMultiplier.getQualityGateAnalysis()));
+        if (Objects.nonNull(qualityMultiplier.getCpdAnalysis())) {
+            toReturn.setCpdAnalysis(mapCpdAnalysis(qualityMultiplier.getCpdAnalysis()));
+        }
+        if (Objects.nonNull(qualityMultiplier.getStaticAnalysis())) {
+            toReturn.setStaticAnalysis(mapStaticAnalysisImpact(qualityMultiplier.getStaticAnalysis()));
+        }
+        if (Objects.nonNull(qualityMultiplier.getCoverageAnalysis())) {
+            toReturn.setCoverageAnalysis(mapCoverageAnalysis(qualityMultiplier.getCoverageAnalysis()));
+        }
+        if (Objects.nonNull(qualityMultiplier.getArchitectureAnalysis())) {
+            toReturn.setArchitectureAnalysis(mapArchitectureAnalysis(qualityMultiplier.getArchitectureAnalysis()));
+        }
+        if (Objects.nonNull(qualityMultiplier.getQualityGateAnalysis())) {
+            toReturn.setQualityGateAnalysis(mapQualityGateAnalysis(qualityMultiplier.getQualityGateAnalysis()));
+        }
         toReturn.setFinalMultiplier(qualityMultiplier.getFinalMultiplier());
         return toReturn;
     }
     private static CpdAnalysisModel mapCpdAnalysis(LlmScoringResponse.CpdAnalysis cpdAnalysis) {
-        if (Objects.isNull(cpdAnalysis)) {
-            return null;
-        }
         CpdAnalysisModel toReturn = new CpdAnalysisModel();
         toReturn.setDuplicationPercent(cpdAnalysis.getDuplicationPercent());
         toReturn.setImpact(cpdAnalysis.getImpact());
         return toReturn;
     }
     private static StaticAnalysisImpactModel mapStaticAnalysisImpact(LlmScoringResponse.StaticAnalysisImpact staticAnalysis) {
-        if (Objects.isNull(staticAnalysis)) {
-            return null;
-        }
         StaticAnalysisImpactModel toReturn = new StaticAnalysisImpactModel();
         toReturn.setPmdViolationsInChanges(staticAnalysis.getPmdViolationsInChanges());
         toReturn.setSpotbugsIssuesInChanges(staticAnalysis.getSpotbugsIssuesInChanges());
@@ -272,18 +297,12 @@ public class LlmResponseMapper {
         return toReturn;
     }
     private static CoverageAnalysisModel mapCoverageAnalysis(LlmScoringResponse.CoverageAnalysis coverageAnalysis) {
-        if (Objects.isNull(coverageAnalysis)) {
-            return null;
-        }
         CoverageAnalysisModel toReturn = new CoverageAnalysisModel();
         toReturn.setCoveragePercent(coverageAnalysis.getCoveragePercent());
         toReturn.setImpact(coverageAnalysis.getImpact());
         return toReturn;
     }
     private static ArchitectureAnalysisModel mapArchitectureAnalysis(LlmScoringResponse.ArchitectureAnalysis architectureAnalysis) {
-        if (Objects.isNull(architectureAnalysis)) {
-            return null;
-        }
         ArchitectureAnalysisModel toReturn = new ArchitectureAnalysisModel();
         toReturn.setSolidViolations(Optional.ofNullable(architectureAnalysis.getSolidViolations()).orElse(Collections.emptyList()));
         toReturn.setArchitectureIssues(Optional.ofNullable(architectureAnalysis.getArchitectureIssues()).orElse(Collections.emptyList()));
@@ -291,9 +310,6 @@ public class LlmResponseMapper {
         return toReturn;
     }
     private static ArchitectureEffortBonusModel mapArchitectureEffortBonus(LlmScoringResponse.ArchitectureEffortBonus bonus) {
-        if (Objects.isNull(bonus)) {
-            return null;
-        }
         ArchitectureEffortBonusModel toReturn = new ArchitectureEffortBonusModel();
         toReturn.setArchitectureImpactScore(bonus.getArchitectureImpactScore());
         toReturn.setQualityFactor(bonus.getQualityFactor());
@@ -303,35 +319,46 @@ public class LlmResponseMapper {
         return toReturn;
     }
     private static QualityGateAnalysisModel mapQualityGateAnalysis(LlmScoringResponse.QualityGateAnalysis qualityGateAnalysis) {
-        if (Objects.isNull(qualityGateAnalysis)) {
-            return null;
-        }
         QualityGateAnalysisModel toReturn = new QualityGateAnalysisModel();
         toReturn.setFailedGates(Optional.ofNullable(qualityGateAnalysis.getFailedGates()).orElse(Collections.emptyList()));
         toReturn.setImpact(qualityGateAnalysis.getImpact());
         return toReturn;
     }
     private static RiskDimensionsModel mapQualityDimensions(LlmScoringResponse.QualityDimensions qualityDimensions) {
-        if (Objects.isNull(qualityDimensions)) {
-            return null;
-        }
         RiskDimensionsModel toReturn = new RiskDimensionsModel();
-        toReturn.setArchitectureImpact(mapDimensionScore(qualityDimensions.getArchitectureImpact()));
-        toReturn.setConcurrencyRisk(mapDimensionScore(qualityDimensions.getConcurrencyRisk()));
-        toReturn.setIntegrationSurface(mapDimensionScore(qualityDimensions.getIntegrationSurface()));
-        toReturn.setDataIntegrity(mapDimensionScore(qualityDimensions.getDataIntegrity()));
-        toReturn.setSecuritySensitivity(mapDimensionScore(qualityDimensions.getSecuritySensitivity()));
-        toReturn.setScalabilityImpact(mapDimensionScore(qualityDimensions.getScalabilityImpact()));
-        toReturn.setObservability(mapDimensionScore(qualityDimensions.getObservability()));
-        toReturn.setResilience(mapDimensionScore(qualityDimensions.getResilience()));
-        toReturn.setPerformance(mapDimensionScore(qualityDimensions.getPerformance()));
-        toReturn.setTestingCoverage(mapDimensionScore(qualityDimensions.getTestingCoverage()));
+        if (Objects.nonNull(qualityDimensions.getArchitectureImpact())) {
+            toReturn.setArchitectureImpact(mapDimensionScore(qualityDimensions.getArchitectureImpact()));
+        }
+        if (Objects.nonNull(qualityDimensions.getConcurrencyRisk())) {
+            toReturn.setConcurrencyRisk(mapDimensionScore(qualityDimensions.getConcurrencyRisk()));
+        }
+        if (Objects.nonNull(qualityDimensions.getIntegrationSurface())) {
+            toReturn.setIntegrationSurface(mapDimensionScore(qualityDimensions.getIntegrationSurface()));
+        }
+        if (Objects.nonNull(qualityDimensions.getDataIntegrity())) {
+            toReturn.setDataIntegrity(mapDimensionScore(qualityDimensions.getDataIntegrity()));
+        }
+        if (Objects.nonNull(qualityDimensions.getSecuritySensitivity())) {
+            toReturn.setSecuritySensitivity(mapDimensionScore(qualityDimensions.getSecuritySensitivity()));
+        }
+        if (Objects.nonNull(qualityDimensions.getScalabilityImpact())) {
+            toReturn.setScalabilityImpact(mapDimensionScore(qualityDimensions.getScalabilityImpact()));
+        }
+        if (Objects.nonNull(qualityDimensions.getObservability())) {
+            toReturn.setObservability(mapDimensionScore(qualityDimensions.getObservability()));
+        }
+        if (Objects.nonNull(qualityDimensions.getResilience())) {
+            toReturn.setResilience(mapDimensionScore(qualityDimensions.getResilience()));
+        }
+        if (Objects.nonNull(qualityDimensions.getPerformance())) {
+            toReturn.setPerformance(mapDimensionScore(qualityDimensions.getPerformance()));
+        }
+        if (Objects.nonNull(qualityDimensions.getTestingCoverage())) {
+            toReturn.setTestingCoverage(mapDimensionScore(qualityDimensions.getTestingCoverage()));
+        }
         return toReturn;
     }
     private static DimensionScoreModel mapDimensionScore(LlmScoringResponse.DimensionScore dimensionScore) {
-        if (Objects.isNull(dimensionScore)) {
-            return null;
-        }
         DimensionScoreModel toReturn = new DimensionScoreModel();
         toReturn.setScore(dimensionScore.getScore());
         toReturn.setRationale(dimensionScore.getRationale());
@@ -339,22 +366,22 @@ public class LlmResponseMapper {
         return toReturn;
     }
     private static StaticAnalysisReviewModel mapStaticAnalysisReview(LlmScoringResponse.StaticAnalysisReview staticAnalysisReview) {
-        if (Objects.isNull(staticAnalysisReview)) {
-            return null;
-        }
         StaticAnalysisReviewModel toReturn = new StaticAnalysisReviewModel();
-        toReturn.setPmdInChangedLines(mapFindings(staticAnalysisReview.getPmdInChangedLines()));
-        toReturn.setPmdPreExisting(mapFindings(staticAnalysisReview.getPmdPreExisting()));
-        toReturn.setPmdFalsePositives(mapFindings(staticAnalysisReview.getPmdFalsePositives()));
-        toReturn.setSpotbugsInChangedLines(mapFindings(staticAnalysisReview.getSpotbugsInChangedLines()));
-        toReturn.setSpotbugsPreExisting(mapFindings(staticAnalysisReview.getSpotbugsPreExisting()));
-        toReturn.setSpotbugsFalsePositives(mapFindings(staticAnalysisReview.getSpotbugsFalsePositives()));
+        toReturn.setPmdInChangedLines(Optional.ofNullable(staticAnalysisReview.getPmdInChangedLines())
+                .map(LlmResponseMapper::mapFindings).orElse(Collections.emptyList()));
+        toReturn.setPmdPreExisting(Optional.ofNullable(staticAnalysisReview.getPmdPreExisting())
+                .map(LlmResponseMapper::mapFindings).orElse(Collections.emptyList()));
+        toReturn.setPmdFalsePositives(Optional.ofNullable(staticAnalysisReview.getPmdFalsePositives())
+                .map(LlmResponseMapper::mapFindings).orElse(Collections.emptyList()));
+        toReturn.setSpotbugsInChangedLines(Optional.ofNullable(staticAnalysisReview.getSpotbugsInChangedLines())
+                .map(LlmResponseMapper::mapFindings).orElse(Collections.emptyList()));
+        toReturn.setSpotbugsPreExisting(Optional.ofNullable(staticAnalysisReview.getSpotbugsPreExisting())
+                .map(LlmResponseMapper::mapFindings).orElse(Collections.emptyList()));
+        toReturn.setSpotbugsFalsePositives(Optional.ofNullable(staticAnalysisReview.getSpotbugsFalsePositives())
+                .map(LlmResponseMapper::mapFindings).orElse(Collections.emptyList()));
         return toReturn;
     }
     private static List<StaticAnalysisFindingModel> mapFindings(List<LlmScoringResponse.StaticAnalysisFinding> findings) {
-        if (CollectionUtils.isEmpty(findings)) {
-            return Collections.emptyList();
-        }
         return findings.stream()
                 .map(LlmResponseMapper::mapFinding)
                 .collect(Collectors.toList());
@@ -365,13 +392,12 @@ public class LlmResponseMapper {
         toReturn.setFile(finding.getFile());
         toReturn.setLine(finding.getLine());
         toReturn.setAssessment(finding.getAssessment());
-        toReturn.setSeverity(mapFindingSeverity(finding.getSeverity()));
+        toReturn.setSeverity(Optional.ofNullable(finding.getSeverity())
+                .map(LlmResponseMapper::mapFindingSeverity)
+                .orElse(StaticAnalysisFindingModel.SeverityEnum.INFO));
         return toReturn;
     }
     private static StaticAnalysisFindingModel.SeverityEnum mapFindingSeverity(LlmScoringResponse.FindingSeverity severity) {
-        if (Objects.isNull(severity)) {
-            return StaticAnalysisFindingModel.SeverityEnum.INFO;
-        }
         switch (severity) {
             case ERROR:
                 return StaticAnalysisFindingModel.SeverityEnum.ERROR;
@@ -384,25 +410,27 @@ public class LlmResponseMapper {
         }
     }
     private static BlastRadiusAnalysisModel mapBlastRadiusAnalysis(LlmScoringResponse.BlastRadiusAnalysis blastRadiusAnalysis) {
-        if (Objects.isNull(blastRadiusAnalysis)) {
-            return null;
-        }
         BlastRadiusAnalysisModel toReturn = new BlastRadiusAnalysisModel();
         toReturn.setTotalCallers(blastRadiusAnalysis.getTotalCallers());
         toReturn.setProductionCallers(blastRadiusAnalysis.getProductionCallers());
         toReturn.setTestCallers(blastRadiusAnalysis.getTestCallers());
-        toReturn.setRiskLevel(mapBlastRadiusRiskLevel(blastRadiusAnalysis.getRiskLevel()));
+        toReturn.setRiskLevel(Optional.ofNullable(blastRadiusAnalysis.getRiskLevel())
+                .map(LlmResponseMapper::mapBlastRadiusRiskLevel)
+                .orElse(BlastRadiusAnalysisModel.RiskLevelEnum.LOW));
         toReturn.setCriticalCallers(Optional.ofNullable(blastRadiusAnalysis.getCriticalCallers()).orElse(Collections.emptyList()));
         toReturn.setExplanation(blastRadiusAnalysis.getExplanation());
-        toReturn.setModuleType(mapModuleType(blastRadiusAnalysis.getModuleType()));
-        toReturn.setSignatureChanges(mapSignatureChanges(blastRadiusAnalysis.getSignatureChanges()));
-        toReturn.setExternalImpactEstimate(mapExternalImpactEstimate(blastRadiusAnalysis.getExternalImpactEstimate()));
+        if (Objects.nonNull(blastRadiusAnalysis.getModuleType())) {
+            toReturn.setModuleType(mapModuleType(blastRadiusAnalysis.getModuleType()));
+        }
+        if (Objects.nonNull(blastRadiusAnalysis.getSignatureChanges())) {
+            toReturn.setSignatureChanges(mapSignatureChanges(blastRadiusAnalysis.getSignatureChanges()));
+        }
+        if (Objects.nonNull(blastRadiusAnalysis.getExternalImpactEstimate())) {
+            toReturn.setExternalImpactEstimate(mapExternalImpactEstimate(blastRadiusAnalysis.getExternalImpactEstimate()));
+        }
         return toReturn;
     }
     private static BlastRadiusAnalysisModel.RiskLevelEnum mapBlastRadiusRiskLevel(LlmScoringResponse.RiskLevel riskLevel) {
-        if (Objects.isNull(riskLevel)) {
-            return BlastRadiusAnalysisModel.RiskLevelEnum.LOW;
-        }
         switch (riskLevel) {
             case LOW:
                 return BlastRadiusAnalysisModel.RiskLevelEnum.LOW;
@@ -418,9 +446,6 @@ public class LlmResponseMapper {
         }
     }
     private static BlastRadiusAnalysisModel.ModuleTypeEnum mapModuleType(LlmScoringResponse.ModuleType moduleType) {
-        if (Objects.isNull(moduleType)) {
-            return null;
-        }
         switch (moduleType) {
             case CORE_LIBRARY:
                 return BlastRadiusAnalysisModel.ModuleTypeEnum.CORE_LIBRARY;
@@ -433,19 +458,15 @@ public class LlmResponseMapper {
         }
     }
     private static SignatureChangesModel mapSignatureChanges(LlmScoringResponse.SignatureChanges signatureChanges) {
-        if (Objects.isNull(signatureChanges)) {
-            return null;
-        }
         SignatureChangesModel toReturn = new SignatureChangesModel();
         toReturn.setHasBreakingChanges(signatureChanges.isHasBreakingChanges());
         toReturn.setChangedSignatures(Optional.ofNullable(signatureChanges.getChangedSignatures()).orElse(Collections.emptyList()));
-        toReturn.setBreakingChangeType(mapBreakingChangeType(signatureChanges.getBreakingChangeType()));
+        if (Objects.nonNull(signatureChanges.getBreakingChangeType())) {
+            toReturn.setBreakingChangeType(mapBreakingChangeType(signatureChanges.getBreakingChangeType()));
+        }
         return toReturn;
     }
     private static SignatureChangesModel.BreakingChangeTypeEnum mapBreakingChangeType(LlmScoringResponse.BreakingChangeType breakingChangeType) {
-        if (Objects.isNull(breakingChangeType)) {
-            return null;
-        }
         switch (breakingChangeType) {
             case PARAMETER_ADDED:
                 return SignatureChangesModel.BreakingChangeTypeEnum.PARAMETER_ADDED;
@@ -462,9 +483,6 @@ public class LlmResponseMapper {
         }
     }
     private static BlastRadiusAnalysisModel.ExternalImpactEstimateEnum mapExternalImpactEstimate(LlmScoringResponse.ExternalImpact externalImpactEstimate) {
-        if (Objects.isNull(externalImpactEstimate)) {
-            return null;
-        }
         switch (externalImpactEstimate) {
             case NONE:
                 return BlastRadiusAnalysisModel.ExternalImpactEstimateEnum.NONE;
