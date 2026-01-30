@@ -180,6 +180,61 @@ String name = user.getName() != null ? user.getName() : "Unknown";
 Integer count = getCount() != null ? getCount() : 0;
 ```
 
+## Complex Null-Check Ternaries
+
+**For multi-level null checks with fallback defaults, use default assignment + if statement** instead of complex ternary expressions:
+
+```java
+// Good - default + if for multi-level null checks
+List<String> tags = Collections.emptyList();
+if (Objects.nonNull(response.getTags()) && Objects.nonNull(response.getTags().getItems())) {
+    tags = response.getTags().getItems();
+}
+
+// Good - Optional.ofNullable for simple single-level null fallback (see Null Checks above)
+ctx.setVariable("items", Optional.ofNullable(data.getItems()).orElse(Collections.emptyList()));
+
+// Bad - complex ternary with chained null checks
+List<String> tags = Objects.nonNull(response.getTags()) && Objects.nonNull(response.getTags().getItems())
+        ? response.getTags().getItems()
+        : Collections.emptyList();
+```
+
+For nested ternaries, use if/else if:
+
+```java
+// Good - if/else if
+RiskLevel risk;
+if (callers > HIGH_THRESHOLD) {
+    risk = RiskLevel.HIGH;
+} else if (callers > MODERATE_THRESHOLD) {
+    risk = RiskLevel.MODERATE;
+} else {
+    risk = RiskLevel.LOW;
+}
+
+// Bad - nested ternary
+RiskLevel risk = callers > HIGH_THRESHOLD ? RiskLevel.HIGH :
+        callers > MODERATE_THRESHOLD ? RiskLevel.MODERATE : RiskLevel.LOW;
+```
+
+When multiple fields share the same parent null check, restructure with an outer if block or early return:
+
+```java
+// Good - outer null check eliminates repeated && chains
+if (Objects.isNull(review)) {
+    ctx.setVariable("items", Collections.emptyList());
+    ctx.setVariable("count", 0);
+    return;
+}
+ctx.setVariable("items", Optional.ofNullable(review.getItems()).orElse(Collections.emptyList()));
+ctx.setVariable("count", CollectionUtils.size(review.getItems()));
+
+// Bad - repeated && chains
+ctx.setVariable("items", Objects.nonNull(review) && Objects.nonNull(review.getItems()) ? review.getItems() : Collections.emptyList());
+ctx.setVariable("count", Objects.nonNull(review) && Objects.nonNull(review.getItems()) ? review.getItems().size() : 0);
+```
+
 ## Fail Fast - No Defensive Programming
 
 **CRITICAL: NEVER add null/empty checks at the start of methods that silently return.** The caller is responsible for passing valid data. If invalid data is passed, let it fail fast (NPE) so bugs are discovered immediately.
@@ -238,6 +293,33 @@ private void processItems(List<Item> items) {
 **The only exceptions:**
 1. System boundaries (user input, external APIs, public library interfaces)
 2. Checking optional **data fields** (not method arguments) from external sources like LLM responses where fields may legitimately be absent
+
+**Mapper methods — null checks belong at call sites, not inside mappers:**
+
+```java
+// CORRECT - check the data field at the call site before invoking mapper
+if (Objects.nonNull(llmResponse.getRiskAssessment())) {
+    result.setRiskAssessment(mapRiskAssessment(llmResponse.getRiskAssessment()));
+}
+
+// CORRECT - for enum fields with a default, use Optional at call site
+result.setRiskLevel(Optional.ofNullable(riskAssessment.getRiskLevel())
+        .map(Mapper::mapRiskLevel).orElse(RiskLevelEnum.LOW));
+
+// CORRECT - for list fields, use Optional at call site
+toReturn.setItems(Optional.ofNullable(source.getItems())
+        .map(Mapper::mapItems).orElse(Collections.emptyList()));
+
+// FORBIDDEN - null/empty guard inside the mapper method itself
+private static RiskAssessmentModel mapRiskAssessment(RiskAssessment riskAssessment) {
+    if (Objects.isNull(riskAssessment)) { return null; }  // WRONG! Check at call site
+    // ...
+}
+private static List<Item> mapItems(List<SourceItem> items) {
+    if (CollectionUtils.isEmpty(items)) { return Collections.emptyList(); }  // WRONG!
+    // ...
+}
+```
 
 ## Return Variable Naming
 
@@ -549,6 +631,39 @@ for (CodeUnitModel codeUnit : file.getCodeUnits()) {
     if (isMethodOrConstructor(codeUnit.getKind())) {
         toReturn.add(mapMethodChange(file, codeUnit, fileContext));
     }
+}
+
+// Good - wrap logic in positive null check instead of bare return
+private static void populateBonus(Context ctx, Bonus bonus) {
+    ctx.setVariable("bonus", bonus);
+    if (Objects.nonNull(bonus)) {
+        ctx.setVariable("score", bonus.getScore());
+        ctx.setVariable("calculation", bonus.getCalculation());
+    }
+}
+
+// Bad - null-check guard clause with bare return
+private static void populateBonus(Context ctx, Bonus bonus) {
+    ctx.setVariable("bonus", bonus);
+    if (Objects.isNull(bonus)) {
+        return;
+    }
+    ctx.setVariable("score", bonus.getScore());
+    ctx.setVariable("calculation", bonus.getCalculation());
+}
+```
+
+**Exception:** Early return is acceptable when the null case has meaningful work (setting default values for multiple variables):
+
+```java
+// OK - null case sets multiple default values before returning
+private static void populateReview(Context ctx, Review review) {
+    if (Objects.isNull(review)) {
+        ctx.setVariable("items", Collections.emptyList());
+        ctx.setVariable("count", 0);
+        return;
+    }
+    // ... main logic using review
 }
 ```
 

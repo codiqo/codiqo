@@ -25,7 +25,6 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.experimental.SuperBuilder;
-import lombok.extern.slf4j.Slf4j;
 import net.sourceforge.pmd.lang.java.ast.ASTExecutableDeclaration;
 import net.sourceforge.pmd.lang.java.ast.ASTTypeDeclaration;
 import net.sourceforge.pmd.lang.java.ast.JModifier;
@@ -37,7 +36,6 @@ import net.sourceforge.pmd.lang.metrics.MetricsUtil;
 import net.sourceforge.pmd.reporting.RuleViolation;
 import reactor.core.publisher.Mono;
 
-@Slf4j
 @Setter
 @Getter
 @SuperBuilder

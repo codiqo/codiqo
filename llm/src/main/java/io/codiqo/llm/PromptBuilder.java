@@ -32,8 +32,6 @@ public interface PromptBuilder {
         int projectTotalMethods = 0;
         @Builder.Default
         int codeUnitsAffected = 0;
-        @Builder.Default
-        boolean nativeThinking = false;
 
         public static PromptContextBuilder withFullContext(RunArgs args) {
             return PromptContext.builder().args(args);

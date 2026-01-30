@@ -167,8 +167,8 @@ Your task is to provide:
 3. **Quality factor** (0.0-1.0)
 
 The server will compute:
-- Clamp quality multiplier to [0.5, 1.2]
-- Architecture bonus = architectureImpact × baseEffort × 0.01 × qualityFactor
+- Clamp quality multiplier to range [(${quality_multiplier_min})] .. [(${quality_multiplier_max})]
+- Architecture bonus = architectureImpact × baseEffort × [(${architecture_bonus_factor})] × qualityFactor
 - Final score = baseEffort × qualityMultiplier + architectureBonus
 
 **Your JSON fields `score`, `scoreCalculation`, `bonusCalculation`, and `bonusPoints` will be OVERWRITTEN by the server. You can leave them as placeholder values (e.g., 0).**
@@ -176,8 +176,8 @@ The server will compute:
 **Formula reference (for understanding, not for you to compute):**
 ```
 quality_multiplier = 1.0 + cpd_impact + static_analysis_impact + coverage_impact + architecture_penalty
-quality_multiplier = MAX(0.5, MIN(1.2, quality_multiplier))
-architecture_effort_bonus = architectureImpact × base_effort × 0.01 × qualityFactor
+quality_multiplier = MAX([(${quality_multiplier_min})], MIN([(${quality_multiplier_max})], quality_multiplier))
+architecture_effort_bonus = architectureImpact × base_effort × [(${architecture_bonus_factor})] × qualityFactor
 FINAL_SCORE = (base_effort × quality_multiplier) + architecture_effort_bonus
 ```
 
@@ -343,12 +343,12 @@ The `severity` field in each diagnostic tells you the actual priority:
 
 | Coverage of Changed Code | Impact |
 |-------------------------|--------|
-| ≥90% (excellent) | [(${coverage_excellent_bonus})] |
-| 80-89% (good) | [(${coverage_good_bonus})] |
-| 70-79% (acceptable) | 0 |
-| 60-69% (low) | [(${coverage_low_penalty})] |
-| 50-59% (poor) | [(${coverage_poor_penalty})] |
-| <50% (terrible) | [(${coverage_terrible_penalty})] |
+| ≥[(${cov_excellent_min})]% (excellent) | [(${coverage_excellent_bonus})] |
+| [(${cov_good_min})]-[(${cov_excellent_min - 1})]% (good) | [(${coverage_good_bonus})] |
+| [(${cov_acceptable_min})]-[(${cov_good_min - 1})]% (acceptable) | 0 |
+| [(${cov_low_min})]-[(${cov_acceptable_min - 1})]% (low) | [(${coverage_low_penalty})] |
+| [(${cov_poor_min})]-[(${cov_low_min - 1})]% (poor) | [(${coverage_poor_penalty})] |
+| <[(${cov_poor_min})]% (terrible) | [(${coverage_terrible_penalty})] |
 
 ## 3.4 Architecture/SOLID Violations (Penalties)
 
@@ -378,7 +378,7 @@ When reporting SOLID violations in `architectureAnalysis.solidViolations[]`, you
 
 When a developer does architecture work with quality, they deserve credit for the extra effort.
 
-**Formula:** `bonus = architectureImpact × base_effort × 0.01 × qualityFactor`
+**Formula:** `bonus = architectureImpact × base_effort × [(${architecture_bonus_factor})] × qualityFactor`
 
 | Architecture Impact | Quality Factor | Bonus (for base_effort = 60) |
 |--------------------|----------------|------------------------------|
@@ -388,14 +388,14 @@ When a developer does architecture work with quality, they deserve credit for th
 | 9-10 (major) | 1.0 (excellent) | 5.4 - 6.0 points |
 
 **Quality Factor Guidelines:**
-- **1.0** - Excellent: Good coverage (≥80%), no blocking issues, clean design
-- **0.7-0.9** - Good: Adequate coverage (60-80%), minor issues only
+- **1.0** - Excellent: Good coverage (≥[(${cov_good_min})]%), no blocking issues, clean design
+- **0.7-0.9** - Good: Adequate coverage ([(${cov_low_min})]-[(${cov_good_min})]%), minor issues only
 - **0.4-0.6** - Adequate: Some coverage, no blocking bugs
 - **0.1-0.3** - Poor: Low coverage, some issues
 - **0.0** - None: No tests, blocking bugs, or poor design
 
 **Example:** base_effort = 60, architectureImpact = 8, qualityFactor = 0.8
-- bonus = 8 × 60 × 0.01 × 0.8 = 3.84 points added to final score
+- bonus = 8 × 60 × [(${architecture_bonus_factor})] × 0.8 = 3.84 points added to final score
 
 This bonus is ADDITIVE (not multiplicative) and applies AFTER the quality multiplier.
 
@@ -451,9 +451,9 @@ For dimensions 1-9:
 - **qualityGateMet**: true if the gate requirement is satisfied, false otherwise
 
 **Dimension 10 (Testing Coverage) is INVERTED** - higher score is better:
-- 0-2: Poor coverage (<60%) - concerning
-- 3-5: Moderate coverage (60-80%)
-- 6-8: Good coverage (80-95%)
+- 0-2: Poor coverage (<[(${cov_low_min})]%) - concerning
+- 3-5: Moderate coverage ([(${cov_low_min})]-[(${cov_good_min})]%)
+- 6-8: Good coverage ([(${cov_good_min})]-95%)
 - 9-10: Excellent coverage (95%+)
 
 ## Detailed Dimension Descriptions
@@ -518,25 +518,25 @@ For dimensions 1-9:
 
 **Step 1:** Find the maximum non-null dimension score (exclude testingCoverage) = `maxDimScore`
 
-**Step 2:** Count dimensions with score ≥ 7 (exclude testingCoverage) = `highDimCount`
+**Step 2:** Count dimensions with score ≥ [(${risk_high_dimension_threshold})] (exclude testingCoverage) = `highDimCount`
 
-**Step 3:** `baseRisk = maxDimScore × 7`
+**Step 3:** `baseRisk = maxDimScore × [(${risk_base_multiplier})]`
 
 **Step 4:** Apply modifiers (cumulative):
-- For each high-scoring dimension beyond the first: **+5** (i.e., `(highDimCount - 1) × 5`)
-- If `moduleType` is `CORE_LIBRARY` or `SHARED_UTILITY`: **+10**
-- If `hasBreakingChanges` is `true`: **+10**
+- For each high-scoring dimension beyond the first: **+[(${risk_high_dim_penalty})]** (i.e., `(highDimCount - 1) × [(${risk_high_dim_penalty})]`)
+- If `moduleType` is `CORE_LIBRARY` or `SHARED_UTILITY`: **+[(${risk_core_library_penalty})]**
+- If `hasBreakingChanges` is `true`: **+[(${risk_breaking_changes_penalty})]**
 
-**Step 5:** `riskScore = min(100, baseRisk + all modifiers)`
+**Step 5:** `riskScore = min([(${risk_score_max})], baseRisk + all modifiers)`
 
 ### Risk Level Mapping (MANDATORY — derive from riskScore)
 | riskScore Range | riskLevel |
 |-----------------|-----------|
-| 0–25 | `LOW` |
-| 26–50 | `MODERATE` |
-| 51–75 | `HIGH` |
-| 76–90 | `VERY_HIGH` |
-| 91–100 | `CRITICAL` |
+| 0–[(${risk_level_low_max})] | `LOW` |
+| [(${risk_level_low_max + 1})]–[(${risk_level_moderate_max})] | `MODERATE` |
+| [(${risk_level_moderate_max + 1})]–[(${risk_level_high_max})] | `HIGH` |
+| [(${risk_level_high_max + 1})]–[(${risk_level_very_high_max})] | `VERY_HIGH` |
+| [(${risk_level_very_high_max + 1})]–[(${risk_score_max})] | `CRITICAL` |
 
 **Show your risk calculation in the `thinking` field** as part of the analysis.
 
@@ -625,21 +625,30 @@ Apply these when assessing risk for library modules:
 - Framework version upgrades (Spring, Kafka, etc.)
 - Library updates - check for breaking changes
 
-### MANDATORY: Web Search Tool for Dependency Analysis
+### Web Search Tool for Dependency Analysis
 
-**YOU MUST USE the `WebSearchTool` function when you detect dependency version changes.**
+You MAY have access to a `WebSearchTool` function for researching dependency version changes.
 
-When analyzing commits with dependency upgrades:
-1. **FIRST**: Call `WebSearchTool` with query like "{library} {old_version} to {new_version} breaking changes"
-2. **THEN**: Use the search results to identify known issues, bugs, and migration requirements
-3. **FINALLY**: Provide your JSON assessment incorporating the search findings
+**When to use it:**
+- ONLY when you encounter a dependency version upgrade and you have NO knowledge about breaking changes or migration requirements for that specific version transition
+- Do NOT search for libraries/versions you already know well from your training data
+- When the user message already includes a **Web Search Context** section with pre-fetched results, do NOT search again for the same libraries
 
-Example tool calls:
-- `{"query": "Spring Boot 3 to 4 migration breaking changes", "maxResults": 5}`
-- `{"query": "Kafka 3.9 to 4.1 upgrade guide known issues", "maxResults": 5}`
-- `{"query": "Spring Framework 6 to 7 deprecations removed APIs", "maxResults": 5}`
+**How to use it — CRITICAL RULES:**
+1. **ONE query per tool call.** Each tool call must contain exactly ONE JSON object: `{"query": "...", "maxResults": 5}`
+2. **NEVER concatenate multiple JSON objects** in a single tool call's arguments. If you need to search for 3 libraries, make 3 separate tool calls — one per library.
+3. Keep queries focused and concise, e.g. `{"query": "Spring Boot 3.5 to 4.0 breaking changes", "maxResults": 5}`
+4. Limit yourself to at most 2-3 searches per commit analysis to avoid excessive context growth
 
-**DO NOT skip the web search** - external documentation often reveals critical breaking changes not visible in the code diff.
+**Correct example** (3 separate tool calls for 3 libraries):
+- Tool call 1: `{"query": "Spring Boot 3.5 to 4.0 breaking changes", "maxResults": 5}`
+- Tool call 2: `{"query": "Kafka 3.9 to 4.1 migration guide", "maxResults": 5}`
+- Tool call 3: `{"query": "Jackson 2.17 to 2.18 changelog", "maxResults": 5}`
+
+**WRONG — NEVER do this** (multiple JSONs concatenated in one call):
+- `{"query": "Spring Boot 3.5 to 4.0 breaking changes", "maxResults": 5}{"query": "Kafka 3.9 to 4.1 migration guide", "maxResults": 5}`
+
+If no web search tool is available, rely on your training knowledge. Note any uncertainties in your `thinking` field when analyzing unfamiliar library upgrades.
 
 ## Code Smells
 - Long parameter lists (>5 parameters)
@@ -676,6 +685,21 @@ Bugs affect **MERGABILITY**, not productivity score.
 - Additional edge case tests
 - Documentation improvements
 
+## Code Fix Generation (for bugs)
+
+**PRIORITY: Always provide `suggestedBlockCode` first.** Most fixes can be expressed as a single code block rewrite (method/constructor). Only fall back to text-only `suggestedFileFix` when the fix genuinely requires cross-block or file-level changes (imports, class declaration, multiple blocks).
+
+For each bug you report, provide fix guidance:
+1. **`suggestedBlockCode`** (PREFERRED): Provide the **complete fixed code block** — full method/constructor from signature to closing brace. Provide this for EVERY bug where the fix is within a single code block. Must be syntactically valid and compilable.
+2. **`suggestedFileFix`**: Text explanation of how to fix. Use ONLY when the fix requires file-level changes that can't be captured in a single block. Always provide as a fallback.
+3. **`suggestedFix`**: Brief plain-text one-liner summary.
+
+**Rules for `suggestedBlockCode`:**
+- Include the full code block (from signature to closing brace), not just the changed line
+- The code must be syntactically valid in the relevant language
+- Do NOT include surrounding class code, imports, or other blocks — only the affected block
+- Preserve the original indentation style
+
 **NOT BUGS (NEVER put in `bugs` section):**
 - ANY issue already detected by PMD or SpotBugs → goes to `staticAnalysisReview` ONLY
 - Even if you independently notice the same issue (e.g., "constructor calls overridable method") → `staticAnalysisReview`
@@ -704,16 +728,20 @@ For each finding:
 2. **Validate**: Is it a real issue or false positive? If false positive, move to `pmdFalsePositives`/`spotbugsFalsePositives`
 3. **Assess**: Severity based on actual impact (ERROR/WARNING/INFO)
 
-### Code Fix Generation (for findings in changed lines)
+### Code Fix Generation (for all static analysis findings)
 
-For each finding in `pmdInChangedLines` or `spotbugsInChangedLines` with severity `ERROR` or `WARNING`:
-1. **`suggestedFileFix`**: Brief text explanation of how to fix. Use this when the fix requires file-level changes (imports, class declaration, multiple blocks). Always provide this field.
-2. **`suggestedBlockCode`**: If the fix is contained within a single code block (method, constructor, function, etc.), provide the **complete fixed block** (full signature + body). If the fix requires changes outside the block (imports, class-level changes, etc.), leave `suggestedBlockCode` as `null` and explain in `suggestedFileFix` instead.
+**PRIORITY: Always provide `suggestedBlockCode` first.** Most fixes can be expressed as a single code block rewrite (method/constructor). Only fall back to text-only `suggestedFileFix` when the fix genuinely requires cross-block or file-level changes (imports, class declaration, multiple blocks).
+
+For **every** finding in `pmdInChangedLines`, `spotbugsInChangedLines`, `pmdPreExisting`, and `spotbugsPreExisting` — regardless of severity — provide a suggested fix if possible:
+1. **`suggestedBlockCode`** (PREFERRED): Provide the **complete fixed code block** — full method/constructor from signature to closing brace. Provide this for EVERY finding where the fix is within a single code block. Must be syntactically valid and compilable.
+2. **`suggestedFileFix`**: Text explanation of how to fix. Use ONLY when the fix requires file-level changes that can't be captured in a single block. Always provide as a fallback.
+
+**Always attempt to provide at least one of the two fields.** Only omit both when the finding is a false positive or the fix is too context-dependent to suggest reliably.
 
 **Rules for `suggestedBlockCode`:**
 - Include the full code block (from signature to closing brace), not just the changed line
 - The code must be syntactically valid in the relevant language
-- Do NOT include surrounding class code, imports, or other blocks — only the affected block itself
+- Do NOT include surrounding class code, imports, or other blocks — only the affected block
 - Preserve the original indentation style
 - For constructor issues (e.g., ConstructorCallsOverridableMethod), provide the fixed constructor
 
@@ -925,7 +953,9 @@ Your entire response is parsed as JSON directly.
         "description": "<detailed explanation>",
         "file": "<file path>",
         "line": <number>,
-        "suggestedFix": "<how to fix>",
+        "suggestedFix": "<how to fix (text)>",
+        "suggestedFileFix": "<text explanation of fix>",
+        "suggestedBlockCode": "<complete fixed code block (ALWAYS provide when fix is within single block) or null>",
         "confidence": "<high|medium|low>",
         "source": "<llm|pmd|spotbugs>"
       }
@@ -1148,7 +1178,7 @@ quality_multiplier = 1.0 + 0.05 + 0.05 + 0.05 + 0 + 0 = 1.15
 
 # Architecture Effort Bonus
 architectureImpact = 1, qualityFactor = 1.0 (excellent: 85% coverage, no issues)
-bonus = 1 × 28.40 × 0.01 × 1.0 = 0.28 points
+bonus = 1 × 28.40 × [(${architecture_bonus_factor})] × 1.0 = 0.28 points
 
 # Final Score
 FINAL = (28.40 × 1.15) + 0.28 = 32.94 ≈ 33

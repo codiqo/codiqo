@@ -1,6 +1,5 @@
 package io.codiqo.llm.client;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
@@ -12,16 +11,13 @@ import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
-import com.openai.models.chat.completions.ChatCompletion;
-import com.openai.models.chat.completions.ChatCompletion.Choice;
+import com.openai.models.chat.completions.ChatCompletionAssistantMessageParam;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionMessageFunctionToolCall;
-import com.openai.models.chat.completions.ChatCompletionMessageFunctionToolCall.Function;
-import com.openai.models.chat.completions.ChatCompletionMessageToolCall;
+import com.openai.models.chat.completions.ChatCompletionStreamOptions;
 import com.openai.models.chat.completions.ChatCompletionToolMessageParam;
 
 import io.codiqo.api.RunArgs;
@@ -31,6 +27,8 @@ import io.codiqo.llm.PromptBuilder.PromptContext;
 import io.codiqo.llm.PromptBuilder.UserMessageResult;
 import io.codiqo.llm.ThymeleafPromptBuilder;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
+import io.codiqo.llm.client.OpenAIClientWrapper.AccumulatedToolCall;
+import io.codiqo.llm.client.OpenAIClientWrapper.StreamingResult;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringResponse;
 
@@ -49,7 +47,6 @@ public class LlmScoringClient implements ScoringClient {
     private final Double topP;
     private final Integer maxTokens;
     private final boolean enableWebSearch;
-
 
     public LlmScoringClient(RunArgs args) {
         OpenAIOkHttpClient.Builder builder = OpenAIOkHttpClient.builder();
@@ -95,6 +92,7 @@ public class LlmScoringClient implements ScoringClient {
         paramsBuilder.model(model);
         paramsBuilder.addSystemMessage(systemPrompt);
         paramsBuilder.addUserMessage(userMessage);
+        paramsBuilder.streamOptions(ChatCompletionStreamOptions.builder().includeUsage(true).build());
         if (Objects.nonNull(temperature)) {
             paramsBuilder.temperature(temperature);
         }
@@ -112,68 +110,68 @@ public class LlmScoringClient implements ScoringClient {
         int totalCompletionTokens = 0;
         List<String> toolCallsMade = Lists.newArrayList();
 
+        OpenAIClientWrapper.StreamingHandler bridgeHandler = new OpenAIClientWrapper.StreamingHandler() {
+            @Override
+            public void onContent(String delta) {
+                handler.onContent(delta);
+            }
+        };
+
         for (int iteration = 0; iteration < MAX_TOOL_CALLS; iteration++) {
-            ChatCompletion completion = wrapper.chat(paramsBuilder.build());
-            Choice choice = Iterables.getOnlyElement(completion.choices());
+            StreamingResult streamResult = wrapper.stream(paramsBuilder.build(), bridgeHandler);
 
-            if (completion.usage().isPresent()) {
-                var usage = completion.usage().get();
-                totalPromptTokens += (int) usage.promptTokens();
-                totalCompletionTokens += (int) usage.completionTokens();
-            }
+            totalPromptTokens += streamResult.getPromptTokens();
+            totalCompletionTokens += streamResult.getCompletionTokens();
 
-            List<ChatCompletionMessageToolCall> toolCalls = choice.message().toolCalls().orElse(Collections.emptyList());
-            if (CollectionUtils.isEmpty(toolCalls)) {
-                String rawContent = choice.message().content().get();
-
-                String thinking = null;
-                String jsonContent = rawContent;
-                ThinkingExtractor extractor = new ThinkingExtractor(rawContent);
-                if (extractor.hasThinking()) {
-                    thinking = extractor.getThinking();
-                    jsonContent = extractor.getContent();
+            if (CollectionUtils.isNotEmpty(streamResult.getToolCalls())) {
+                ChatCompletionAssistantMessageParam.Builder assistantMsg = ChatCompletionAssistantMessageParam.builder();
+                String content = streamResult.getContent().toString();
+                if (StringUtils.isNotEmpty(content)) {
+                    assistantMsg.content(content);
                 }
-
-                handler.onContent(jsonContent);
-
-                LlmScoringResponse scoringResponse = objectMapper.readValue(jsonContent, LlmScoringResponse.class);
-
-                if (thinking != null) {
-                    handler.onThinking(thinking);
-                    if (StringUtils.isBlank(scoringResponse.getThinking())) {
-                        scoringResponse.setThinking(thinking);
-                    }
+                for (AccumulatedToolCall tc : streamResult.getToolCalls()) {
+                    assistantMsg.addToolCall(ChatCompletionMessageFunctionToolCall.builder()
+                            .id(tc.getId())
+                            .function(ChatCompletionMessageFunctionToolCall.Function.builder()
+                                    .name(tc.getName())
+                                    .arguments(tc.getArguments().toString())
+                                    .build())
+                            .build());
                 }
+                paramsBuilder.addMessage(assistantMsg.build());
 
-                finalScoreCalculator.apply(scoringResponse, preComputedScores);
+                for (AccumulatedToolCall tc : streamResult.getToolCalls()) {
+                    String toolName = tc.getName();
+                    String arguments = tc.getArguments().toString();
+                    toolCallsMade.add(toolName + ": " + arguments);
+                    handler.onToolCall(toolName);
 
-                ScoringResult result = ScoringResult.builder()
-                        .response(scoringResponse)
-                        .rawJson(jsonContent)
-                        .thinking(thinking)
-                        .promptTokens(totalPromptTokens)
-                        .completionTokens(totalCompletionTokens)
-                        .promptLength(promptLength)
-                        .toolCallsMade(toolCallsMade)
-                        .build();
-
-                handler.onComplete(result);
-                return result;
+                    Object result = executeTool(toolName, arguments);
+                    paramsBuilder.addMessage(ChatCompletionToolMessageParam.builder()
+                            .toolCallId(tc.getId())
+                            .contentAsJson(result)
+                            .build());
+                }
+                continue;
             }
 
-            paramsBuilder.addMessage(choice.message());
+            String rawContent = streamResult.getContent().toString();
+            LlmScoringResponse scoringResponse = objectMapper.readValue(rawContent, LlmScoringResponse.class);
 
-            for (ChatCompletionMessageToolCall call : toolCalls) {
-                Function function = call.asFunction().function();
-                String toolName = function.name();
-                toolCallsMade.add(toolName + ": " + function.arguments());
+            finalScoreCalculator.apply(scoringResponse, preComputedScores);
 
-                Object result = executeTool(function);
-                paramsBuilder.addMessage(ChatCompletionToolMessageParam.builder()
-                        .toolCallId(call.asFunction().id())
-                        .contentAsJson(result)
-                        .build());
-            }
+            ScoringResult result = ScoringResult.builder()
+                    .response(scoringResponse)
+                    .rawJson(rawContent)
+                    .thinking(scoringResponse.getThinking())
+                    .promptTokens(totalPromptTokens)
+                    .completionTokens(totalCompletionTokens)
+                    .promptLength(promptLength)
+                    .toolCallsMade(toolCallsMade)
+                    .build();
+
+            handler.onComplete(result);
+            return result;
         }
 
         throw new IllegalStateException("exceeded maximum tool call iterations (" + MAX_TOOL_CALLS + ")");
@@ -187,64 +185,11 @@ public class LlmScoringClient implements ScoringClient {
             webSearchClient.close();
         }
     }
-    private Object executeTool(ChatCompletionMessageFunctionToolCall.Function function) throws Exception {
-        if (WebSearchTool.class.getSimpleName().equals(function.name())) {
-            WebSearchTool searchTool = function.arguments(WebSearchTool.class);
+    private Object executeTool(String name, String arguments) throws Exception {
+        if (WebSearchTool.class.getSimpleName().equals(name)) {
+            WebSearchTool searchTool = objectMapper.readValue(arguments, WebSearchTool.class);
             return searchTool.apply(webSearchClient);
         }
-        throw new IllegalArgumentException("unknown tool: " + function.name());
-    }
-
-    /**
-     * Extracts thinking content from tags like &lt;think&gt;, &lt;thinking&gt;, &lt;reasoning&gt;.
-     * Used for models that output their reasoning wrapped in XML-style tags.
-     */
-    private static class ThinkingExtractor {
-        private static final String[][] TAG_PAIRS = {
-                { "<think>", "</think>" },
-                { "<thinking>", "</thinking>" },
-                { "<reasoning>", "</reasoning>" }
-        };
-
-        private final String thinking;
-        private final String content;
-
-        private ThinkingExtractor(String rawContent) {
-            StringBuilder thinkingBuilder = new StringBuilder();
-            String remaining = rawContent;
-
-            for (String[] tagPair : TAG_PAIRS) {
-                String openTag = tagPair[0];
-                String closeTag = tagPair[1];
-
-                int openIdx;
-                while ((openIdx = remaining.indexOf(openTag)) >= 0) {
-                    int closeIdx = remaining.indexOf(closeTag, openIdx + openTag.length());
-                    if (closeIdx >= 0) {
-                        String thinkContent = remaining.substring(openIdx + openTag.length(), closeIdx);
-                        if (thinkingBuilder.length() > 0) {
-                            thinkingBuilder.append("\n\n");
-                        }
-                        thinkingBuilder.append(thinkContent.trim());
-                        remaining = remaining.substring(0, openIdx) + remaining.substring(closeIdx + closeTag.length());
-                    } else {
-                        break;
-                    }
-                }
-            }
-
-            this.thinking = thinkingBuilder.length() > 0 ? thinkingBuilder.toString() : null;
-            this.content = remaining.trim();
-        }
-
-        private boolean hasThinking() {
-            return thinking != null && !thinking.isEmpty();
-        }
-        private String getThinking() {
-            return thinking;
-        }
-        private String getContent() {
-            return content;
-        }
+        throw new IllegalArgumentException("unknown tool: " + name);
     }
 }

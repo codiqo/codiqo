@@ -332,7 +332,8 @@
             <div class="flex flex-col md:flex-row gap-4 mb-6">
                 <!-- Total Score with Gauge - Fixed width -->
                 <div class="flex-shrink-0">
-                    <div class="rounded-lg p-4 text-center h-full flex flex-col justify-center items-center" th:classappend="${dangerClass}">
+                    <div class="rounded-lg p-4 text-center h-full flex flex-col justify-center items-center"
+                         th:data-danger-score="${totalScore}">
                         <div class="score-gauge mx-auto mb-2">
                             <svg width="100" height="100" viewBox="0 0 120 120">
                                 <circle cx="60" cy="60" r="50" fill="none" stroke="#e5e7eb" stroke-width="10"/>
@@ -391,12 +392,12 @@
 
             <!-- Senior Review Alert - Full Width -->
             <div class="mb-6" th:if="${seniorReviewScore >= 5}">
-                <div th:classappend="${seniorReviewScore >= 8} ? 'bg-red-100 border-red-400 text-red-700' : (${seniorReviewScore >= 7} ? 'bg-orange-100 border-orange-400 text-orange-700' : 'bg-yellow-100 border-yellow-400 text-yellow-700')"
+                <div th:data-senior-class="${seniorReviewScore}"
                      class="border px-6 py-4 rounded-lg flex items-center justify-between">
                     <div class="flex items-center">
-                        <span class="text-2xl mr-3" th:text="${seniorReviewScore >= 8} ? '🚨' : (${seniorReviewScore >= 7} ? '⚠️' : '👀')"></span>
+                        <span class="text-2xl mr-3" th:data-senior-emoji="${seniorReviewScore}"></span>
                         <div>
-                            <span class="font-bold text-lg" th:text="${seniorReviewScore >= 8} ? 'Critical: Senior Review Required' : (${seniorReviewScore >= 7} ? 'Senior Review Recommended' : 'Peer Review Suggested')"></span>
+                            <span class="font-bold text-lg" th:data-senior-label="${seniorReviewScore}"></span>
                             <ul th:if="${recommendations != null and #lists.size(recommendations) > 0}" class="text-sm mt-1 ml-1 opacity-90">
                                 <li th:each="reason : ${recommendations}" th:text="'• ' + ${reason}">Reason</li>
                             </ul>
@@ -698,26 +699,29 @@
                     <!-- Architecture Bonus Details (full width below) -->
                     <div th:if="${architectureBonus != null}" class="mt-4 bg-white rounded p-3 border">
                         <h4 class="text-sm font-semibold text-teal-700 mb-2">🏗️ Architecture Effort Bonus</h4>
-                        <div class="grid grid-cols-4 gap-4 text-xs">
-                            <div class="text-center">
+                        <div class="grid grid-cols-4 gap-3 text-xs">
+                            <div class="text-center bg-teal-50 rounded-lg p-3 border border-teal-200">
                                 <p class="text-gray-500">Impact Score</p>
                                 <p class="font-bold text-lg" th:text="${architectureImpactScore} + '/10'">0/10</p>
                             </div>
-                            <div class="text-center">
+                            <div class="text-center bg-teal-50 rounded-lg p-3 border border-teal-200">
                                 <p class="text-gray-500">Quality Factor</p>
                                 <p class="font-bold text-lg" th:text="${qualityFactor}">0.00</p>
                             </div>
-                            <div class="text-center">
+                            <div class="text-center bg-teal-50 rounded-lg p-3 border border-teal-200">
                                 <p class="text-gray-500">Base Effort</p>
                                 <p class="font-bold text-lg" th:text="${bonusBaseEffort}">0.00</p>
                             </div>
-                            <div class="text-center">
+                            <div class="text-center bg-teal-50 rounded-lg p-3 border border-teal-200">
                                 <p class="text-gray-500">Bonus Points</p>
                                 <p class="font-bold text-lg text-teal-700" th:text="'+' + ${bonusPoints}">+0.00</p>
                             </div>
                         </div>
-                        <div class="mt-2 pt-2 border-t text-xs text-gray-500">
-                            <span class="font-semibold">Calculation:</span> <span class="font-mono text-teal-700" th:text="${bonusCalculation}"></span>
+                        <div th:if="${bonusCalculation != null}" class="mt-2 pt-2 border-t">
+                            <div class="bg-gradient-to-r from-teal-50 to-cyan-50 rounded p-2 border border-teal-200">
+                                <p class="text-xs text-gray-500 mb-1">Calculation:</p>
+                                <p class="font-mono text-sm text-teal-800 font-bold" th:text="${bonusCalculation}"></p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -725,9 +729,10 @@
 
             <!-- Risk Assessment - Compact single row -->
             <div th:if="${riskAssessment != null}" class="mb-6">
-                <div class="rounded-lg px-4 py-3 border flex items-center justify-between" th:classappend="${brRiskLevelClass}">
+                <div class="rounded-lg px-4 py-3 border flex items-center justify-between"
+                     th:data-risk-class="${riskLevel}">
                     <div class="flex items-center gap-3">
-                        <span class="text-xl" th:text="${riskLevel == 'critical'} ? '🔴' : (${riskLevel == 'high' or riskLevel == 'very_high'} ? '🟠' : (${riskLevel == 'moderate'} ? '🟡' : '🟢'))">🟢</span>
+                        <span class="text-xl" th:data-risk-emoji="${riskLevel}">🟢</span>
                         <span class="font-semibold uppercase" th:text="${riskLevel}">Low</span>
                         <span class="text-xs opacity-70">Risk Level</span>
                     </div>
@@ -776,7 +781,9 @@
             <div th:if="${blastRadius != null or brTotalCallers > 0}" class="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-6">
                 <h3 class="text-sm font-semibold text-orange-700 uppercase mb-3 flex items-center justify-between">
                     <span><span class="mr-2">💥</span> Blast Radius Analysis</span>
-                    <span th:unless="${#strings.isEmpty(brModuleType)}" class="text-xs font-normal px-2 py-1 rounded" th:classappend="${#strings.equals(brModuleType, 'core_library')} ? 'bg-red-100 text-red-700' : (${#strings.equals(brModuleType, 'shared_utility')} ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700')" th:text="${brModuleTypeDisplay}">Leaf Application</span>
+                    <span th:unless="${#strings.isEmpty(brModuleType)}" class="text-xs font-normal px-2 py-1 rounded"
+                          th:data-module-class="${brModuleType}"
+                          th:data-module-label="${brModuleType}">Leaf Application</span>
                 </h3>
 
                 <!-- Caller Counts -->
@@ -795,7 +802,9 @@
                     </div>
                     <div class="bg-white rounded-lg p-3 border text-center">
                         <p class="text-xs text-gray-500 uppercase">Risk Level</p>
-                        <p class="text-lg font-bold uppercase" th:class="${brRiskLevelClass}" th:text="${brRiskLevel}">Low</p>
+                        <p class="text-lg font-bold uppercase"
+                           th:data-risk-class="${brRiskLevel}"
+                           th:text="${brRiskLevel}">Low</p>
                     </div>
                 </div>
 
@@ -815,7 +824,9 @@
                 <div th:unless="${#strings.isEmpty(brExternalImpact)}" class="mb-4">
                     <div class="flex items-center justify-between bg-white rounded-lg p-3 border">
                         <span class="text-sm text-gray-600">External Consumer Impact Estimate:</span>
-                        <span class="text-sm font-bold uppercase px-3 py-1 rounded" th:class="${brExternalImpactClass}" th:text="${brExternalImpact}">Unknown</span>
+                        <span class="text-sm font-bold uppercase px-3 py-1 rounded"
+                              th:data-ext-impact="${brExternalImpact}"
+                              th:text="${brExternalImpact}">Unknown</span>
                     </div>
                 </div>
 
@@ -878,7 +889,7 @@
                          class="bg-gray-50 rounded-lg p-3 flex items-center justify-between"
                          th:classappend="${!dim.applicable} ? ' opacity-60' : ''">
                         <div class="flex items-center space-x-3 flex-1 min-w-0">
-                            <span class="text-xl flex-shrink-0" th:text="${dim.icon}">🏗️</span>
+                            <span class="text-xl flex-shrink-0" th:switch="${dim.iconType}"><th:block th:case="'architecture'">🏗️</th:block><th:block th:case="'concurrency'">⚡</th:block><th:block th:case="'integration'">🔗</th:block><th:block th:case="'data'">🗄️</th:block><th:block th:case="'security'">🔒</th:block><th:block th:case="'scalability'">📈</th:block><th:block th:case="'observability'">👁️</th:block><th:block th:case="'resilience'">🛡️</th:block><th:block th:case="'performance'">⚡</th:block><th:block th:case="'testing'">✅</th:block><th:block th:case="*">❓</th:block></span>
                             <div class="min-w-0">
                                 <p class="font-medium text-gray-800 text-sm truncate" th:text="${dim.name}">Architecture</p>
                                 <p class="text-xs text-gray-500 truncate" th:text="${dim.rationale}" th:title="${dim.rationale}">Rationale here</p>
@@ -886,10 +897,12 @@
                         </div>
                         <div class="flex items-center space-x-2 flex-shrink-0 ml-2">
                             <div class="w-20 bg-gray-200 rounded-full h-2">
-                                <div class="h-2 rounded-full" th:classappend="'bar-' + ${dim.barClass}"
+                                <div class="h-2 rounded-full"
+                                     th:data-dim-bar="${dim.score}" th:data-dim-applicable="${dim.applicable}"
                                      th:style="${dim.applicable} ? 'width: ' + ${dim.score * 10} + '%' : 'width: 100%'"></div>
                             </div>
-                            <span class="text-sm font-bold min-w-12 text-right" th:class="${dim.scoreClass}" 
+                            <span class="text-sm font-bold min-w-12 text-right"
+                                  th:data-dim-score-class="${dim.score}" th:data-dim-applicable="${dim.applicable}"
                                   th:text="${dim.scoreDisplay} + (${dim.applicable} ? '/10' : '')">8/10</span>
                         </div>
                     </div>
@@ -937,16 +950,18 @@
 
                         <!-- Findings List -->
                         <div class="space-y-3">
-                            <div th:each="finding : ${findings}" th:class="${finding.severityClass}"
-                                 class="rounded-lg p-4">
+                            <div th:each="finding : ${findings}" class="rounded-lg p-4"
+                                 th:data-severity-class="${finding.severity}">
                                 <div class="flex items-start">
-                                    <span class="text-xl mr-3 flex-shrink-0" th:text="${finding.severityIcon}">⚠️</span>
+                                    <span class="text-xl mr-3 flex-shrink-0"
+                                          th:data-severity-emoji="${finding.severity}">⚠️</span>
                                     <div class="flex-1 min-w-0">
                                         <div class="flex items-center flex-wrap gap-2 mb-1">
                                             <h4 class="font-semibold text-gray-800" th:text="${finding.title}">Finding Title</h4>
-                                            <span th:unless="${#strings.isEmpty(finding.typeDisplay)}" class="text-xs px-2 py-0.5 bg-gray-200 text-gray-700 rounded" th:text="${finding.typeDisplay}">Type</span>
+                                            <span th:unless="${#strings.isEmpty(finding.type)}" class="text-xs px-2 py-0.5 bg-gray-200 text-gray-700 rounded"
+                                                  th:switch="${finding.type}"><th:block th:case="'SECURITY'">🔐 Security</th:block><th:block th:case="'CONCURRENCY'">⚡ Concurrency</th:block><th:block th:case="'DATA_CORRUPTION'">💾 Data Corruption</th:block><th:block th:case="'LOGIC'">🧠 Logic</th:block><th:block th:case="'RESOURCE_LEAK'">💧 Resource Leak</th:block><th:block th:case="'NULL_POINTER'">❌ Null Pointer</th:block><th:block th:case="'ARCHITECTURE'">🏗️ Architecture</th:block><th:block th:case="*">❓ Other</th:block></span>
                                             <span th:unless="${#strings.isEmpty(finding.confidence)}" class="text-xs px-2 py-0.5 rounded"
-                                                  th:classappend="${#strings.equals(finding.confidence, 'high')} ? 'bg-green-100 text-green-700' : (${#strings.equals(finding.confidence, 'medium')} ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-600')"
+                                                  th:data-confidence-class="${finding.confidence}"
                                                   th:text="${finding.confidence} + ' confidence'">confidence</span>
                                             <span th:unless="${#strings.isEmpty(finding.source)}" class="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded"
                                                   th:text="${finding.source}">LLM</span>
@@ -956,10 +971,27 @@
                                             <span class="font-mono bg-gray-200 px-1 rounded" th:text="${finding.file}">File.java</span>
                                             <code th:unless="${#strings.isEmpty(finding.lineHint)}" class="ml-2 text-gray-700" th:text="${finding.lineHint}">line hint</code>
                                         </div>
-                                        <!-- Suggested Fix -->
-                                        <div th:unless="${#strings.isEmpty(finding.suggestedFix)}" class="mt-3 bg-green-50 border border-green-200 rounded p-2">
+                                        <!-- Suggested Fix (legacy text field, shown only when suggestedFileFix is absent) -->
+                                        <div th:if="${#strings.isEmpty(finding.suggestedFileFix) and not #strings.isEmpty(finding.suggestedFix)}" class="mt-3 bg-green-50 border border-green-200 rounded p-2">
                                             <p class="text-xs font-semibold text-green-700 mb-1">💡 Suggested Fix:</p>
                                             <p class="text-sm text-green-800" th:text="${finding.suggestedFix}">Fix suggestion</p>
+                                        </div>
+                                        <!-- Suggested File Fix (structured field) -->
+                                        <div th:if="${not #strings.isEmpty(finding.suggestedFileFix)}" class="mt-3 bg-green-50 border border-green-200 rounded p-2">
+                                            <p class="text-xs font-semibold text-green-700 mb-1">💡 Suggested Fix:</p>
+                                            <p class="text-sm text-green-800" th:text="${finding.suggestedFileFix}">Fix suggestion</p>
+                                        </div>
+                                        <!-- Suggested Block Code (collapsible code view) -->
+                                        <div th:if="${not #strings.isEmpty(finding.suggestedBlockCode)}" class="mt-2">
+                                            <details class="group">
+                                                <summary class="text-xs font-semibold text-blue-700 cursor-pointer hover:text-blue-900">🔧 View Fixed Code</summary>
+                                                <div class="relative mt-1">
+                                                    <button class="absolute top-2 right-2 px-2 py-1 text-[10px] font-semibold bg-emerald-600 text-white rounded hover:bg-emerald-700 transition-colors"
+                                                            th:attr="data-file=${finding.file},data-block-code=${finding.suggestedBlockCode}"
+                                                            onclick="copyFixPayload(this)">Copy Fix</button>
+                                                    <pre class="bg-gray-900 text-gray-100 rounded p-2 text-xs overflow-x-auto max-h-48"><code class="language-java" th:text="${finding.suggestedBlockCode}">fixed code</code></pre>
+                                                </div>
+                                            </details>
                                         </div>
                                     </div>
                                 </div>
@@ -1004,21 +1036,48 @@
                                     <div th:if="${not #lists.isEmpty(pmdInChangedLines)}">
                                         <p class="text-xs text-orange-600 font-semibold uppercase mb-1">⚠️ Issues in Changed Lines</p>
                                         <div class="text-xs text-gray-700 bg-orange-50 rounded p-2 space-y-2">
-                                            <div th:each="finding,findingStat : ${pmdInChangedLines}" class="border-b border-orange-200 pb-2 last:border-0 last:pb-0">
-                                                <div class="flex items-start gap-2">
-                                                    <span th:if="${finding.severity != null and finding.severity.name() == 'ERROR'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-800 shrink-0">ERROR</span>
-                                                    <span th:if="${finding.severity != null and finding.severity.name() == 'WARNING'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-yellow-100 text-yellow-800 shrink-0">WARNING</span>
-                                                    <span th:if="${finding.severity == null or finding.severity.name() == 'INFO'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 shrink-0">INFO</span>
-                                                    <span><span class="font-medium" th:text="${finding.rule}">RULE</span>:<span th:text="${finding.file}">file</span><span th:if="${finding.line != null}">:<span th:text="${finding.line}">0</span></span> - <span th:text="${finding.assessment}">assessment</span></span>
-                                                </div>
-                                                <div th:if="${not #strings.isEmpty(finding.suggestedFileFix)}" class="mt-1 ml-6 bg-green-50 border border-green-200 rounded p-1.5">
-                                                    <p class="text-[10px] font-semibold text-green-700">💡 Suggested Fix:</p>
+                                            <div th:each="finding,findingStat : ${pmdInChangedLines}" class="border-b border-orange-200 pb-2 last:border-0 last:pb-0 overflow-hidden">
+                                                <table class="text-[11px] w-full">
+                                                    <tr>
+                                                        <td class="pr-2 py-0.5 text-gray-500 font-medium align-top whitespace-nowrap">Level</td>
+                                                        <td class="py-0.5">
+                                                            <span th:if="${finding.severity != null and finding.severity.name() == 'ERROR'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-800">ERROR</span>
+                                                            <span th:if="${finding.severity != null and finding.severity.name() == 'WARNING'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-yellow-100 text-yellow-800">WARNING</span>
+                                                            <span th:if="${finding.severity == null or finding.severity.name() == 'INFO'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800">INFO</span>
+                                                        </td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td class="pr-2 py-0.5 text-gray-500 font-medium align-top whitespace-nowrap">Rule</td>
+                                                        <td class="py-0.5">
+                                                            <a th:href="'https://pmd.github.io/latest/search.html#q=' + ${finding.rule}" target="_blank" class="font-semibold text-blue-700 hover:underline" th:text="${finding.rule}">RULE</a>
+                                                        </td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td class="pr-2 py-0.5 text-gray-500 font-medium align-top whitespace-nowrap">File</td>
+                                                        <td class="py-0.5 break-all" th:text="${finding.file}">file</td>
+                                                    </tr>
+                                                    <tr th:if="${finding.line != null}">
+                                                        <td class="pr-2 py-0.5 text-gray-500 font-medium align-top whitespace-nowrap">Line</td>
+                                                        <td class="py-0.5" th:text="${finding.line}">0</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td class="pr-2 py-0.5 text-gray-500 font-medium align-top whitespace-nowrap">Description</td>
+                                                        <td class="py-0.5" th:text="${finding.assessment}">assessment</td>
+                                                    </tr>
+                                                </table>
+                                                <div th:if="${not #strings.isEmpty(finding.suggestedFileFix)}" class="mt-1 bg-green-50 border border-green-200 rounded p-1.5">
+                                                    <p class="text-[10px] font-semibold text-green-700">Suggested Fix:</p>
                                                     <p class="text-[11px] text-green-800" th:text="${finding.suggestedFileFix}">Fix suggestion</p>
                                                 </div>
-                                                <div th:if="${not #strings.isEmpty(finding.suggestedBlockCode)}" class="mt-1 ml-6">
+                                                <div th:if="${not #strings.isEmpty(finding.suggestedBlockCode)}" class="mt-1">
                                                     <details class="group">
-                                                        <summary class="text-[10px] font-semibold text-blue-700 cursor-pointer hover:text-blue-900">🔧 View Fixed Code</summary>
-                                                        <pre class="mt-1 bg-gray-900 text-gray-100 rounded p-2 text-[11px] overflow-x-auto max-h-48"><code th:text="${finding.suggestedBlockCode}">fixed code</code></pre>
+                                                        <summary class="text-[10px] font-semibold text-blue-700 cursor-pointer hover:text-blue-900">View Fixed Code</summary>
+                                                        <div class="relative mt-1">
+                                                            <button class="absolute top-2 right-2 px-2 py-1 text-[10px] font-semibold bg-emerald-600 text-white rounded hover:bg-emerald-700 transition-colors"
+                                                                    th:attr="data-file=${finding.file},data-block-code=${finding.suggestedBlockCode}"
+                                                                    onclick="copyFixPayload(this)">Copy Fix</button>
+                                                            <pre class="bg-gray-900 text-gray-100 rounded p-2 text-[11px] overflow-x-auto max-h-48"><code class="language-java" th:text="${finding.suggestedBlockCode}">fixed code</code></pre>
+                                                        </div>
                                                     </details>
                                                 </div>
                                             </div>
@@ -1060,21 +1119,48 @@
                                     <div th:if="${not #lists.isEmpty(spotbugsInChangedLines)}">
                                         <p class="text-xs text-orange-600 font-semibold uppercase mb-1">⚠️ Issues in Changed Lines</p>
                                         <div class="text-xs text-gray-700 bg-orange-50 rounded p-2 space-y-2">
-                                            <div th:each="finding,findingStat : ${spotbugsInChangedLines}" class="border-b border-orange-200 pb-2 last:border-0 last:pb-0">
-                                                <div class="flex items-start gap-2">
-                                                    <span th:if="${finding.severity != null and finding.severity.name() == 'ERROR'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-800 shrink-0">ERROR</span>
-                                                    <span th:if="${finding.severity != null and finding.severity.name() == 'WARNING'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-yellow-100 text-yellow-800 shrink-0">WARNING</span>
-                                                    <span th:if="${finding.severity == null or finding.severity.name() == 'INFO'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 shrink-0">INFO</span>
-                                                    <span><span class="font-medium" th:text="${finding.rule}">RULE</span>:<span th:text="${finding.file}">file</span><span th:if="${finding.line != null}">:<span th:text="${finding.line}">0</span></span> - <span th:text="${finding.assessment}">assessment</span></span>
-                                                </div>
-                                                <div th:if="${not #strings.isEmpty(finding.suggestedFileFix)}" class="mt-1 ml-6 bg-green-50 border border-green-200 rounded p-1.5">
-                                                    <p class="text-[10px] font-semibold text-green-700">💡 Suggested Fix:</p>
+                                            <div th:each="finding,findingStat : ${spotbugsInChangedLines}" class="border-b border-orange-200 pb-2 last:border-0 last:pb-0 overflow-hidden">
+                                                <table class="text-[11px] w-full">
+                                                    <tr>
+                                                        <td class="pr-2 py-0.5 text-gray-500 font-medium align-top whitespace-nowrap">Level</td>
+                                                        <td class="py-0.5">
+                                                            <span th:if="${finding.severity != null and finding.severity.name() == 'ERROR'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-800">ERROR</span>
+                                                            <span th:if="${finding.severity != null and finding.severity.name() == 'WARNING'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-yellow-100 text-yellow-800">WARNING</span>
+                                                            <span th:if="${finding.severity == null or finding.severity.name() == 'INFO'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800">INFO</span>
+                                                        </td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td class="pr-2 py-0.5 text-gray-500 font-medium align-top whitespace-nowrap">Rule</td>
+                                                        <td class="py-0.5">
+                                                            <a th:href="'https://spotbugs.readthedocs.io/en/latest/bugDescriptions.html#' + ${finding.rule}" target="_blank" class="font-semibold text-blue-700 hover:underline" th:text="${finding.rule}">RULE</a>
+                                                        </td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td class="pr-2 py-0.5 text-gray-500 font-medium align-top whitespace-nowrap">File</td>
+                                                        <td class="py-0.5 break-all" th:text="${finding.file}">file</td>
+                                                    </tr>
+                                                    <tr th:if="${finding.line != null}">
+                                                        <td class="pr-2 py-0.5 text-gray-500 font-medium align-top whitespace-nowrap">Line</td>
+                                                        <td class="py-0.5" th:text="${finding.line}">0</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td class="pr-2 py-0.5 text-gray-500 font-medium align-top whitespace-nowrap">Description</td>
+                                                        <td class="py-0.5" th:text="${finding.assessment}">assessment</td>
+                                                    </tr>
+                                                </table>
+                                                <div th:if="${not #strings.isEmpty(finding.suggestedFileFix)}" class="mt-1 bg-green-50 border border-green-200 rounded p-1.5">
+                                                    <p class="text-[10px] font-semibold text-green-700">Suggested Fix:</p>
                                                     <p class="text-[11px] text-green-800" th:text="${finding.suggestedFileFix}">Fix suggestion</p>
                                                 </div>
-                                                <div th:if="${not #strings.isEmpty(finding.suggestedBlockCode)}" class="mt-1 ml-6">
+                                                <div th:if="${not #strings.isEmpty(finding.suggestedBlockCode)}" class="mt-1">
                                                     <details class="group">
-                                                        <summary class="text-[10px] font-semibold text-blue-700 cursor-pointer hover:text-blue-900">🔧 View Fixed Code</summary>
-                                                        <pre class="mt-1 bg-gray-900 text-gray-100 rounded p-2 text-[11px] overflow-x-auto max-h-48"><code th:text="${finding.suggestedBlockCode}">fixed code</code></pre>
+                                                        <summary class="text-[10px] font-semibold text-blue-700 cursor-pointer hover:text-blue-900">View Fixed Code</summary>
+                                                        <div class="relative mt-1">
+                                                            <button class="absolute top-2 right-2 px-2 py-1 text-[10px] font-semibold bg-emerald-600 text-white rounded hover:bg-emerald-700 transition-colors"
+                                                                    th:attr="data-file=${finding.file},data-block-code=${finding.suggestedBlockCode}"
+                                                                    onclick="copyFixPayload(this)">Copy Fix</button>
+                                                            <pre class="bg-gray-900 text-gray-100 rounded p-2 text-[11px] overflow-x-auto max-h-48"><code class="language-java" th:text="${finding.suggestedBlockCode}">fixed code</code></pre>
+                                                        </div>
                                                     </details>
                                                 </div>
                                             </div>
@@ -1141,16 +1227,17 @@
             <h2 class="text-xl font-bold text-gray-800 mb-4">📁 Changed Files</h2>
             
             <div class="space-y-4">
-                <div th:each="file, fileStat : ${files}" class="border rounded-lg overflow-hidden">
+                <div th:each="file, fileStat : ${files}" class="border rounded-lg overflow-hidden"
+                     th:data-file-type="${file.fileType}">
                     <!-- File Header -->
                     <div class="bg-gray-50 px-4 py-3 flex items-center justify-between cursor-pointer"
                          th:onclick="'toggleCollapsible(\'file-content-' + ${fileStat.index} + '\')'">
                         <div class="flex items-center space-x-3">
-                            <span class="text-xl" th:text="${file.fileTypeIcon}">📄</span>
+                            <span class="text-xl" th:switch="${file.fileType}"><th:block th:case="'java'">☕</th:block><th:block th:case="'kt'">🇰</th:block><th:block th:case="'scala'">🇸</th:block><th:block th:case="'py'">🐍</th:block><th:block th:case="'go'">🐹</th:block><th:block th:case="'rs'">⚙️</th:block><th:block th:case="'ts'">🟨</th:block><th:block th:case="'js'">🟨</th:block><th:block th:case="'sql'">🗃️</th:block><th:block th:case="'properties'">⚙️</th:block><th:block th:case="'gradle'">🐘</th:block><th:block th:case="*">📄</th:block></span>
                             <div class="flex items-center flex-wrap gap-2">
                                 <span class="font-mono text-sm" th:text="${file.path}">path/to/file.java</span>
                                 <span class="px-2 py-0.5 rounded text-xs font-medium"
-                                      th:class="${file.changeTypeClass}"
+                                      th:data-change-class="${file.changeType}"
                                       th:text="${file.changeType}">MODIFY</span>
                                 <span th:if="${not #lists.isEmpty(file.affectedSymbols)}"
                                       class="px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700"
@@ -1179,10 +1266,11 @@
                             </div>
                             <div class="space-y-1.5">
                                 <div th:each="symbol, symStat : ${file.affectedSymbols}"
-                                     class="bg-white rounded border border-gray-200 px-3 py-2 text-xs">
+                                     class="symbol-entry bg-white rounded border border-gray-200 px-3 py-2 text-xs">
                                     <div class="flex items-center justify-between">
                                         <div class="flex items-center space-x-2 min-w-0 flex-1">
-                                            <span th:text="${symbol.kindIcon}" class="text-base flex-shrink-0">🔧</span>
+                                            <span class="text-base flex-shrink-0"
+                                                  th:text="${symbol.constructor} ? '🏗️' : '🔧'">🔧</span>
                                             <div class="min-w-0 flex-1">
                                                 <span class="font-mono font-semibold text-gray-800" th:text="${symbol.name}">methodName</span>
                                                 <span th:if="${symbol.containerName}" class="text-gray-400 ml-1">
@@ -1193,12 +1281,12 @@
                                         </div>
                                         <div class="flex items-center space-x-2 flex-shrink-0 ml-2">
                                             <span class="text-[10px] text-gray-400 font-mono" th:text="'L' + ${symbol.lineRange}">L10-20</span>
-                                            <button th:if="${symbol.callerCount > 0}"
-                                                  class="text-[10px] px-1.5 py-0.5 rounded font-medium bg-orange-100 text-orange-700 hover:bg-orange-200 cursor-pointer"
-                                                  th:title="'Called by ' + ${symbol.callerCount} + ' caller(s). Click to see details.'"
-                                                  th:onclick="'toggleCallers(this)'">
-                                                📞 <span th:text="${symbol.callerCount}">1</span> callers
-                                            </button>
+                                            <span th:if="${symbol.callerCount > 0}">
+                                                <button class="text-[10px] px-1.5 py-0.5 rounded font-medium bg-orange-100 text-orange-700 hover:bg-orange-200 cursor-pointer"
+                                                        th:onclick="'toggleCallers(this)'">
+                                                    📞 <span th:text="${symbol.callerCount}">1</span> callers
+                                                </button>
+                                            </span>
                                         </div>
                                     </div>
                                     <!-- Expandable callers list -->
@@ -1237,8 +1325,8 @@
                                         class="text-gray-400 hover:text-white text-2xl leading-none">&times;</button>
                             </div>
                             <div class="code-content">
-                                <pre class="m-0"><code th:id="'code-before-' + ${fileStat.index}" 
-                                    th:class="'language-' + ${file.hljsLanguage}" 
+                                <pre class="m-0"><code th:id="'code-before-' + ${fileStat.index}"
+                                    data-hljs class="language-plaintext"
                                     th:text="${file.contentBefore}"></code></pre>
                             </div>
                         </div>
@@ -1255,8 +1343,8 @@
                                         class="text-gray-400 hover:text-white text-2xl leading-none">&times;</button>
                             </div>
                             <div class="code-content">
-                                <pre class="m-0"><code th:id="'code-after-' + ${fileStat.index}" 
-                                    th:class="'language-' + ${file.hljsLanguage}" 
+                                <pre class="m-0"><code th:id="'code-after-' + ${fileStat.index}"
+                                    data-hljs class="language-plaintext"
                                     th:text="${file.contentAfter}"></code></pre>
                             </div>
                         </div>
@@ -1275,7 +1363,7 @@
                         <span th:if="${highRiskMethodCount > 0}" class="font-semibold text-red-600" th:text="${highRiskMethodCount} + ' high-risk symbol(s)'">0 high-risk symbols</span>
                         <span th:if="${highRiskMethodCount == 0}" class="font-semibold text-green-600">No high-risk symbols detected</span>
                         <span class="text-gray-400 mx-2">|</span>
-                        Max cognitive complexity: <span class="font-semibold" th:classappend="${maxCognitiveComplexity > 15} ? 'text-red-600' : (${maxCognitiveComplexity > 10} ? 'text-orange-600' : 'text-green-600')" th:text="${maxCognitiveComplexity}">0</span>
+                        Max cognitive complexity: <span class="font-semibold" th:data-complexity-class="${maxCognitiveComplexity}" th:text="${maxCognitiveComplexity}">0</span>
                     </p>
                 </div>
                 <button onclick="toggleCollapsible('complexity-content')" class="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded text-gray-600">
@@ -1302,7 +1390,7 @@
                     <h2 class="text-xl font-bold text-gray-800 mb-1">📊 Code Coverage Analysis (JaCoCo)</h2>
                     <p class="text-sm text-gray-500">
                         Line coverage for changed files.
-                        <span th:classappend="${coverageLevel == 'GOOD'} ? 'text-green-600' : (${coverageLevel == 'ACCEPTABLE'} ? 'text-yellow-600' : (${coverageLevel == 'LOW'} ? 'text-orange-600' : 'text-red-600'))"
+                        <span th:data-coverage-text="${coverageLevel}"
                               class="font-semibold" th:text="${#numbers.formatDecimal(overallCoveragePercent, 1, 1)} + '%'">0%</span> overall
                         <span th:if="${uncoveredMethodCount > 0}" class="text-gray-400 mx-1">|</span>
                         <span th:if="${uncoveredMethodCount > 0}" class="font-semibold text-red-600" th:text="${uncoveredMethodCount} + ' uncovered symbol(s)'">0 uncovered</span>
@@ -1329,7 +1417,7 @@
                     <span th:text="${missedLines} + ' missed'">0 missed</span>
                 </div>
                 <div class="w-full bg-gray-200 rounded-full h-3">
-                    <div th:classappend="${coverageLevel == 'GOOD'} ? 'bg-green-500' : (${coverageLevel == 'ACCEPTABLE'} ? 'bg-yellow-500' : (${coverageLevel == 'LOW'} ? 'bg-orange-500' : 'bg-red-500'))"
+                    <div th:data-coverage-bar="${coverageLevel}"
                          class="h-3 rounded-full transition-all duration-500"
                          th:style="'width: ' + ${overallCoveragePercent} + '%'"></div>
                 </div>
@@ -1364,8 +1452,9 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <tr th:each="match : ${similarityMatches}" 
-                        th:class="'border-b hover:bg-gray-50 ' + (${match.combinedScore >= 0.90} ? 'bg-red-50' : (${match.combinedScore >= 0.75} ? 'bg-orange-50' : ''))">
+                    <tr th:each="match : ${similarityMatches}"
+                        class="border-b hover:bg-gray-50"
+                        th:data-similarity-row="${match.combinedScore}">
                         <td class="p-2 text-gray-500" th:text="${match.rank}">1</td>
                         <!-- Diff Code (Source) -->
                         <td class="p-2">
@@ -1379,7 +1468,7 @@
                             <br/><span class="text-xs text-gray-400" th:text="${match.targetFileName}">ExistingFile.java</span>
                         </td>
                         <td class="p-2 text-center">
-                            <span th:class="${match.combinedScore >= 0.90} ? 'text-red-600 font-bold' : (${match.combinedScore >= 0.75} ? 'text-orange-600 font-bold' : 'text-gray-700')"
+                            <span class="text-gray-700" th:data-similarity-text="${match.combinedScore}"
                                   th:text="${match.combinedScorePercent}">85%</span>
                             <br/><span class="text-xs text-gray-400" th:text="${match.lineCount} + ' lines'">25 lines</span>
                         </td>
@@ -1437,11 +1526,240 @@
         </footer>
     </div>
 
+    <script th:inline="javascript">
+        var CONFIG = {
+            scoreThresholdHuge: /*[[${scoreThresholdHuge}]]*/ 150,
+            scoreThresholdLarge: /*[[${scoreThresholdLarge}]]*/ 90,
+            scoreThresholdMedium: /*[[${scoreThresholdMedium}]]*/ 50,
+            dimScoreCritical: /*[[${dimScoreCritical}]]*/ 8,
+            dimScoreMajor: /*[[${dimScoreMajor}]]*/ 6,
+            dimScoreModerate: /*[[${dimScoreModerate}]]*/ 4,
+            seniorReviewCritical: /*[[${seniorReviewCritical}]]*/ 8,
+            seniorReviewMajor: /*[[${seniorReviewMajor}]]*/ 7,
+            complexityHigh: /*[[${complexityHighDisplay}]]*/ 15,
+            complexityModerate: /*[[${complexityModerateDisplay}]]*/ 10,
+            similarityCritical: /*[[${similarityCritical}]]*/ 0.90,
+            similarityMajor: /*[[${similarityMajor}]]*/ 0.75
+        };
+    </script>
     <script>
+        // Enum → CSS class mappings
+        function riskLevelClass(v) {
+            switch (v) {
+                case 'critical': return 'bg-red-100 text-red-700';
+                case 'high': case 'very_high': return 'bg-orange-100 text-orange-700';
+                case 'moderate': return 'bg-yellow-100 text-yellow-700';
+                default: return 'bg-green-100 text-green-700';
+            }
+        }
+        function riskLevelEmoji(v) {
+            switch (v) {
+                case 'critical': return '🔴';
+                case 'high': case 'very_high': return '🟠';
+                case 'moderate': return '🟡';
+                default: return '🟢';
+            }
+        }
+        function moduleTypeClass(v) {
+            switch (v) {
+                case 'core_library': return 'bg-red-100 text-red-700';
+                case 'shared_utility': return 'bg-yellow-100 text-yellow-700';
+                default: return 'bg-green-100 text-green-700';
+            }
+        }
+        function moduleTypeLabel(v) {
+            switch (v) {
+                case 'core_library': return 'Core Library';
+                case 'shared_utility': return 'Shared Utility';
+                default: return 'Leaf Application';
+            }
+        }
+        function externalImpactClass(v) {
+            switch (v) {
+                case 'high': return 'bg-red-100 text-red-700';
+                case 'medium': return 'bg-orange-100 text-orange-700';
+                case 'low': return 'bg-yellow-100 text-yellow-700';
+                case 'none': return 'bg-green-100 text-green-700';
+                default: return 'bg-gray-100 text-gray-600';
+            }
+        }
+        function severityClass(v) {
+            switch (v) {
+                case 'BLOCKING': return 'severity-critical';
+                case 'MAJOR': return 'severity-major';
+                default: return 'severity-minor';
+            }
+        }
+        function severityEmoji(v) {
+            switch (v) {
+                case 'BLOCKING': return '🛑';
+                case 'MAJOR': return '⚠️';
+                default: return 'ℹ️';
+            }
+        }
+        function confidenceClass(v) {
+            switch (v) {
+                case 'high': return 'bg-green-100 text-green-700';
+                case 'medium': return 'bg-yellow-100 text-yellow-700';
+                default: return 'bg-gray-100 text-gray-600';
+            }
+        }
+        function changeTypeClass(v) {
+            switch (v) {
+                case 'NEW': return 'bg-green-100 text-green-800';
+                case 'DELETE': return 'bg-red-100 text-red-800';
+                case 'MODIFY': return 'bg-blue-100 text-blue-800';
+                default: return 'bg-gray-100 text-gray-800';
+            }
+        }
+        function coverageLevelTextClass(v) {
+            switch (v) {
+                case 'GOOD': return 'text-green-600';
+                case 'ACCEPTABLE': return 'text-yellow-600';
+                case 'LOW': return 'text-orange-600';
+                default: return 'text-red-600';
+            }
+        }
+        function coverageLevelBarClass(v) {
+            switch (v) {
+                case 'GOOD': return 'bg-green-500';
+                case 'ACCEPTABLE': return 'bg-yellow-500';
+                case 'LOW': return 'bg-orange-500';
+                default: return 'bg-red-500';
+            }
+        }
+        function hljsLanguage(v) {
+            switch (v) {
+                case 'kt': return 'kotlin';
+                case 'py': return 'python';
+                case 'rs': return 'rust';
+                case 'ts': return 'typescript';
+                case 'js': return 'javascript';
+                case 'unknown': return 'plaintext';
+                default: return v;
+            }
+        }
+        // Threshold-based mappings
+        function dangerClass(score) {
+            var s = parseInt(score);
+            if (s >= CONFIG.scoreThresholdHuge) return 'danger-critical';
+            if (s >= CONFIG.scoreThresholdLarge) return 'danger-high';
+            if (s >= CONFIG.scoreThresholdMedium) return 'danger-medium';
+            return 'danger-low';
+        }
+        function seniorReviewClass(score) {
+            var s = parseInt(score);
+            if (s >= CONFIG.seniorReviewCritical) return 'bg-red-100 border-red-400 text-red-700';
+            if (s >= CONFIG.seniorReviewMajor) return 'bg-orange-100 border-orange-400 text-orange-700';
+            return 'bg-yellow-100 border-yellow-400 text-yellow-700';
+        }
+        function seniorReviewEmoji(score) {
+            var s = parseInt(score);
+            if (s >= CONFIG.seniorReviewCritical) return '🚨';
+            if (s >= CONFIG.seniorReviewMajor) return '⚠️';
+            return '👀';
+        }
+        function seniorReviewLabel(score) {
+            var s = parseInt(score);
+            if (s >= CONFIG.seniorReviewCritical) return 'Critical: Senior Review Required';
+            if (s >= CONFIG.seniorReviewMajor) return 'Senior Review Recommended';
+            return 'Peer Review Suggested';
+        }
+        function dimBarClass(score, applicable) {
+            if (applicable === 'false') return 'bar-na';
+            var s = parseInt(score);
+            if (s >= CONFIG.dimScoreCritical) return 'bar-critical';
+            if (s >= CONFIG.dimScoreMajor) return 'bar-major';
+            if (s >= CONFIG.dimScoreModerate) return 'bar-moderate';
+            return 'bar-low';
+        }
+        function dimScoreClass(score, applicable) {
+            if (applicable === 'false') return 'score-na';
+            var s = parseInt(score);
+            if (s >= CONFIG.dimScoreCritical) return 'score-critical';
+            if (s >= CONFIG.dimScoreMajor) return 'score-major';
+            if (s >= CONFIG.dimScoreModerate) return 'score-moderate';
+            return 'score-low';
+        }
+        function complexityClass(value) {
+            var v = parseInt(value);
+            if (v > CONFIG.complexityHigh) return 'text-red-600';
+            if (v > CONFIG.complexityModerate) return 'text-orange-600';
+            return 'text-green-600';
+        }
+        function similarityRowClass(score) {
+            var s = parseFloat(score);
+            if (s >= CONFIG.similarityCritical) return 'bg-red-50';
+            if (s >= CONFIG.similarityMajor) return 'bg-orange-50';
+            return '';
+        }
+        function similarityTextClass(score) {
+            var s = parseFloat(score);
+            if (s >= CONFIG.similarityCritical) return 'text-red-600 font-bold';
+            if (s >= CONFIG.similarityMajor) return 'text-orange-600 font-bold';
+            return 'text-gray-700';
+        }
+        // Generic helpers to apply data-attribute-driven mappings
+        function mapCss(attr, fn) {
+            document.querySelectorAll('[data-' + attr + ']').forEach(function(el) {
+                var cls = fn(el.getAttribute('data-' + attr));
+                if (cls) el.className += ' ' + cls;
+            });
+        }
+        function mapText(attr, fn) {
+            document.querySelectorAll('[data-' + attr + ']').forEach(function(el) {
+                el.textContent = fn(el.getAttribute('data-' + attr));
+            });
+        }
+        function applyEnumMappings() {
+            mapCss('risk-class', riskLevelClass);
+            mapText('risk-emoji', riskLevelEmoji);
+            mapCss('danger-score', dangerClass);
+            mapCss('senior-class', seniorReviewClass);
+            mapText('senior-emoji', seniorReviewEmoji);
+            mapText('senior-label', seniorReviewLabel);
+            mapCss('module-class', moduleTypeClass);
+            mapText('module-label', moduleTypeLabel);
+            mapCss('ext-impact', externalImpactClass);
+            mapCss('severity-class', severityClass);
+            mapText('severity-emoji', severityEmoji);
+            mapCss('confidence-class', confidenceClass);
+            mapCss('change-class', changeTypeClass);
+            mapCss('complexity-class', complexityClass);
+            mapCss('coverage-text', coverageLevelTextClass);
+            mapCss('coverage-bar', coverageLevelBarClass);
+            mapCss('similarity-row', similarityRowClass);
+            mapCss('similarity-text', similarityTextClass);
+            document.querySelectorAll('[data-dim-bar]').forEach(function(el) {
+                el.className += ' ' + dimBarClass(el.getAttribute('data-dim-bar'), el.getAttribute('data-dim-applicable'));
+            });
+            document.querySelectorAll('[data-dim-score-class]').forEach(function(el) {
+                el.className += ' ' + dimScoreClass(el.getAttribute('data-dim-score-class'), el.getAttribute('data-dim-applicable'));
+            });
+            document.querySelectorAll('[data-file-type]').forEach(function(el) {
+                var lang = hljsLanguage(el.getAttribute('data-file-type'));
+                el.querySelectorAll('code[data-hljs]').forEach(function(code) {
+                    code.className = 'language-' + lang;
+                });
+            });
+        }
+
         // Initialize syntax highlighting for all diff blocks
         document.addEventListener('DOMContentLoaded', function() {
+            applyEnumMappings();
             document.querySelectorAll('code.language-diff').forEach(block => {
                 hljs.highlightElement(block);
+            });
+
+            // Highlight code blocks inside <details> when toggled open
+            document.querySelectorAll('details').forEach(detail => {
+                detail.addEventListener('toggle', function() {
+                    if (this.open) {
+                        this.querySelectorAll('code:not(.hljs)').forEach(code => {
+                            hljs.highlightElement(code);
+                        });
+                    }
+                });
             });
             
             // Configure marked for safe rendering
@@ -1502,6 +1820,21 @@
             }
         });
 
+        function copyFixPayload(button) {
+            const filePath = button.getAttribute('data-file');
+            const suggestedBlockCode = button.getAttribute('data-block-code');
+            const payload = JSON.stringify({ filePath: filePath, suggestedBlockCode: suggestedBlockCode });
+            navigator.clipboard.writeText(payload).then(function() {
+                const original = button.textContent;
+                button.textContent = 'Copied!';
+                button.classList.replace('bg-emerald-600', 'bg-gray-500');
+                setTimeout(function() {
+                    button.textContent = original;
+                    button.classList.replace('bg-gray-500', 'bg-emerald-600');
+                }, 2000);
+            });
+        }
+
         function showModal(id) {
             const modal = document.getElementById(id);
             if (modal) {
@@ -1551,7 +1884,7 @@
         
         // Toggle callers list expansion
         function toggleCallers(button) {
-            const symbolDiv = button.closest('.py-1\\.5');
+            const symbolDiv = button.closest('.symbol-entry');
             const callersList = symbolDiv.querySelector('.callers-list');
             if (callersList) {
                 callersList.classList.toggle('hidden');
