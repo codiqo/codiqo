@@ -9,9 +9,9 @@ import org.apache.maven.artifact.Artifact;
 
 import com.google.common.collect.BiMap;
 
-import io.codiq.lang.spec.JBinaryMethodSig;
-import io.codiq.lang.spec.JavaBinarySignatureFormatter;
 import io.codiqo.api.MavenProjectSpec;
+import io.codiqo.lang.spec.JBinaryMethodSig;
+import io.codiqo.lang.spec.JavaBinarySignatureFormatter;
 import io.github.classgraph.ClassInfo;
 import io.github.classgraph.Resource;
 import lombok.EqualsAndHashCode;

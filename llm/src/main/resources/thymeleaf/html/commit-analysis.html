@@ -1,0 +1,1630 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title th:text="'Commit Analysis: ' + ${commitIdShort}">Commit Analysis</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/scala.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/diff.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/properties.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/gradle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
+    <style>
+        /* Custom scrollbar for code blocks */
+        pre { scrollbar-width: thin; }
+        pre::-webkit-scrollbar { height: 8px; width: 8px; }
+        pre::-webkit-scrollbar-track { background: #1e293b; }
+        pre::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        pre::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        
+        /* Modal styles */
+        .modal { 
+            display: none; 
+            position: fixed; 
+            top: 0; left: 0; right: 0; bottom: 0; 
+            background: rgba(0, 0, 0, 0.8); 
+            z-index: 1000; 
+            overflow-y: auto;
+        }
+        .modal.active { display: flex; justify-content: center; align-items: flex-start; padding: 2rem; }
+        .modal-content { 
+            background: #1e293b; 
+            border-radius: 8px; 
+            max-width: 90%; 
+            width: 100%; 
+            max-height: 90vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .modal-header { 
+            padding: 1rem; 
+            border-bottom: 1px solid #334155; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center;
+            flex-shrink: 0;
+        }
+        .code-content { 
+            overflow: auto; 
+            flex: 1;
+            max-height: calc(90vh - 60px);
+        }
+        .code-content pre { margin: 0; }
+        .code-content code { padding: 1rem !important; display: block; }
+        
+        /* Danger level colors */
+        .danger-critical { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
+        .danger-high { background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); }
+        .danger-medium { background: linear-gradient(135deg, #eab308 0%, #ca8a04 100%); }
+        .danger-low { background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%); }
+        
+        /* Severity colors */
+        .severity-critical { background-color: #fef2f2; border-left: 4px solid #ef4444; }
+        .severity-major { background-color: #fffbeb; border-left: 4px solid #f59e0b; }
+        .severity-minor { background-color: #f0fdf4; border-left: 4px solid #22c55e; }
+        
+        /* Dimension score text colors */
+        .score-critical { color: #ef4444; }
+        .score-major { color: #f59e0b; }
+        .score-moderate { color: #eab308; }
+        .score-low { color: #22c55e; }
+        .score-na { color: #9ca3af; font-style: italic; }
+        
+        /* Dimension score progress bar colors */
+        .bar-critical { background-color: #ef4444; }
+        .bar-major { background-color: #f59e0b; }
+        .bar-moderate { background-color: #eab308; }
+        .bar-low { background-color: #22c55e; }
+        .bar-na { background-color: #d1d5db; }
+        
+        /* Similarity match border colors */
+        .similarity-critical { border-left-color: #ef4444 !important; background-color: #fef2f2; }
+        .similarity-high { border-left-color: #f97316 !important; background-color: #fff7ed; }
+        .similarity-medium { border-left-color: #eab308 !important; background-color: #fefce8; }
+        .similarity-low { border-left-color: #22c55e !important; background-color: #f0fdf4; }
+        
+        /* Progress bar animation */
+        @keyframes fillProgress {
+            from { width: 0; }
+        }
+        .progress-fill {
+            animation: fillProgress 1s ease-out forwards;
+        }
+        
+        /* Collapsible sections */
+        .collapsible-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+        .collapsible-content.expanded {
+            max-height: 2000px;
+        }
+        
+        /* Tab styles */
+        .tab-button {
+            padding: 0.75rem 1.5rem;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        .tab-button.active {
+            border-bottom-color: #3b82f6;
+            color: #3b82f6;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        
+        /* Score gauge */
+        .score-gauge {
+            position: relative;
+            width: 100px;
+            height: 100px;
+        }
+        .score-gauge svg {
+            transform: rotate(-90deg);
+        }
+        .score-gauge .score-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.25rem;
+            font-weight: bold;
+        }
+        
+        /* Markdown prose styling for LLM thinking */
+        .prose h1 { font-size: 1.5rem; font-weight: 700; margin-top: 1rem; margin-bottom: 0.5rem; color: #1f2937; }
+        .prose h2 { font-size: 1.25rem; font-weight: 600; margin-top: 1rem; margin-bottom: 0.5rem; color: #374151; }
+        .prose h3 { font-size: 1.1rem; font-weight: 600; margin-top: 0.75rem; margin-bottom: 0.25rem; color: #4b5563; }
+        .prose p { margin-bottom: 0.5rem; line-height: 1.6; }
+        .prose ul, .prose ol { margin-left: 1.5rem; margin-bottom: 0.5rem; }
+        .prose li { margin-bottom: 0.25rem; }
+        .prose ul { list-style-type: disc; }
+        .prose ol { list-style-type: decimal; }
+        .prose strong { font-weight: 600; color: #1f2937; }
+        .prose em { font-style: italic; }
+        .prose code { background: #f3f4f6; padding: 0.125rem 0.375rem; border-radius: 0.25rem; font-size: 0.875em; }
+        .prose pre { background: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; margin: 0.5rem 0; }
+        .prose pre code { background: transparent; padding: 0; color: inherit; }
+        .prose blockquote { border-left: 4px solid #7c3aed; padding-left: 1rem; margin: 0.5rem 0; color: #6b7280; font-style: italic; }
+        .prose hr { border-color: #e5e7eb; margin: 1rem 0; }
+        .prose a { color: #7c3aed; text-decoration: underline; }
+        .prose table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; }
+        .prose th, .prose td { border: 1px solid #e5e7eb; padding: 0.5rem; text-align: left; }
+        .prose th { background: #f9fafb; font-weight: 600; }
+
+        /* Tooltip popover styles */
+        .tooltip-trigger {
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            background: #e5e7eb;
+            border-radius: 50%;
+            font-size: 10px;
+            color: #6b7280;
+            margin-left: 4px;
+            transition: all 0.2s;
+        }
+        .tooltip-trigger:hover {
+            background: #3b82f6;
+            color: white;
+        }
+        .tooltip-popover {
+            display: none;
+            position: absolute;
+            z-index: 100;
+            background: #1f2937;
+            color: #f3f4f6;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 12px;
+            line-height: 1.5;
+            max-width: 320px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+            white-space: normal;
+        }
+        .tooltip-popover.active {
+            display: block;
+        }
+        .tooltip-popover::before {
+            content: '';
+            position: absolute;
+            top: -6px;
+            left: 20px;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-bottom: 6px solid #1f2937;
+        }
+        .tooltip-popover code {
+            background: #374151;
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+        .has-tooltip {
+            position: relative;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900">
+    <div class="container mx-auto px-4 py-8">
+        
+        <!-- Header with Commit Info -->
+        <header class="bg-gradient-to-br from-slate-800 via-slate-700 to-blue-900 border border-slate-600 rounded-lg shadow-lg p-5 mb-6">
+            <!-- Centered Commit ID -->
+            <div class="flex justify-center items-center gap-3 mb-4">
+                <code class="text-blue-300 text-lg bg-slate-900/50 border border-blue-500/30 px-4 py-2 rounded-lg font-mono tracking-wide shadow-inner" th:text="${commitId}">abc1234567890def1234567890abc1234567890</code>
+                <span th:if="${mergeCommit}" class="text-xs bg-purple-500/20 text-purple-300 px-2 py-1 rounded border border-purple-500/30">🔀 Merge</span>
+                <span th:if="${gpgSignature}" class="text-xs bg-green-500/20 text-green-300 px-2 py-1 rounded border border-green-500/30">🔐 Signed</span>
+            </div>
+            
+            <!-- Two-column metadata table -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-2 text-sm mb-3">
+                <div>
+                    <span class="text-slate-400">Author:</span>
+                    <span class="font-medium text-slate-100" th:text="${author}">Author</span>
+                </div>
+                <div>
+                    <span class="text-slate-400">Date:</span>
+                    <span class="text-slate-200" th:text="${timestamp}">2024-01-01</span>
+                </div>
+                <div th:unless="${#lists.isEmpty(branches)}">
+                    <span class="text-slate-400">Branch:</span>
+                    <span th:each="br, stat : ${branches}" class="text-slate-200 font-mono text-xs">
+                        <span th:text="${br}">main</span><span th:unless="${stat.last}">, </span>
+                    </span>
+                </div>
+                <div th:unless="${#strings.isEmpty(llmModel)}">
+                    <span class="text-slate-400">Model:</span>
+                    <span class="text-slate-200 font-mono text-xs" th:text="${llmModel}">gpt-4</span>
+                </div>
+                <!-- Token usage info -->
+                <div th:if="${llmTotalTokens > 0}">
+                    <span class="text-slate-400">Tokens:</span>
+                    <span class="text-slate-200 text-xs">
+                        <span th:text="${llmInputTokensFormatted}">0</span> in /
+                        <span th:text="${llmOutputTokensFormatted}">0</span> out
+                        <span class="text-slate-400">(<span th:text="${llmTotalTokensFormatted}">0</span> total)</span>
+                    </span>
+                </div>
+                <!-- API call duration -->
+                <div th:unless="${#strings.isEmpty(llmDuration)}">
+                    <span class="text-slate-400">Duration:</span>
+                    <span class="text-slate-200 text-xs font-mono" th:text="${llmDuration}">00:00:00.000</span>
+                </div>
+                <div th:unless="${#strings.isEmpty(authorEmail)}">
+                    <span class="text-slate-400">Email:</span>
+                    <span class="text-slate-200 text-xs" th:text="${authorEmail}">email@example.com</span>
+                </div>
+                <div th:unless="${#strings.isEmpty(generatedAt)}">
+                    <span class="text-slate-400">Generated:</span>
+                    <span class="text-slate-200 text-xs" th:text="${generatedAt}">2024-01-01 00:00</span>
+                </div>
+                <!-- Show committer if different from author -->
+                <div th:if="${not #strings.isEmpty(committer) and not #strings.equals(committer, author)}">
+                    <span class="text-slate-400">Committer:</span>
+                    <span class="text-slate-200 text-xs" th:text="${committer}">Committer</span>
+                </div>
+                <!-- Show parent commits for merge commits -->
+                <div th:if="${parentIds != null and #lists.size(parentIds) > 1}">
+                    <span class="text-slate-400">Parents:</span>
+                    <span class="text-slate-200 font-mono text-xs" th:text="${#strings.abbreviate(#strings.listJoin(parentIds, ', '), 40)}">abc123, def456</span>
+                </div>
+            </div>
+
+            <!-- Key Metrics Bar -->
+            <div class="flex gap-3 mb-3">
+                <div class="flex items-center gap-1.5 bg-slate-900/50 border border-slate-600/50 rounded-lg px-3 py-1.5">
+                    <span class="text-slate-400 text-xs">Files</span>
+                    <span class="text-white font-bold text-sm" th:text="${totalFilesChanged}">0</span>
+                </div>
+                <div class="flex items-center gap-1.5 bg-slate-900/50 border border-blue-500/30 rounded-lg px-3 py-1.5">
+                    <span class="text-blue-300 text-xs">Symbols</span>
+                    <span class="text-white font-bold text-sm" th:text="${totalAffectedSymbols}">0</span>
+                </div>
+                <div th:if="${confirmedErrorCount > 0}" class="flex items-center gap-1.5 bg-red-900/30 border border-red-500/40 rounded-lg px-3 py-1.5">
+                    <span class="text-red-300 text-xs">Errors</span>
+                    <span class="text-red-200 font-bold text-sm" th:text="${confirmedErrorCount}">0</span>
+                </div>
+                <div th:unless="${confirmedErrorCount > 0}" class="flex items-center gap-1.5 bg-green-900/20 border border-green-500/30 rounded-lg px-3 py-1.5">
+                    <span class="text-green-300 text-xs">Errors</span>
+                    <span class="text-green-200 font-bold text-sm">0</span>
+                </div>
+            </div>
+
+            <!-- Collapsible commit message -->
+            <details class="border-t border-slate-600/50 pt-2">
+                <summary class="cursor-pointer text-sm text-slate-400 hover:text-slate-200">
+                    <span class="font-medium">Commit Message</span>
+                    <span class="text-xs text-slate-500 ml-2">(click to expand)</span>
+                </summary>
+                <pre class="mt-2 text-slate-200 text-sm whitespace-pre-wrap font-sans bg-slate-900/50 rounded p-3 max-h-48 overflow-y-auto" th:text="${message}">Commit message here</pre>
+            </details>
+        </header>
+
+        <!-- LLM Scoring Section -->
+        <section class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">📊 Contribution Analysis</h2>
+
+            <!-- Main Score Display - Horizontal layout with equal heights -->
+            <div class="flex flex-col md:flex-row gap-4 mb-6">
+                <!-- Total Score with Gauge - Fixed width -->
+                <div class="flex-shrink-0">
+                    <div class="rounded-lg p-4 text-center h-full flex flex-col justify-center items-center" th:classappend="${dangerClass}">
+                        <div class="score-gauge mx-auto mb-2">
+                            <svg width="100" height="100" viewBox="0 0 120 120">
+                                <circle cx="60" cy="60" r="50" fill="none" stroke="#e5e7eb" stroke-width="10"/>
+                                <circle cx="60" cy="60" r="50" fill="none" stroke="white" stroke-width="10"
+                                        stroke-dasharray="314"
+                                        th:attr="stroke-dashoffset=${scoreGaugeOffset}"/>
+                            </svg>
+                            <div class="score-text text-white" th:text="${totalScoreFormatted}">85</div>
+                        </div>
+                        <p class="text-white font-semibold uppercase text-sm" th:text="${changeClassification}">Medium</p>
+                    </div>
+                </div>
+
+                <!-- Score Formula & Components - Flex grow to fill remaining space -->
+                <div class="flex-1 flex flex-col gap-3">
+                    <!-- Score Calculation Formula -->
+                    <div class="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg p-3 flex-1 flex items-center justify-center">
+                        <div class="text-center">
+                            <p class="text-xs text-gray-500 uppercase mb-1">Final Score Calculation</p>
+                            <p class="font-mono text-lg font-bold text-gray-800" th:text="${scoreCalculation}">68.34 × 1.15 + 4.92 = 83.51</p>
+                            <p class="text-xs text-gray-500 mt-1">Base Effort × Quality Multiplier + Architecture Bonus</p>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-3 gap-3">
+                        <!-- Base Effort -->
+                        <div class="bg-blue-50 rounded-lg p-3 text-center flex flex-col justify-center">
+                            <p class="text-xs text-gray-500 uppercase">Base Effort</p>
+                            <p class="text-xl font-bold text-blue-600" th:text="${baseEffortScore}">68.34</p>
+                            <p class="text-xs text-gray-400">Volume × Complexity</p>
+                        </div>
+
+                        <!-- Quality Multiplier -->
+                        <div class="bg-purple-50 rounded-lg p-3 text-center flex flex-col justify-center">
+                            <p class="text-xs text-gray-500 uppercase">Quality Multiplier</p>
+                            <p class="text-xl font-bold"
+                               th:classappend="${qualityMultiplierPositive} ? 'text-green-600' : 'text-orange-600'"
+                               th:text="${finalQualityMultiplier != null ? finalQualityMultiplier + '×' : 'N/A'}">1.15×</p>
+                            <p class="text-xs text-gray-400">CPD + Coverage + Arch</p>
+                        </div>
+
+                        <!-- Architecture Bonus -->
+                        <div class="bg-green-50 rounded-lg p-3 text-center flex flex-col justify-center" th:if="${architectureBonus != null}">
+                            <p class="text-xs text-gray-500 uppercase">Arch Bonus</p>
+                            <p class="text-xl font-bold text-green-600" th:text="'+' + ${bonusPoints}">+4.92</p>
+                            <p class="text-xs text-gray-400">Quality Factor: <span th:text="${qualityFactor}">0.85</span></p>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-3 text-center flex flex-col justify-center" th:unless="${architectureBonus != null}">
+                            <p class="text-xs text-gray-500 uppercase">Arch Bonus</p>
+                            <p class="text-xl font-bold text-gray-400">N/A</p>
+                            <p class="text-xs text-gray-400">Not applicable</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Senior Review Alert - Full Width -->
+            <div class="mb-6" th:if="${seniorReviewScore >= 5}">
+                <div th:classappend="${seniorReviewScore >= 8} ? 'bg-red-100 border-red-400 text-red-700' : (${seniorReviewScore >= 7} ? 'bg-orange-100 border-orange-400 text-orange-700' : 'bg-yellow-100 border-yellow-400 text-yellow-700')"
+                     class="border px-6 py-4 rounded-lg flex items-center justify-between">
+                    <div class="flex items-center">
+                        <span class="text-2xl mr-3" th:text="${seniorReviewScore >= 8} ? '🚨' : (${seniorReviewScore >= 7} ? '⚠️' : '👀')"></span>
+                        <div>
+                            <span class="font-bold text-lg" th:text="${seniorReviewScore >= 8} ? 'Critical: Senior Review Required' : (${seniorReviewScore >= 7} ? 'Senior Review Recommended' : 'Peer Review Suggested')"></span>
+                            <ul th:if="${recommendations != null and #lists.size(recommendations) > 0}" class="text-sm mt-1 ml-1 opacity-90">
+                                <li th:each="reason : ${recommendations}" th:text="'• ' + ${reason}">Reason</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <span class="font-bold text-2xl" th:text="${seniorReviewScore} + '/10'"></span>
+                </div>
+            </div>
+
+            <!-- Expandable Score Details -->
+            <details open class="bg-gray-50 rounded-lg border border-gray-200 mb-6">
+                <summary class="cursor-pointer px-4 py-3 font-semibold text-gray-800 hover:bg-gray-100 rounded-lg flex items-center justify-between">
+                    <span class="text-lg">📐 Score Breakdown Details</span>
+                    <span class="text-xs text-gray-400">Click to collapse</span>
+                </summary>
+                <!-- 3 horizontal tables layout -->
+                <div class="px-4 pb-4 pt-2">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <!-- Volume Score Table -->
+                        <div th:if="${volumeScore != null}" class="bg-white rounded p-3 border">
+                            <h4 class="text-sm font-semibold text-blue-700 mb-2 has-tooltip">
+                                📦 Volume Score
+                                <span class="tooltip-trigger" data-tooltip="volume-main">?</span>
+                                <div id="tooltip-volume-main" class="tooltip-popover">
+                                    <strong>Volume Score Formula:</strong><br>
+                                    <code>score = ln(1 + count) × factor × multiplier</code><br><br>
+                                    <strong>Project Size Multipliers:</strong><br>
+                                    • sizeFactor = <span th:text="${sizeFactor}">0.00</span><br>
+                                    • relativeAdj = <span th:text="${relativeAdj}">1.00</span> (for lines)<br>
+                                    • modifyMult = <span th:text="${volModifyMult}">1.00</span> (for modifications)<br>
+                                    • addMult = <span th:text="${volAddMult}">1.00</span> (for additions)<br><br>
+                                    Logarithmic scaling ensures small changes get meaningful scores while large changes don't explode.
+                                </div>
+                            </h4>
+                            <table class="w-full text-xs">
+                                <thead class="text-gray-400">
+                                    <tr>
+                                        <th class="text-left py-1 font-normal">Metric</th>
+                                        <th class="text-right py-1 font-normal">Count</th>
+                                        <th class="text-right py-1 font-normal">Score</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr class="border-b has-tooltip">
+                                        <td class="py-1 text-gray-500">
+                                            Lines Changed
+                                            <span class="tooltip-trigger" data-tooltip="lines">?</span>
+                                            <div id="tooltip-lines" class="tooltip-popover">
+                                                <strong>Formula:</strong> <code>ln(1 + <span th:text="${linesChanged}">0</span>) × 5.0 × <span th:text="${relativeAdj}">1.00</span></code><br><br>
+                                                <strong>relativeAdj = <span th:text="${relativeAdj}">1.00</span></strong> (project size normalization)<br>
+                                                Logarithmic scaling prevents large diffs from dominating.
+                                            </div>
+                                        </td>
+                                        <td class="py-1 text-right font-mono" th:text="${linesChanged}">0</td>
+                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${linesScore}">0.00</td>
+                                    </tr>
+                                    <tr th:if="${methodsModified > 0}" class="border-b has-tooltip">
+                                        <td class="py-1 text-gray-500">
+                                            Symbols Modified
+                                            <span class="tooltip-trigger" data-tooltip="methods-mod">?</span>
+                                            <div id="tooltip-methods-mod" class="tooltip-popover">
+                                                <strong>Formula:</strong> <code>ln(1 + <span th:text="${methodsModified}">0</span>) × 6.0 × <span th:text="${volModifyMult}">1.00</span></code><br><br>
+                                                <strong>modifyMult = <span th:text="${volModifyMult}">1.00</span></strong> (bonus for modifying complex code)<br>
+                                                Higher multiplier rewards touching complex code in large projects.
+                                            </div>
+                                        </td>
+                                        <td class="py-1 text-right font-mono" th:text="${methodsModified}">0</td>
+                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${methodsModifiedScore}">0.00</td>
+                                    </tr>
+                                    <tr th:if="${methodsAdded > 0}" class="border-b has-tooltip">
+                                        <td class="py-1 text-gray-500">
+                                            Symbols Added
+                                            <span class="tooltip-trigger" data-tooltip="methods-add">?</span>
+                                            <div id="tooltip-methods-add" class="tooltip-popover">
+                                                <strong>Formula:</strong> <code>ln(1 + <span th:text="${methodsAdded}">0</span>) × 8.0 × <span th:text="${volAddMult}">1.00</span></code><br><br>
+                                                <strong>addMult = <span th:text="${volAddMult}">1.00</span></strong> (adjusted for project size)<br>
+                                                New symbols have higher base factor (8.0) for new functionality.
+                                            </div>
+                                        </td>
+                                        <td class="py-1 text-right font-mono" th:text="${methodsAdded}">0</td>
+                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${methodsAddedScore}">0.00</td>
+                                    </tr>
+                                    <tr th:if="${classesModified > 0}" class="border-b has-tooltip">
+                                        <td class="py-1 text-gray-500">
+                                            Classes Modified
+                                            <span class="tooltip-trigger" data-tooltip="classes-mod">?</span>
+                                            <div id="tooltip-classes-mod" class="tooltip-popover">
+                                                <strong>Formula:</strong> <code>ln(1 + <span th:text="${classesModified}">0</span>) × 5.0 × <span th:text="${volModifyMult}">1.00</span></code><br><br>
+                                                <strong>modifyMult = <span th:text="${volModifyMult}">1.00</span></strong><br>
+                                                Class-level changes indicate structural modifications to existing code.
+                                            </div>
+                                        </td>
+                                        <td class="py-1 text-right font-mono" th:text="${classesModified}">0</td>
+                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${classesModifiedScore}">0.00</td>
+                                    </tr>
+                                    <tr th:if="${classesAdded > 0}" class="border-b has-tooltip">
+                                        <td class="py-1 text-gray-500">
+                                            Classes Added
+                                            <span class="tooltip-trigger" data-tooltip="classes-add">?</span>
+                                            <div id="tooltip-classes-add" class="tooltip-popover">
+                                                <strong>Formula:</strong> <code>ln(1 + <span th:text="${classesAdded}">0</span>) × 10.0 × <span th:text="${volAddMult}">1.00</span></code><br><br>
+                                                <strong>addMult = <span th:text="${volAddMult}">1.00</span></strong><br>
+                                                New classes have highest factor (10.0) for structural additions.
+                                            </div>
+                                        </td>
+                                        <td class="py-1 text-right font-mono" th:text="${classesAdded}">0</td>
+                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${classesAddedScore}">0.00</td>
+                                    </tr>
+                                </tbody>
+                                <tfoot>
+                                    <tr class="bg-blue-50">
+                                        <td colspan="2" class="py-1 font-semibold text-gray-700">Total Volume</td>
+                                        <td class="py-1 text-right font-bold text-blue-700" th:text="${totalVolumeScore}">0.00</td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+
+                        <!-- Complexity Multiplier Table -->
+                        <div th:if="${complexityMultiplier != null}" class="bg-white rounded p-3 border">
+                            <h4 class="text-sm font-semibold text-purple-700 mb-2 has-tooltip">
+                                🧠 Complexity Multiplier
+                                <span class="tooltip-trigger" data-tooltip="complexity-main">?</span>
+                                <div id="tooltip-complexity-main" class="tooltip-popover">
+                                    <strong>Complexity Assessment:</strong><br><br>
+                                    <strong>Modifying:</strong> BONUS for touching complex code (rewards skill)<br>
+                                    <strong>Creating:</strong> PENALTY for creating complex code (discourages poor design)<br><br>
+                                    <code>baseEffort = volumeScore × combinedMultiplier</code>
+                                </div>
+                            </h4>
+                            <table class="w-full text-xs">
+                                <tbody>
+                                    <tr class="border-b has-tooltip">
+                                        <td class="py-1 text-gray-500">
+                                            Avg Modify Complexity
+                                            <span class="tooltip-trigger" data-tooltip="avg-modify">?</span>
+                                            <div id="tooltip-avg-modify" class="tooltip-popover">
+                                                Average cyclomatic complexity of modified symbols.<br><br>
+                                                Higher = harder code to work with, deserves more credit.
+                                            </div>
+                                        </td>
+                                        <td class="py-1 text-right font-mono" th:text="${avgModifyComplexity}">0.00</td>
+                                    </tr>
+                                    <tr class="border-b has-tooltip">
+                                        <td class="py-1 text-gray-500">
+                                            Modify Multiplier
+                                            <span class="tooltip-trigger" data-tooltip="modify-mult">?</span>
+                                            <div id="tooltip-modify-mult" class="tooltip-popover">
+                                                <strong>BONUS for modifying complex code:</strong><br>
+                                                • Trivial (1-4): ×1.0<br>
+                                                • Moderate (5-10): ×1.1<br>
+                                                • Complex (11-20): ×1.2<br>
+                                                • Highly Complex (>20): ×1.3
+                                            </div>
+                                        </td>
+                                        <td class="py-1 text-right font-bold text-purple-600" th:text="${modifyMultiplier}">1.00</td>
+                                    </tr>
+                                    <tr class="border-b has-tooltip">
+                                        <td class="py-1 text-gray-500">
+                                            Avg Create Complexity
+                                            <span class="tooltip-trigger" data-tooltip="avg-create">?</span>
+                                            <div id="tooltip-avg-create" class="tooltip-popover">
+                                                Average cyclomatic complexity of newly created symbols.<br><br>
+                                                Lower is better - simple code is good design.
+                                            </div>
+                                        </td>
+                                        <td class="py-1 text-right font-mono" th:text="${avgCreateComplexity}">0.00</td>
+                                    </tr>
+                                    <tr class="border-b has-tooltip">
+                                        <td class="py-1 text-gray-500">
+                                            Create Multiplier
+                                            <span class="tooltip-trigger" data-tooltip="create-mult">?</span>
+                                            <div id="tooltip-create-mult" class="tooltip-popover">
+                                                <strong>PENALTY for creating complex code:</strong><br>
+                                                • Trivial (1-4): ×1.1 (bonus!)<br>
+                                                • Moderate (5-10): ×1.0<br>
+                                                • Complex (11-20): ×0.9<br>
+                                                • Highly Complex (>20): ×0.7
+                                            </div>
+                                        </td>
+                                        <td class="py-1 text-right font-bold text-purple-600" th:text="${createMultiplier}">1.00</td>
+                                    </tr>
+                                </tbody>
+                                <tfoot>
+                                    <tr class="bg-purple-50">
+                                        <td class="py-1 font-semibold text-gray-700">Combined</td>
+                                        <td class="py-1 text-right font-bold text-purple-700" th:text="${combinedComplexityMultiplier}">1.00</td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+
+                        <!-- Quality Multiplier Table -->
+                        <div th:if="${qualityMultiplier != null}" class="bg-white rounded p-3 border">
+                            <h4 class="text-sm font-semibold text-green-700 mb-2 has-tooltip">
+                                ✨ Quality Multiplier
+                                <span class="tooltip-trigger" data-tooltip="quality-main">?</span>
+                                <div id="tooltip-quality-main" class="tooltip-popover">
+                                    <strong>Quality Multiplier:</strong><br><br>
+                                    Adjusts score based on code quality.<br>
+                                    <code>finalMultiplier = 1.0 + all impacts</code><br>
+                                    Clamped to range [0.5, 1.2]
+                                </div>
+                            </h4>
+                            <!-- Calculation Formula -->
+                            <div th:if="${qualityMultiplierCalculation != null}" class="bg-gradient-to-r from-green-50 to-emerald-50 rounded p-2 mb-2 border border-green-200">
+                                <p class="text-xs text-gray-500 mb-1">Calculation:</p>
+                                <p class="font-mono text-xs text-green-800 font-semibold" th:text="${qualityMultiplierCalculation}">1.0 + 0.05 (CPD) - 0.06 (SA) + 0.10 (Cov) = 1.09</p>
+                            </div>
+                            <table class="w-full text-xs">
+                                <tbody>
+                                    <tr th:if="${cpdAnalysis != null}" class="border-b has-tooltip">
+                                        <td class="py-1 text-gray-500">
+                                            CPD (<span th:text="${cpdDuplicationPercent}">0</span>%)
+                                            <span class="tooltip-trigger" data-tooltip="cpd">?</span>
+                                            <div id="tooltip-cpd" class="tooltip-popover">
+                                                <strong>Copy-Paste Detection:</strong><br>
+                                                • 0-5%: +0.05 (clean)<br>
+                                                • 6-15%: 0 (acceptable)<br>
+                                                • 16-25%: -0.05 (moderate)<br>
+                                                • 26-40%: -0.10 (high)<br>
+                                                • >40%: -0.15 (severe)
+                                            </div>
+                                        </td>
+                                        <td class="py-1 text-right font-bold" th:classappend="${cpdImpact != null and cpdImpact.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${cpdImpact}">0.00</td>
+                                    </tr>
+                                    <tr th:if="${staticAnalysisQuality != null}" class="border-b has-tooltip">
+                                        <td class="py-1 text-gray-500">
+                                            Static Analysis
+                                            <span th:if="${staticAnalysisClean}" class="ml-1 px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-xs font-semibold">CLEAN</span>
+                                            <span class="tooltip-trigger" data-tooltip="static">?</span>
+                                            <div id="tooltip-static" class="tooltip-popover">
+                                                <strong>PMD + SpotBugs (error-severity only):</strong><br><br>
+                                                <strong>CLEAN bonus (+0.05):</strong><br>
+                                                Awarded when zero error-severity violations<br>
+                                                are introduced in this commit.<br>
+                                                No new bugs = you get a score bonus!<br><br>
+                                                <strong>Penalties (per introduced error):</strong><br>
+                                                • Introduced error: -0.05<br>
+                                                • Pre-existing error: -0.01<br>
+                                                Max penalty: -0.30
+                                            </div>
+                                        </td>
+                                        <td class="py-1 text-right font-bold" th:classappend="${staticAnalysisImpact != null and staticAnalysisImpact.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${staticAnalysisImpact}">0.00</td>
+                                    </tr>
+                                    <tr th:if="${coverageQuality != null}" class="border-b has-tooltip">
+                                        <td class="py-1 text-gray-500">
+                                            Coverage (<span th:text="${qualityCoveragePercent}">0</span>%)
+                                            <span class="tooltip-trigger" data-tooltip="coverage">?</span>
+                                            <div id="tooltip-coverage" class="tooltip-popover">
+                                                <strong>Test Coverage Impact:</strong><br>
+                                                • ≥90%: +0.10 (excellent)<br>
+                                                • 80-89%: +0.05 (good)<br>
+                                                • 70-79%: 0 (acceptable)<br>
+                                                • 60-69%: -0.05 (low)<br>
+                                                • 50-59%: -0.10 (poor)<br>
+                                                • <50%: -0.15 (terrible)
+                                            </div>
+                                        </td>
+                                        <td class="py-1 text-right font-bold" th:classappend="${coverageImpact != null and coverageImpact.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${coverageImpact}">0.00</td>
+                                    </tr>
+                                    <tr th:if="${architectureQuality != null}" class="border-b has-tooltip">
+                                        <td class="py-1 text-gray-500">
+                                            Architecture
+                                            <span class="tooltip-trigger" data-tooltip="arch">?</span>
+                                            <div id="tooltip-arch" class="tooltip-popover">
+                                                <strong>SOLID/Architecture Issues:</strong><br>
+                                                • Minor style: -0.01/issue<br>
+                                                • SOLID violation: -0.02/issue<br>
+                                                • Major architecture: -0.03/issue<br>
+                                                Max penalty: -0.10
+                                            </div>
+                                        </td>
+                                        <td class="py-1 text-right font-bold" th:classappend="${architecturePenalty != null and architecturePenalty.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${architecturePenalty}">0.00</td>
+                                    </tr>
+                                    <tr th:if="${qualityGateAnalysis != null}" class="border-b has-tooltip">
+                                        <td class="py-1 text-gray-500">
+                                            Quality Gate
+                                            <span class="tooltip-trigger" data-tooltip="gate">?</span>
+                                            <div id="tooltip-gate" class="tooltip-popover">
+                                                <strong>Quality Gate Failures:</strong><br>
+                                                -0.03 per failed gate.<br><br>
+                                                When a dimension score is high but the quality gate requirement is not met.
+                                            </div>
+                                        </td>
+                                        <td class="py-1 text-right font-bold" th:classappend="${qualityGateImpact != null and qualityGateImpact.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${qualityGateImpact}">0.00</td>
+                                    </tr>
+                                </tbody>
+                                <tfoot>
+                                    <tr class="bg-green-50">
+                                        <td class="py-1 font-semibold text-gray-700">Final Multiplier</td>
+                                        <td class="py-1 text-right font-bold text-green-700" th:text="${finalQualityMultiplier}">1.00</td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Architecture Bonus Details (full width below) -->
+                    <div th:if="${architectureBonus != null}" class="mt-4 bg-white rounded p-3 border">
+                        <h4 class="text-sm font-semibold text-teal-700 mb-2">🏗️ Architecture Effort Bonus</h4>
+                        <div class="grid grid-cols-4 gap-4 text-xs">
+                            <div class="text-center">
+                                <p class="text-gray-500">Impact Score</p>
+                                <p class="font-bold text-lg" th:text="${architectureImpactScore} + '/10'">0/10</p>
+                            </div>
+                            <div class="text-center">
+                                <p class="text-gray-500">Quality Factor</p>
+                                <p class="font-bold text-lg" th:text="${qualityFactor}">0.00</p>
+                            </div>
+                            <div class="text-center">
+                                <p class="text-gray-500">Base Effort</p>
+                                <p class="font-bold text-lg" th:text="${bonusBaseEffort}">0.00</p>
+                            </div>
+                            <div class="text-center">
+                                <p class="text-gray-500">Bonus Points</p>
+                                <p class="font-bold text-lg text-teal-700" th:text="'+' + ${bonusPoints}">+0.00</p>
+                            </div>
+                        </div>
+                        <div class="mt-2 pt-2 border-t text-xs text-gray-500">
+                            <span class="font-semibold">Calculation:</span> <span class="font-mono text-teal-700" th:text="${bonusCalculation}"></span>
+                        </div>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Risk Assessment - Compact single row -->
+            <div th:if="${riskAssessment != null}" class="mb-6">
+                <div class="rounded-lg px-4 py-3 border flex items-center justify-between" th:classappend="${brRiskLevelClass}">
+                    <div class="flex items-center gap-3">
+                        <span class="text-xl" th:text="${riskLevel == 'critical'} ? '🔴' : (${riskLevel == 'high' or riskLevel == 'very_high'} ? '🟠' : (${riskLevel == 'moderate'} ? '🟡' : '🟢'))">🟢</span>
+                        <span class="font-semibold uppercase" th:text="${riskLevel}">Low</span>
+                        <span class="text-xs opacity-70">Risk Level</span>
+                    </div>
+                    <div class="flex items-baseline">
+                        <span class="text-2xl font-bold" th:text="${riskScore}">78</span>
+                        <span class="text-2xl font-bold">/100</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- LLM Summary -->
+            <div class="bg-gray-50 rounded-lg p-4 mb-6">
+                <h3 class="text-sm font-semibold text-gray-500 uppercase mb-2">Executive Summary</h3>
+                <div id="llm-summary-content" class="text-gray-700 prose prose-sm max-w-none"></div>
+                <script th:inline="javascript">
+                    /*<![CDATA[*/
+                    var llmSummaryRaw = /*[[${llmSummary}]]*/ '';
+                    /*]]>*/
+                </script>
+            </div>
+            
+            <!-- LLM Thinking/Reasoning Section -->
+            <div class="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-6">
+                <details open>
+                    <summary class="cursor-pointer flex items-center text-sm font-semibold text-purple-700 uppercase mb-2">
+                        <span class="mr-2">🧠</span> AI Reasoning (How the score was determined)
+                        <span class="ml-auto text-xs text-purple-500 font-normal">Click to collapse</span>
+                    </summary>
+                    <div id="llm-thinking-content"
+                         class="mt-3 bg-white rounded p-4 text-gray-700 text-sm border border-purple-100 max-h-[600px] overflow-y-auto prose prose-sm max-w-none">
+                        <p id="llm-thinking-placeholder" class="text-gray-400 italic text-center py-4">
+                            AI reasoning not available for this analysis.
+                            <span class="block mt-1 text-xs">The model may not support extended thinking, or thinking output was not captured.</span>
+                        </p>
+                    </div>
+                    <!-- Raw thinking text for JS to process -->
+                    <script th:inline="javascript">
+                        /*<![CDATA[*/
+                        var llmThinkingRaw = /*[[${llmThinking}]]*/ null;
+                        /*]]>*/
+                    </script>
+                </details>
+            </div>
+            
+            <!-- Blast Radius Analysis -->
+            <div th:if="${blastRadius != null or brTotalCallers > 0}" class="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-6">
+                <h3 class="text-sm font-semibold text-orange-700 uppercase mb-3 flex items-center justify-between">
+                    <span><span class="mr-2">💥</span> Blast Radius Analysis</span>
+                    <span th:unless="${#strings.isEmpty(brModuleType)}" class="text-xs font-normal px-2 py-1 rounded" th:classappend="${#strings.equals(brModuleType, 'core_library')} ? 'bg-red-100 text-red-700' : (${#strings.equals(brModuleType, 'shared_utility')} ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700')" th:text="${brModuleTypeDisplay}">Leaf Application</span>
+                </h3>
+
+                <!-- Caller Counts -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    <div class="bg-white rounded-lg p-3 border text-center">
+                        <p class="text-xs text-gray-500 uppercase">Total Callers</p>
+                        <p class="text-2xl font-bold text-orange-600" th:text="${brTotalCallers}">0</p>
+                    </div>
+                    <div class="bg-white rounded-lg p-3 border text-center">
+                        <p class="text-xs text-gray-500 uppercase">Production</p>
+                        <p class="text-2xl font-bold text-blue-600" th:text="${brProductionCallers}">0</p>
+                    </div>
+                    <div class="bg-white rounded-lg p-3 border text-center">
+                        <p class="text-xs text-gray-500 uppercase">Test</p>
+                        <p class="text-2xl font-bold text-green-600" th:text="${brTestCallers}">0</p>
+                    </div>
+                    <div class="bg-white rounded-lg p-3 border text-center">
+                        <p class="text-xs text-gray-500 uppercase">Risk Level</p>
+                        <p class="text-lg font-bold uppercase" th:class="${brRiskLevelClass}" th:text="${brRiskLevel}">Low</p>
+                    </div>
+                </div>
+
+                <!-- Breaking Changes Alert -->
+                <div th:if="${hasBreakingChanges}" class="bg-red-100 border border-red-300 rounded-lg p-3 mb-4">
+                    <div class="flex items-center mb-2">
+                        <span class="text-xl mr-2">⚠️</span>
+                        <span class="font-semibold text-red-700">Breaking API Changes Detected</span>
+                        <span th:unless="${#strings.isEmpty(breakingChangeType)}" class="ml-2 text-xs bg-red-200 text-red-800 px-2 py-0.5 rounded" th:text="${breakingChangeType}">parameter_added</span>
+                    </div>
+                    <ul th:unless="${#lists.isEmpty(changedSignatures)}" class="list-disc list-inside text-sm text-red-700 ml-6">
+                        <li th:each="sig : ${changedSignatures}" th:text="${sig}">methodSignature()</li>
+                    </ul>
+                </div>
+
+                <!-- External Impact -->
+                <div th:unless="${#strings.isEmpty(brExternalImpact)}" class="mb-4">
+                    <div class="flex items-center justify-between bg-white rounded-lg p-3 border">
+                        <span class="text-sm text-gray-600">External Consumer Impact Estimate:</span>
+                        <span class="text-sm font-bold uppercase px-3 py-1 rounded" th:class="${brExternalImpactClass}" th:text="${brExternalImpact}">Unknown</span>
+                    </div>
+                </div>
+
+                <!-- Critical Callers List -->
+                <div th:unless="${#lists.isEmpty(brCriticalCallers)}" class="mb-3">
+                    <p class="text-xs text-gray-500 uppercase mb-1">Critical Callers (<span th:text="${#lists.size(brCriticalCallers)}">0</span>):</p>
+                    <ul class="list-disc list-inside text-sm text-gray-700 bg-white rounded p-2 border max-h-32 overflow-y-auto">
+                        <li th:each="caller : ${brCriticalCallers}"
+                            class="font-mono text-xs text-red-700"
+                            th:text="${caller}">ClassName</li>
+                    </ul>
+                </div>
+
+                <!-- Explanation -->
+                <div th:unless="${#strings.isEmpty(brExplanation)}" class="text-sm text-gray-700 bg-white rounded p-3 border">
+                    <p th:text="${brExplanation}">Blast radius explanation</p>
+                </div>
+            </div>
+
+            <!-- Commit Tags (Technical + Functional) - only show if we have at least one tag -->
+            <div th:if="${not #lists.isEmpty(technicalTags) or not #lists.isEmpty(functionalTags)}" class="bg-indigo-50 border border-indigo-200 rounded-lg p-4 mb-6">
+                <h3 class="text-sm font-semibold text-indigo-700 uppercase mb-3 flex items-center justify-center">
+                    <span class="mr-2">🏷️</span> Commit Tags (<span th:text="${#lists.size(technicalTags) + #lists.size(functionalTags)}">0</span>)
+                </h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Technical Tags - full width if functional tags are empty -->
+                    <div th:unless="${#lists.isEmpty(technicalTags)}"
+                         class="bg-white rounded-lg p-3 border"
+                         th:classappend="${#lists.isEmpty(functionalTags)} ? 'md:col-span-2' : ''">
+                        <p class="text-xs text-gray-500 uppercase mb-2 flex items-center">
+                            <span class="mr-1">⚙️</span> Technical (<span th:text="${#lists.size(technicalTags)}">0</span>)
+                        </p>
+                        <ul class="list-disc list-inside space-y-1">
+                            <li th:each="tag : ${technicalTags}"
+                                class="text-sm text-blue-800"
+                                th:text="${tag}">tag</li>
+                        </ul>
+                    </div>
+                    <!-- Functional Tags - full width if technical tags are empty -->
+                    <div th:unless="${#lists.isEmpty(functionalTags)}"
+                         class="bg-white rounded-lg p-3 border"
+                         th:classappend="${#lists.isEmpty(technicalTags)} ? 'md:col-span-2' : ''">
+                        <p class="text-xs text-gray-500 uppercase mb-2 flex items-center">
+                            <span class="mr-1">📦</span> Functional / Business (<span th:text="${#lists.size(functionalTags)}">0</span>)
+                        </p>
+                        <ul class="list-disc list-inside space-y-1">
+                            <li th:each="tag : ${functionalTags}"
+                                class="text-sm text-purple-800"
+                                th:text="${tag}">tag</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Dimension Scores (Key Dimensions 0-10) -->
+            <div th:unless="${#lists.isEmpty(dimensionScores)}" class="mb-6">
+                <h3 class="text-sm font-semibold text-gray-500 uppercase mb-3">Key Dimensions (0-10 Scale, N/A = Not Applicable)</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div th:each="dim : ${dimensionScores}" 
+                         class="bg-gray-50 rounded-lg p-3 flex items-center justify-between"
+                         th:classappend="${!dim.applicable} ? ' opacity-60' : ''">
+                        <div class="flex items-center space-x-3 flex-1 min-w-0">
+                            <span class="text-xl flex-shrink-0" th:text="${dim.icon}">🏗️</span>
+                            <div class="min-w-0">
+                                <p class="font-medium text-gray-800 text-sm truncate" th:text="${dim.name}">Architecture</p>
+                                <p class="text-xs text-gray-500 truncate" th:text="${dim.rationale}" th:title="${dim.rationale}">Rationale here</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-2 flex-shrink-0 ml-2">
+                            <div class="w-20 bg-gray-200 rounded-full h-2">
+                                <div class="h-2 rounded-full" th:classappend="'bar-' + ${dim.barClass}"
+                                     th:style="${dim.applicable} ? 'width: ' + ${dim.score * 10} + '%' : 'width: 100%'"></div>
+                            </div>
+                            <span class="text-sm font-bold min-w-12 text-right" th:class="${dim.scoreClass}" 
+                                  th:text="${dim.scoreDisplay} + (${dim.applicable} ? '/10' : '')">8/10</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Tabbed Findings/Recommendations/Static Analysis -->
+            <div class="border rounded-lg">
+                <div class="border-b flex flex-wrap">
+                    <button class="tab-button active" onclick="showTab('findings')">
+                        🐛 Bugs
+                        <span th:unless="${#lists.isEmpty(findings)}" class="ml-1 px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs"
+                              th:text="${#lists.size(findings)}">3</span>
+                    </button>
+                    <button class="tab-button" onclick="showTab('recommendations')">
+                        💡 Review Reasons
+                        <span th:unless="${#lists.isEmpty(recommendations)}" class="ml-1 px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full text-xs"
+                              th:text="${#lists.size(recommendations)}">0</span>
+                    </button>
+                    <button class="tab-button" onclick="showTab('static-analysis')">
+                        🔍 Static Analysis
+                        <span th:if="${totalNewIssues > 0}" class="ml-1 px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full text-xs"
+                              th:text="${totalNewIssues}">0</span>
+                    </button>
+                </div>
+                
+                <!-- Findings Tab -->
+                <div id="tab-findings" class="tab-content active p-4">
+                    <div th:unless="${#lists.isEmpty(findings)}">
+                        <!-- Findings Summary -->
+                        <div class="flex gap-4 mb-4 text-sm">
+                            <span class="flex items-center">
+                                <span class="w-3 h-3 bg-red-500 rounded-full mr-1"></span>
+                                Blocking: <span class="font-bold ml-1" th:text="${criticalFindings}">0</span>
+                            </span>
+                            <span class="flex items-center">
+                                <span class="w-3 h-3 bg-yellow-500 rounded-full mr-1"></span>
+                                Major: <span class="font-bold ml-1" th:text="${majorFindings}">0</span>
+                            </span>
+                            <span class="flex items-center">
+                                <span class="w-3 h-3 bg-blue-500 rounded-full mr-1"></span>
+                                Minor: <span class="font-bold ml-1" th:text="${minorFindings}">0</span>
+                            </span>
+                        </div>
+
+                        <!-- Findings List -->
+                        <div class="space-y-3">
+                            <div th:each="finding : ${findings}" th:class="${finding.severityClass}"
+                                 class="rounded-lg p-4">
+                                <div class="flex items-start">
+                                    <span class="text-xl mr-3 flex-shrink-0" th:text="${finding.severityIcon}">⚠️</span>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex items-center flex-wrap gap-2 mb-1">
+                                            <h4 class="font-semibold text-gray-800" th:text="${finding.title}">Finding Title</h4>
+                                            <span th:unless="${#strings.isEmpty(finding.typeDisplay)}" class="text-xs px-2 py-0.5 bg-gray-200 text-gray-700 rounded" th:text="${finding.typeDisplay}">Type</span>
+                                            <span th:unless="${#strings.isEmpty(finding.confidence)}" class="text-xs px-2 py-0.5 rounded"
+                                                  th:classappend="${#strings.equals(finding.confidence, 'high')} ? 'bg-green-100 text-green-700' : (${#strings.equals(finding.confidence, 'medium')} ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-600')"
+                                                  th:text="${finding.confidence} + ' confidence'">confidence</span>
+                                            <span th:unless="${#strings.isEmpty(finding.source)}" class="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded"
+                                                  th:text="${finding.source}">LLM</span>
+                                        </div>
+                                        <p class="text-sm text-gray-600 mt-1" th:text="${#strings.defaultString(finding.description, 'No description')}">Description</p>
+                                        <div class="mt-2 text-xs text-gray-500" th:unless="${#strings.isEmpty(finding.file)}">
+                                            <span class="font-mono bg-gray-200 px-1 rounded" th:text="${finding.file}">File.java</span>
+                                            <code th:unless="${#strings.isEmpty(finding.lineHint)}" class="ml-2 text-gray-700" th:text="${finding.lineHint}">line hint</code>
+                                        </div>
+                                        <!-- Suggested Fix -->
+                                        <div th:unless="${#strings.isEmpty(finding.suggestedFix)}" class="mt-3 bg-green-50 border border-green-200 rounded p-2">
+                                            <p class="text-xs font-semibold text-green-700 mb-1">💡 Suggested Fix:</p>
+                                            <p class="text-sm text-green-800" th:text="${finding.suggestedFix}">Fix suggestion</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <p th:if="${#lists.isEmpty(findings)}" class="text-gray-500 text-center py-4">✅ No bugs detected</p>
+                </div>
+                
+                <!-- Recommendations Tab -->
+                <div id="tab-recommendations" class="tab-content p-4">
+                    <div th:unless="${#lists.isEmpty(recommendations)}">
+                        <ul class="space-y-2">
+                            <li th:each="rec, stat : ${recommendations}" class="flex items-start">
+                                <span class="text-green-500 mr-2" th:text="${stat.index + 1} + '.'">1.</span>
+                                <span th:text="${rec}">Recommendation text</span>
+                            </li>
+                        </ul>
+                    </div>
+                    <p th:if="${#lists.isEmpty(recommendations)}" class="text-gray-500 text-center py-4">No recommendations</p>
+                </div>
+                
+                <!-- Static Analysis Review Tab -->
+                <div id="tab-static-analysis" class="tab-content p-4">
+                    <div th:if="${staticAnalysisReview != null}">
+                        <div class="space-y-4">
+                            <!-- Summary -->
+                            <div th:if="${totalNewIssues > 0}" class="bg-yellow-50 border border-yellow-200 rounded p-3 mb-4">
+                                <span class="font-semibold text-yellow-700"><span th:text="${totalNewIssues}">0</span> issue(s) introduced in changed lines</span>
+                            </div>
+                            <div th:if="${totalNewIssues == 0}" class="bg-green-50 border border-green-200 rounded p-3 mb-4">
+                                <span class="font-semibold text-green-700">No error-severity violations introduced — CLEAN bonus (+0.05) awarded</span>
+                            </div>
+
+                            <!-- PMD Section -->
+                            <div class="bg-white rounded-lg border p-3">
+                                <h4 class="text-sm font-semibold text-blue-700 mb-3 flex items-center">
+                                    <span class="mr-2">🔍</span> PMD Analysis
+                                </h4>
+                                <div class="space-y-3">
+                                    <!-- PMD in Changed Lines (New Issues) -->
+                                    <div th:if="${not #lists.isEmpty(pmdInChangedLines)}">
+                                        <p class="text-xs text-orange-600 font-semibold uppercase mb-1">⚠️ Issues in Changed Lines</p>
+                                        <div class="text-xs text-gray-700 bg-orange-50 rounded p-2 space-y-2">
+                                            <div th:each="finding,findingStat : ${pmdInChangedLines}" class="border-b border-orange-200 pb-2 last:border-0 last:pb-0">
+                                                <div class="flex items-start gap-2">
+                                                    <span th:if="${finding.severity != null and finding.severity.name() == 'ERROR'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-800 shrink-0">ERROR</span>
+                                                    <span th:if="${finding.severity != null and finding.severity.name() == 'WARNING'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-yellow-100 text-yellow-800 shrink-0">WARNING</span>
+                                                    <span th:if="${finding.severity == null or finding.severity.name() == 'INFO'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 shrink-0">INFO</span>
+                                                    <span><span class="font-medium" th:text="${finding.rule}">RULE</span>:<span th:text="${finding.file}">file</span><span th:if="${finding.line != null}">:<span th:text="${finding.line}">0</span></span> - <span th:text="${finding.assessment}">assessment</span></span>
+                                                </div>
+                                                <div th:if="${not #strings.isEmpty(finding.suggestedFileFix)}" class="mt-1 ml-6 bg-green-50 border border-green-200 rounded p-1.5">
+                                                    <p class="text-[10px] font-semibold text-green-700">💡 Suggested Fix:</p>
+                                                    <p class="text-[11px] text-green-800" th:text="${finding.suggestedFileFix}">Fix suggestion</p>
+                                                </div>
+                                                <div th:if="${not #strings.isEmpty(finding.suggestedBlockCode)}" class="mt-1 ml-6">
+                                                    <details class="group">
+                                                        <summary class="text-[10px] font-semibold text-blue-700 cursor-pointer hover:text-blue-900">🔧 View Fixed Code</summary>
+                                                        <pre class="mt-1 bg-gray-900 text-gray-100 rounded p-2 text-[11px] overflow-x-auto max-h-48"><code th:text="${finding.suggestedBlockCode}">fixed code</code></pre>
+                                                    </details>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <!-- PMD Pre-existing -->
+                                    <div th:if="${not #lists.isEmpty(pmdPreExisting)}">
+                                        <p class="text-xs text-gray-500 font-semibold uppercase mb-1">📋 Pre-existing (Not Counted)</p>
+                                        <ul class="text-xs text-gray-500 bg-gray-50 rounded p-2 max-h-24 overflow-y-auto space-y-1">
+                                            <li th:each="finding : ${pmdPreExisting}" class="flex items-start gap-2">
+                                                <span th:if="${finding.severity != null and finding.severity.name() == 'ERROR'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700 shrink-0">ERROR</span>
+                                                <span th:if="${finding.severity != null and finding.severity.name() == 'WARNING'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-yellow-100 text-yellow-700 shrink-0">WARNING</span>
+                                                <span th:if="${finding.severity == null or finding.severity.name() == 'INFO'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-200 text-gray-600 shrink-0">INFO</span>
+                                                <span><span class="font-medium" th:text="${finding.rule}">RULE</span>:<span th:text="${finding.file}">file</span><span th:if="${finding.line != null}">:<span th:text="${finding.line}">0</span></span> - <span th:text="${finding.assessment}">assessment</span></span>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                    <!-- PMD False Positives -->
+                                    <div th:if="${not #lists.isEmpty(pmdFalsePositives)}">
+                                        <p class="text-xs text-green-600 font-semibold uppercase mb-1">✓ Dismissed as False Positives</p>
+                                        <ul class="text-xs text-gray-500 bg-green-50 rounded p-2 max-h-24 overflow-y-auto space-y-1">
+                                            <li th:each="finding : ${pmdFalsePositives}" class="flex items-start gap-2">
+                                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-700 shrink-0">OK</span>
+                                                <span><span class="font-medium" th:text="${finding.rule}">RULE</span>:<span th:text="${finding.file}">file</span><span th:if="${finding.line != null}">:<span th:text="${finding.line}">0</span></span> - <span th:text="${finding.assessment}">reason</span></span>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                    <p th:if="${#lists.isEmpty(pmdInChangedLines) and #lists.isEmpty(pmdPreExisting) and #lists.isEmpty(pmdFalsePositives)}" class="text-xs text-gray-400 italic">No PMD findings</p>
+                                </div>
+                            </div>
+
+                            <!-- SpotBugs Section -->
+                            <div class="bg-white rounded-lg border p-3">
+                                <h4 class="text-sm font-semibold text-purple-700 mb-3 flex items-center">
+                                    <span class="mr-2">🐛</span> SpotBugs Analysis
+                                </h4>
+                                <div class="space-y-3">
+                                    <!-- SpotBugs in Changed Lines -->
+                                    <div th:if="${not #lists.isEmpty(spotbugsInChangedLines)}">
+                                        <p class="text-xs text-orange-600 font-semibold uppercase mb-1">⚠️ Issues in Changed Lines</p>
+                                        <div class="text-xs text-gray-700 bg-orange-50 rounded p-2 space-y-2">
+                                            <div th:each="finding,findingStat : ${spotbugsInChangedLines}" class="border-b border-orange-200 pb-2 last:border-0 last:pb-0">
+                                                <div class="flex items-start gap-2">
+                                                    <span th:if="${finding.severity != null and finding.severity.name() == 'ERROR'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-800 shrink-0">ERROR</span>
+                                                    <span th:if="${finding.severity != null and finding.severity.name() == 'WARNING'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-yellow-100 text-yellow-800 shrink-0">WARNING</span>
+                                                    <span th:if="${finding.severity == null or finding.severity.name() == 'INFO'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 shrink-0">INFO</span>
+                                                    <span><span class="font-medium" th:text="${finding.rule}">RULE</span>:<span th:text="${finding.file}">file</span><span th:if="${finding.line != null}">:<span th:text="${finding.line}">0</span></span> - <span th:text="${finding.assessment}">assessment</span></span>
+                                                </div>
+                                                <div th:if="${not #strings.isEmpty(finding.suggestedFileFix)}" class="mt-1 ml-6 bg-green-50 border border-green-200 rounded p-1.5">
+                                                    <p class="text-[10px] font-semibold text-green-700">💡 Suggested Fix:</p>
+                                                    <p class="text-[11px] text-green-800" th:text="${finding.suggestedFileFix}">Fix suggestion</p>
+                                                </div>
+                                                <div th:if="${not #strings.isEmpty(finding.suggestedBlockCode)}" class="mt-1 ml-6">
+                                                    <details class="group">
+                                                        <summary class="text-[10px] font-semibold text-blue-700 cursor-pointer hover:text-blue-900">🔧 View Fixed Code</summary>
+                                                        <pre class="mt-1 bg-gray-900 text-gray-100 rounded p-2 text-[11px] overflow-x-auto max-h-48"><code th:text="${finding.suggestedBlockCode}">fixed code</code></pre>
+                                                    </details>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <!-- SpotBugs Pre-existing -->
+                                    <div th:if="${not #lists.isEmpty(spotbugsPreExisting)}">
+                                        <p class="text-xs text-gray-500 font-semibold uppercase mb-1">📋 Pre-existing (Not Counted)</p>
+                                        <ul class="text-xs text-gray-500 bg-gray-50 rounded p-2 max-h-24 overflow-y-auto space-y-1">
+                                            <li th:each="finding : ${spotbugsPreExisting}" class="flex items-start gap-2">
+                                                <span th:if="${finding.severity != null and finding.severity.name() == 'ERROR'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700 shrink-0">ERROR</span>
+                                                <span th:if="${finding.severity != null and finding.severity.name() == 'WARNING'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-yellow-100 text-yellow-700 shrink-0">WARNING</span>
+                                                <span th:if="${finding.severity == null or finding.severity.name() == 'INFO'}" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-200 text-gray-600 shrink-0">INFO</span>
+                                                <span><span class="font-medium" th:text="${finding.rule}">RULE</span>:<span th:text="${finding.file}">file</span><span th:if="${finding.line != null}">:<span th:text="${finding.line}">0</span></span> - <span th:text="${finding.assessment}">assessment</span></span>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                    <!-- SpotBugs False Positives -->
+                                    <div th:if="${not #lists.isEmpty(spotbugsFalsePositives)}">
+                                        <p class="text-xs text-green-600 font-semibold uppercase mb-1">✓ Dismissed as False Positives</p>
+                                        <ul class="text-xs text-gray-500 bg-green-50 rounded p-2 max-h-24 overflow-y-auto space-y-1">
+                                            <li th:each="finding : ${spotbugsFalsePositives}" class="flex items-start gap-2">
+                                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-700 shrink-0">OK</span>
+                                                <span><span class="font-medium" th:text="${finding.rule}">RULE</span>:<span th:text="${finding.file}">file</span><span th:if="${finding.line != null}">:<span th:text="${finding.line}">0</span></span> - <span th:text="${finding.assessment}">reason</span></span>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                    <p th:if="${#lists.isEmpty(spotbugsInChangedLines) and #lists.isEmpty(spotbugsPreExisting) and #lists.isEmpty(spotbugsFalsePositives)}" class="text-xs text-gray-400 italic">No SpotBugs findings</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <p th:if="${staticAnalysisReview == null}" class="text-gray-500 text-center py-4">No static analysis review available</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- PMD CPD Code Duplication Section - Token-based copy-paste detection -->
+        <section th:if="${cpdDuplicationCount > 0}" class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h2 class="text-xl font-bold text-gray-800 mb-1">📋 Code Duplication Analysis (PMD CPD)</h2>
+                    <p class="text-sm text-gray-500">Token-based copy-paste detection found <span class="font-semibold text-orange-600" th:text="${cpdDuplicationCount}">0</span> duplication(s) in changed files.</p>
+                </div>
+                <button onclick="toggleCollapsible('cpd-content')" class="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded text-gray-600">
+                    Toggle Details
+                </button>
+            </div>
+
+            <div id="cpd-content" class="collapsible-content expanded">
+                <div id="cpd-markdown-content" class="prose max-w-none bg-gray-50 rounded-lg p-4 border border-gray-200 max-h-[600px] overflow-y-auto">
+                    <!-- Markdown will be rendered here by JavaScript -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Store CPD Markdown for JavaScript rendering -->
+        <script th:if="${cpdDuplicationCount > 0}" th:inline="javascript">
+            var cpdMarkdownRaw = /*[[${cpdMarkdownReport}]]*/ '';
+        </script>
+
+        <!-- Changed Files Section -->
+        <section class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">📁 Changed Files</h2>
+            
+            <div class="space-y-4">
+                <div th:each="file, fileStat : ${files}" class="border rounded-lg overflow-hidden">
+                    <!-- File Header -->
+                    <div class="bg-gray-50 px-4 py-3 flex items-center justify-between cursor-pointer"
+                         th:onclick="'toggleCollapsible(\'file-content-' + ${fileStat.index} + '\')'">
+                        <div class="flex items-center space-x-3">
+                            <span class="text-xl" th:text="${file.fileTypeIcon}">📄</span>
+                            <div class="flex items-center flex-wrap gap-2">
+                                <span class="font-mono text-sm" th:text="${file.path}">path/to/file.java</span>
+                                <span class="px-2 py-0.5 rounded text-xs font-medium"
+                                      th:class="${file.changeTypeClass}"
+                                      th:text="${file.changeType}">MODIFY</span>
+                                <span th:if="${not #lists.isEmpty(file.affectedSymbols)}"
+                                      class="px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700"
+                                      th:text="'🔧 ' + ${#lists.size(file.affectedSymbols)} + ' symbol' + (${#lists.size(file.affectedSymbols) > 1} ? 's' : '')">🔧 2 symbols</span>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <button th:if="${file.contentBefore != null}"
+                                    th:onclick="'event.stopPropagation(); showModal(\'modal-before-' + ${fileStat.index} + '\')'"
+                                    class="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">Old</button>
+                            <button th:if="${file.contentAfter != null}"
+                                    th:onclick="'event.stopPropagation(); showModal(\'modal-after-' + ${fileStat.index} + '\')'"
+                                    class="px-2 py-1 text-xs bg-blue-100 hover:bg-blue-200 text-blue-700 rounded">New</button>
+                            <span class="text-gray-400 transform transition-transform" id="chevron">▼</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Collapsible Content -->
+                    <div th:id="'file-content-' + ${fileStat.index}" class="collapsible-content expanded">
+                        <!-- Affected Symbols - Enhanced View -->
+                        <div th:if="${not #lists.isEmpty(file.affectedSymbols)}" class="px-4 py-3 bg-gradient-to-r from-purple-50 to-blue-50 border-b">
+                            <div class="flex items-center justify-between mb-2">
+                                <p class="text-xs font-semibold text-purple-700">
+                                    🔧 Affected Symbols (<span th:text="${#lists.size(file.affectedSymbols)}">0</span>)
+                                </p>
+                            </div>
+                            <div class="space-y-1.5">
+                                <div th:each="symbol, symStat : ${file.affectedSymbols}"
+                                     class="bg-white rounded border border-gray-200 px-3 py-2 text-xs">
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center space-x-2 min-w-0 flex-1">
+                                            <span th:text="${symbol.kindIcon}" class="text-base flex-shrink-0">🔧</span>
+                                            <div class="min-w-0 flex-1">
+                                                <span class="font-mono font-semibold text-gray-800" th:text="${symbol.name}">methodName</span>
+                                                <span th:if="${symbol.containerName}" class="text-gray-400 ml-1">
+                                                    in <span class="text-blue-600" th:text="${symbol.containerName}">ClassName</span>
+                                                </span>
+                                                <span th:if="${symbol.signature}" class="text-gray-400 font-mono ml-1 truncate" th:text="${symbol.signature}">: void</span>
+                                            </div>
+                                        </div>
+                                        <div class="flex items-center space-x-2 flex-shrink-0 ml-2">
+                                            <span class="text-[10px] text-gray-400 font-mono" th:text="'L' + ${symbol.lineRange}">L10-20</span>
+                                            <button th:if="${symbol.callerCount > 0}"
+                                                  class="text-[10px] px-1.5 py-0.5 rounded font-medium bg-orange-100 text-orange-700 hover:bg-orange-200 cursor-pointer"
+                                                  th:title="'Called by ' + ${symbol.callerCount} + ' caller(s). Click to see details.'"
+                                                  th:onclick="'toggleCallers(this)'">
+                                                📞 <span th:text="${symbol.callerCount}">1</span> callers
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <!-- Expandable callers list -->
+                                    <div th:if="${!symbol.callers.isEmpty()}"
+                                         class="hidden mt-2 pt-2 border-t border-gray-100 callers-list">
+                                        <p class="text-[10px] text-gray-500 mb-1">Called by:</p>
+                                        <div class="space-y-0.5 ml-2">
+                                            <div th:each="caller : ${symbol.callers}" class="flex items-center space-x-1 text-[10px] text-gray-500 hover:text-gray-700">
+                                                <span class="text-orange-400">↖</span>
+                                                <span th:text="${caller.name}" class="font-medium font-mono">callerMethod</span>
+                                                <span class="text-gray-300">•</span>
+                                                <span th:text="${caller.file}" class="text-blue-500">File.java</span>
+                                                <span th:if="${caller.line > 0}" class="text-gray-400" th:text="':' + ${caller.line}">:42</span>
+                                                <span th:text="${caller.detail}" class="text-gray-400"></span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Diff Display -->
+                        <div th:if="${file.diff}" class="bg-gray-900 max-h-[600px] overflow-auto">
+                            <pre class="m-0"><code class="language-diff text-sm" th:text="${file.diff}">diff content</code></pre>
+                        </div>
+                    </div>
+                    
+                    <!-- Before Modal -->
+                    <div th:if="${file.contentBefore != null}" th:id="'modal-before-' + ${fileStat.index}" class="modal">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h3 class="text-lg font-semibold text-white">
+                                    Before: <span th:text="${file.fileName}">file.java</span>
+                                </h3>
+                                <button th:onclick="'hideModal(\'modal-before-' + ${fileStat.index} + '\')'" 
+                                        class="text-gray-400 hover:text-white text-2xl leading-none">&times;</button>
+                            </div>
+                            <div class="code-content">
+                                <pre class="m-0"><code th:id="'code-before-' + ${fileStat.index}" 
+                                    th:class="'language-' + ${file.hljsLanguage}" 
+                                    th:text="${file.contentBefore}"></code></pre>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- After Modal -->
+                    <div th:if="${file.contentAfter != null}" th:id="'modal-after-' + ${fileStat.index}" class="modal">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h3 class="text-lg font-semibold text-white">
+                                    After: <span th:text="${file.fileName}">file.java</span>
+                                </h3>
+                                <button th:onclick="'hideModal(\'modal-after-' + ${fileStat.index} + '\')'" 
+                                        class="text-gray-400 hover:text-white text-2xl leading-none">&times;</button>
+                            </div>
+                            <div class="code-content">
+                                <pre class="m-0"><code th:id="'code-after-' + ${fileStat.index}" 
+                                    th:class="'language-' + ${file.hljsLanguage}" 
+                                    th:text="${file.contentAfter}"></code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- PMD Complexity Analysis Section - Cyclomatic and Cognitive complexity metrics -->
+        <section th:if="${highRiskMethodCount > 0 or maxCognitiveComplexity > 0}" class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h2 class="text-xl font-bold text-gray-800 mb-1">🧠 Code Complexity Analysis (PMD Metrics)</h2>
+                    <p class="text-sm text-gray-500">
+                        Cyclomatic &amp; Cognitive complexity metrics. 
+                        <span th:if="${highRiskMethodCount > 0}" class="font-semibold text-red-600" th:text="${highRiskMethodCount} + ' high-risk symbol(s)'">0 high-risk symbols</span>
+                        <span th:if="${highRiskMethodCount == 0}" class="font-semibold text-green-600">No high-risk symbols detected</span>
+                        <span class="text-gray-400 mx-2">|</span>
+                        Max cognitive complexity: <span class="font-semibold" th:classappend="${maxCognitiveComplexity > 15} ? 'text-red-600' : (${maxCognitiveComplexity > 10} ? 'text-orange-600' : 'text-green-600')" th:text="${maxCognitiveComplexity}">0</span>
+                    </p>
+                </div>
+                <button onclick="toggleCollapsible('complexity-content')" class="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded text-gray-600">
+                    Toggle Details
+                </button>
+            </div>
+            
+            <div id="complexity-content" class="collapsible-content expanded">
+                <div id="complexity-markdown-content" class="prose max-w-none bg-gray-50 rounded-lg p-4 border border-gray-200 max-h-[600px] overflow-y-auto">
+                    <!-- Markdown will be rendered here by JavaScript -->
+                </div>
+            </div>
+        </section>
+        
+        <!-- Store Complexity Markdown for JavaScript rendering -->
+        <script th:if="${highRiskMethodCount > 0 or maxCognitiveComplexity > 0}" th:inline="javascript">
+            var complexityMarkdownRaw = /*[[${complexityMarkdownReport}]]*/ '';
+        </script>
+
+        <!-- JaCoCo Code Coverage Section -->
+        <section th:if="${coverageLevel != 'UNKNOWN' and (coveredLines > 0 or missedLines > 0)}" class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h2 class="text-xl font-bold text-gray-800 mb-1">📊 Code Coverage Analysis (JaCoCo)</h2>
+                    <p class="text-sm text-gray-500">
+                        Line coverage for changed files.
+                        <span th:classappend="${coverageLevel == 'GOOD'} ? 'text-green-600' : (${coverageLevel == 'ACCEPTABLE'} ? 'text-yellow-600' : (${coverageLevel == 'LOW'} ? 'text-orange-600' : 'text-red-600'))"
+                              class="font-semibold" th:text="${#numbers.formatDecimal(overallCoveragePercent, 1, 1)} + '%'">0%</span> overall
+                        <span th:if="${uncoveredMethodCount > 0}" class="text-gray-400 mx-1">|</span>
+                        <span th:if="${uncoveredMethodCount > 0}" class="font-semibold text-red-600" th:text="${uncoveredMethodCount} + ' uncovered symbol(s)'">0 uncovered</span>
+                        <span th:if="${partialMethodCount > 0}" class="text-gray-400 mx-1">|</span>
+                        <span th:if="${partialMethodCount > 0}" class="font-semibold text-orange-600" th:text="${partialMethodCount} + ' partial symbol(s)'">0 partial</span>
+                    </p>
+                </div>
+                <div class="flex items-center gap-3">
+                    <!-- Coverage badge -->
+                    <span th:if="${coverageLevel == 'GOOD'}" class="px-2 py-1 text-xs font-semibold bg-green-100 text-green-800 rounded">Good</span>
+                    <span th:if="${coverageLevel == 'ACCEPTABLE'}" class="px-2 py-1 text-xs font-semibold bg-yellow-100 text-yellow-800 rounded">Acceptable</span>
+                    <span th:if="${coverageLevel == 'LOW'}" class="px-2 py-1 text-xs font-semibold bg-orange-100 text-orange-800 rounded">Low</span>
+                    <span th:if="${coverageLevel == 'CRITICAL'}" class="px-2 py-1 text-xs font-semibold bg-red-100 text-red-800 rounded">Critical</span>
+                    <button onclick="toggleCollapsible('coverage-content')" class="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded text-gray-600">
+                        Toggle Details
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Coverage progress bar -->
+            <div class="mb-4">
+                <div class="flex justify-between text-xs text-gray-500 mb-1">
+                    <span th:text="${coveredLines} + ' covered'">0 covered</span>
+                    <span th:text="${missedLines} + ' missed'">0 missed</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-3">
+                    <div th:classappend="${coverageLevel == 'GOOD'} ? 'bg-green-500' : (${coverageLevel == 'ACCEPTABLE'} ? 'bg-yellow-500' : (${coverageLevel == 'LOW'} ? 'bg-orange-500' : 'bg-red-500'))"
+                         class="h-3 rounded-full transition-all duration-500"
+                         th:style="'width: ' + ${overallCoveragePercent} + '%'"></div>
+                </div>
+            </div>
+            
+            <div id="coverage-content" class="collapsible-content expanded">
+                <div id="coverage-markdown-content" class="prose max-w-none bg-gray-50 rounded-lg p-4 border border-gray-200 max-h-[600px] overflow-y-auto">
+                    <!-- Markdown will be rendered here by JavaScript -->
+                </div>
+            </div>
+        </section>
+        
+        <!-- Store Coverage Markdown for JavaScript rendering -->
+        <script th:if="${coverageLevel != 'UNKNOWN' and (coveredLines > 0 or missedLines > 0)}" th:inline="javascript">
+            var coverageMarkdownRaw = /*[[${coverageMarkdownReport}]]*/ '';
+        </script>
+
+        <!-- Copy-Paste Detection Section - Shows diff code → similar existing code -->
+        <section th:if="${not #lists.isEmpty(similarityMatches)}" class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-xl font-bold text-gray-800 mb-2">🔍 Structural Similarity Detected</h2>
+            <p class="text-sm text-gray-500 mb-4">Code from this commit appears structurally similar to existing code in the codebase.</p>
+            
+            <table class="w-full text-sm">
+                <thead class="bg-gray-100">
+                    <tr>
+                        <th class="text-left p-2 font-semibold">#</th>
+                        <th class="text-left p-2 font-semibold">From Diff (Changed Code)</th>
+                        <th class="text-center p-2 font-semibold">→</th>
+                        <th class="text-left p-2 font-semibold">Similar To (Existing Code)</th>
+                        <th class="text-center p-2 font-semibold">Similarity</th>
+                        <th class="text-center p-2 font-semibold">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr th:each="match : ${similarityMatches}" 
+                        th:class="'border-b hover:bg-gray-50 ' + (${match.combinedScore >= 0.90} ? 'bg-red-50' : (${match.combinedScore >= 0.75} ? 'bg-orange-50' : ''))">
+                        <td class="p-2 text-gray-500" th:text="${match.rank}">1</td>
+                        <!-- Diff Code (Source) -->
+                        <td class="p-2">
+                            <span class="text-green-700 font-medium" th:text="${match.diffClass}">DiffClass</span><span class="text-gray-400">.</span><span class="text-green-600 font-mono text-xs" th:text="${match.diffSignature}">newMethod()</span>
+                            <br/><span class="text-xs text-gray-400" th:text="${match.diffFileName}">NewFile.java</span>
+                        </td>
+                        <td class="p-2 text-center text-gray-400 text-lg">→</td>
+                        <!-- Existing Code (Target) -->
+                        <td class="p-2">
+                            <span class="text-purple-700 font-medium" th:text="${match.targetClass}">ExistingClass</span><span class="text-gray-400">.</span><span class="text-blue-600 font-mono text-xs" th:text="${match.targetSignature}">existingMethod()</span>
+                            <br/><span class="text-xs text-gray-400" th:text="${match.targetFileName}">ExistingFile.java</span>
+                        </td>
+                        <td class="p-2 text-center">
+                            <span th:class="${match.combinedScore >= 0.90} ? 'text-red-600 font-bold' : (${match.combinedScore >= 0.75} ? 'text-orange-600 font-bold' : 'text-gray-700')"
+                                  th:text="${match.combinedScorePercent}">85%</span>
+                            <br/><span class="text-xs text-gray-400" th:text="${match.lineCount} + ' lines'">25 lines</span>
+                        </td>
+                        <td class="p-2 text-center">
+                            <button class="text-blue-600 hover:underline text-xs" 
+                                    th:onclick="'showModal(\'similarity-modal-' + ${match.rank} + '\')'">
+                                Compare
+                            </button>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <!-- Similarity Comparison Modals - Side by side view -->
+            <div th:each="match : ${similarityMatches}" th:id="'similarity-modal-' + ${match.rank}" class="modal">
+                <div class="modal-content" style="max-width: 1400px;">
+                    <div class="modal-header">
+                        <div>
+                            <h3 class="text-lg font-semibold text-white">
+                                Code Similarity Comparison 
+                                <span class="text-orange-400" th:text="'(' + ${match.combinedScorePercent} + ' match)'"></span>
+                            </h3>
+                        </div>
+                        <button th:onclick="'hideModal(\'similarity-modal-' + ${match.rank} + '\')'" 
+                                class="text-gray-400 hover:text-white text-2xl leading-none">&times;</button>
+                    </div>
+                    <div style="display: flex; gap: 16px; padding: 16px; background: #1e1e1e; overflow: auto; max-height: calc(90vh - 60px);">
+                        <!-- Left: Diff Code -->
+                        <div style="flex: 1; min-width: 0; overflow: auto;">
+                            <div class="text-xs text-gray-400 mb-2 px-2">
+                                <span class="text-green-400 font-bold">FROM DIFF:</span> 
+                                <span class="text-green-300" th:text="${match.diffClass}">Class</span>.<span th:text="${match.diffSignature}">method</span>
+                                <br/><span class="text-gray-500 font-mono" th:text="${match.diffFileName}">file.java</span>
+                            </div>
+                            <pre class="m-0" style="font-size: 11px; overflow: auto;"><code th:text="${match.diffBody}">diff code here</code></pre>
+                        </div>
+                        <!-- Right: Existing Code -->
+                        <div style="flex: 1; min-width: 0; overflow: auto;">
+                            <div class="text-xs text-gray-400 mb-2 px-2">
+                                <span class="text-purple-400 font-bold">EXISTING:</span> 
+                                <span class="text-purple-300" th:text="${match.targetClass}">Class</span>.<span th:text="${match.targetSignature}">method</span>
+                                <br/><span class="text-gray-500 font-mono" th:text="${match.targetFileName}">file.java</span>
+                            </div>
+                            <pre class="m-0" style="font-size: 11px; overflow: auto;"><code th:text="${match.targetBody}">existing code here</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="mt-8 py-4 border-t border-gray-200 text-center text-sm text-gray-500">
+            <p th:if="${repositoryName}">Repository: <span class="font-medium" th:text="${repositoryName}"></span></p>
+            <p class="mt-1">Generated by Codiqo • AI-Powered Commit Analysis</p>
+        </footer>
+    </div>
+
+    <script>
+        // Initialize syntax highlighting for all diff blocks
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('code.language-diff').forEach(block => {
+                hljs.highlightElement(block);
+            });
+            
+            // Configure marked for safe rendering
+            marked.setOptions({
+                breaks: true,        // Convert \n to <br>
+                gfm: true,           // GitHub Flavored Markdown
+                headerIds: false,    // Don't add IDs to headers
+                mangle: false        // Don't mangle email addresses
+            });
+            
+            // Render LLM Summary as Markdown
+            const summaryContainer = document.getElementById('llm-summary-content');
+            if (summaryContainer && typeof llmSummaryRaw !== 'undefined' && llmSummaryRaw) {
+                summaryContainer.innerHTML = marked.parse(llmSummaryRaw);
+                summaryContainer.querySelectorAll('pre code').forEach(block => {
+                    hljs.highlightElement(block);
+                });
+            }
+            
+            // Render LLM thinking as Markdown
+            const thinkingContainer = document.getElementById('llm-thinking-content');
+            if (thinkingContainer && typeof llmThinkingRaw !== 'undefined' && llmThinkingRaw) {
+                thinkingContainer.innerHTML = marked.parse(llmThinkingRaw);
+                // Highlight any code blocks in the rendered markdown
+                thinkingContainer.querySelectorAll('pre code').forEach(block => {
+                    hljs.highlightElement(block);
+                });
+            }
+            
+            // Render PMD CPD duplication report as Markdown
+            const cpdContainer = document.getElementById('cpd-markdown-content');
+            if (cpdContainer && typeof cpdMarkdownRaw !== 'undefined' && cpdMarkdownRaw) {
+                cpdContainer.innerHTML = marked.parse(cpdMarkdownRaw);
+                // Highlight code blocks in the rendered markdown (duplicated code snippets)
+                cpdContainer.querySelectorAll('pre code').forEach(block => {
+                    hljs.highlightElement(block);
+                });
+            }
+            
+            // Render PMD Complexity analysis report as Markdown
+            const complexityContainer = document.getElementById('complexity-markdown-content');
+            if (complexityContainer && typeof complexityMarkdownRaw !== 'undefined' && complexityMarkdownRaw) {
+                complexityContainer.innerHTML = marked.parse(complexityMarkdownRaw);
+                // Highlight code blocks in the rendered markdown
+                complexityContainer.querySelectorAll('pre code').forEach(block => {
+                    hljs.highlightElement(block);
+                });
+            }
+            
+            // Render JaCoCo Coverage analysis report as Markdown
+            const coverageContainer = document.getElementById('coverage-markdown-content');
+            if (coverageContainer && typeof coverageMarkdownRaw !== 'undefined' && coverageMarkdownRaw) {
+                coverageContainer.innerHTML = marked.parse(coverageMarkdownRaw);
+                // Highlight code blocks in the rendered markdown
+                coverageContainer.querySelectorAll('pre code').forEach(block => {
+                    hljs.highlightElement(block);
+                });
+            }
+        });
+
+        function showModal(id) {
+            const modal = document.getElementById(id);
+            if (modal) {
+                modal.classList.add('active');
+                // Highlight ALL code blocks in modal on first open (lazy loading)
+                modal.querySelectorAll('code:not(.hljs)').forEach(code => {
+                    hljs.highlightElement(code);
+                });
+                document.body.style.overflow = 'hidden';
+            }
+        }
+
+        function hideModal(id) {
+            const modal = document.getElementById(id);
+            if (modal) {
+                modal.classList.remove('active');
+                document.body.style.overflow = '';
+            }
+        }
+
+        // Close modal on Escape key or clicking outside
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                document.querySelectorAll('.modal.active').forEach(modal => {
+                    modal.classList.remove('active');
+                });
+                document.body.style.overflow = '';
+            }
+        });
+        
+        document.querySelectorAll('.modal').forEach(modal => {
+            modal.addEventListener('click', function(e) {
+                if (e.target === modal) {
+                    modal.classList.remove('active');
+                    document.body.style.overflow = '';
+                }
+            });
+        });
+        
+        // Collapsible sections
+        function toggleCollapsible(id) {
+            const content = document.getElementById(id);
+            if (content) {
+                content.classList.toggle('expanded');
+            }
+        }
+        
+        // Toggle callers list expansion
+        function toggleCallers(button) {
+            const symbolDiv = button.closest('.py-1\\.5');
+            const callersList = symbolDiv.querySelector('.callers-list');
+            if (callersList) {
+                callersList.classList.toggle('hidden');
+                // Update button style
+                if (callersList.classList.contains('hidden')) {
+                    button.classList.remove('bg-orange-200');
+                    button.classList.add('bg-orange-100');
+                } else {
+                    button.classList.remove('bg-orange-100');
+                    button.classList.add('bg-orange-200');
+                }
+            }
+        }
+        
+        // Tab switching
+        function showTab(tabName) {
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            // Deactivate all tab buttons
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            // Show selected tab content
+            const tabContent = document.getElementById('tab-' + tabName);
+            if (tabContent) {
+                tabContent.classList.add('active');
+            }
+            // Activate clicked button
+            event.target.classList.add('active');
+        }
+
+        // Tooltip click handling
+        document.addEventListener('DOMContentLoaded', function() {
+            // Close all tooltips when clicking outside
+            document.addEventListener('click', function(e) {
+                if (!e.target.classList.contains('tooltip-trigger')) {
+                    document.querySelectorAll('.tooltip-popover.active').forEach(tip => {
+                        tip.classList.remove('active');
+                    });
+                }
+            });
+
+            // Handle tooltip trigger clicks
+            document.querySelectorAll('.tooltip-trigger').forEach(trigger => {
+                trigger.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    const tooltipId = 'tooltip-' + this.getAttribute('data-tooltip');
+                    const tooltip = document.getElementById(tooltipId);
+
+                    // Close other tooltips
+                    document.querySelectorAll('.tooltip-popover.active').forEach(tip => {
+                        if (tip.id !== tooltipId) {
+                            tip.classList.remove('active');
+                        }
+                    });
+
+                    if (tooltip) {
+                        // Toggle this tooltip
+                        tooltip.classList.toggle('active');
+
+                        // Position the tooltip
+                        if (tooltip.classList.contains('active')) {
+                            const rect = this.getBoundingClientRect();
+                            const parentRect = this.parentElement.getBoundingClientRect();
+                            tooltip.style.top = (this.offsetTop + this.offsetHeight + 8) + 'px';
+                            tooltip.style.left = Math.max(0, this.offsetLeft - 10) + 'px';
+                        }
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>

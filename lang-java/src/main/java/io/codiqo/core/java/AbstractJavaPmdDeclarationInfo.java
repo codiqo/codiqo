@@ -15,12 +15,12 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
 import edu.umd.cs.findbugs.BugInstance;
-import io.codiq.lang.spec.JBinaryMethodSig;
-import io.codiq.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.coverage.CodeBlockCoverage;
 import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.metrics.CodeBlockMetrics;
+import io.codiqo.lang.spec.JBinaryMethodSig;
+import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;

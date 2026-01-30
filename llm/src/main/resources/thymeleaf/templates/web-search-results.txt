@@ -1,0 +1,16 @@
+## Web Search Results for: [(${query})]
+
+[# th:if="${results.isEmpty()}"]
+No results found.
+[/]
+[# th:if="${!results.isEmpty()}"]
+[# th:each="item, stat : ${results}"]
+### [(${stat.index + 1})]. [(${item.title})]
+**URL:** [(${item.url})]
+
+[(${item.content})]
+
+---
+
+[/]
+[/]

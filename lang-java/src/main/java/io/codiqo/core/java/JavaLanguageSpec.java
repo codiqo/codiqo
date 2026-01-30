@@ -66,12 +66,9 @@ import edu.umd.cs.findbugs.FindBugs;
 import edu.umd.cs.findbugs.FindBugs2;
 import edu.umd.cs.findbugs.Plugin;
 import edu.umd.cs.findbugs.PluginLoader;
-import edu.umd.cs.findbugs.Priorities;
 import edu.umd.cs.findbugs.SourceLineAnnotation;
 import edu.umd.cs.findbugs.config.UserPreferences;
 import edu.umd.cs.findbugs.plugins.DuplicatePluginIdException;
-import io.codiq.lang.spec.JBinaryMethodSig;
-import io.codiq.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.LanguageSpec;
 import io.codiqo.api.MavenProjectSpec;
@@ -86,6 +83,8 @@ import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.jdtls.JdtLspProjectImporter;
 import io.codiqo.jdtls.Lsp4jGitAffectedSymbolInfo;
+import io.codiqo.lang.spec.JBinaryMethodSig;
+import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.util.Fetch;
 import lombok.SneakyThrows;
 import lombok.experimental.Delegate;
@@ -348,13 +347,12 @@ public class JavaLanguageSpec implements LanguageSpec {
         cfg.setFailOnViolation(false);
         cfg.setFailOnError(true);
         cfg.setSourceEncoding(StandardCharsets.UTF_8);
-        cfg.setMinimumPriority(RulePriority.HIGH);
+        cfg.setMinimumPriority(RulePriority.valueOf(args.getPmdMinPriority().toUpperCase()));
         pmdRules.forEach(cfg::addRuleSet);
 
         try (PmdAnalysis pmd = PmdAnalysis.create(cfg)) {
             MutableBoolean toApply = new MutableBoolean();
 
-            // Add ALL source files from the indexed blocks (module-level analysis)
             for (File sourceFile : summary.getBlocks().keySet()) {
                 if (FilenameUtils.isExtension(sourceFile.getName(), language.getExtensions())) {
                     if (pmd.files().addFile(sourceFile.toPath().normalize())) {
@@ -369,7 +367,6 @@ public class JavaLanguageSpec implements LanguageSpec {
                 violations.forEach(violation -> {
                     Range<Integer> markRange = Range.closed(violation.getLocation().getStartLine(), violation.getLocation().getEndLine());
 
-                    // Match violations against ALL indexed blocks (module-level)
                     for (File sourceFile : summary.getBlocks().keySet()) {
                         if (violation.getFileId().getAbsolutePath().equals(sourceFile.getAbsolutePath())) {
                             Collection<CodeBlockInfo> blocks = summary.getBlocks().get(sourceFile);
@@ -470,7 +467,7 @@ public class JavaLanguageSpec implements LanguageSpec {
                 try (StringWriter writer = new StringWriter()) {
                     try (PrintWriter printer = new PrintWriter(writer)) {
                         BugCollectionBugReporter bugReporter = new BugCollectionBugReporter(spotbugs, printer);
-                        bugReporter.setPriorityThreshold(Priorities.HIGH_PRIORITY);
+                        bugReporter.setPriorityThreshold(args.getSpotbugsPriorityThreshold());
 
                         try (FindBugs2 findBugs = new FindBugs2()) {
                             findBugs.setProject(spotbugs);
@@ -489,7 +486,6 @@ public class JavaLanguageSpec implements LanguageSpec {
                                 SourceLineAnnotation sourceLine = bug.getPrimarySourceLineAnnotation();
                                 Range<Integer> markRange = Range.closed(sourceLine.getStartLine(), sourceLine.getEndLine());
 
-                                // Match violations against ALL indexed blocks (module-level)
                                 for (File sourceFile : summary.getBlocks().keySet()) {
                                     if (sourceFile.toPath().normalize().endsWith(sourceLine.getSourcePath())) {
                                         Collection<CodeBlockInfo> blocks = summary.getBlocks().get(sourceFile);

@@ -5,8 +5,8 @@ import java.math.BigInteger;
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
 
-import io.codiq.lang.spec.JavaBinarySignatureFormatter;
-import io.codiq.lang.spec.JavaConstructorBlockInfo;
+import io.codiqo.lang.spec.JavaBinarySignatureFormatter;
+import io.codiqo.lang.spec.JavaConstructorBlockInfo;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.experimental.SuperBuilder;

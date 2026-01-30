@@ -11,8 +11,8 @@ import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.Sets;
 
-import io.codiq.lang.spec.JavaBinarySignatureFormatter;
-import io.codiq.lang.spec.JavaMethodBlockInfo;
+import io.codiqo.lang.spec.JavaBinarySignatureFormatter;
+import io.codiqo.lang.spec.JavaMethodBlockInfo;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.experimental.SuperBuilder;
