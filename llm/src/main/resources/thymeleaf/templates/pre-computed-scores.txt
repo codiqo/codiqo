@@ -1,0 +1,50 @@
+[#-- Thymeleaf TEXT mode template for Pre-Computed Volume Scores Section --]
+## PRE-COMPUTED VOLUME SCORES (USE THESE VALUES DIRECTLY)
+
+The following values have been calculated server-side. **DO NOT recalculate them.**
+Use these exact values in your `effortBreakdown` response.
+
+```
+Project Normalization:
+  sizeFactor: [(${#numbers.formatDecimal(scores.sizeFactor, 1, 2)})]
+  modifyMult: [(${#numbers.formatDecimal(scores.modifyMult, 1, 2)})]
+  addMult: [(${#numbers.formatDecimal(scores.addMult, 1, 2)})]
+  relativeAdj: [(${#numbers.formatDecimal(scores.relativeAdj, 1, 2)})]
+
+Volume Score Components:
+  linesChanged: [(${scores.linesChanged})] -> linesScore: [(${#numbers.formatDecimal(scores.linesScore, 1, 2)})]
+  methodsModified: [(${scores.methodsModified})] -> score: [(${#numbers.formatDecimal(scores.methodsModifiedScore, 1, 2)})]
+  methodsAdded: [(${scores.methodsAdded})] -> score: [(${#numbers.formatDecimal(scores.methodsAddedScore, 1, 2)})]
+  classesModified: [(${scores.classesModified})] -> score: [(${#numbers.formatDecimal(scores.classesModifiedScore, 1, 2)})]
+  classesAdded: [(${scores.classesAdded})] -> score: [(${#numbers.formatDecimal(scores.classesAddedScore, 1, 2)})]
+
+TOTAL volumeScore: [(${#numbers.formatDecimal(scores.volumeScore, 1, 2)})]
+Default complexityMultiplier: [(${#numbers.formatDecimal(scores.defaultComplexityMultiplier, 1, 2)})]
+Base Effort (volumeScore x complexityMultiplier): [(${#numbers.formatDecimal(scores.baseEffort, 1, 2)})]
+
+## CPD PRE-COMPUTED (MANDATORY - USE THESE EXACT VALUES):
+  totalClones: [(${scores.cpdTotalClones})]
+  introducedClones: [(${scores.cpdIntroducedClones})] (only these count)
+  testOnlyClones: [(${scores.cpdTestOnlyClones})] (at 1/5 weight)
+  effectivePenalty: [(${#numbers.formatDecimal(scores.cpdEffectivePenalty, 1, 1)})]
+  category: [(${scores.cpdCategory})]
+  >>> RECOMMENDED IMPACT: [(${#numbers.formatDecimal(scores.cpdRecommendedImpact, 1, 2)})] <<<
+
+## STATIC ANALYSIS PRE-COMPUTED (MANDATORY - USE THESE EXACT VALUES):
+  totalErrors: [(${scores.staticAnalysisErrorCount})] (only severity="error" counts)
+  introducedErrors: [(${scores.staticAnalysisIntroducedCount})] (on lines you added/modified - FULL penalty)
+  preExistingErrors: [(${scores.staticAnalysisPreExistingCount})] (on unchanged lines - 1/5 penalty)
+  category: [(${scores.staticAnalysisCategory})]
+  >>> RECOMMENDED IMPACT: [(${#numbers.formatDecimal(scores.staticAnalysisRecommendedImpact, 1, 2)})] <<<
+```
+
+**CRITICAL: Use the pre-computed CPD and Static Analysis impact values!**
+- You MUST use `cpdRecommendedImpact` as your `cpdAnalysis.impact`
+- You MUST use `staticAnalysisRecommendedImpact` as your `staticAnalysis.impact`
+- These are calculated server-side using consistent rules - DO NOT override them!
+
+**Your remaining tasks:**
+1. Use the pre-computed CPD and static analysis impacts (above)
+2. Assess coverage impact based on coverage data
+3. Assess architecture penalty/quality factor based on diff analysis
+4. Compute: `FINAL_SCORE = baseEffort x qualityMultiplier + architectureBonus`

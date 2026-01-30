@@ -1,0 +1,117 @@
+[#-- Thymeleaf TEXT mode template for User Message --]
+[#-- Contains commit data for LLM to analyze --]
+
+# COMMIT ANALYSIS REQUEST
+
+## Commit Information
+- **SHA:** [(${request.commitHash})]
+- **Message:** [(${request.commitMessage})]
+- **Author:** [(${request.author})]
+- **Timestamp:** [(${request.timestamp})]
+- **Repository:** [(${request.repository})]
+- **Branch:** [(${request.branch})]
+
+---
+
+## Change Summary
+
+| Metric | Count |
+|--------|-------|
+| Files Changed | [(${request.changeSummary != null ? request.changeSummary.totalFilesChanged : 0})] |
+| Total Lines Changed | [(${request.changeSummary != null ? request.changeSummary.totalLinesChanged : 0})] |
+| Lines Added | [(${request.changeSummary != null ? request.changeSummary.linesAdded : 0})] |
+| Lines Deleted | [(${request.changeSummary != null ? request.changeSummary.linesDeleted : 0})] |
+| Symbols Added | [(${request.changeSummary != null ? request.changeSummary.methodsAdded : 0})] |
+| Symbols Modified | [(${request.changeSummary != null ? request.changeSummary.methodsModified : 0})] |
+| Symbols Deleted | [(${request.changeSummary != null ? request.changeSummary.methodsDeleted : 0})] |
+| Classes Added | [(${request.changeSummary != null ? request.changeSummary.classesAdded : 0})] |
+| Classes Modified | [(${request.changeSummary != null ? request.changeSummary.classesModified : 0})] |
+
+---
+
+## Coverage Information
+
+- **Changed Line Coverage:** [(${request.coverage != null ? request.coverage.changedLineCoverage : 0})]%
+- **Changed Branch Coverage:** [(${request.coverage != null ? request.coverage.changedBranchCoverage : 0})]%
+- **Project Line Coverage:** [(${request.coverage != null ? request.coverage.projectLineCoverage : 0})]%
+- **Project Branch Coverage:** [(${request.coverage != null ? request.coverage.projectBranchCoverage : 0})]%
+
+---
+
+## Complexity Metrics
+
+| Metric | Value |
+|--------|-------|
+| Total Cyclomatic | [(${request.complexity != null ? request.complexity.totalCyclomaticComplexity : 0})] |
+| Total Cognitive | [(${request.complexity != null ? request.complexity.totalCognitiveComplexity : 0})] |
+| Max Symbol Complexity | [(${request.complexity != null ? request.complexity.maxMethodComplexity : 0})] |
+| Average Symbol Complexity | [(${request.complexity != null ? request.complexity.averageMethodComplexity : 0})] |
+
+---
+
+## Copy-Paste Detection (CPD)
+
+**SCOPE: This measures duplication ONLY within CHANGED FILES, not the entire project.**
+
+| Metric | Value |
+|--------|-------|
+| Duplicated Lines | [(${request.duplication != null ? request.duplication.totalDuplicatedLines : 0})] |
+| Duplication % | [(${request.duplication != null ? request.duplication.duplicatedPercentage : 0})]% of changed code |
+| Clone Instances | [(${request.duplication != null and request.duplication.cloneDetails != null ? request.duplication.cloneDetails.size() : 0})] |
+| Clones from Existing | [(${request.duplication != null and request.duplication.clonesFromExisting != null ? request.duplication.clonesFromExisting.size() : 0})] |
+| New Clone Groups | [(${request.duplication != null and request.duplication.newClones != null ? request.duplication.newClones.size() : 0})] |
+[# th:if="${request.duplication != null and request.duplication.clonesFromExisting != null and !request.duplication.clonesFromExisting.isEmpty()}"]
+
+### Clones From Existing Code (New/modified symbols copying existing code)
+
+[# th:each="clone : ${request.duplication.clonesFromExisting}"]
+- **Affected:** `[(${clone.affectedSignature})]`
+  - Copies from: [# th:each="src,iterStat : ${clone.sourceSignatures}"]`[(${src})]`[# th:unless="${iterStat.last}"], [/][/]
+[/]
+[/]
+[# th:if="${request.duplication != null and request.duplication.newClones != null and !request.duplication.newClones.isEmpty()}"]
+
+### New Clone Groups (Multiple new/modified symbols that are duplicates of each other)
+
+[# th:each="group,groupIter : ${request.duplication.newClones}"]
+**Group [(${groupIter.index + 1})]:** [# th:each="sig,iterStat : ${group.memberSignatures}"]`[(${sig})]`[# th:unless="${iterStat.last}"], [/][/]
+[/]
+[/]
+
+---
+
+[(${preComputedScoresSection})]
+
+---
+[# th:if="${!request.webSearchContext.isEmpty()}"]
+
+## Web Search Context (Dependency Analysis)
+
+The following web search results provide context about dependency upgrades and breaking changes:
+
+[# th:each="ctx : ${request.webSearchContext}"]
+### Search: [(${ctx.query})]
+
+[# th:each="result,iterStat : ${ctx.results}"]
+**[(${iterStat.index + 1}). [(${result.title})]]([(${result.url})])**
+
+[(${result.content})]
+
+[/]
+---
+[/]
+[/]
+
+## Full Request Data (JSON)
+
+The complete request data including file changes, symbol changes, diffs, and callers is provided below:
+
+```json
+[(${requestJson})]
+```
+
+---
+
+**Now analyze this commit using the scoring model defined in the system prompt and return your JSON assessment.**
+
+**CRITICAL JSON REMINDER: A backslash in JSON strings is ONLY valid before one of these nine characters: `" \ / n r t b f u`. Before writing any backslash, verify the next character is in that list. All other characters (hyphens, asterisks, hashes, dots, brackets, colons) are written directly without any backslash.**

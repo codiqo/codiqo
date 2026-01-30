@@ -38,7 +38,6 @@ import com.google.common.collect.Multimap;
 import com.google.common.collect.MultimapBuilder;
 import com.google.common.collect.Sets;
 
-import io.codiq.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.IndexingSummary.IndexingSummaryBuilder;
 import io.codiqo.api.LanguageProcessors;
@@ -56,6 +55,7 @@ import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.core.java.JavaLanguageSpec;
+import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.util.Fetch;
 import lombok.SneakyThrows;
 import net.sourceforge.pmd.cpd.CPDConfiguration;

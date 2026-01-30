@@ -27,7 +27,7 @@ import lombok.Setter;
 
 @Setter
 @Getter
-class MavenProjectWrapper implements MavenProjectSpec {
+public class MavenProjectWrapper implements MavenProjectSpec {
     private String id;
     private String groupId;
     private String artifactId;

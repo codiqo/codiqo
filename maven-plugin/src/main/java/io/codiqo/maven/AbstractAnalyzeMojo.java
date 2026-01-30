@@ -81,6 +81,16 @@ import io.codiqo.api.logging.LogFactory;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.maven.logging.MavenLogFactory;
+import io.codiqo.maven.populator.CommitModelPopulator;
+import io.codiqo.maven.populator.DuplicationReportPopulator;
+import io.codiqo.maven.populator.FileAnalysisPopulator;
+import io.codiqo.maven.populator.IndexModelPopulator;
+import io.codiqo.maven.populator.LlmScoringPopulator;
+import io.codiqo.maven.populator.MetricsAggregator;
+import io.codiqo.maven.populator.ModuleLevelMetricsPopulator;
+import io.codiqo.maven.populator.OutputSerializer;
+import io.codiqo.maven.populator.ProjectModelPopulator;
+import io.codiqo.maven.populator.SubmissionContext;
 import io.codiqo.util.Fetch;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
@@ -89,10 +99,8 @@ import lombok.SneakyThrows;
 abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Artifact, Collection<File>> {
     public static final Set<String> NON_CODE_PACKAGINGS = Set.of("pom", "bom");
     public static final String JAR_EXTENSION = "jar";
-
     public static final String LOMBOK_GROUP_ID = "org.projectlombok";
     public static final String LOMBOK_ARTIFACT_ID = "lombok";
-
     public static final String JACOCO_GROUP_ID = "org.jacoco";
     public static final String JACOCO_MAVEN_PLUGIN_ARTIFACT_ID = "jacoco-maven-plugin";
     public static final String JACOCO_MAVEN_PLUGIN_DEST_FILE = "destFile";
@@ -100,19 +108,14 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
     @Inject
     private RuntimeInformation runtimeInformation;
-
     @Inject
     protected RepositorySystem repositorySystem;
-
     @Inject
     protected MavenSession mavenSession;
-
     @Inject
     protected ProjectBuilder projectBuilder;
-
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
     protected MavenProject project;
-
     @Parameter(defaultValue = "${project.remoteProjectRepositories}", readonly = true)
     protected List<RemoteRepository> remoteRepos;
 
@@ -127,39 +130,49 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
     @Parameter(property = "codiqo.importTimeoutMinutes", defaultValue = "15")
     protected long importTimeoutMinutes;
-
     @Parameter(property = "codiqo.connectTimeoutSeconds", defaultValue = "30")
     protected long connectTimeoutSeconds;
-
-    @Parameter(property = "codiqo.readTimeoutSeconds", defaultValue = "60")
+    @Parameter(property = "codiqo.readTimeoutSeconds", defaultValue = "300")
     protected long readTimeoutSeconds;
-
     @Parameter(property = "codiqo.maxRequests", defaultValue = "256")
     protected int maxRequests;
-
     @Parameter(property = "codiqo.maxRequestsPerHost", defaultValue = "128")
     protected int maxRequestsPerHost;
-
     @Parameter(property = "codiqo.cpdMinimumTileSize", defaultValue = "64")
     protected int cpdMinimumTileSize;
-
     @Parameter(property = "codiqo.jdtlsVersion", defaultValue = "1.55.0")
     protected String jdtlsVersion;
-
     @Parameter(property = "codiqo.dumpAnalysis", defaultValue = "true")
     protected boolean dumpAnalysis = true;
-
     @Parameter(property = "codiqo.ignoreCoverage", defaultValue = "false")
     protected boolean ignoreCoverage = false;
-
     @Parameter(property = "codiqo.ignoreCpd", defaultValue = "false")
     protected boolean ignoreCpd = false;
-
     @Parameter(property = "codiqo.ignoreDiagnostics", defaultValue = "false")
     protected boolean ignoreDiagnostics = false;
-
     @Parameter(property = "codiqo.ignoreComplexity", defaultValue = "false")
     protected boolean ignoreComplexity = false;
+    @Parameter(property = "codiqo.pmdMinPriority", defaultValue = "medium_high")
+    protected String pmdMinPriority;
+    @Parameter(property = "codiqo.spotbugsPriorityThreshold", defaultValue = "2")
+    protected int spotbugsPriorityThreshold;
+    @Parameter(property = "codiqo.llm.model", defaultValue = "gpt-oss:120b-cloud")
+    protected String llmModel;
+    @Parameter(property = "codiqo.llm.apiKey")
+    protected String llmApiKey;
+    @Parameter(property = "codiqo.llm.baseUrl", defaultValue = "https://ollama.com/v1")
+    protected String llmBaseUrl;
+    @Parameter(property = "codiqo.llm.temperature", defaultValue = "0.3")
+    protected double llmTemperature;
+    @Parameter(property = "codiqo.llm.maxTokens", defaultValue = "32767")
+    protected int llmMaxTokens;
+    @Parameter(property = "codiqo.llm.nativeThinking", defaultValue = "true")
+    protected boolean llmNativeThinking;
+    @Parameter(property = "codiqo.llm.enableWebSearchTool", defaultValue = "true")
+    protected boolean llmEnableWebSearchTool;
+
+    @Parameter(property = "codiqo.outputDirectory")
+    protected File outputDirectory;
 
     @Override
     @SuppressWarnings("deprecation")
@@ -168,7 +181,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             CollectRequest collect = new CollectRequest();
             collect.setRoot(new org.eclipse.aether.graph.Dependency(artifact, null));
             collect.setRepositories(remoteRepos);
-
             DependencyRequest req = new DependencyRequest(collect, null);
             DependencyResult result = repositorySystem.resolveDependencies(mavenSession.getRepositorySession(), req);
             return result
@@ -184,10 +196,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Override
     public final void execute() throws MojoExecutionException, MojoFailureException {
         RunArgs args = new RunArgs();
-
         Optional.ofNullable(javaHome).ifPresent(args::setJavaHome);
         Optional.ofNullable(mavenHome).ifPresent(args::setMavenHome);
-
         args.setImportTimeout(Duration.ofMinutes(importTimeoutMinutes));
         args.setConnectTimeout(Duration.ofSeconds(connectTimeoutSeconds));
         args.setReadTimeout(Duration.ofSeconds(readTimeoutSeconds));
@@ -200,11 +210,26 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setIgnoreCpd(ignoreCpd);
         args.setIgnoreDiagnostics(ignoreDiagnostics);
         args.setIgnoreComplexity(ignoreComplexity);
-
+        args.setPmdMinPriority(pmdMinPriority);
+        args.setSpotbugsPriorityThreshold(spotbugsPriorityThreshold);
+        args.setLlmModel(llmModel);
+        args.setLlmBaseUrl(llmBaseUrl);
+        args.setLlmTemperature(llmTemperature);
+        args.setLlmMaxTokens(llmMaxTokens);
+        args.setLlmNativeThinking(llmNativeThinking);
+        args.setLlmEnableWebSearchTool(llmEnableWebSearchTool);
+        Optional.ofNullable(outputDirectory).ifPresent(args::setOutputDirectory);
+        if (StringUtils.isNotEmpty(llmApiKey)) {
+            if (llmApiKey.startsWith("env:")) {
+                String envVar = llmApiKey.substring(4);
+                args.setLlmApiKey(System.getenv(envVar));
+            } else {
+                args.setLlmApiKey(llmApiKey);
+            }
+        }
         try (InputStream stream = Resources.getResource("codiqo.versions").openStream()) {
             Properties versions = new Properties();
             versions.load(stream);
-
             for (DefaultArtifact agent : new DefaultArtifact[] {
                     new DefaultArtifact(LOMBOK_GROUP_ID, LOMBOK_ARTIFACT_ID, JAR_EXTENSION, versions.get("lombok.version").toString())
             }) {
@@ -213,7 +238,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         } catch (IOException err) {
             throw new MojoExecutionException(err);
         }
-
         try (Repository orig = new FileRepositoryBuilder().setGitDir(new File(project.getBasedir(), ".git")).readEnvironment().findGitDir().build()) {
             args.setGit(orig);
             doPrepare(args);
@@ -260,12 +284,10 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     if (Objects.nonNull(prj.getParent())) {
                         toReturn.setParent(Optional.of(prj.getParent().getId()));
                     }
-
                     File jacocoDestFile = autoDetectJacocoDestFile(prj);
                     if (jacocoDestFile.exists()) {
                         toReturn.setCoverage(Optional.of(jacocoDestFile));
                     }
-
                     try {
                         prj.getCompileSourceRoots().forEach(root -> {
                             File file = new File(root);
@@ -283,7 +305,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     } catch (DependencyResolutionRequiredException err) {
                         ExceptionUtils.wrapAndThrow(err);
                     }
-
                     try {
                         prj.getTestCompileSourceRoots().forEach(root -> {
                             File file = new File(root);
@@ -301,32 +322,25 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     } catch (DependencyResolutionRequiredException err) {
                         ExceptionUtils.wrapAndThrow(err);
                     }
-
                     prj.getArtifacts().forEach(artifact -> {
                         File file = artifact.getFile();
                         if (Objects.nonNull(file) && file.exists()) {
                             toReturn.getArtifacts().put(artifact, file);
                         }
                     });
-
                     args.getProjects().add(toReturn);
                 });
-
         ClassGraph classGraph = new ClassGraph().enableAllInfo();
         jars.forEach(classGraph::overrideClasspath);
-
         StopWatch stopWatch = StopWatch.createStarted();
         ScanResult scan = classGraph.scan();
         stopWatch.stop();
-
         args.getProjects().forEach(spec -> {
             if (spec instanceof MavenProjectWrapper) {
                 ((MavenProjectWrapper) spec).setScan(scan);
             }
         });
-
         getLog().info(String.format("configured maven projects in %s, classgraph classes: %d", stopWatch, scan.getAllClasses().size()));
-
         return scan;
     }
     protected File autoDetectJacocoDestFile(MavenProject reactor) {
@@ -334,15 +348,13 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 JACOCO_GROUP_ID.equals(plugin.getGroupId()),
                 JACOCO_MAVEN_PLUGIN_ARTIFACT_ID.equals(plugin.getArtifactId())
         });
-
         Optional<Plugin> opt = reactor.getBuild().getPlugins().stream().filter(filter).findAny();
-        if (!opt.isPresent()) {
+        if (opt.isEmpty()) {
             PluginManagement pluginManagement = reactor.getBuild().getPluginManagement();
             if (Objects.nonNull(pluginManagement)) {
                 opt = pluginManagement.getPlugins().stream().filter(filter).findAny();
             }
         }
-
         if (opt.isPresent()) {
             Xpp3Dom config = (Xpp3Dom) opt.get().getConfiguration();
             if (Objects.nonNull(config)) {
@@ -352,7 +364,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 }
             }
         }
-
         return Paths.get(reactor.getBuild().getDirectory(), JACOCO_MAVEN_PLUGIN_DEST_FILE_DEFAULT_VALUE).toFile();
     }
     protected void resolveCommit(RunArgs args, String commitId) throws Exception {
@@ -379,7 +390,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     }
     protected InvocationRequest invocationRequest(RunArgs args) {
         File rootPom = new File(args.getGit().getWorkTree(), "pom.xml");
-
         InvocationRequest request = new DefaultInvocationRequest();
         request.setPomFile(rootPom);
         if (args.isIgnoreCoverage()) {
@@ -423,7 +433,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         if (Objects.nonNull(mavenHome)) {
             request.setMavenHome(mavenHome);
         }
-
         return request;
     }
     protected ProjectBuildingRequest buildingRequest() {
@@ -437,13 +446,11 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             InvocationRequest request,
             ProjectBuildingRequest buildingRequest) throws Exception {
         File rootPom = new File(args.getGit().getWorkTree(), "pom.xml");
-
         Invoker invoker = new DefaultInvoker();
         InvocationResult result = invoker.execute(request);
         if (result.getExitCode() != 0) {
             throw new MojoExecutionException("maven build failed in fork", result.getExecutionException());
         }
-
         return projectBuilder.build(rootPom, buildingRequest);
     }
     protected void buildAndCollectModules(
@@ -456,7 +463,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             if (modulePom.exists()) {
                 ProjectBuildingResult moduleResult = projectBuilder.build(modulePom, buildingRequest);
                 MavenProject moduleProject = moduleResult.getProject();
-
                 if (CollectionUtils.isEmpty(moduleProject.getModules())) {
                     collected.add(moduleProject);
                 } else {
@@ -480,13 +486,17 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         }
     }
     protected void doExecute(RunArgs args) throws Exception {
+        SubmissionContext ctx = doAnalyze(args);
+        if (Objects.nonNull(ctx)) {
+            doLlmScoring(ctx);
+        }
+    }
+    protected SubmissionContext doAnalyze(RunArgs args) throws Exception {
         LogFactory logFactory = new MavenLogFactory(getLog());
         Path workTree = args.getGit().getWorkTree().toPath().normalize();
-
         try (Fetch fetch = new Fetch(args)) {
             try (LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, args, fetch)) {
                 registry.load().block();
-
                 MutableBoolean toApply = new MutableBoolean();
                 DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, registry, args);
                 CommitAnalysis analysis = analyzer.analyze();
@@ -495,11 +505,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                         toApply.setTrue();
                     }
                 });
-
                 if (toApply.isTrue()) {
                     IndexingSummary index = registry.index(analysis);
                     registry.collectAndCapture(index, analysis);
-
                     SubmissionContext ctx = SubmissionContext.create(
                             args,
                             index,
@@ -507,22 +515,23 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                             workTree,
                             logFactory,
                             project,
-                            runtimeInformation
-                    );
-
+                            runtimeInformation);
                     new ProjectModelPopulator(getLog()).accept(ctx);
                     new CommitModelPopulator().accept(ctx);
                     new ModuleLevelMetricsPopulator().accept(ctx);
                     new FileAnalysisPopulator().accept(ctx);
                     new IndexModelPopulator().accept(ctx);
-
                     DuplicationReportPopulator duplicationPopulator = new DuplicationReportPopulator();
                     duplicationPopulator.accept(ctx);
-
                     new MetricsAggregator(duplicationPopulator.getTotalDuplicatedLines()).accept(ctx);
                     new OutputSerializer(preferYaml, getLog()).accept(ctx);
+                    return ctx;
                 }
             }
         }
+        return null;
+    }
+    protected void doLlmScoring(SubmissionContext ctx) throws Exception {
+        new LlmScoringPopulator(getLog()).accept(ctx);
     }
 }

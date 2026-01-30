@@ -1,137 +1,274 @@
 package io.codiqo.llm.schema;
 
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Objects;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
+import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.BooleanUtils;
+
+import com.google.common.collect.Lists;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-/**
- * Response structure from LLM contribution scoring.
- * Maps to the JSON output defined in the system prompt template.
- *
- * Used for developer velocity tracking and fair productivity measurement.
- */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class LlmScoringResponse {
+    private static final EnumSet<RiskLevel> HIGH_RISK_LEVELS = EnumSet.of(RiskLevel.HIGH, RiskLevel.VERY_HIGH, RiskLevel.CRITICAL);
+    private static final EnumSet<ModuleType> SHARED_MODULE_TYPES = EnumSet.of(ModuleType.CORE_LIBRARY, ModuleType.SHARED_UTILITY);
+    private static final EnumSet<ExternalImpact> SIGNIFICANT_EXTERNAL_IMPACTS = EnumSet.of(ExternalImpact.MEDIUM, ExternalImpact.HIGH);
 
-    /** LLM's contribution score (0 to configured max) */
-    @JsonProperty("llm_contribution_score")
-    private int llmContributionScore;
-
-    /** LLM's thinking/analysis in markdown format */
+    private double score;
+    private String scoreCalculation;
+    private EffortBreakdown effortBreakdown;
+    private QualityMultiplier qualityMultiplier;
+    private ArchitectureEffortBonus architectureEffortBonus;
+    private QualityDimensions qualityDimensions;
+    private RiskAssessment riskAssessment;
+    private ChangeClassification changeClassification;
     private String thinking;
-
-    /** Effort dimension scores */
-    @JsonProperty("effort_assessment")
-    private EffortAssessment effortAssessment;
-
-    /** Quality dimension scores */
-    @JsonProperty("quality_assessment")
-    private QualityAssessment qualityAssessment;
-
-    /** Complexity analysis with NEW vs MODIFY distinction */
-    @JsonProperty("complexity_analysis")
-    private ComplexityAnalysis complexityAnalysis;
-
-    /** Impact analysis based on callers */
-    @JsonProperty("impact_analysis")
-    private ImpactAnalysis impactAnalysis;
-
-    /** Quality penalties applied */
-    @JsonProperty("quality_penalties")
-    private QualityPenalties qualityPenalties;
-
-    /** Static analysis validation */
-    @JsonProperty("static_analysis_review")
+    private Bugs bugs;
     private StaticAnalysisReview staticAnalysisReview;
-
-    /** Bugs discovered by LLM */
-    @JsonProperty("bugs_found")
-    private List<BugFinding> bugsFound;
-
-    /** Executive summary */
+    private BlastRadiusAnalysis blastRadiusAnalysis;
+    private int requiresSeniorReview;
+    @Builder.Default
+    private List<String> seniorReviewReasons = Lists.newArrayList();
     private String summary;
-
-    /** Tags for categorization */
     private Tags tags;
 
-    /** Velocity tracking metrics */
-    @JsonProperty("velocity_metrics")
-    private VelocityMetrics velocityMetrics;
-
-    // === EFFORT ASSESSMENT ===
-
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class EffortAssessment {
-        @JsonProperty("scope_of_work")
-        private DimensionScore scopeOfWork;
-
-        @JsonProperty("technical_difficulty")
-        private DimensionScore technicalDifficulty;
-
-        @JsonProperty("impact_breadth")
-        private DimensionScore impactBreadth;
-
-        public double getAverageScore() {
-            int count = 0;
-            int sum = 0;
-            if (scopeOfWork != null && scopeOfWork.getScore() != null) {
-                sum += scopeOfWork.getScore();
-                count++;
-            }
-            if (technicalDifficulty != null && technicalDifficulty.getScore() != null) {
-                sum += technicalDifficulty.getScore();
-                count++;
-            }
-            if (impactBreadth != null && impactBreadth.getScore() != null) {
-                sum += impactBreadth.getScore();
-                count++;
-            }
-            return count > 0 ? (double) sum / count : 0;
+    public boolean hasBlockingBugs() {
+        return Objects.nonNull(bugs) && CollectionUtils.isNotEmpty(bugs.getBlocking());
+    }
+    public boolean isSeniorReviewRequired(int threshold) {
+        return requiresSeniorReview >= threshold;
+    }
+    public boolean isHighRisk() {
+        if (Objects.isNull(riskAssessment) || Objects.isNull(riskAssessment.getRiskLevel())) {
+            return false;
         }
+        return HIGH_RISK_LEVELS.contains(riskAssessment.getRiskLevel());
+    }
+    public int getTotalBugCount() {
+        if (Objects.isNull(bugs)) {
+            return 0;
+        }
+        return CollectionUtils.size(bugs.getBlocking()) + CollectionUtils.size(bugs.getMajor()) + CollectionUtils.size(bugs.getMinor());
+    }
+    public boolean hasLibraryBreakingChanges() {
+        if (Objects.isNull(blastRadiusAnalysis)) {
+            return false;
+        }
+        boolean isCoreOrShared = SHARED_MODULE_TYPES.contains(blastRadiusAnalysis.getModuleType());
+        boolean hasBreaking = Objects.nonNull(blastRadiusAnalysis.getSignatureChanges()) && blastRadiusAnalysis.getSignatureChanges().isHasBreakingChanges();
+        return BooleanUtils.and(new boolean[]{isCoreOrShared, hasBreaking});
+    }
+    public boolean hasSignificantExternalImpact() {
+        if (Objects.isNull(blastRadiusAnalysis) || Objects.isNull(blastRadiusAnalysis.getExternalImpactEstimate())) {
+            return false;
+        }
+        return SIGNIFICANT_EXTERNAL_IMPACTS.contains(blastRadiusAnalysis.getExternalImpactEstimate());
     }
 
-    // === QUALITY ASSESSMENT ===
+    public enum ChangeClassification {
+        TRIVIAL,
+        SMALL,
+        MEDIUM,
+        LARGE,
+        HUGE
+    }
+
+    public enum RiskLevel {
+        LOW,
+        MODERATE,
+        HIGH,
+        VERY_HIGH,
+        CRITICAL
+    }
+
+    public enum BugType {
+        SECURITY,
+        CONCURRENCY,
+        DATA_CORRUPTION,
+        LOGIC,
+        RESOURCE_LEAK,
+        NULL_POINTER,
+        ARCHITECTURE,
+        OTHER
+    }
+
+    public enum Confidence {
+        HIGH,
+        MEDIUM,
+        LOW
+    }
+
+    public enum BugSource {
+        LLM,
+        PMD,
+        SPOTBUGS
+    }
+
+    public enum ModuleType {
+        CORE_LIBRARY,
+        SHARED_UTILITY,
+        LEAF_APPLICATION
+    }
+
+    public enum ExternalImpact {
+        NONE,
+        LOW,
+        MEDIUM,
+        HIGH,
+        UNKNOWN
+    }
+
+    public enum BreakingChangeType {
+        PARAMETER_ADDED,
+        PARAMETER_REMOVED,
+        PARAMETER_CHANGED,
+        RETURN_TYPE_CHANGED,
+        EXCEPTION_ADDED
+    }
 
     @Data
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class QualityAssessment {
-        @JsonProperty("code_design")
-        private DimensionScore codeDesign;
+    public static class EffortBreakdown {
+        private VolumeScore volumeScore;
+        private ComplexityMultiplier complexityMultiplier;
+        private double baseEffortScore;
+    }
 
-        private DimensionScore completeness;
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class VolumeScore {
+        private int linesChanged;
+        private double linesScore;
+        private int methodsModified;
+        private double methodsModifiedScore;
+        private int methodsAdded;
+        private double methodsAddedScore;
+        private int classesModified;
+        private double classesModifiedScore;
+        private int classesAdded;
+        private double classesAddedScore;
+        private double sizeFactor;
+        private double modifyMultiplier;
+        private double addMultiplier;
+        private double relativeAdjustment;
+        private double totalVolumeScore;
+    }
 
-        private DimensionScore originality;
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ComplexityMultiplier {
+        private double avgModifyComplexity;
+        private double modifyMultiplier;
+        private double avgCreateComplexity;
+        private double createMultiplier;
+        private double combinedMultiplier;
+    }
 
-        public double getAverageScore() {
-            int count = 0;
-            int sum = 0;
-            if (codeDesign != null && codeDesign.getScore() != null) {
-                sum += codeDesign.getScore();
-                count++;
-            }
-            if (completeness != null && completeness.getScore() != null) {
-                sum += completeness.getScore();
-                count++;
-            }
-            if (originality != null && originality.getScore() != null) {
-                sum += originality.getScore();
-                count++;
-            }
-            return count > 0 ? (double) sum / count : 0;
-        }
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class QualityMultiplier {
+        private CpdAnalysis cpdAnalysis;
+        private StaticAnalysisImpact staticAnalysis;
+        private CoverageAnalysis coverageAnalysis;
+        private ArchitectureAnalysis architectureAnalysis;
+        private QualityGateAnalysis qualityGateAnalysis;
+        private double finalMultiplier;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class CpdAnalysis {
+        private double duplicationPercent;
+        private double impact;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class StaticAnalysisImpact {
+        private int pmdViolationsInChanges;
+        private int spotbugsIssuesInChanges;
+        private double impact;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class CoverageAnalysis {
+        private double coveragePercent;
+        private double impact;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ArchitectureAnalysis {
+        @Builder.Default
+        private List<String> solidViolations = Lists.newArrayList();
+        @Builder.Default
+        private List<String> architectureIssues = Lists.newArrayList();
+        private double penaltyImpact;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class QualityGateAnalysis {
+        @Builder.Default
+        private List<String> failedGates = Lists.newArrayList();
+        private double impact;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ArchitectureEffortBonus {
+        private int architectureImpactScore;
+        private double qualityFactor;
+        private double baseEffort;
+        private String bonusCalculation;
+        private double bonusPoints;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class QualityDimensions {
+        private DimensionScore architectureImpact;
+        private DimensionScore concurrencyRisk;
+        private DimensionScore integrationSurface;
+        private DimensionScore dataIntegrity;
+        private DimensionScore securitySensitivity;
+        private DimensionScore scalabilityImpact;
+        private DimensionScore observability;
+        private DimensionScore resilience;
+        private DimensionScore performance;
+        private DimensionScore testingCoverage;
     }
 
     @Data
@@ -139,329 +276,123 @@ public class LlmScoringResponse {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class DimensionScore {
-        private Integer score; // 0-10
+        private Integer score;
         private String rationale;
-    }
-
-    // === COMPLEXITY ANALYSIS ===
-
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class ComplexityAnalysis {
-        @JsonProperty("methods_modified")
-        private List<MethodComplexityEntry> methodsModified;
-
-        @JsonProperty("methods_added")
-        private List<MethodComplexityEntry> methodsAdded;
-
-        @JsonProperty("complexity_bonus")
-        private double complexityBonus; // Can be negative (penalty)
-
-        @JsonProperty("complexity_summary")
-        private String complexitySummary;
-
-        public int getModifiedMethodCount() {
-            return methodsModified != null ? methodsModified.size() : 0;
-        }
-
-        public int getAddedMethodCount() {
-            return methodsAdded != null ? methodsAdded.size() : 0;
-        }
-
-        public boolean hasNewComplexMethods() {
-            if (methodsAdded == null) {
-                return false;
-            }
-            return methodsAdded.stream()
-                    .anyMatch(m -> "complex".equals(m.getComplexityLevel())
-                            || "highly_complex".equals(m.getComplexityLevel()));
-        }
+        private boolean qualityGateMet;
     }
 
     @Data
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class MethodComplexityEntry {
-        private String method; // class.methodName
-        private String operation; // "MODIFY" or "NEW"
-
-        @JsonProperty("existing_complexity")
-        private Integer existingComplexity; // For MODIFY
-
-        @JsonProperty("new_complexity")
-        private Integer newComplexity; // For NEW
-
-        @JsonProperty("complexity_level")
-        private String complexityLevel; // trivial, moderate, complex, highly_complex
-
-        @JsonProperty("multiplier_applied")
-        private double multiplierApplied;
-
-        private String rationale;
-    }
-
-    // === IMPACT ANALYSIS ===
-
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class ImpactAnalysis {
-        @JsonProperty("total_callers")
-        private int totalCallers;
-
-        @JsonProperty("production_callers")
-        private int productionCallers;
-
-        @JsonProperty("test_callers")
-        private int testCallers;
-
-        @JsonProperty("effective_callers")
-        private double effectiveCallers;
-
-        @JsonProperty("impact_level")
-        private String impactLevel; // low, medium, high, critical
-
-        @JsonProperty("critical_callers")
-        private List<CriticalCaller> criticalCallers;
-
-        @JsonProperty("impact_score")
-        private double impactScore;
+    public static class RiskAssessment {
+        private int riskScore;
+        private RiskLevel riskLevel;
     }
 
     @Data
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class CriticalCaller {
-        private String caller; // class.method
-        private String reason;
+    public static class Bugs {
+        @Builder.Default
+        private List<Bug> blocking = Lists.newArrayList();
+        @Builder.Default
+        private List<Bug> major = Lists.newArrayList();
+        @Builder.Default
+        private List<Bug> minor = Lists.newArrayList();
     }
-
-    // === QUALITY PENALTIES ===
 
     @Data
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class QualityPenalties {
-        @JsonProperty("copy_paste_percent")
-        private double copyPastePercent;
-
-        @JsonProperty("copy_paste_penalty")
-        private double copyPastePenalty;
-
-        @JsonProperty("coverage_percent")
-        private double coveragePercent;
-
-        @JsonProperty("coverage_penalty")
-        private double coveragePenalty;
-
-        @JsonProperty("static_analysis_penalty")
-        private double staticAnalysisPenalty;
-
-        @JsonProperty("total_penalty")
-        private double totalPenalty;
-
-        public boolean hasSignificantPenalties() {
-            return totalPenalty > 5;
-        }
+    public static class Bug {
+        private BugType type;
+        private String title;
+        private String description;
+        private String file;
+        private Integer line;
+        private String suggestedFix;
+        private Confidence confidence;
+        private BugSource source;
     }
-
-    // === STATIC ANALYSIS REVIEW ===
 
     @Data
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
     public static class StaticAnalysisReview {
-        @JsonProperty("pmd_validated")
-        private int pmdValidated;
-
-        @JsonProperty("pmd_false_positives")
-        private int pmdFalsePositives;
-
-        @JsonProperty("spotbugs_validated")
-        private int spotbugsValidated;
-
-        @JsonProperty("spotbugs_false_positives")
-        private int spotbugsFalsePositives;
-
-        @JsonProperty("critical_bugs")
-        private List<String> criticalBugs;
-
-        public int getTotalValidatedIssues() {
-            return pmdValidated + spotbugsValidated;
-        }
-
-        public int getTotalFalsePositives() {
-            return pmdFalsePositives + spotbugsFalsePositives;
-        }
+        @Builder.Default
+        private List<StaticAnalysisFinding> pmdInChangedLines = Lists.newArrayList();
+        @Builder.Default
+        private List<StaticAnalysisFinding> pmdPreExisting = Lists.newArrayList();
+        @Builder.Default
+        private List<StaticAnalysisFinding> pmdFalsePositives = Lists.newArrayList();
+        @Builder.Default
+        private List<StaticAnalysisFinding> spotbugsInChangedLines = Lists.newArrayList();
+        @Builder.Default
+        private List<StaticAnalysisFinding> spotbugsPreExisting = Lists.newArrayList();
+        @Builder.Default
+        private List<StaticAnalysisFinding> spotbugsFalsePositives = Lists.newArrayList();
     }
-
-    // === BUG FINDING ===
 
     @Data
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class BugFinding {
-        private String severity; // critical, major, minor
-        private String type; // logic, concurrency, resource, security, integration
-        private String title;
-        private String description;
+    public static class StaticAnalysisFinding {
+        private String rule;
         private String file;
-
-        @JsonProperty("line_hint")
-        private String lineHint;
-
-        private String confidence; // high, medium, low
-
-        @JsonProperty("suggested_fix")
-        private String suggestedFix;
-
-        public boolean isCritical() {
-            return "critical".equalsIgnoreCase(severity);
-        }
-
-        public boolean isHighConfidence() {
-            return "high".equalsIgnoreCase(confidence);
-        }
+        private Integer line;
+        private String assessment;
+        private FindingSeverity severity;
+        private String suggestedFileFix;
+        private String suggestedBlockCode;
     }
 
-    // === TAGS ===
+    public enum FindingSeverity {
+        ERROR,
+        WARNING,
+        INFO
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class BlastRadiusAnalysis {
+        private int totalCallers;
+        private int productionCallers;
+        private int testCallers;
+        private RiskLevel riskLevel;
+        @Builder.Default
+        private List<String> criticalCallers = Lists.newArrayList();
+        private ModuleType moduleType;
+        private SignatureChanges signatureChanges;
+        private ExternalImpact externalImpactEstimate;
+        private String explanation;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class SignatureChanges {
+        private boolean hasBreakingChanges;
+        @Builder.Default
+        private List<String> changedSignatures = Lists.newArrayList();
+        private BreakingChangeType breakingChangeType;
+    }
 
     @Data
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
     public static class Tags {
-        private List<String> technical;
-        private List<String> functional;
-    }
-
-    // === VELOCITY METRICS ===
-
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class VelocityMetrics {
-        @JsonProperty("estimated_hours")
-        private double estimatedHours;
-
-        @JsonProperty("contribution_category")
-        private String contributionCategory; // trivial, small, medium, large, major
-
-        private List<String> flags; // Concerns for velocity tracking
-
-        public boolean isTrivial() {
-            return "trivial".equalsIgnoreCase(contributionCategory);
-        }
-
-        public boolean isMajor() {
-            return "major".equalsIgnoreCase(contributionCategory);
-        }
-
-        public boolean hasFlags() {
-            return flags != null && !flags.isEmpty();
-        }
-    }
-
-    // === UTILITY METHODS ===
-
-    /**
-     * Calculate total contribution score (static + LLM)
-     */
-    public double getTotalContributionScore(double staticScore) {
-        return staticScore + llmContributionScore;
-    }
-
-    /**
-     * Check if this commit has quality concerns
-     */
-    public boolean hasQualityConcerns() {
-        return qualityPenalties != null && qualityPenalties.hasSignificantPenalties()
-                || bugsFound != null && bugsFound.stream().anyMatch(BugFinding::isCritical)
-                || complexityAnalysis != null && complexityAnalysis.hasNewComplexMethods();
-    }
-
-    /**
-     * Check if this is a high-value contribution
-     */
-    public boolean isHighValueContribution() {
-        return velocityMetrics != null
-                && ("large".equals(velocityMetrics.getContributionCategory())
-                        || "major".equals(velocityMetrics.getContributionCategory()));
-    }
-
-    /**
-     * Get effective effort score (average of effort dimensions)
-     */
-    public double getEffortScore() {
-        return effortAssessment != null ? effortAssessment.getAverageScore() : 0;
-    }
-
-    /**
-     * Get effective quality score (average of quality dimensions)
-     */
-    public double getQualityScore() {
-        return qualityAssessment != null ? qualityAssessment.getAverageScore() : 0;
-    }
-
-    /**
-     * Calculate contribution grade based on total score
-     */
-    public String calculateGrade(double totalScore, int maxScore) {
-        if (maxScore == 0) {
-            return "A";
-        }
-        double percent = totalScore * 100.0 / maxScore;
-        if (percent >= 85) {
-            return "A";
-        }
-        if (percent >= 70) {
-            return "B";
-        }
-        if (percent >= 55) {
-            return "C";
-        }
-        if (percent >= 40) {
-            return "D";
-        }
-        return "F";
-    }
-
-    /**
-     * Get flags that should be reviewed
-     */
-    public List<String> getReviewFlags() {
-        List<String> allFlags = new java.util.ArrayList<>();
-
-        if (velocityMetrics != null && velocityMetrics.getFlags() != null) {
-            allFlags.addAll(velocityMetrics.getFlags());
-        }
-
-        if (qualityPenalties != null) {
-            if (qualityPenalties.getCopyPastePercent() > 30) {
-                allFlags.add("high-copy-paste");
-            }
-            if (qualityPenalties.getCoveragePercent() < 50) {
-                allFlags.add("low-coverage");
-            }
-        }
-
-        if (complexityAnalysis != null && complexityAnalysis.hasNewComplexMethods()) {
-            allFlags.add("new-complex-methods");
-        }
-
-        if (bugsFound != null && bugsFound.stream().anyMatch(BugFinding::isCritical)) {
-            allFlags.add("critical-bugs");
-        }
-
-        return allFlags;
+        @Builder.Default
+        private List<String> technical = Lists.newArrayList();
+        @Builder.Default
+        private List<String> functional = Lists.newArrayList();
     }
 }

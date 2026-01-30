@@ -103,6 +103,11 @@
             <artifactId>codiqo-lang-java</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>codiqo-llm</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <!-- -->
         <!-- provided -->
         <!-- -->

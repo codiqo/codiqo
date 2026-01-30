@@ -200,12 +200,22 @@ components:
         completedAt:
           type: string
           format: date-time
+        llmAnalysis:
+          $ref: '#/components/schemas/LlmAnalysisModel'
         changeClassification:
           type: string
-          enum: [trivial, low_risk, moderate_risk, high_risk, critical_risk]
-          description: LLM classification of the change type
+          enum: [trivial, small, medium, large, huge]
+          description: |
+            Size-based classification of the change:
+            - trivial: 5-15 score (typo fix, log message)
+            - small: 20-40 score (bug fix, minor enhancement)
+            - medium: 50-80 score (new feature, moderate refactor)
+            - large: 90-140 score (major feature, significant refactor)
+            - huge: 150-200+ score (architecture change, large migration)
         bugs:
           $ref: '#/components/schemas/BugsModel'
+        riskAssessment:
+          $ref: '#/components/schemas/RiskAssessmentModel'
         assessment:
           $ref: '#/components/schemas/AssessmentModel'
         requiresSeniorReview:
@@ -694,6 +704,26 @@ components:
           $ref: '#/components/schemas/RiskFactorsModel'
         summary:
           type: string
+
+    RiskAssessmentModel:
+      type: object
+      description: Risk assessment from LLM analysis
+      properties:
+        riskScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Overall risk score (0-100)
+        riskLevel:
+          type: string
+          enum: [low, moderate, high, very_high, critical]
+          description: |
+            Risk level based on score:
+            - low: 0-20
+            - moderate: 21-40
+            - high: 41-60
+            - very_high: 61-80
+            - critical: 81-100
 
     RiskFactorsModel:
       type: object
@@ -1679,6 +1709,8 @@ components:
           $ref: '#/components/schemas/EffortBreakdownModel'
         qualityMultiplier:
           $ref: '#/components/schemas/QualityMultiplierModel'
+        architectureEffortBonus:
+          $ref: '#/components/schemas/ArchitectureEffortBonusModel'
 
     EffortBreakdownModel:
       type: object
@@ -1698,97 +1730,110 @@ components:
     VolumeScoreModel:
       type: object
       description: |
-        Volume-based effort score calculation.
-        NOTE: Files touched is intentionally excluded - code units (methods, classes) 
-        provide better granularity for productivity measurement.
+        Volume-based effort score calculation using logarithmic scaling.
+        Formula: score = ln(1 + count) × log_factor × multiplier
       properties:
         linesChanged:
           type: integer
           minimum: 0
           description: Total lines of code changed in the commit
-        linesPoints:
+        linesScore:
           type: number
           format: double
-          description: Points earned from lines changed (with relative scaling)
+          description: Score from lines changed (logarithmic with relative adjustment)
         methodsModified:
           type: integer
           minimum: 0
           description: Number of existing methods modified
-        methodsModifiedPoints:
+        methodsModifiedScore:
           type: number
           format: double
-          description: Points for modifying methods (with complexity multiplier)
+          description: Score for modifying methods (with complexity bonus)
         methodsAdded:
           type: integer
           minimum: 0
           description: Number of new methods added
-        methodsAddedPoints:
+        methodsAddedScore:
           type: number
           format: double
-          description: Points for adding methods (with clean code bonus)
+          description: Score for adding methods (with clean code bonus)
         classesModified:
           type: integer
           minimum: 0
           description: Number of existing classes modified
-        classesModifiedPoints:
+        classesModifiedScore:
           type: number
           format: double
-          description: Points for modifying classes
+          description: Score for modifying classes
         classesAdded:
           type: integer
           minimum: 0
           description: Number of new classes added
-        classesAddedPoints:
+        classesAddedScore:
           type: number
           format: double
-          description: Points for adding classes
-        projectSizeFactor:
+          description: Score for adding classes
+        sizeFactor:
           type: number
           format: double
           description: |
             Cube root normalization factor based on project size.
-            Used for relative scoring: cbrt(project_total_lines) / 100
+            Formula: cbrt(project_total_lines) / 100
         modifyMultiplier:
           type: number
           format: double
           description: |
             Multiplier for modification operations.
-            Slightly higher for larger projects (harder to navigate).
-            Formula: 1.0 + min(projectSizeFactor * 0.3, 0.2)
+            Formula: 1.0 + min(sizeFactor * 0.3, 0.2)
         addMultiplier:
           type: number
           format: double
           description: |
             Multiplier for addition operations.
-            Contribution is more significant in smaller codebases.
-            Formula: 1.0 + (0.1 / (1.0 + projectSizeFactor))
+            Formula: 1.0 + (0.1 / (1.0 + sizeFactor))
+        relativeAdjustment:
+          type: number
+          format: double
+          description: |
+            Adjustment factor relative to project size.
+            Formula: clamp(1 + 0.1 * ln(project_lines / changed_lines), 0.8, 1.3)
         totalVolumeScore:
           type: number
           format: double
-          description: Final volume score (sum of all component scores, capped at max)
+          description: Final volume score (sum of all component scores)
 
     ComplexityMultiplierModel:
       type: object
+      description: |
+        Complexity multiplier based on cyclomatic complexity.
+        MODIFY = bonus (reward tackling hard code), CREATE = penalty for high complexity.
       properties:
         avgModifyComplexity:
           type: number
           format: double
+          description: Average cyclomatic complexity of modified methods
         modifyMultiplier:
           type: number
           format: double
-        avgNewComplexity:
+          description: Multiplier for modifying existing complex code (bonus)
+        avgCreateComplexity:
           type: number
           format: double
-        newMultiplier:
+          description: Average cyclomatic complexity of new methods
+        createMultiplier:
           type: number
           format: double
+          description: Multiplier for creating new code (penalty if complex)
         combinedMultiplier:
           type: number
           format: double
+          description: Combined multiplier (average of modify and create if both apply)
 
     QualityMultiplierModel:
       type: object
-      description: Quality multiplier calculation breakdown
+      description: |
+        Quality multiplier calculation breakdown.
+        Formula: quality_multiplier = 1.0 + sum(impacts), clamped to [0.5, 1.2]
       properties:
         cpdAnalysis:
           $ref: '#/components/schemas/CpdAnalysisModel'
@@ -1798,6 +1843,8 @@ components:
           $ref: '#/components/schemas/CoverageAnalysisModel'
         architectureAnalysis:
           $ref: '#/components/schemas/ArchitectureAnalysisModel'
+        qualityGateAnalysis:
+          $ref: '#/components/schemas/QualityGateAnalysisModel'
         finalMultiplier:
           type: number
           format: double
@@ -1806,53 +1853,109 @@ components:
 
     CpdAnalysisModel:
       type: object
+      description: Copy-paste detection analysis
       properties:
         duplicationPercent:
           type: number
           format: double
-        affectsChangedCode:
-          type: boolean
-        multiplierImpact:
+          description: Percentage of duplicated code in changed files
+        impact:
           type: number
           format: double
+          description: Impact on quality multiplier (+0.05 clean, -0.10 to -0.30 for duplication)
 
     StaticAnalysisImpactModel:
       type: object
+      description: PMD and SpotBugs analysis impact
       properties:
         pmdViolationsInChanges:
           type: integer
           minimum: 0
+          description: PMD violations in changed lines only
         spotbugsIssuesInChanges:
           type: integer
           minimum: 0
-        multiplierImpact:
+          description: SpotBugs issues in changed lines only
+        impact:
           type: number
           format: double
+          description: Impact on quality multiplier (capped at -0.30)
 
     CoverageAnalysisModel:
       type: object
+      description: Test coverage analysis
       properties:
         coveragePercent:
           type: number
           format: double
-        multiplierImpact:
+          description: Coverage percentage of changed code
+        impact:
           type: number
           format: double
+          description: Impact on quality multiplier (+0.10 excellent, -0.15 terrible)
 
     ArchitectureAnalysisModel:
       type: object
+      description: Architecture and SOLID principles analysis
       properties:
         solidViolations:
           type: array
           items:
             type: string
+          description: List of SOLID principle violations
         architectureIssues:
           type: array
           items:
             type: string
-        multiplierImpact:
+          description: List of architecture issues (god class, circular deps, etc.)
+        penaltyImpact:
           type: number
           format: double
+          description: Penalty impact on quality multiplier for violations (capped at -0.20)
+
+    ArchitectureEffortBonusModel:
+      type: object
+      description: |
+        Bonus points for significant, quality architecture work.
+        Formula: bonus = architectureImpact × baseEffort × 0.01 × qualityFactor
+      properties:
+        architectureImpactScore:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: Architecture impact dimension score (0-10)
+        qualityFactor:
+          type: number
+          format: double
+          minimum: 0.0
+          maximum: 1.0
+          description: Quality factor (0.0-1.0) based on coverage, bugs, and code quality
+        baseEffort:
+          type: number
+          format: double
+          description: Base effort score used for bonus calculation
+        bonusCalculation:
+          type: string
+          description: Human-readable formula showing the calculation
+        bonusPoints:
+          type: number
+          format: double
+          minimum: 0
+          description: Final bonus points added to the final score
+
+    QualityGateAnalysisModel:
+      type: object
+      description: Quality gate failures analysis
+      properties:
+        failedGates:
+          type: array
+          items:
+            type: string
+          description: List of failed quality gates with reasons
+        impact:
+          type: number
+          format: double
+          description: Impact on quality multiplier (-0.03 per failed gate, capped at -0.15)
 
     DiffAnalysisModel:
       type: object
@@ -1970,30 +2073,79 @@ components:
 
     BlastRadiusAnalysisModel:
       type: object
+      description: |
+        Blast radius analysis for the commit including module type classification,
+        signature change detection, and external impact estimation.
       properties:
         totalCallers:
           type: integer
           default: 0
+          description: Total number of callers (internal) for affected methods
         productionCallers:
           type: integer
           default: 0
+          description: Number of production code callers
         testCallers:
           type: integer
           default: 0
+          description: Number of test code callers
         riskLevel:
           type: string
           enum: [low, moderate, high, critical]
           default: low
+          description: Overall blast radius risk level
         affectedModules:
           type: array
           items:
             type: string
+          description: List of modules affected by changes
         criticalCallers:
           type: array
           items:
             type: string
+          description: List of critical callers (services, controllers)
+        moduleType:
+          type: string
+          enum: [core_library, shared_utility, leaf_application]
+          description: |
+            Classification of the module being modified:
+            - core_library: Reusable foundation (*-core, *-common, *-api, *-client)
+            - shared_utility: Helper code across modules (*-utils, *-shared)
+            - leaf_application: End application (*-service, *-app, *-web)
+        signatureChanges:
+          $ref: '#/components/schemas/SignatureChangesModel'
+        externalImpactEstimate:
+          type: string
+          enum: [none, low, medium, high, unknown]
+          description: |
+            Estimated impact on external consumers (not visible in internal caller data):
+            - none: No external impact
+            - low: Minor impact, backwards compatible
+            - medium: Some consumers may need updates
+            - high: Breaking change, many consumers affected
+            - unknown: Cannot determine without external visibility
         explanation:
           type: string
+          description: Explanation of blast radius analysis
+
+    SignatureChangesModel:
+      type: object
+      description: Analysis of method signature changes for API impact
+      properties:
+        hasBreakingChanges:
+          type: boolean
+          default: false
+          description: Whether any signature changes are breaking
+        changedSignatures:
+          type: array
+          items:
+            type: string
+          description: List of method signatures that changed
+        breakingChangeType:
+          type: string
+          enum: [parameter_added, parameter_removed, parameter_changed, return_type_changed, exception_added]
+          nullable: true
+          description: Type of breaking change if applicable
 
     StaticAnalysisReviewModel:
       type: object
@@ -2001,39 +2153,60 @@ components:
         pmdValidated:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/StaticAnalysisFindingModel'
         pmdFalsePositives:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/StaticAnalysisFindingModel'
         pmdInChangedLines:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/StaticAnalysisFindingModel'
         pmdPreExisting:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/StaticAnalysisFindingModel'
         spotbugsValidated:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/StaticAnalysisFindingModel'
         spotbugsFalsePositives:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/StaticAnalysisFindingModel'
         spotbugsInChangedLines:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/StaticAnalysisFindingModel'
         spotbugsPreExisting:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/StaticAnalysisFindingModel'
         preExistingIssues:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/StaticAnalysisFindingModel'
+
+    StaticAnalysisFindingModel:
+      type: object
+      properties:
+        rule:
+          type: string
+          description: The rule/bug ID (e.g., PMD rule name or SpotBugs bug pattern)
+        file:
+          type: string
+          description: The file path where the issue was found
+        line:
+          type: integer
+          nullable: true
+          description: The line number where the issue was found
+        assessment:
+          type: string
+          description: Brief assessment or explanation of the finding
+        severity:
+          type: string
+          enum: [error, warning, info]
+          description: Severity level - error (penalized), warning (informational), info (low priority)
 
     ReviewTagsModel:
       type: object
@@ -2058,6 +2231,107 @@ components:
           type: array
           items:
             type: string
+
+    # ==========================================================================
+    # LLM Analysis (Tool Usage, Tokens, etc.)
+    # ==========================================================================
+
+    LlmAnalysisModel:
+      type: object
+      description: |
+        LLM analysis metadata including model used, token usage, tool invocations,
+        and analysis duration. Used for tracking and auditing LLM-powered analysis.
+      properties:
+        model:
+          type: string
+          description: LLM model identifier used for analysis (e.g., "qwen3-coder:480b-cloud")
+        provider:
+          type: string
+          description: LLM provider (e.g., "ollama", "openai", "anthropic")
+        tokenUsage:
+          $ref: '#/components/schemas/TokenUsageModel'
+        toolUsage:
+          $ref: '#/components/schemas/ToolUsageModel'
+        analysisTimeMs:
+          type: integer
+          minimum: 0
+          description: Time taken for LLM analysis in milliseconds
+        thinking:
+          type: string
+          description: LLM's reasoning in markdown format (if native thinking is enabled)
+        promptLength:
+          type: integer
+          minimum: 0
+          description: Total length of system prompt + user message in characters
+
+    TokenUsageModel:
+      type: object
+      description: Token usage statistics from LLM API call
+      properties:
+        promptTokens:
+          type: integer
+          minimum: 0
+          description: Number of tokens in the input prompt
+        completionTokens:
+          type: integer
+          minimum: 0
+          description: Number of tokens in the LLM response
+        totalTokens:
+          type: integer
+          minimum: 0
+          description: Total tokens (prompt + completion)
+
+    ToolUsageModel:
+      type: object
+      description: |
+        Information about tools invoked during LLM analysis.
+        Tools include web search for dependency migration guides.
+      properties:
+        toolCallsCount:
+          type: integer
+          minimum: 0
+          description: Total number of tool invocations during analysis
+        webSearchCalls:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebSearchCallModel'
+          description: Web search tool invocations (for dependency analysis)
+
+    WebSearchCallModel:
+      type: object
+      description: |
+        Web search tool invocation for finding library migration guides,
+        breaking changes, and technical documentation.
+      properties:
+        query:
+          type: string
+          description: Search query (e.g., "Spring Boot 3 to 4 migration breaking changes")
+        maxResults:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 5
+          description: Maximum number of results requested
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebSearchResultModel'
+          description: Search results returned
+
+    WebSearchResultModel:
+      type: object
+      description: Individual web search result
+      properties:
+        title:
+          type: string
+          description: Result page title
+        url:
+          type: string
+          format: uri
+          description: URL of the result
+        snippet:
+          type: string
+          description: Content snippet/summary from the page
 
     # ==========================================================================
     # Error

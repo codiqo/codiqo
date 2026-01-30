@@ -1,24 +1,25 @@
 package io.codiqo.llm.schema;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+
+import org.apache.commons.collections4.CollectionUtils;
+
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-/**
- * Request payload for LLM contribution scoring.
- * Contains all information about a commit for velocity analysis.
- */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class LlmScoringRequest {
-
-    // === COMMIT METADATA ===
     private String commitHash;
     private String commitMessage;
     private String author;
@@ -27,29 +28,34 @@ public class LlmScoringRequest {
     private String repository;
     private String branch;
 
-    // === CHANGE SUMMARY ===
     private ChangeSummary changeSummary;
-
-    // === FILE CHANGES ===
     private List<FileChange> fileChanges;
-
-    // === METHOD-LEVEL CHANGES (Critical for NEW vs MODIFY analysis) ===
     private List<MethodChange> methodChanges;
-
-    // === PRE-COMPUTED STATIC SCORES ===
-    private StaticScores staticScores;
-
-    // === STATIC ANALYSIS FINDINGS ===
-    private List<PmdFinding> pmdFindings;
-    private List<SpotBugsFinding> spotBugsFindings;
-
-    // === CALLER INFORMATION (from JDTLS) ===
-    private List<CallerInfo> callers;
-
-    // === QUALITY METRICS ===
-    private CopyPasteAnalysis copyPasteAnalysis;
     private CoverageInfo coverage;
     private ComplexityMetrics complexity;
+    private DuplicationInfo duplication;
+    @Builder.Default
+    private List<WebSearchContext> webSearchContext = Collections.emptyList();
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class WebSearchContext {
+        private String query;
+        @Builder.Default
+        private List<WebSearchResultItem> results = Collections.emptyList();
+
+        @Data
+        @Builder
+        @NoArgsConstructor
+        @AllArgsConstructor
+        public static class WebSearchResultItem {
+            private String title;
+            private String url;
+            private String content;
+        }
+    }
 
     @Data
     @Builder
@@ -62,7 +68,6 @@ public class LlmScoringRequest {
         private int linesDeleted;
         private int linesModified;
 
-        // Method/class level counts
         private int methodsAdded;
         private int methodsModified;
         private int methodsDeleted;
@@ -71,7 +76,11 @@ public class LlmScoringRequest {
         private int classesDeleted;
 
         private List<String> packagesAffected;
-        private String changeType; // "feature", "bugfix", "refactor", "config", "test"
+        private ChangeType changeType;
+    }
+
+    public enum ChangeType {
+        FEATURE, BUGFIX, REFACTOR, CONFIG, TEST
     }
 
     @Data
@@ -80,13 +89,21 @@ public class LlmScoringRequest {
     @AllArgsConstructor
     public static class FileChange {
         private String path;
-        private String changeType; // "added", "modified", "deleted", "renamed"
+        private FileChangeType changeType;
         private int linesAdded;
         private int linesDeleted;
         private String diff;
         private String language;
         private boolean isTest;
         private boolean isConfig;
+    }
+
+    public enum FileChangeType {
+        ADDED, MODIFIED, DELETED, RENAMED
+    }
+
+    public enum Operation {
+        NEW, MODIFY, DELETE
     }
 
     /**
@@ -101,199 +118,133 @@ public class LlmScoringRequest {
         private String className;
         private String methodName;
         private String signature;
-        private String fullyQualifiedName; // com.example.Service.methodName
+        private String fullyQualifiedName;
 
-        /** "NEW" = added in this commit, "MODIFY" = changed existing, "DELETE" = removed */
-        private String operation;
+        private Operation operation;
 
-        // Location
+        /**
+         * location
+         */
         private String file;
         private int startLine;
         private int endLine;
 
-        // Change metrics
+        /**
+         * change metrics
+         */
         private int linesAdded;
         private int linesDeleted;
         private int totalLinesChanged;
 
-        // Complexity metrics (CRITICAL for scoring)
+        /**
+         * Complexity metrics (CRITICAL for scoring)
+         */
         private int cyclomaticComplexity;
         private int cognitiveComplexity;
         private int nestingDepth;
         private int parameterCount;
 
-        /** For MODIFY: the complexity BEFORE the change */
+        /**
+         * For MODIFY: the complexity BEFORE the change
+         */
         private Integer previousCyclomaticComplexity;
         private Integer previousCognitiveComplexity;
 
-        /** Visibility: public, protected, package, private */
         private String visibility;
-
-        /** Is this a constructor? */
         private boolean isConstructor;
-
-        /** Annotations on this method */
         private List<String> annotations;
 
-        /** Callers of THIS specific method (from JDTLS) */
-        private List<CallerInfo> callers;
+        @Builder.Default
+        private List<CallerInfo> callers = Lists.newArrayList();
 
-        // Helper methods
+        /**
+         * PMD and SpotBugs diagnostics for this method.
+         * Used by LLM to assess code quality and identify issues.
+         */
+        @Builder.Default
+        private List<DiagnosticInfo> diagnostics = Lists.newArrayList();
+
         public boolean isNew() {
-            return "NEW".equalsIgnoreCase(operation);
+            return operation == Operation.NEW;
         }
-
         public boolean isModify() {
-            return "MODIFY".equalsIgnoreCase(operation);
+            return operation == Operation.MODIFY;
         }
-
         public boolean isDelete() {
-            return "DELETE".equalsIgnoreCase(operation);
+            return operation == Operation.DELETE;
         }
-
         public int getCallerCount() {
-            return callers != null ? callers.size() : 0;
+            return CollectionUtils.size(callers);
         }
-
         public long getProductionCallerCount() {
-            return callers != null ? callers.stream().filter(c -> !c.isTestCaller()).count() : 0;
+            return Objects.nonNull(callers) ? callers.stream().filter(c -> !c.isTestCaller()).count() : 0;
         }
-    }
-
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class StaticScores {
-        // Base effort scores
-        private double linesChangedScore;
-        private double filesChangedScore;
-        private double methodsChangedScore;
-
-        // Complexity bonus/penalty
-        private double complexityBonusScore;
-
-        // Impact score
-        private double impactScore;
-
-        // Penalties
-        private double copyPastePenalty;
-        private double coveragePenalty;
-        private double staticAnalysisPenalty;
-
-        // Totals
-        private double totalStaticScore;
-        private int maxStaticScore;
-
-        // Breakdown for transparency
-        private Map<String, Double> scoreBreakdown;
-    }
-
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class PmdFinding {
-        private String rule;
-        private String ruleSet;
-        private int priority; // 1-5
-        private String message;
-        private String file;
-        private int beginLine;
-        private int endLine;
-        private String category;
-        private boolean isBugIndicator;
-        private String externalInfoUrl;
-    }
-
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class SpotBugsFinding {
-        private String type;
-        private String category; // "CORRECTNESS", "MT_CORRECTNESS", etc.
-        private int rank; // 1-20
-        private int priority; // 1-3
-        private String message;
-        private String longMessage;
-        private String file;
-        private int startLine;
-        private int endLine;
-        private String className;
-        private String methodName;
-        private boolean isRealBug;
     }
 
     /**
-     * Caller information from JDTLS - detailed for impact analysis.
+     * Caller information from JDTLS for blast radius analysis.
+     * Provides rich context for LLM to assess impact of changes.
      */
     @Data
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
     public static class CallerInfo {
-        // Caller identification
-        private String callerClass;
         private String callerMethod;
-        private String callerSignature;
-        private String callerPackage;
-        private String callerFullyQualified;
-
-        // Called method identification
-        private String calledClass;
-        private String calledMethod;
-        private String calledSignature;
-
-        // Location of the call
         private String file;
         private int line;
-        private int column;
-
-        // Classification (CRITICAL for impact scoring)
         private boolean isTestCaller;
-        private boolean isProductionCaller;
-        private boolean isPublicApi; // Entry point?
-        private boolean isCriticalPath; // Business-critical flow?
-        private boolean isScheduledJob; // @Scheduled
-        private boolean isEventHandler; // Event listener
-        private boolean isAsyncCaller; // @Async
-        private boolean isTransactional; // @Transactional
 
-        // Context
-        private List<String> annotations;
-        private String callContext; // Code snippet around call
-        private String moduleOrComponent;
+        /**
+         * Java ASM binary format signature (e.g., "com/example/MyClass.myMethod(Ljava/lang/String;I)V").
+         * Format: package/ClassName.methodName(parameterDescriptors)returnDescriptor
+         * - L...;  = object type
+         * - I/J/D  = int/long/double primitives
+         * - [      = array prefix
+         * - V      = void return
+         */
+        private String signature;
 
-        // Caller's own complexity (for understanding propagation)
-        private Integer callerComplexity;
+        /**
+         * Symbol kind (method, constructor, lambda, etc.)
+         */
+        private String kind;
+
+        /**
+         * Fully qualified symbol identifier
+         */
+        private String symbol;
+
+        private boolean isDeprecated;
+
+        /**
+         * Number of call sites from this caller to the target method.
+         * Multiple calls from same caller indicate tighter coupling.
+         */
+        private int callSiteCount;
     }
 
     @Data
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class CopyPasteAnalysis {
-        private double overallDuplicationPercentage;
-        private int totalDuplicatedLines;
-        private int totalDuplicatedBlocks;
-        private List<DuplicationBlock> duplications;
+    public static class DiagnosticInfo {
+        private String tool;
+        private String ruleId;
+        private String message;
+        private String category;
+        private DiagnosticSeverity severity;
+        private int startLine;
+        private int endLine;
+        private boolean introducedInCommit;
+    }
 
-        @Data
-        @Builder
-        @NoArgsConstructor
-        @AllArgsConstructor
-        public static class DuplicationBlock {
-            private String sourceFile;
-            private int sourceStartLine;
-            private int sourceEndLine;
-            private String targetFile; // Where it was copied from
-            private int targetStartLine;
-            private int targetEndLine;
-            private int lineCount;
-            private int tokenCount;
-            private double similarity;
-        }
+    public enum DiagnosticSeverity {
+        ERROR,
+        WARNING,
+        INFO,
+        NOTE,
+        NONE
     }
 
     @Data
@@ -301,19 +252,16 @@ public class LlmScoringRequest {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class CoverageInfo {
-        // Overall coverage for changed code
         private double changedLineCoverage;
         private double changedBranchCoverage;
 
-        // Overall project coverage (for context)
         private double projectLineCoverage;
         private double projectBranchCoverage;
 
-        // Per-method coverage (for detailed analysis)
-        private Map<String, MethodCoverage> methodCoverages;
-
-        // Uncovered paths (for risk flagging)
-        private List<UncoveredPath> uncoveredPaths;
+        @Builder.Default
+        private Map<String, MethodCoverage> methodCoverages = Maps.newHashMap();
+        @Builder.Default
+        private List<UncoveredPath> uncoveredPaths = Lists.newArrayList();
 
         @Data
         @Builder
@@ -339,7 +287,11 @@ public class LlmScoringRequest {
             private int startLine;
             private int endLine;
             private String pathDescription;
-            private String riskLevel; // "low", "medium", "high", "critical"
+            private RiskLevel riskLevel;
+        }
+
+        public enum RiskLevel {
+            LOW, MEDIUM, HIGH, CRITICAL
         }
     }
 
@@ -348,18 +300,82 @@ public class LlmScoringRequest {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class ComplexityMetrics {
-        // Aggregate metrics
         private int totalCyclomaticComplexity;
         private int totalCognitiveComplexity;
         private int maxMethodComplexity;
         private double averageMethodComplexity;
 
-        // Change in complexity
         private int complexityDelta; // Positive = more complex overall
         private int newHighComplexityMethods; // New methods with high complexity (bad)
         private int modifiedHighComplexityMethods; // Modified complex methods (hard work)
 
-        // Thresholds used
         private int complexityThreshold;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class DuplicationInfo {
+        private double duplicatedPercentage;
+        private int totalDuplicatedLines;
+        private int totalDuplicatedTokens;
+        private int minimumTokens;
+
+        @Builder.Default
+        private List<CloneDetail> cloneDetails = Lists.newArrayList();
+        @Builder.Default
+        private List<CloneFromExisting> clonesFromExisting = Lists.newArrayList();
+        @Builder.Default
+        private List<NewCloneGroup> newClones = Lists.newArrayList();
+
+        @Data
+        @Builder
+        @NoArgsConstructor
+        @AllArgsConstructor
+        public static class CloneDetail {
+            private int tokenCount;
+            private int lineCount;
+            private boolean crossFile;
+            private boolean selfDuplication;
+            private boolean allTestCode;
+            private boolean introducedInCommit;
+            @Builder.Default
+            private List<CloneLocation> locations = Lists.newArrayList();
+        }
+
+        @Data
+        @Builder
+        @NoArgsConstructor
+        @AllArgsConstructor
+        public static class CloneLocation {
+            private String file;
+            private int startLine;
+            private int endLine;
+            private String methodSignature;
+            private String sourceSlice;
+            private boolean testCode;
+            private boolean introducedInCommit;
+            private int linesOverlappingDiff;
+        }
+
+        @Data
+        @Builder
+        @NoArgsConstructor
+        @AllArgsConstructor
+        public static class CloneFromExisting {
+            private String affectedSignature;
+            @Builder.Default
+            private List<String> sourceSignatures = Lists.newArrayList();
+        }
+
+        @Data
+        @Builder
+        @NoArgsConstructor
+        @AllArgsConstructor
+        public static class NewCloneGroup {
+            @Builder.Default
+            private List<String> memberSignatures = Lists.newArrayList();
+        }
     }
 }

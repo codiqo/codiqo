@@ -188,7 +188,7 @@
                     <span class="text-gray-400">Date:</span>
                     <span class="text-gray-700" th:text="${timestamp}">2024-01-01</span>
                 </div>
-                <div th:if="${branches != null and #lists.size(branches) > 0}">
+                <div th:if="${!branches.isEmpty()}">
                     <span class="text-gray-400">Branch:</span>
                     <span th:each="br, stat : ${branches}" class="text-gray-700 font-mono text-xs">
                         <span th:text="${br}">main</span><span th:if="${!stat.last}">, </span>
@@ -199,7 +199,7 @@
                     <span class="text-gray-700 font-mono text-xs" th:text="${llmModel}">gpt-4</span>
                 </div>
                 <!-- Token usage info -->
-                <div th:if="${hasTokenUsage}">
+                <div th:if="${llmInputTokensFormatted != null and llmInputTokensFormatted != '0'}">
                     <span class="text-gray-400">Tokens:</span>
                     <span class="text-gray-700 text-xs">
                         <span th:text="${llmInputTokensFormatted}">0</span> in / 
@@ -304,7 +304,7 @@
                         </div>
                         
                         <!-- Static Analysis Breakdown (Math) -->
-                        <div class="col-span-2" th:if="${hasStaticBreakdown}">
+                        <div class="col-span-2" th:if="${staticBreakdownLines != null and !staticBreakdownLines.isEmpty()}">
                             <details class="bg-blue-50 rounded-lg border border-blue-200">
                                 <summary class="cursor-pointer px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100 rounded-lg">
                                     📐 Static Analysis Breakdown (How 40/100 is calculated)
@@ -326,7 +326,32 @@
                     </div>
                 </div>
             </div>
-            
+
+            <!-- Risk Assessment Card -->
+            <div th:if="${riskAssessment != null}" class="mb-6">
+                <div class="rounded-lg border-2 overflow-hidden"
+                     th:classappend="${riskLevel == 'critical'} ? 'border-red-500 bg-red-50' : (${riskLevel == 'very_high' or riskLevel == 'high'} ? 'border-orange-500 bg-orange-50' : (${riskLevel == 'moderate'} ? 'border-yellow-500 bg-yellow-50' : 'border-green-500 bg-green-50'))">
+                    <div class="px-4 py-3 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <span class="text-2xl"
+                                  th:text="${riskLevel == 'critical'} ? '🚨' : (${riskLevel == 'very_high' or riskLevel == 'high'} ? '⚠️' : (${riskLevel == 'moderate'} ? '⚡' : '✅'))">⚠️</span>
+                            <div>
+                                <span class="font-semibold text-gray-700">Risk Level:</span>
+                                <span class="font-bold uppercase ml-1"
+                                      th:classappend="${riskLevel == 'critical'} ? 'text-red-700' : (${riskLevel == 'very_high' or riskLevel == 'high'} ? 'text-orange-700' : (${riskLevel == 'moderate'} ? 'text-yellow-700' : 'text-green-700'))"
+                                      th:text="${riskLevel != null ? #strings.replace(riskLevel, '_', ' ') : 'Unknown'}">MODERATE</span>
+                            </div>
+                        </div>
+                        <div class="flex items-baseline gap-1">
+                            <span class="text-3xl font-bold"
+                                  th:classappend="${riskLevel == 'critical'} ? 'text-red-600' : (${riskLevel == 'very_high' or riskLevel == 'high'} ? 'text-orange-600' : (${riskLevel == 'moderate'} ? 'text-yellow-600' : 'text-green-600'))"
+                                  th:text="${riskScore}">78</span>
+                            <span class="text-lg text-gray-500">/100</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- LLM Summary -->
             <div class="bg-gray-50 rounded-lg p-4 mb-6">
                 <h3 class="text-sm font-semibold text-gray-500 uppercase mb-2">Executive Summary</h3>
@@ -358,10 +383,17 @@
             </div>
             
             <!-- Blast Radius Analysis -->
-            <div th:if="${hasBlastRadius}" class="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-6">
-                <h3 class="text-sm font-semibold text-orange-700 uppercase mb-3 flex items-center">
-                    <span class="mr-2">💥</span> Blast Radius Analysis
-                </h3>
+            <div th:if="${brTotalCallers != null}" class="border rounded-lg p-4 mb-6"
+                 th:classappend="${brRiskLevelClass != null} ? ${brRiskLevelClass} : 'bg-orange-50 border-orange-200'">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-sm font-semibold uppercase flex items-center"
+                        th:classappend="${brRiskLevel != null and brRiskLevel.name() == 'CRITICAL'} ? 'text-red-700' : (${brRiskLevel != null and (brRiskLevel.name() == 'HIGH' or brRiskLevel.name() == 'VERY_HIGH')} ? 'text-orange-700' : 'text-yellow-700')">
+                        <span class="mr-2">💥</span> Blast Radius Analysis
+                    </h3>
+                    <span th:if="${brRiskLevel != null}" class="px-3 py-1 rounded-full text-xs font-bold uppercase"
+                          th:classappend="${brRiskLevel.name() == 'CRITICAL'} ? 'bg-red-200 text-red-800' : (${brRiskLevel.name() == 'HIGH' or brRiskLevel.name() == 'VERY_HIGH'} ? 'bg-orange-200 text-orange-800' : (${brRiskLevel.name() == 'MODERATE'} ? 'bg-yellow-200 text-yellow-800' : 'bg-green-200 text-green-800'))"
+                          th:text="${#strings.replace(brRiskLevel.name(), '_', ' ')}">HIGH</span>
+                </div>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-3">
                     <!-- Total Callers -->
                     <div class="bg-white rounded-lg p-3 border">
@@ -404,7 +436,7 @@
             </div>
 
             <!-- Commit Tags (Technical + Functional) -->
-            <div th:if="${hasTags}" class="bg-indigo-50 border border-indigo-200 rounded-lg p-4 mb-6">
+            <div th:if="${!technicalTags.isEmpty() or !functionalTags.isEmpty()}" class="bg-indigo-50 border border-indigo-200 rounded-lg p-4 mb-6">
                 <h3 class="text-sm font-semibold text-indigo-700 uppercase mb-3 flex items-center justify-center">
                     <span class="mr-2">🏷️</span> Commit Tags
                 </h3>
@@ -435,7 +467,7 @@
             </div>
             
             <!-- Dimension Scores (Key Dimensions 0-10) -->
-            <div th:if="${hasDimensionScores}" class="mb-6">
+            <div th:if="${!dimensionScores.isEmpty()}" class="mb-6">
                 <h3 class="text-sm font-semibold text-gray-500 uppercase mb-3">Key Dimensions (0-10 Scale, N/A = Not Applicable)</h3>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div th:each="dim : ${dimensionScores}" 
@@ -465,7 +497,7 @@
                 <div class="border-b flex">
                     <button class="tab-button active" onclick="showTab('findings')">
                         Findings
-                        <span th:if="${hasFindings}" class="ml-1 px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs"
+                        <span th:if="${!findings.isEmpty()}" class="ml-1 px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs"
                               th:text="${criticalFindings + majorFindings + minorFindings}">3</span>
                     </button>
                     <button class="tab-button" onclick="showTab('recommendations')">Recommendations</button>
@@ -474,7 +506,7 @@
                 
                 <!-- Findings Tab -->
                 <div id="tab-findings" class="tab-content active p-4">
-                    <div th:if="${hasFindings}">
+                    <div th:if="${!findings.isEmpty()}">
                         <!-- Findings Summary -->
                         <div class="flex gap-4 mb-4 text-sm">
                             <span class="flex items-center">
@@ -509,12 +541,12 @@
                             </div>
                         </div>
                     </div>
-                    <p th:unless="${hasFindings}" class="text-gray-500 text-center py-4">No findings detected</p>
+                    <p th:if="${findings.isEmpty()}" class="text-gray-500 text-center py-4">No findings detected</p>
                 </div>
                 
                 <!-- Recommendations Tab -->
                 <div id="tab-recommendations" class="tab-content p-4">
-                    <div th:if="${hasRecommendations}">
+                    <div th:if="${!recommendations.isEmpty()}">
                         <ul class="space-y-2">
                             <li th:each="rec : ${recommendations}" class="flex items-start">
                                 <span class="text-green-500 mr-2">✓</span>
@@ -522,12 +554,12 @@
                             </li>
                         </ul>
                     </div>
-                    <p th:unless="${hasRecommendations}" class="text-gray-500 text-center py-4">No recommendations</p>
+                    <p th:if="${recommendations.isEmpty()}" class="text-gray-500 text-center py-4">No recommendations</p>
                 </div>
                 
                 <!-- Static Analysis Used Tab -->
                 <div id="tab-static-analysis" class="tab-content p-4">
-                    <div th:if="${hasStaticAnalysisUsed}">
+                    <div th:if="${staticAnalysisUsed != null}">
                         <div class="space-y-4">
                             <!-- Complexity Metrics -->
                             <div th:if="${staticAnalysisUsed.complexityMetrics}">
@@ -560,7 +592,7 @@
                             </div>
                         </div>
                     </div>
-                    <p th:unless="${hasStaticAnalysisUsed}" class="text-gray-500 text-center py-4">No static analysis data available</p>
+                    <p th:if="${staticAnalysisUsed == null}" class="text-gray-500 text-center py-4">No static analysis data available</p>
                 </div>
             </div>
         </section>
@@ -670,7 +702,7 @@
                                             </button>
                                         </div>
                                         <!-- Expandable callers list -->
-                                        <div th:if="${symbol.callers != null and !symbol.callers.isEmpty()}" 
+                                        <div th:if="${!symbol.callers.isEmpty()}"
                                              class="hidden mt-2 ml-6 pl-3 border-l-2 border-orange-200 text-xs space-y-1 callers-list">
                                             <div th:each="caller : ${symbol.callers}" class="flex items-center space-x-2 text-gray-600 hover:text-gray-900">
                                                 <span class="text-orange-400">↖</span>
@@ -710,10 +742,10 @@
                             </div>
                         </div>
                         <div class="flex items-center space-x-2">
-                            <button th:if="${file.hasContentBefore}" 
+                            <button th:if="${file.contentBefore != null}"
                                     th:onclick="'event.stopPropagation(); showModal(\'modal-before-' + ${fileStat.index} + '\')'"
                                     class="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">Old</button>
-                            <button th:if="${file.hasContentAfter}"
+                            <button th:if="${file.contentAfter != null}"
                                     th:onclick="'event.stopPropagation(); showModal(\'modal-after-' + ${fileStat.index} + '\')'"
                                     class="px-2 py-1 text-xs bg-blue-100 hover:bg-blue-200 text-blue-700 rounded">New</button>
                             <span class="text-gray-400 transform transition-transform" id="chevron">▼</span>
@@ -746,7 +778,7 @@
                     </div>
                     
                     <!-- Before Modal -->
-                    <div th:if="${file.hasContentBefore}" th:id="'modal-before-' + ${fileStat.index}" class="modal">
+                    <div th:if="${file.contentBefore != null}" th:id="'modal-before-' + ${fileStat.index}" class="modal">
                         <div class="modal-content">
                             <div class="modal-header">
                                 <h3 class="text-lg font-semibold text-white">
@@ -764,7 +796,7 @@
                     </div>
                     
                     <!-- After Modal -->
-                    <div th:if="${file.hasContentAfter}" th:id="'modal-after-' + ${fileStat.index}" class="modal">
+                    <div th:if="${file.contentAfter != null}" th:id="'modal-after-' + ${fileStat.index}" class="modal">
                         <div class="modal-content">
                             <div class="modal-header">
                                 <h3 class="text-lg font-semibold text-white">
@@ -785,7 +817,7 @@
         </section>
 
         <!-- PMD CPD Code Duplication Section - Token-based copy-paste detection -->
-        <section th:if="${hasCpdDuplications}" class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <section th:if="${cpdDuplicationCount != null and cpdDuplicationCount > 0}" class="bg-white rounded-lg shadow-md p-6 mb-6">
             <div class="flex items-center justify-between mb-4">
                 <div>
                     <h2 class="text-xl font-bold text-gray-800 mb-1">📋 Code Duplication Analysis (PMD CPD)</h2>
@@ -804,12 +836,12 @@
         </section>
         
         <!-- Store CPD Markdown for JavaScript rendering -->
-        <script th:if="${hasCpdDuplications}" th:inline="javascript">
+        <script th:if="${cpdDuplicationCount != null and cpdDuplicationCount > 0}" th:inline="javascript">
             var cpdMarkdownRaw = /*[[${cpdMarkdownReport}]]*/ '';
         </script>
 
         <!-- PMD Complexity Analysis Section - Cyclomatic and Cognitive complexity metrics -->
-        <section th:if="${hasComplexityAnalysis}" class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <section th:if="${complexityMarkdownReport != null}" class="bg-white rounded-lg shadow-md p-6 mb-6">
             <div class="flex items-center justify-between mb-4">
                 <div>
                     <h2 class="text-xl font-bold text-gray-800 mb-1">🧠 Code Complexity Analysis (PMD Metrics)</h2>
@@ -834,12 +866,12 @@
         </section>
         
         <!-- Store Complexity Markdown for JavaScript rendering -->
-        <script th:if="${hasComplexityAnalysis}" th:inline="javascript">
+        <script th:if="${complexityMarkdownReport != null}" th:inline="javascript">
             var complexityMarkdownRaw = /*[[${complexityMarkdownReport}]]*/ '';
         </script>
 
         <!-- JaCoCo Code Coverage Section -->
-        <section th:if="${hasCoverageAnalysis}" class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <section th:if="${coverageMarkdownReport != null}" class="bg-white rounded-lg shadow-md p-6 mb-6">
             <div class="flex items-center justify-between mb-4">
                 <div>
                     <h2 class="text-xl font-bold text-gray-800 mb-1">📊 Code Coverage Analysis (JaCoCo)</h2>
@@ -886,12 +918,12 @@
         </section>
         
         <!-- Store Coverage Markdown for JavaScript rendering -->
-        <script th:if="${hasCoverageAnalysis}" th:inline="javascript">
+        <script th:if="${coverageMarkdownReport != null}" th:inline="javascript">
             var coverageMarkdownRaw = /*[[${coverageMarkdownReport}]]*/ '';
         </script>
 
         <!-- Copy-Paste Detection Section - Shows diff code → similar existing code -->
-        <section th:if="${hasSimilarityMatches}" class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <section th:if="${!similarityMatches.isEmpty()}" class="bg-white rounded-lg shadow-md p-6 mb-6">
             <h2 class="text-xl font-bold text-gray-800 mb-2">🔍 Structural Similarity Detected</h2>
             <p class="text-sm text-gray-500 mb-4">Code from this commit appears structurally similar to existing methods in the codebase.</p>
             
@@ -976,7 +1008,7 @@
         <!-- Footer -->
         <footer class="mt-8 py-4 border-t border-gray-200 text-center text-sm text-gray-500">
             <p th:if="${repositoryName}">Repository: <span class="font-medium" th:text="${repositoryName}"></span></p>
-            <p class="mt-1">Generated by Patrianna team • AI-Powered Commit Analysis</p>
+            <p class="mt-1">Generated by Codiqo • AI-Powered Commit Analysis</p>
         </footer>
     </div>
 
