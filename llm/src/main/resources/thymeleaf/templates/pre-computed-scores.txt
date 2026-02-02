@@ -9,18 +9,23 @@ Project Normalization:
   sizeFactor: [(${#numbers.formatDecimal(scores.sizeFactor, 1, 2)})]
   modifyMult: [(${#numbers.formatDecimal(scores.modifyMult, 1, 2)})]
   addMult: [(${#numbers.formatDecimal(scores.addMult, 1, 2)})]
-  relativeAdj: [(${#numbers.formatDecimal(scores.relativeAdj, 1, 2)})]
 
-Volume Score Components:
+Content Score Components (formula: count^exponent × factor × multiplier):
   linesChanged: [(${scores.linesChanged})] -> linesScore: [(${#numbers.formatDecimal(scores.linesScore, 1, 2)})]
-  methodsModified: [(${scores.methodsModified})] -> score: [(${#numbers.formatDecimal(scores.methodsModifiedScore, 1, 2)})]
-  methodsAdded: [(${scores.methodsAdded})] -> score: [(${#numbers.formatDecimal(scores.methodsAddedScore, 1, 2)})]
+  codeBlocksModified: [(${scores.codeBlocksModified})] -> score: [(${#numbers.formatDecimal(scores.codeBlocksModifiedScore, 1, 2)})]
+  codeBlocksAdded: [(${scores.codeBlocksAdded})] -> score: [(${#numbers.formatDecimal(scores.codeBlocksAddedScore, 1, 2)})]
   classesModified: [(${scores.classesModified})] -> score: [(${#numbers.formatDecimal(scores.classesModifiedScore, 1, 2)})]
   classesAdded: [(${scores.classesAdded})] -> score: [(${#numbers.formatDecimal(scores.classesAddedScore, 1, 2)})]
+  contentScore: [(${#numbers.formatDecimal(scores.contentScore, 1, 2)})]
 
-TOTAL volumeScore: [(${#numbers.formatDecimal(scores.volumeScore, 1, 2)})]
-Default complexityMultiplier: [(${#numbers.formatDecimal(scores.defaultComplexityMultiplier, 1, 2)})]
-Base Effort (volumeScore x complexityMultiplier): [(${#numbers.formatDecimal(scores.baseEffort, 1, 2)})]
+Files Scope Multiplier (formula: 1 + rawScopeBonus × fileDensity):
+  filesChanged: [(${scores.filesChanged})]
+  fileDensity: [(${#numbers.formatDecimal(scores.fileDensity, 1, 2)})] (avgLines/file ÷ threshold, capped at 1.0)
+  filesScopeMultiplier: [(${#numbers.formatDecimal(scores.filesScopeMultiplier, 1, 2)})]
+
+TOTAL Volume Score (Content Score × Files Scope Multiplier): [(${#numbers.formatDecimal(scores.volumeScore, 1, 2)})]
+Default Complexity Multiplier: [(${#numbers.formatDecimal(scores.defaultComplexityMultiplier, 1, 2)})]
+Base Effort (Volume Score × Complexity Multiplier): [(${#numbers.formatDecimal(scores.baseEffort, 1, 2)})]
 
 ## CPD PRE-COMPUTED (MANDATORY - USE THESE EXACT VALUES):
   totalClones: [(${scores.cpdTotalClones})]
@@ -47,4 +52,4 @@ Base Effort (volumeScore x complexityMultiplier): [(${#numbers.formatDecimal(sco
 1. Use the pre-computed CPD and static analysis impacts (above)
 2. Assess coverage impact based on coverage data
 3. Assess architecture penalty/quality factor based on diff analysis
-4. Compute: `FINAL_SCORE = baseEffort x qualityMultiplier + architectureBonus`
+4. Compute: `Final Score = Base Effort × Quality Multiplier + Architecture Bonus`

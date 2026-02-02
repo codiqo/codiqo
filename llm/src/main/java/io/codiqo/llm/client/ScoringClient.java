@@ -8,6 +8,7 @@ import org.apache.commons.collections4.CollectionUtils;
 import com.google.common.collect.Lists;
 
 import io.codiqo.llm.PromptBuilder.PromptContext;
+import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import lombok.Builder;
@@ -20,6 +21,7 @@ public interface ScoringClient extends Closeable {
     @Builder
     class ScoringResult {
         LlmScoringResponse response;
+        PreComputedScores preComputedScores;
         String rawJson;
         String thinking;
         int promptTokens;

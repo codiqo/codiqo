@@ -152,10 +152,14 @@ public class LlmScoringResponse {
     public static class VolumeScore {
         private int linesChanged;
         private double linesScore;
-        private int methodsModified;
-        private double methodsModifiedScore;
-        private int methodsAdded;
-        private double methodsAddedScore;
+        private int filesChanged;
+        private double contentScore;
+        private double filesScopeMultiplier;
+        private double fileDensity;
+        private int codeBlocksModified;
+        private double codeBlocksModifiedScore;
+        private int codeBlocksAdded;
+        private double codeBlocksAddedScore;
         private int classesModified;
         private double classesModifiedScore;
         private int classesAdded;
@@ -163,7 +167,6 @@ public class LlmScoringResponse {
         private double sizeFactor;
         private double modifyMultiplier;
         private double addMultiplier;
-        private double relativeAdjustment;
         private double totalVolumeScore;
     }
 

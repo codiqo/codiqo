@@ -394,13 +394,15 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             metricsModel.setCyclomaticComplexity(metrics.cyclo());
             metricsModel.setCognitiveComplexity(metrics.cognitive());
             metricsModel.setLinesOfCode(metrics.lineCount());
-            metricsModel.setLogicalLinesOfCode(metrics.ncss().orElse(metrics.lineCount()));
+            metricsModel.setLogicalLinesOfCode(metrics.ncss());
+            metricsModel.setFanOut(metrics.fanOut());
+            metricsModel.setNpath(metrics.npath());
             codeUnitModel.setMetrics(metricsModel);
 
             fileAnalysis.project().ifPresent(spec -> {
                 ModuleQualityTracker tracker = ctx.getQualityTrackers().getUnchecked(spec.getId());
                 tracker.incrementCodeUnits();
-                tracker.addLines(metrics.lineCount());
+                tracker.addLines(metrics.ncss());
                 tracker.addComplexity(metrics.cyclo());
                 tracker.addPmdViolations(javaBlock.getPmdViolations().size());
                 tracker.addSpotbugsIssues(javaBlock.getSpotbugs().size());

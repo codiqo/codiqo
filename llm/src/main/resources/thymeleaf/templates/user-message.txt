@@ -21,9 +21,9 @@
 | Total Lines Changed | [(${request.changeSummary != null ? request.changeSummary.totalLinesChanged : 0})] |
 | Lines Added | [(${request.changeSummary != null ? request.changeSummary.linesAdded : 0})] |
 | Lines Deleted | [(${request.changeSummary != null ? request.changeSummary.linesDeleted : 0})] |
-| Symbols Added | [(${request.changeSummary != null ? request.changeSummary.methodsAdded : 0})] |
-| Symbols Modified | [(${request.changeSummary != null ? request.changeSummary.methodsModified : 0})] |
-| Symbols Deleted | [(${request.changeSummary != null ? request.changeSummary.methodsDeleted : 0})] |
+| Code Blocks Added | [(${request.changeSummary != null ? request.changeSummary.codeBlocksAdded : 0})] |
+| Code Blocks Modified | [(${request.changeSummary != null ? request.changeSummary.codeBlocksModified : 0})] |
+| Code Blocks Deleted | [(${request.changeSummary != null ? request.changeSummary.codeBlocksDeleted : 0})] |
 | Classes Added | [(${request.changeSummary != null ? request.changeSummary.classesAdded : 0})] |
 | Classes Modified | [(${request.changeSummary != null ? request.changeSummary.classesModified : 0})] |
 
@@ -44,8 +44,8 @@
 |--------|-------|
 | Total Cyclomatic | [(${request.complexity != null ? request.complexity.totalCyclomaticComplexity : 0})] |
 | Total Cognitive | [(${request.complexity != null ? request.complexity.totalCognitiveComplexity : 0})] |
-| Max Symbol Complexity | [(${request.complexity != null ? request.complexity.maxMethodComplexity : 0})] |
-| Average Symbol Complexity | [(${request.complexity != null ? request.complexity.averageMethodComplexity : 0})] |
+| Max Code Block Complexity | [(${request.complexity != null ? request.complexity.maxMethodComplexity : 0})] |
+| Average Code Block Complexity | [(${request.complexity != null ? request.complexity.averageMethodComplexity : 0})] |
 
 ---
 
@@ -104,7 +104,7 @@ The following web search results provide context about dependency upgrades and b
 
 ## Full Request Data (JSON)
 
-The complete request data including file changes, symbol changes, diffs, and callers is provided below:
+The complete request data including file changes, code block changes, diffs, and callers is provided below:
 
 ```json
 [(${requestJson})]

@@ -22,6 +22,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
 import io.codiqo.llm.client.ScoringClient.ScoringResult;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringRequest.CallerInfo;
@@ -31,7 +32,7 @@ import io.codiqo.llm.schema.LlmScoringRequest.DuplicationInfo.CloneFromExisting;
 import io.codiqo.llm.schema.LlmScoringRequest.DuplicationInfo.CloneLocation;
 import io.codiqo.llm.schema.LlmScoringRequest.DuplicationInfo.NewCloneGroup;
 import io.codiqo.llm.schema.LlmScoringRequest.FileChange;
-import io.codiqo.llm.schema.LlmScoringRequest.MethodChange;
+import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import io.codiqo.llm.schema.LlmScoringResponse.ArchitectureAnalysis;
 import io.codiqo.llm.schema.LlmScoringResponse.ArchitectureEffortBonus;
@@ -128,7 +129,21 @@ public class HtmlReportBuilder implements ReportBuilder {
         ctx.setVariable("changeClassification", response.getChangeClassification());
         ctx.setVariable("scoreCalculation", response.getScoreCalculation());
         ctx.setVariable("seniorReviewScore", response.getRequiresSeniorReview());
-        populateEffortBreakdown(ctx, response);
+        ctx.setVariable("volumeExponent", formatScore(args.getVolumeExponent()));
+        ctx.setVariable("filesScopeFactor", formatScore(args.getFilesScopeFactor()));
+        ctx.setVariable("fileDensityThreshold", formatScore(args.getFileDensityThreshold()));
+        ctx.setVariable("linesLogFactor", formatScore(args.getLinesLogFactor()));
+        ctx.setVariable("codeBlocksModLogFactor", formatScore(args.getCodeBlocksModifiedLogFactor()));
+        ctx.setVariable("codeBlocksAddLogFactor", formatScore(args.getCodeBlocksAddedLogFactor()));
+        ctx.setVariable("classesModLogFactor", formatScore(args.getClassesModifiedLogFactor()));
+        ctx.setVariable("classesAddLogFactor", formatScore(args.getClassesAddedLogFactor()));
+        ctx.setVariable("architectureBonusFactor", formatScore(args.getArchitectureBonusFactor()));
+        ctx.setVariable("qualityMultiplierMin", formatScore(args.getQualityMultiplierMin()));
+        ctx.setVariable("qualityMultiplierMax", formatScore(args.getQualityMultiplierMax()));
+        ctx.setVariable("complexityTrivialMax", args.getComplexityTrivialMax());
+        ctx.setVariable("complexityModerateMax", args.getComplexityModerateMax());
+        ctx.setVariable("complexityComplexMax", args.getComplexityComplexMax());
+        populateEffortBreakdown(ctx, response, result.getPreComputedScores());
         populateQualityMultiplier(ctx, response);
         populateArchitectureBonus(ctx, response);
         populateRiskAssessment(ctx, response);
@@ -173,7 +188,7 @@ public class HtmlReportBuilder implements ReportBuilder {
         int totalFiles = Objects.nonNull(request.getFileChanges()) ? request.getFileChanges().size() : 0;
         ctx.setVariable("totalFilesChanged", totalFiles);
         ctx.setVariable("javaFilesChanged", countJavaFiles(request));
-        ctx.setVariable("totalAffectedSymbols", countAffectedSymbols(request));
+        ctx.setVariable("totalAffectedCodeBlocks", countAffectedCodeBlocks(request));
         ctx.setVariable("confirmedErrorCount", countConfirmedErrors(response));
         ctx.setVariable("files", buildFileViews(request));
         populateCpdDetails(ctx, request);
@@ -188,7 +203,7 @@ public class HtmlReportBuilder implements ReportBuilder {
         ctx.setVariable("similarityMatches", Collections.emptyList());
         return templateEngine.process(TEMPLATE_COMMIT_ANALYSIS, ctx);
     }
-    private static void populateEffortBreakdown(Context ctx, LlmScoringResponse response) {
+    private static void populateEffortBreakdown(Context ctx, LlmScoringResponse response, PreComputedScores preComputed) {
         EffortBreakdown breakdown = response.getEffortBreakdown();
         if (Objects.isNull(breakdown)) {
             ctx.setVariable("volumeScore", null);
@@ -198,20 +213,42 @@ public class HtmlReportBuilder implements ReportBuilder {
         }
         VolumeScore volume = breakdown.getVolumeScore();
         ctx.setVariable("volumeScore", volume);
-        if (Objects.nonNull(volume)) {
+        if (Objects.nonNull(preComputed)) {
+            ctx.setVariable("linesChanged", preComputed.getLinesChanged());
+            ctx.setVariable("linesScore", formatScore(preComputed.getLinesScore()));
+            ctx.setVariable("filesChanged", preComputed.getFilesChanged());
+            ctx.setVariable("contentScore", formatScore(preComputed.getContentScore()));
+            ctx.setVariable("filesScopeMultiplier", formatScore(preComputed.getFilesScopeMultiplier()));
+            ctx.setVariable("fileDensity", formatScore(preComputed.getFileDensity()));
+            ctx.setVariable("codeBlocksModified", preComputed.getCodeBlocksModified());
+            ctx.setVariable("codeBlocksModifiedScore", formatScore(preComputed.getCodeBlocksModifiedScore()));
+            ctx.setVariable("codeBlocksAdded", preComputed.getCodeBlocksAdded());
+            ctx.setVariable("codeBlocksAddedScore", formatScore(preComputed.getCodeBlocksAddedScore()));
+            ctx.setVariable("classesModified", preComputed.getClassesModified());
+            ctx.setVariable("classesModifiedScore", formatScore(preComputed.getClassesModifiedScore()));
+            ctx.setVariable("classesAdded", preComputed.getClassesAdded());
+            ctx.setVariable("classesAddedScore", formatScore(preComputed.getClassesAddedScore()));
+            ctx.setVariable("totalVolumeScore", formatScore(preComputed.getVolumeScore()));
+            ctx.setVariable("sizeFactor", formatScore(preComputed.getSizeFactor()));
+            ctx.setVariable("volModifyMult", formatScore(preComputed.getModifyMult()));
+            ctx.setVariable("volAddMult", formatScore(preComputed.getAddMult()));
+        } else if (Objects.nonNull(volume)) {
             ctx.setVariable("linesChanged", volume.getLinesChanged());
             ctx.setVariable("linesScore", formatScore(volume.getLinesScore()));
-            ctx.setVariable("methodsModified", volume.getMethodsModified());
-            ctx.setVariable("methodsModifiedScore", formatScore(volume.getMethodsModifiedScore()));
-            ctx.setVariable("methodsAdded", volume.getMethodsAdded());
-            ctx.setVariable("methodsAddedScore", formatScore(volume.getMethodsAddedScore()));
+            ctx.setVariable("filesChanged", volume.getFilesChanged());
+            ctx.setVariable("contentScore", formatScore(volume.getContentScore()));
+            ctx.setVariable("filesScopeMultiplier", formatScore(volume.getFilesScopeMultiplier()));
+            ctx.setVariable("fileDensity", formatScore(volume.getFileDensity()));
+            ctx.setVariable("codeBlocksModified", volume.getCodeBlocksModified());
+            ctx.setVariable("codeBlocksModifiedScore", formatScore(volume.getCodeBlocksModifiedScore()));
+            ctx.setVariable("codeBlocksAdded", volume.getCodeBlocksAdded());
+            ctx.setVariable("codeBlocksAddedScore", formatScore(volume.getCodeBlocksAddedScore()));
             ctx.setVariable("classesModified", volume.getClassesModified());
             ctx.setVariable("classesModifiedScore", formatScore(volume.getClassesModifiedScore()));
             ctx.setVariable("classesAdded", volume.getClassesAdded());
             ctx.setVariable("classesAddedScore", formatScore(volume.getClassesAddedScore()));
             ctx.setVariable("totalVolumeScore", formatScore(volume.getTotalVolumeScore()));
             ctx.setVariable("sizeFactor", formatScore(volume.getSizeFactor()));
-            ctx.setVariable("relativeAdj", formatScore(volume.getRelativeAdjustment()));
             ctx.setVariable("volModifyMult", formatScore(volume.getModifyMultiplier()));
             ctx.setVariable("volAddMult", formatScore(volume.getAddMultiplier()));
         }
@@ -528,8 +565,8 @@ public class HtmlReportBuilder implements ReportBuilder {
         int totalCallers = 0;
         int productionCallers = 0;
         int testCallers = 0;
-        if (Objects.nonNull(request.getMethodChanges())) {
-            for (MethodChange method : request.getMethodChanges()) {
+        if (Objects.nonNull(request.getCodeBlockChanges())) {
+            for (CodeBlockChange method : request.getCodeBlockChanges()) {
                 if (Objects.nonNull(method.getCallers())) {
                     for (CallerInfo caller : method.getCallers()) {
                         totalCallers++;
@@ -565,7 +602,9 @@ public class HtmlReportBuilder implements ReportBuilder {
         }
         String brRiskLevel = Objects.nonNull(br.getRiskLevel()) ? br.getRiskLevel().name().toLowerCase() : null;
         ctx.setVariable("brRiskLevel", brRiskLevel);
-        ctx.setVariable("brCriticalCallers", Optional.ofNullable(br.getCriticalCallers()).orElse(Collections.emptyList()));
+        List<String> criticalCallers = Optional.ofNullable(br.getCriticalCallers()).orElse(Collections.emptyList());
+        ctx.setVariable("brCriticalCallers", Lists.transform(criticalCallers,
+                c -> c.replace("<init>", ".<init>").replace("..<init>", ".<init>")));
         ctx.setVariable("brExplanation", br.getExplanation());
         String brModuleType = Objects.nonNull(br.getModuleType()) ? br.getModuleType().name().toLowerCase() : null;
         ctx.setVariable("brModuleType", brModuleType);
@@ -694,9 +733,9 @@ public class HtmlReportBuilder implements ReportBuilder {
         }
         return 0;
     }
-    private static int countAffectedSymbols(LlmScoringRequest request) {
-        if (Objects.nonNull(request.getMethodChanges())) {
-            return request.getMethodChanges().size();
+    private static int countAffectedCodeBlocks(LlmScoringRequest request) {
+        if (Objects.nonNull(request.getCodeBlockChanges())) {
+            return request.getCodeBlockChanges().size();
         }
         return 0;
     }
@@ -710,9 +749,9 @@ public class HtmlReportBuilder implements ReportBuilder {
         if (Objects.isNull(request.getFileChanges())) {
             return Collections.emptyList();
         }
-        Map<String, List<MethodChange>> methodsByFile = Maps.newHashMap();
-        if (Objects.nonNull(request.getMethodChanges())) {
-            for (MethodChange method : request.getMethodChanges()) {
+        Map<String, List<CodeBlockChange>> methodsByFile = Maps.newHashMap();
+        if (Objects.nonNull(request.getCodeBlockChanges())) {
+            for (CodeBlockChange method : request.getCodeBlockChanges()) {
                 if (Objects.nonNull(method.getFile())) {
                     methodsByFile.computeIfAbsent(method.getFile(), k -> Lists.newArrayList()).add(method);
                 }
@@ -732,10 +771,10 @@ public class HtmlReportBuilder implements ReportBuilder {
             }
             String fileType = Objects.nonNull(file.getLanguage()) ? file.getLanguage() : getFileType(path);
             String changeType = normalizeChangeType(file.getChangeType());
-            List<SymbolView> symbols = Lists.newArrayList();
-            List<MethodChange> methods = methodsByFile.get(originalPath);
+            List<CodeBlockView> symbols = Lists.newArrayList();
+            List<CodeBlockChange> methods = methodsByFile.get(originalPath);
             if (Objects.isNull(methods)) {
-                for (Map.Entry<String, List<MethodChange>> entry : methodsByFile.entrySet()) {
+                for (Map.Entry<String, List<CodeBlockChange>> entry : methodsByFile.entrySet()) {
                     if (entry.getKey().endsWith(path) || originalPath.endsWith(entry.getKey())) {
                         methods = entry.getValue();
                         break;
@@ -743,8 +782,8 @@ public class HtmlReportBuilder implements ReportBuilder {
                 }
             }
             if (Objects.nonNull(methods)) {
-                for (MethodChange method : methods) {
-                    symbols.add(buildSymbolView(method));
+                for (CodeBlockChange method : methods) {
+                    symbols.add(buildCodeBlockView(method));
                 }
             }
             toReturn.add(FileView.builder()
@@ -753,12 +792,12 @@ public class HtmlReportBuilder implements ReportBuilder {
                     .fileType(fileType)
                     .changeType(changeType)
                     .diff(file.getDiff())
-                    .affectedSymbols(symbols)
+                    .affectedCodeBlocks(symbols)
                     .build());
         }
         return toReturn;
     }
-    private static SymbolView buildSymbolView(MethodChange method) {
+    private static CodeBlockView buildCodeBlockView(CodeBlockChange method) {
         List<CallerView> callerViews = Lists.newArrayList();
         if (Objects.nonNull(method.getCallers())) {
             for (CallerInfo caller : method.getCallers()) {
@@ -785,8 +824,8 @@ public class HtmlReportBuilder implements ReportBuilder {
                 containerName = classNameStart >= 0 ? beforeMethod.substring(classNameStart + 1) : beforeMethod;
             }
         }
-        return SymbolView.builder()
-                .name(method.getMethodName())
+        return CodeBlockView.builder()
+                .name(method.getName())
                 .signature(method.getSignature())
                 .constructor(method.isConstructor())
                 .lineRange(lineRange)
@@ -926,11 +965,11 @@ public class HtmlReportBuilder implements ReportBuilder {
         String contentBefore;
         String contentAfter;
         @lombok.Builder.Default
-        List<SymbolView> affectedSymbols = Lists.newArrayList();
+        List<CodeBlockView> affectedCodeBlocks = Lists.newArrayList();
     }
     @Value
     @Builder
-    public static class SymbolView {
+    public static class CodeBlockView {
         String name;
         String signature;
         boolean constructor;

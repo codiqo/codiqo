@@ -5,227 +5,134 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title th:text="'Commit Analysis: ' + ${commitIdShort}">Commit Analysis</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/scala.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/diff.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/properties.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/gradle.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
-    <style>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@latest/styles/github-dark.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/highlight.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/java.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/kotlin.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/scala.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/python.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/go.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/rust.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/typescript.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/javascript.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/xml.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/yaml.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/json.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/sql.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/diff.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/properties.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/gradle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@latest/marked.min.js"></script>
+    <style type="text/tailwindcss">
         /* Custom scrollbar for code blocks */
         pre { scrollbar-width: thin; }
         pre::-webkit-scrollbar { height: 8px; width: 8px; }
-        pre::-webkit-scrollbar-track { background: #1e293b; }
-        pre::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
-        pre::-webkit-scrollbar-thumb:hover { background: #64748b; }
-        
+        pre::-webkit-scrollbar-track { background: theme(colors.slate.800); }
+        pre::-webkit-scrollbar-thumb { @apply rounded; background: theme(colors.slate.600); }
+        pre::-webkit-scrollbar-thumb:hover { background: theme(colors.slate.500); }
+
         /* Modal styles */
-        .modal { 
-            display: none; 
-            position: fixed; 
-            top: 0; left: 0; right: 0; bottom: 0; 
-            background: rgba(0, 0, 0, 0.8); 
-            z-index: 1000; 
-            overflow-y: auto;
-        }
-        .modal.active { display: flex; justify-content: center; align-items: flex-start; padding: 2rem; }
-        .modal-content { 
-            background: #1e293b; 
-            border-radius: 8px; 
-            max-width: 90%; 
-            width: 100%; 
-            max-height: 90vh;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-        }
-        .modal-header { 
-            padding: 1rem; 
-            border-bottom: 1px solid #334155; 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center;
-            flex-shrink: 0;
-        }
-        .code-content { 
-            overflow: auto; 
-            flex: 1;
-            max-height: calc(90vh - 60px);
-        }
-        .code-content pre { margin: 0; }
-        .code-content code { padding: 1rem !important; display: block; }
-        
-        /* Danger level colors */
-        .danger-critical { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
-        .danger-high { background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); }
-        .danger-medium { background: linear-gradient(135deg, #eab308 0%, #ca8a04 100%); }
-        .danger-low { background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%); }
-        
+        .modal { @apply hidden fixed inset-0 z-[1000] overflow-y-auto; background: rgba(0, 0, 0, 0.8); }
+        .modal.active { @apply flex justify-center items-start p-8; }
+        .modal-content { @apply bg-slate-800 rounded-lg w-full overflow-hidden flex flex-col; max-width: 90%; max-height: 90vh; }
+        .modal-header { @apply p-4 border-b border-slate-700 flex justify-between items-center shrink-0; }
+        .code-content { @apply overflow-auto flex-1; max-height: calc(90vh - 60px); }
+        .code-content pre { @apply m-0; }
+        .code-content code { @apply block !p-4; }
+
+        /* Danger level gradients */
+        .danger-critical { background: linear-gradient(135deg, theme(colors.red.500) 0%, theme(colors.red.600) 100%); }
+        .danger-high { background: linear-gradient(135deg, theme(colors.orange.500) 0%, theme(colors.orange.600) 100%); }
+        .danger-medium { background: linear-gradient(135deg, theme(colors.yellow.500) 0%, theme(colors.yellow.600) 100%); }
+        .danger-low { background: linear-gradient(135deg, theme(colors.green.500) 0%, theme(colors.green.600) 100%); }
+
         /* Severity colors */
-        .severity-critical { background-color: #fef2f2; border-left: 4px solid #ef4444; }
-        .severity-major { background-color: #fffbeb; border-left: 4px solid #f59e0b; }
-        .severity-minor { background-color: #f0fdf4; border-left: 4px solid #22c55e; }
-        
+        .severity-critical { @apply bg-red-50 border-l-4 border-l-red-500; }
+        .severity-major { @apply bg-amber-50 border-l-4 border-l-amber-500; }
+        .severity-minor { @apply bg-green-50 border-l-4 border-l-green-500; }
+
         /* Dimension score text colors */
-        .score-critical { color: #ef4444; }
-        .score-major { color: #f59e0b; }
-        .score-moderate { color: #eab308; }
-        .score-low { color: #22c55e; }
-        .score-na { color: #9ca3af; font-style: italic; }
-        
+        .score-critical { @apply text-red-500; }
+        .score-major { @apply text-amber-500; }
+        .score-moderate { @apply text-yellow-500; }
+        .score-low { @apply text-green-500; }
+        .score-na { @apply text-gray-400 italic; }
+
         /* Dimension score progress bar colors */
-        .bar-critical { background-color: #ef4444; }
-        .bar-major { background-color: #f59e0b; }
-        .bar-moderate { background-color: #eab308; }
-        .bar-low { background-color: #22c55e; }
-        .bar-na { background-color: #d1d5db; }
-        
+        .bar-critical { @apply bg-red-500; }
+        .bar-major { @apply bg-amber-500; }
+        .bar-moderate { @apply bg-yellow-500; }
+        .bar-low { @apply bg-green-500; }
+        .bar-na { @apply bg-gray-300; }
+
         /* Similarity match border colors */
-        .similarity-critical { border-left-color: #ef4444 !important; background-color: #fef2f2; }
-        .similarity-high { border-left-color: #f97316 !important; background-color: #fff7ed; }
-        .similarity-medium { border-left-color: #eab308 !important; background-color: #fefce8; }
-        .similarity-low { border-left-color: #22c55e !important; background-color: #f0fdf4; }
-        
+        .similarity-critical { @apply bg-red-50; border-left-color: theme(colors.red.500) !important; }
+        .similarity-high { @apply bg-orange-50; border-left-color: theme(colors.orange.500) !important; }
+        .similarity-medium { @apply bg-yellow-50; border-left-color: theme(colors.yellow.500) !important; }
+        .similarity-low { @apply bg-green-50; border-left-color: theme(colors.green.500) !important; }
+
         /* Progress bar animation */
-        @keyframes fillProgress {
-            from { width: 0; }
-        }
-        .progress-fill {
-            animation: fillProgress 1s ease-out forwards;
-        }
-        
+        @keyframes fillProgress { from { width: 0; } }
+        .progress-fill { animation: fillProgress 1s ease-out forwards; }
+
         /* Collapsible sections */
-        .collapsible-content {
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.3s ease-out;
-        }
-        .collapsible-content.expanded {
-            max-height: 2000px;
-        }
-        
+        .collapsible-content { @apply max-h-0 overflow-hidden; transition: max-height 0.3s ease-out; }
+        .collapsible-content.expanded { max-height: 2000px; }
+
         /* Tab styles */
-        .tab-button {
-            padding: 0.75rem 1.5rem;
-            border-bottom: 2px solid transparent;
-            transition: all 0.2s;
-        }
-        .tab-button.active {
-            border-bottom-color: #3b82f6;
-            color: #3b82f6;
-        }
-        .tab-content {
-            display: none;
-        }
-        .tab-content.active {
-            display: block;
-        }
-        
+        .tab-button { @apply py-3 px-6 border-b-2 border-transparent transition-all; }
+        .tab-button.active { @apply border-b-blue-500 text-blue-500; }
+        .tab-content { @apply hidden; }
+        .tab-content.active { @apply block; }
+
         /* Score gauge */
-        .score-gauge {
-            position: relative;
-            width: 100px;
-            height: 100px;
-        }
-        .score-gauge svg {
-            transform: rotate(-90deg);
-        }
-        .score-gauge .score-text {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            font-size: 1.25rem;
-            font-weight: bold;
-        }
-        
+        .score-gauge { @apply relative; width: 100px; height: 100px; }
+        .score-gauge svg { transform: rotate(-90deg); }
+        .score-gauge .score-text { @apply absolute top-1/2 left-1/2 text-xl font-bold; transform: translate(-50%, -50%); }
+
         /* Markdown prose styling for LLM thinking */
-        .prose h1 { font-size: 1.5rem; font-weight: 700; margin-top: 1rem; margin-bottom: 0.5rem; color: #1f2937; }
-        .prose h2 { font-size: 1.25rem; font-weight: 600; margin-top: 1rem; margin-bottom: 0.5rem; color: #374151; }
-        .prose h3 { font-size: 1.1rem; font-weight: 600; margin-top: 0.75rem; margin-bottom: 0.25rem; color: #4b5563; }
-        .prose p { margin-bottom: 0.5rem; line-height: 1.6; }
-        .prose ul, .prose ol { margin-left: 1.5rem; margin-bottom: 0.5rem; }
-        .prose li { margin-bottom: 0.25rem; }
-        .prose ul { list-style-type: disc; }
-        .prose ol { list-style-type: decimal; }
-        .prose strong { font-weight: 600; color: #1f2937; }
-        .prose em { font-style: italic; }
-        .prose code { background: #f3f4f6; padding: 0.125rem 0.375rem; border-radius: 0.25rem; font-size: 0.875em; }
-        .prose pre { background: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; margin: 0.5rem 0; }
-        .prose pre code { background: transparent; padding: 0; color: inherit; }
-        .prose blockquote { border-left: 4px solid #7c3aed; padding-left: 1rem; margin: 0.5rem 0; color: #6b7280; font-style: italic; }
-        .prose hr { border-color: #e5e7eb; margin: 1rem 0; }
-        .prose a { color: #7c3aed; text-decoration: underline; }
-        .prose table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; }
-        .prose th, .prose td { border: 1px solid #e5e7eb; padding: 0.5rem; text-align: left; }
-        .prose th { background: #f9fafb; font-weight: 600; }
+        .prose h1 { @apply text-2xl font-bold mt-4 mb-2 text-gray-800; }
+        .prose h2 { @apply text-xl font-semibold mt-4 mb-2 text-gray-700; }
+        .prose h3 { @apply font-semibold mt-3 mb-1 text-gray-600; font-size: 1.1rem; }
+        .prose p { @apply mb-2; line-height: 1.6; }
+        .prose ul, .prose ol { @apply ml-6 mb-2; }
+        .prose li { @apply mb-1; }
+        .prose ul { @apply list-disc; }
+        .prose ol { @apply list-decimal; }
+        .prose strong { @apply font-semibold text-gray-800; }
+        .prose em { @apply italic; }
+        .prose code { @apply bg-gray-100 rounded text-sm; padding: 0.125rem 0.375rem; }
+        .prose pre { @apply bg-slate-800 text-slate-200 p-4 rounded-lg overflow-x-auto my-2; }
+        .prose pre code { @apply bg-transparent p-0; color: inherit; }
+        .prose blockquote { @apply border-l-4 border-l-violet-600 pl-4 my-2 text-gray-500 italic; }
+        .prose hr { @apply border-gray-200 my-4; }
+        .prose a { @apply text-violet-600 underline; }
+        .prose table { @apply w-full border-collapse my-2; }
+        .prose th, .prose td { @apply border border-gray-200 p-2 text-left; }
+        .prose th { @apply bg-gray-50 font-semibold; }
 
         /* Tooltip popover styles */
         .tooltip-trigger {
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 16px;
-            height: 16px;
-            background: #e5e7eb;
-            border-radius: 50%;
-            font-size: 10px;
-            color: #6b7280;
-            margin-left: 4px;
-            transition: all 0.2s;
+            @apply cursor-pointer inline-flex items-center justify-center rounded-full ml-1 text-gray-500 transition-all;
+            width: 16px; height: 16px; font-size: 10px;
+            background: theme(colors.gray.200);
         }
-        .tooltip-trigger:hover {
-            background: #3b82f6;
-            color: white;
-        }
+        .tooltip-trigger:hover { @apply bg-blue-500 text-white; }
         .tooltip-popover {
-            display: none;
-            position: absolute;
-            z-index: 100;
-            background: #1f2937;
-            color: #f3f4f6;
-            padding: 12px 16px;
-            border-radius: 8px;
-            font-size: 12px;
-            line-height: 1.5;
-            max-width: 320px;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
-            white-space: normal;
+            @apply hidden absolute z-[100] bg-gray-800 text-gray-100 rounded-lg text-xs leading-relaxed;
+            padding: 12px 16px; max-width: 320px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3); white-space: normal;
         }
-        .tooltip-popover.active {
-            display: block;
-        }
+        .tooltip-popover.active { @apply block; }
         .tooltip-popover::before {
-            content: '';
-            position: absolute;
-            top: -6px;
-            left: 20px;
+            content: ''; @apply absolute;
+            top: -6px; left: 20px;
             border-left: 6px solid transparent;
             border-right: 6px solid transparent;
-            border-bottom: 6px solid #1f2937;
+            border-bottom: 6px solid theme(colors.gray.800);
         }
-        .tooltip-popover code {
-            background: #374151;
-            padding: 1px 4px;
-            border-radius: 3px;
-            font-family: monospace;
-        }
-        .has-tooltip {
-            position: relative;
-        }
+        .tooltip-popover code { @apply bg-gray-700 rounded font-mono; padding: 1px 4px; }
+        .has-tooltip { @apply relative; }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-900">
@@ -301,8 +208,8 @@
                     <span class="text-white font-bold text-sm" th:text="${totalFilesChanged}">0</span>
                 </div>
                 <div class="flex items-center gap-1.5 bg-slate-900/50 border border-blue-500/30 rounded-lg px-3 py-1.5">
-                    <span class="text-blue-300 text-xs">Symbols</span>
-                    <span class="text-white font-bold text-sm" th:text="${totalAffectedSymbols}">0</span>
+                    <span class="text-blue-300 text-xs">Code Blocks</span>
+                    <span class="text-white font-bold text-sm" th:text="${totalAffectedCodeBlocks}">0</span>
                 </div>
                 <div th:if="${confirmedErrorCount > 0}" class="flex items-center gap-1.5 bg-red-900/30 border border-red-500/40 rounded-lg px-3 py-1.5">
                     <span class="text-red-300 text-xs">Errors</span>
@@ -350,41 +257,41 @@
                 <!-- Score Formula & Components - Flex grow to fill remaining space -->
                 <div class="flex-1 flex flex-col gap-3">
                     <!-- Score Calculation Formula -->
-                    <div class="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg p-3 flex-1 flex items-center justify-center">
+                    <div class="bg-white/80 rounded-lg p-3 flex-1 flex items-center justify-center border border-gray-200">
                         <div class="text-center">
                             <p class="text-xs text-gray-500 uppercase mb-1">Final Score Calculation</p>
                             <p class="font-mono text-lg font-bold text-gray-800" th:text="${scoreCalculation}">68.34 × 1.15 + 4.92 = 83.51</p>
-                            <p class="text-xs text-gray-500 mt-1">Base Effort × Quality Multiplier + Architecture Bonus</p>
+                            <p class="text-xs text-gray-400 mt-1">Base Effort × Quality Multiplier + Arch Bonus</p>
                         </div>
                     </div>
 
                     <div class="grid grid-cols-3 gap-3">
                         <!-- Base Effort -->
-                        <div class="bg-blue-50 rounded-lg p-3 text-center flex flex-col justify-center">
+                        <div class="bg-slate-50 rounded-lg p-3 text-center flex flex-col justify-center border border-slate-200">
                             <p class="text-xs text-gray-500 uppercase">Base Effort</p>
-                            <p class="text-xl font-bold text-blue-600" th:text="${baseEffortScore}">68.34</p>
+                            <p class="text-xl font-bold text-slate-800" th:text="${baseEffortScore}">68.34</p>
                             <p class="text-xs text-gray-400">Volume × Complexity</p>
                         </div>
 
                         <!-- Quality Multiplier -->
-                        <div class="bg-purple-50 rounded-lg p-3 text-center flex flex-col justify-center">
+                        <div class="bg-slate-50 rounded-lg p-3 text-center flex flex-col justify-center border border-slate-200">
                             <p class="text-xs text-gray-500 uppercase">Quality Multiplier</p>
                             <p class="text-xl font-bold"
-                               th:classappend="${qualityMultiplierPositive} ? 'text-green-600' : 'text-orange-600'"
+                               th:classappend="${qualityMultiplierPositive} ? 'text-green-600' : 'text-red-500'"
                                th:text="${finalQualityMultiplier != null ? finalQualityMultiplier + '×' : 'N/A'}">1.15×</p>
                             <p class="text-xs text-gray-400">CPD + Coverage + Arch</p>
                         </div>
 
                         <!-- Architecture Bonus -->
-                        <div class="bg-green-50 rounded-lg p-3 text-center flex flex-col justify-center" th:if="${architectureBonus != null}">
+                        <div class="bg-slate-50 rounded-lg p-3 text-center flex flex-col justify-center border border-slate-200" th:if="${architectureBonus != null}">
                             <p class="text-xs text-gray-500 uppercase">Arch Bonus</p>
-                            <p class="text-xl font-bold text-green-600" th:text="'+' + ${bonusPoints}">+4.92</p>
+                            <p class="text-xl font-bold text-slate-800" th:text="'+' + ${bonusPoints}">+4.92</p>
                             <p class="text-xs text-gray-400">Quality Factor: <span th:text="${qualityFactor}">0.85</span></p>
                         </div>
-                        <div class="bg-gray-50 rounded-lg p-3 text-center flex flex-col justify-center" th:unless="${architectureBonus != null}">
+                        <div class="bg-slate-50 rounded-lg p-3 text-center flex flex-col justify-center border border-slate-200" th:unless="${architectureBonus != null}">
                             <p class="text-xs text-gray-500 uppercase">Arch Bonus</p>
                             <p class="text-xl font-bold text-gray-400">N/A</p>
-                            <p class="text-xs text-gray-400">Not applicable</p>
+                            <p class="text-xs text-gray-400">Not Applicable</p>
                         </div>
                     </div>
                 </div>
@@ -423,13 +330,12 @@
                                 <span class="tooltip-trigger" data-tooltip="volume-main">?</span>
                                 <div id="tooltip-volume-main" class="tooltip-popover">
                                     <strong>Volume Score Formula:</strong><br>
-                                    <code>score = ln(1 + count) × factor × multiplier</code><br><br>
+                                    <code>score = count<sup th:text="${volumeExponent}">0.75</sup> × factor × multiplier</code><br><br>
                                     <strong>Project Size Multipliers:</strong><br>
                                     • sizeFactor = <span th:text="${sizeFactor}">0.00</span><br>
-                                    • relativeAdj = <span th:text="${relativeAdj}">1.00</span> (for lines)<br>
                                     • modifyMult = <span th:text="${volModifyMult}">1.00</span> (for modifications)<br>
                                     • addMult = <span th:text="${volAddMult}">1.00</span> (for additions)<br><br>
-                                    Logarithmic scaling ensures small changes get meaningful scores while large changes don't explode.
+                                    Power-law scaling preserves magnitude differences while providing diminishing returns.
                                 </div>
                             </h4>
                             <table class="w-full text-xs">
@@ -446,46 +352,45 @@
                                             Lines Changed
                                             <span class="tooltip-trigger" data-tooltip="lines">?</span>
                                             <div id="tooltip-lines" class="tooltip-popover">
-                                                <strong>Formula:</strong> <code>ln(1 + <span th:text="${linesChanged}">0</span>) × 5.0 × <span th:text="${relativeAdj}">1.00</span></code><br><br>
-                                                <strong>relativeAdj = <span th:text="${relativeAdj}">1.00</span></strong> (project size normalization)<br>
-                                                Logarithmic scaling prevents large diffs from dominating.
+                                                <strong>Formula:</strong> <code><span th:text="${linesChanged}">0</span><sup th:text="${volumeExponent}">0.75</sup> × 5.0</code><br><br>
+                                                Power-law scaling preserves magnitude differences between small and large commits.
                                             </div>
                                         </td>
                                         <td class="py-1 text-right font-mono" th:text="${linesChanged}">0</td>
                                         <td class="py-1 text-right font-bold text-blue-600" th:text="${linesScore}">0.00</td>
                                     </tr>
-                                    <tr th:if="${methodsModified > 0}" class="border-b has-tooltip">
+                                    <tr th:if="${codeBlocksModified > 0}" class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
-                                            Symbols Modified
-                                            <span class="tooltip-trigger" data-tooltip="methods-mod">?</span>
-                                            <div id="tooltip-methods-mod" class="tooltip-popover">
-                                                <strong>Formula:</strong> <code>ln(1 + <span th:text="${methodsModified}">0</span>) × 6.0 × <span th:text="${volModifyMult}">1.00</span></code><br><br>
+                                            Code Blocks Modified
+                                            <span class="tooltip-trigger" data-tooltip="codeblocks-mod">?</span>
+                                            <div id="tooltip-codeblocks-mod" class="tooltip-popover">
+                                                <strong>Formula:</strong> <code><span th:text="${codeBlocksModified}">0</span><sup th:text="${volumeExponent}">0.75</sup> × 6.0 × <span th:text="${volModifyMult}">1.00</span></code><br><br>
                                                 <strong>modifyMult = <span th:text="${volModifyMult}">1.00</span></strong> (bonus for modifying complex code)<br>
                                                 Higher multiplier rewards touching complex code in large projects.
                                             </div>
                                         </td>
-                                        <td class="py-1 text-right font-mono" th:text="${methodsModified}">0</td>
-                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${methodsModifiedScore}">0.00</td>
+                                        <td class="py-1 text-right font-mono" th:text="${codeBlocksModified}">0</td>
+                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${codeBlocksModifiedScore}">0.00</td>
                                     </tr>
-                                    <tr th:if="${methodsAdded > 0}" class="border-b has-tooltip">
+                                    <tr th:if="${codeBlocksAdded > 0}" class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
-                                            Symbols Added
-                                            <span class="tooltip-trigger" data-tooltip="methods-add">?</span>
-                                            <div id="tooltip-methods-add" class="tooltip-popover">
-                                                <strong>Formula:</strong> <code>ln(1 + <span th:text="${methodsAdded}">0</span>) × 8.0 × <span th:text="${volAddMult}">1.00</span></code><br><br>
+                                            Code Blocks Added
+                                            <span class="tooltip-trigger" data-tooltip="codeblocks-add">?</span>
+                                            <div id="tooltip-codeblocks-add" class="tooltip-popover">
+                                                <strong>Formula:</strong> <code><span th:text="${codeBlocksAdded}">0</span><sup th:text="${volumeExponent}">0.75</sup> × 8.0 × <span th:text="${volAddMult}">1.00</span></code><br><br>
                                                 <strong>addMult = <span th:text="${volAddMult}">1.00</span></strong> (adjusted for project size)<br>
-                                                New symbols have higher base factor (8.0) for new functionality.
+                                                New code blocks have higher base factor (8.0) for new functionality.
                                             </div>
                                         </td>
-                                        <td class="py-1 text-right font-mono" th:text="${methodsAdded}">0</td>
-                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${methodsAddedScore}">0.00</td>
+                                        <td class="py-1 text-right font-mono" th:text="${codeBlocksAdded}">0</td>
+                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${codeBlocksAddedScore}">0.00</td>
                                     </tr>
                                     <tr th:if="${classesModified > 0}" class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
                                             Classes Modified
                                             <span class="tooltip-trigger" data-tooltip="classes-mod">?</span>
                                             <div id="tooltip-classes-mod" class="tooltip-popover">
-                                                <strong>Formula:</strong> <code>ln(1 + <span th:text="${classesModified}">0</span>) × 5.0 × <span th:text="${volModifyMult}">1.00</span></code><br><br>
+                                                <strong>Formula:</strong> <code><span th:text="${classesModified}">0</span><sup th:text="${volumeExponent}">0.75</sup> × 5.0 × <span th:text="${volModifyMult}">1.00</span></code><br><br>
                                                 <strong>modifyMult = <span th:text="${volModifyMult}">1.00</span></strong><br>
                                                 Class-level changes indicate structural modifications to existing code.
                                             </div>
@@ -498,13 +403,45 @@
                                             Classes Added
                                             <span class="tooltip-trigger" data-tooltip="classes-add">?</span>
                                             <div id="tooltip-classes-add" class="tooltip-popover">
-                                                <strong>Formula:</strong> <code>ln(1 + <span th:text="${classesAdded}">0</span>) × 10.0 × <span th:text="${volAddMult}">1.00</span></code><br><br>
+                                                <strong>Formula:</strong> <code><span th:text="${classesAdded}">0</span><sup th:text="${volumeExponent}">0.75</sup> × 8.0 × <span th:text="${volAddMult}">1.00</span></code><br><br>
                                                 <strong>addMult = <span th:text="${volAddMult}">1.00</span></strong><br>
-                                                New classes have highest factor (10.0) for structural additions.
+                                                New classes have highest factor (8.0) for structural additions.
                                             </div>
                                         </td>
                                         <td class="py-1 text-right font-mono" th:text="${classesAdded}">0</td>
                                         <td class="py-1 text-right font-bold text-blue-600" th:text="${classesAddedScore}">0.00</td>
+                                    </tr>
+                                    <tr class="border-b border-t-2 border-gray-300">
+                                        <td colspan="2" class="py-1 text-gray-600 font-medium">Content Score</td>
+                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${contentScore}">0.00</td>
+                                    </tr>
+                                    <tr th:if="${filesChanged > 1}" class="border-b has-tooltip">
+                                        <td class="py-1 text-gray-500">
+                                            File Density
+                                            <span class="tooltip-trigger" data-tooltip="density">?</span>
+                                            <div id="tooltip-density" class="tooltip-popover">
+                                                <strong>Content Density Dampening:</strong><br>
+                                                <code>min(1.0, avgLinesPerFile / <span th:text="${fileDensityThreshold}">15.00</span>)</code><br><br>
+                                                Dampens the file scope multiplier when many files have trivial changes.
+                                                avgLinesPerFile = linesChanged / filesChanged.<br>
+                                                If avg &ge; <span th:text="${fileDensityThreshold}">15.00</span> lines/file, full multiplier applies.
+                                            </div>
+                                        </td>
+                                        <td class="py-1 text-right font-mono" th:text="${fileDensity}">1.00</td>
+                                        <td class="py-1 text-right text-gray-400 text-xs">dampening</td>
+                                    </tr>
+                                    <tr th:if="${filesChanged > 0}" class="border-b has-tooltip">
+                                        <td class="py-1 text-gray-500">
+                                            Files Scope ×
+                                            <span class="tooltip-trigger" data-tooltip="files">?</span>
+                                            <div id="tooltip-files" class="tooltip-popover">
+                                                <strong>Formula:</strong> <code>1 + (<span th:text="${filesChanged}">0</span><sup th:text="${volumeExponent}">0.75</sup> &times; <span th:text="${filesScopeFactor}">0.50</span>) &times; <span th:text="${fileDensity}">1.00</span></code><br><br>
+                                                Files act as a <strong>scope multiplier</strong> on the content score, dampened by content density.
+                                                Low density (few lines per file) reduces the scope bonus.
+                                            </div>
+                                        </td>
+                                        <td class="py-1 text-right font-mono" th:text="${filesChanged}">0</td>
+                                        <td class="py-1 text-right font-bold text-purple-600">× <span th:text="${filesScopeMultiplier}">1.00</span></td>
                                     </tr>
                                 </tbody>
                                 <tfoot>
@@ -525,7 +462,7 @@
                                     <strong>Complexity Assessment:</strong><br><br>
                                     <strong>Modifying:</strong> BONUS for touching complex code (rewards skill)<br>
                                     <strong>Creating:</strong> PENALTY for creating complex code (discourages poor design)<br><br>
-                                    <code>baseEffort = volumeScore × combinedMultiplier</code>
+                                    <code>Base Effort = Volume Score × Combined Multiplier</code>
                                 </div>
                             </h4>
                             <table class="w-full text-xs">
@@ -535,7 +472,7 @@
                                             Avg Modify Complexity
                                             <span class="tooltip-trigger" data-tooltip="avg-modify">?</span>
                                             <div id="tooltip-avg-modify" class="tooltip-popover">
-                                                Average cyclomatic complexity of modified symbols.<br><br>
+                                                Average cyclomatic complexity of modified code blocks.<br><br>
                                                 Higher = harder code to work with, deserves more credit.
                                             </div>
                                         </td>
@@ -560,7 +497,7 @@
                                             Avg Create Complexity
                                             <span class="tooltip-trigger" data-tooltip="avg-create">?</span>
                                             <div id="tooltip-avg-create" class="tooltip-popover">
-                                                Average cyclomatic complexity of newly created symbols.<br><br>
+                                                Average cyclomatic complexity of newly created code blocks.<br><br>
                                                 Lower is better - simple code is good design.
                                             </div>
                                         </td>
@@ -687,9 +624,11 @@
                                     </tr>
                                 </tbody>
                                 <tfoot>
-                                    <tr class="bg-green-50">
+                                    <tr th:classappend="${qualityMultiplierPositive} ? 'bg-green-50' : 'bg-orange-50'">
                                         <td class="py-1 font-semibold text-gray-700">Final Multiplier</td>
-                                        <td class="py-1 text-right font-bold text-green-700" th:text="${finalQualityMultiplier}">1.00</td>
+                                        <td class="py-1 text-right font-bold"
+                                            th:classappend="${qualityMultiplierPositive} ? 'text-green-700' : 'text-orange-700'"
+                                            th:text="${finalQualityMultiplier}">1.00</td>
                                     </tr>
                                 </tfoot>
                             </table>
@@ -697,33 +636,287 @@
                     </div>
 
                     <!-- Architecture Bonus Details (full width below) -->
-                    <div th:if="${architectureBonus != null}" class="mt-4 bg-white rounded p-3 border">
-                        <h4 class="text-sm font-semibold text-teal-700 mb-2">🏗️ Architecture Effort Bonus</h4>
-                        <div class="grid grid-cols-4 gap-3 text-xs">
-                            <div class="text-center bg-teal-50 rounded-lg p-3 border border-teal-200">
-                                <p class="text-gray-500">Impact Score</p>
-                                <p class="font-bold text-lg" th:text="${architectureImpactScore} + '/10'">0/10</p>
-                            </div>
-                            <div class="text-center bg-teal-50 rounded-lg p-3 border border-teal-200">
-                                <p class="text-gray-500">Quality Factor</p>
-                                <p class="font-bold text-lg" th:text="${qualityFactor}">0.00</p>
-                            </div>
-                            <div class="text-center bg-teal-50 rounded-lg p-3 border border-teal-200">
-                                <p class="text-gray-500">Base Effort</p>
-                                <p class="font-bold text-lg" th:text="${bonusBaseEffort}">0.00</p>
-                            </div>
-                            <div class="text-center bg-teal-50 rounded-lg p-3 border border-teal-200">
-                                <p class="text-gray-500">Bonus Points</p>
-                                <p class="font-bold text-lg text-teal-700" th:text="'+' + ${bonusPoints}">+0.00</p>
-                            </div>
+                    <div th:if="${architectureBonus != null}" class="mt-4 bg-slate-50 rounded p-4 border border-slate-200">
+                        <h4 class="text-sm font-semibold text-slate-700 mb-3">Architecture Effort Bonus</h4>
+                        <div th:if="${bonusCalculation != null}" class="text-center mb-3">
+                            <p class="text-xs text-gray-500 uppercase mb-1">Calculation</p>
+                            <p class="font-mono text-sm text-slate-900 font-bold" th:text="${bonusCalculation}"></p>
                         </div>
-                        <div th:if="${bonusCalculation != null}" class="mt-2 pt-2 border-t">
-                            <div class="bg-gradient-to-r from-teal-50 to-cyan-50 rounded p-2 border border-teal-200">
-                                <p class="text-xs text-gray-500 mb-1">Calculation:</p>
-                                <p class="font-mono text-sm text-teal-800 font-bold" th:text="${bonusCalculation}"></p>
+                        <div class="grid grid-cols-4 gap-3 text-xs">
+                            <div class="text-center bg-white rounded-lg p-3 border border-slate-200">
+                                <p class="text-gray-500 uppercase">Impact Score</p>
+                                <p class="font-bold text-lg text-blue-700" th:text="${architectureImpactScore} + '/10'">0/10</p>
+                            </div>
+                            <div class="text-center bg-white rounded-lg p-3 border border-slate-200">
+                                <p class="text-gray-500 uppercase">Base Effort</p>
+                                <p class="font-bold text-lg text-slate-700" th:text="${bonusBaseEffort}">0.00</p>
+                            </div>
+                            <div class="text-center bg-white rounded-lg p-3 border border-slate-200">
+                                <p class="text-gray-500 uppercase">Quality Factor</p>
+                                <p class="font-bold text-lg text-slate-700" th:text="${qualityFactor}">0.00</p>
+                            </div>
+                            <div class="text-center bg-white rounded-lg p-3 border border-slate-200">
+                                <p class="text-gray-500 uppercase">Bonus Points</p>
+                                <p class="font-bold text-lg text-green-700" th:text="'+' + ${bonusPoints}">+0.00</p>
                             </div>
                         </div>
                     </div>
+
+                    <!-- Scoring Methodology - concise step-by-step tables -->
+                    <details class="mt-4 bg-gradient-to-br from-slate-50 to-gray-100 rounded-lg border border-slate-300">
+                        <summary class="cursor-pointer px-4 py-3 font-semibold text-slate-800 hover:bg-slate-200/50 rounded-lg flex items-center justify-between">
+                            <span class="text-sm">How Scoring Works &mdash; Step-by-Step Calculation</span>
+                            <span class="text-xs text-slate-400">Click to expand</span>
+                        </summary>
+                        <div class="px-4 pb-4 pt-2 space-y-3">
+
+                            <!-- Formula Overview -->
+                            <p class="text-sm font-bold text-white text-center bg-slate-700 rounded-lg p-3">Final Score = Base Effort &times; Quality Multiplier + Architecture Bonus</p>
+
+                            <!-- Step 1: Project Size Normalization -->
+                            <div class="bg-white rounded-lg p-3 border border-slate-200">
+                                <h5 class="text-xs font-bold text-slate-700 mb-2">Step 1: Project Size Normalization</h5>
+                                <table class="w-full text-xs border-collapse">
+                                    <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Variable</th><th class="text-left py-0.5 font-normal">Formula</th><th class="text-right py-0.5 font-normal">Value</th></tr></thead>
+                                    <tbody class="font-mono">
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">sizeFactor</td><td class="py-0.5 text-gray-500">cbrt(projectTotalLines) / 100</td><td class="py-0.5 text-right font-bold" th:text="${sizeFactor}">0.31</td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">modifyMult</td><td class="py-0.5 text-gray-500">1.0 + min(sizeFactor &times; 0.3, 0.2)</td><td class="py-0.5 text-right font-bold" th:text="${volModifyMult}">1.09</td></tr>
+                                        <tr><td class="py-0.5 text-gray-600">addMult</td><td class="py-0.5 text-gray-500">1.0 + 0.1 / (1 + sizeFactor)</td><td class="py-0.5 text-right font-bold" th:text="${volAddMult}">1.08</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <!-- Step 2: Content Score Components -->
+                            <div class="bg-white rounded-lg p-3 border border-slate-200">
+                                <h5 class="text-xs font-bold text-slate-700 mb-1">Step 2: Content Score Components</h5>
+                                <p class="text-xs text-gray-400 mb-2">Formula: count<sup th:text="${volumeExponent}">0.75</sup> &times; factor &times; multiplier</p>
+                                <table class="w-full text-xs border-collapse">
+                                    <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Metric</th><th class="text-right py-0.5 font-normal">Count</th><th class="text-right py-0.5 font-normal">Factor</th><th class="text-right py-0.5 font-normal">Mult</th><th class="text-right py-0.5 font-normal">Score</th></tr></thead>
+                                    <tbody class="font-mono">
+                                        <tr class="border-b">
+                                            <td class="py-0.5 text-gray-600">Lines Changed</td>
+                                            <td class="py-0.5 text-right" th:text="${linesChanged}">0</td>
+                                            <td class="py-0.5 text-right" th:text="${linesLogFactor}">5.0</td>
+                                            <td class="py-0.5 text-right text-gray-400">1.0</td>
+                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${linesScore}">0.00</td>
+                                        </tr>
+                                        <tr th:if="${codeBlocksModified > 0}" class="border-b">
+                                            <td class="py-0.5 text-gray-600">Code Blocks Modified</td>
+                                            <td class="py-0.5 text-right" th:text="${codeBlocksModified}">0</td>
+                                            <td class="py-0.5 text-right" th:text="${codeBlocksModLogFactor}">6.0</td>
+                                            <td class="py-0.5 text-right" th:text="${volModifyMult}">1.09</td>
+                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${codeBlocksModifiedScore}">0.00</td>
+                                        </tr>
+                                        <tr th:if="${codeBlocksAdded > 0}" class="border-b">
+                                            <td class="py-0.5 text-gray-600">Code Blocks Added</td>
+                                            <td class="py-0.5 text-right" th:text="${codeBlocksAdded}">0</td>
+                                            <td class="py-0.5 text-right" th:text="${codeBlocksAddLogFactor}">8.0</td>
+                                            <td class="py-0.5 text-right" th:text="${volAddMult}">1.08</td>
+                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${codeBlocksAddedScore}">0.00</td>
+                                        </tr>
+                                        <tr th:if="${classesModified > 0}" class="border-b">
+                                            <td class="py-0.5 text-gray-600">Classes Modified</td>
+                                            <td class="py-0.5 text-right" th:text="${classesModified}">0</td>
+                                            <td class="py-0.5 text-right" th:text="${classesModLogFactor}">5.0</td>
+                                            <td class="py-0.5 text-right" th:text="${volModifyMult}">1.09</td>
+                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${classesModifiedScore}">0.00</td>
+                                        </tr>
+                                        <tr th:if="${classesAdded > 0}" class="border-b">
+                                            <td class="py-0.5 text-gray-600">Classes Added</td>
+                                            <td class="py-0.5 text-right" th:text="${classesAdded}">0</td>
+                                            <td class="py-0.5 text-right" th:text="${classesAddLogFactor}">8.0</td>
+                                            <td class="py-0.5 text-right" th:text="${volAddMult}">1.08</td>
+                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${classesAddedScore}">0.00</td>
+                                        </tr>
+                                    </tbody>
+                                    <tfoot><tr class="bg-blue-50"><td colspan="4" class="py-0.5 font-semibold text-gray-700">Content Score</td><td class="py-0.5 text-right font-bold text-blue-700" th:text="${contentScore}">0.00</td></tr></tfoot>
+                                </table>
+                            </div>
+
+                            <!-- Step 3: Files Scope -->
+                            <div class="bg-white rounded-lg p-3 border border-slate-200">
+                                <h5 class="text-xs font-bold text-slate-700 mb-2">Step 3: Files Scope Multiplier</h5>
+                                <table class="w-full text-xs border-collapse">
+                                    <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Variable</th><th class="text-left py-0.5 font-normal">Formula</th><th class="text-right py-0.5 font-normal">Value</th></tr></thead>
+                                    <tbody class="font-mono">
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">fileDensity</td><td class="py-0.5 text-gray-500">min(1.0, avgLinesPerFile / <span th:text="${fileDensityThreshold}">15.0</span>)</td><td class="py-0.5 text-right font-bold" th:text="${fileDensity}">1.00</td></tr>
+                                        <tr><td class="py-0.5 text-gray-600">filesScopeMultiplier</td><td class="py-0.5 text-gray-500">1 + (<span th:text="${filesChanged}">0</span><sup th:text="${volumeExponent}">0.75</sup> &times; <span th:text="${filesScopeFactor}">0.50</span>) &times; <span th:text="${fileDensity}">1.00</span></td><td class="py-0.5 text-right font-bold text-purple-600">&times; <span th:text="${filesScopeMultiplier}">1.00</span></td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <!-- Step 4: Volume Score -->
+                            <div class="bg-white rounded-lg p-3 border border-slate-200">
+                                <h5 class="text-xs font-bold text-slate-700 mb-2">Step 4: Volume Score</h5>
+                                <table class="w-full text-xs border-collapse">
+                                    <tbody class="font-mono">
+                                        <tr class="bg-blue-50"><td class="py-0.5 font-semibold text-gray-700">Volume Score</td><td class="py-0.5 text-gray-500"><span th:text="${contentScore}">0.00</span> &times; <span th:text="${filesScopeMultiplier}">1.00</span></td><td class="py-0.5 text-right font-bold text-blue-700" th:text="${totalVolumeScore}">0.00</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <!-- Step 5: Complexity Multiplier -->
+                            <div th:if="${complexityMultiplier != null}" class="bg-white rounded-lg p-3 border border-slate-200">
+                                <h5 class="text-xs font-bold text-slate-700 mb-2">Step 5: Complexity Multiplier</h5>
+                                <table class="w-full text-xs border-collapse">
+                                    <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Operation</th><th class="text-left py-0.5 font-normal">Avg Cyclomatic</th><th class="text-right py-0.5 font-normal">Multiplier</th></tr></thead>
+                                    <tbody class="font-mono">
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">Modify (bonus for hard code)</td><td class="py-0.5" th:text="${avgModifyComplexity}">0.00</td><td class="py-0.5 text-right font-bold" th:text="${modifyMultiplier}">1.00</td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">Create (penalty for complex new code)</td><td class="py-0.5" th:text="${avgCreateComplexity}">0.00</td><td class="py-0.5 text-right font-bold" th:text="${createMultiplier}">1.00</td></tr>
+                                    </tbody>
+                                    <tfoot><tr class="bg-purple-50"><td colspan="2" class="py-0.5 font-semibold text-gray-700">Combined</td><td class="py-0.5 text-right font-bold text-purple-700">&times; <span th:text="${combinedComplexityMultiplier}">1.00</span></td></tr></tfoot>
+                                </table>
+                                <p class="text-xs text-gray-400 mt-1">Modify: trivial 1.0&times; &rarr; moderate 1.1&times; &rarr; complex 1.2&times; &rarr; highly complex 1.3&times;. Create: trivial 1.1&times; &rarr; moderate 1.0&times; &rarr; complex 0.9&times; &rarr; highly complex 0.7&times;.</p>
+                            </div>
+
+                            <!-- Step 6: Base Effort -->
+                            <div class="bg-white rounded-lg p-3 border border-slate-200">
+                                <h5 class="text-xs font-bold text-slate-700 mb-2">Step 6: Base Effort</h5>
+                                <table class="w-full text-xs border-collapse">
+                                    <tbody class="font-mono">
+                                        <tr class="bg-slate-100"><td class="py-0.5 font-semibold text-gray-700">Base Effort</td><td class="py-0.5 text-gray-500"><span th:text="${totalVolumeScore}">0.00</span> &times; <span th:text="${combinedComplexityMultiplier}">1.05</span></td><td class="py-0.5 text-right font-bold text-slate-800" th:text="${baseEffortScore}">0.00</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <!-- Step 7: Quality Multiplier -->
+                            <div th:if="${qualityMultiplier != null}" class="bg-white rounded-lg p-3 border border-slate-200">
+                                <h5 class="text-xs font-bold text-slate-700 mb-2">Step 7: Quality Multiplier <span class="font-normal text-gray-400">[<span th:text="${qualityMultiplierMin}">0.50</span>&ndash;<span th:text="${qualityMultiplierMax}">1.20</span>]</span></h5>
+                                <table class="w-full text-xs border-collapse">
+                                    <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Dimension</th><th class="text-right py-0.5 font-normal">Impact</th></tr></thead>
+                                    <tbody class="font-mono">
+                                        <tr th:if="${cpdAnalysis != null}" class="border-b">
+                                            <td class="py-0.5 text-gray-600">CPD (<span th:text="${cpdDuplicationPercent}">0</span>%)</td>
+                                            <td class="py-0.5 text-right font-bold" th:classappend="${cpdImpact != null and cpdImpact.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${cpdImpact}">0.00</td>
+                                        </tr>
+                                        <tr th:if="${staticAnalysisQuality != null}" class="border-b">
+                                            <td class="py-0.5 text-gray-600">Static Analysis</td>
+                                            <td class="py-0.5 text-right font-bold" th:classappend="${staticAnalysisImpact != null and staticAnalysisImpact.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${staticAnalysisImpact}">0.00</td>
+                                        </tr>
+                                        <tr th:if="${coverageQuality != null}" class="border-b">
+                                            <td class="py-0.5 text-gray-600">Coverage (<span th:text="${qualityCoveragePercent}">0</span>%)</td>
+                                            <td class="py-0.5 text-right font-bold" th:classappend="${coverageImpact != null and coverageImpact.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${coverageImpact}">0.00</td>
+                                        </tr>
+                                        <tr th:if="${architectureQuality != null}" class="border-b">
+                                            <td class="py-0.5 text-gray-600">Architecture</td>
+                                            <td class="py-0.5 text-right font-bold" th:classappend="${architecturePenalty != null and architecturePenalty.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${architecturePenalty}">0.00</td>
+                                        </tr>
+                                        <tr th:if="${qualityGateAnalysis != null}" class="border-b">
+                                            <td class="py-0.5 text-gray-600">Quality Gate</td>
+                                            <td class="py-0.5 text-right font-bold" th:classappend="${qualityGateImpact != null and qualityGateImpact.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${qualityGateImpact}">0.00</td>
+                                        </tr>
+                                    </tbody>
+                                    <tfoot>
+                                        <tr th:classappend="${qualityMultiplierPositive} ? 'bg-green-50' : 'bg-orange-50'">
+                                            <td class="py-0.5 font-semibold text-gray-700">Final Multiplier</td>
+                                            <td class="py-0.5 text-right font-bold" th:classappend="${qualityMultiplierPositive} ? 'text-green-700' : 'text-orange-700'">&times; <span th:text="${finalQualityMultiplier}">1.00</span></td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                                <p th:if="${qualityMultiplierCalculation != null}" class="text-xs text-gray-400 mt-1 font-mono" th:text="${qualityMultiplierCalculation}">1.0 + 0.05 (CPD) + 0.05 (SA) = 1.10</p>
+                            </div>
+
+                            <!-- Step 8: Architecture Bonus -->
+                            <div th:if="${architectureBonus != null}" class="bg-white rounded-lg p-3 border border-slate-200">
+                                <h5 class="text-xs font-bold text-slate-700 mb-2">Step 8: Architecture Bonus</h5>
+                                <table class="w-full text-xs border-collapse">
+                                    <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Variable</th><th class="text-right py-0.5 font-normal">Value</th></tr></thead>
+                                    <tbody class="font-mono">
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">Impact Score</td><td class="py-0.5 text-right" th:text="${architectureImpactScore} + '/10'">0/10</td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">Quality Factor</td><td class="py-0.5 text-right" th:text="${qualityFactor}">0.00</td></tr>
+                                    </tbody>
+                                    <tfoot><tr class="bg-green-50"><td class="py-0.5 font-semibold text-gray-700">Bonus</td><td class="py-0.5 text-right font-bold text-green-700">+ <span th:text="${bonusPoints}">0.00</span></td></tr></tfoot>
+                                </table>
+                                <p class="text-xs text-gray-400 mt-1 font-mono" th:text="${bonusCalculation}">Impact &times; BaseEffort &times; 0.015 &times; QualityFactor = +0.00</p>
+                            </div>
+
+                            <!-- Step 9: Final Score -->
+                            <div class="bg-slate-700 rounded-lg p-3">
+                                <table class="w-full text-xs border-collapse">
+                                    <tbody class="font-mono text-white">
+                                        <tr><td class="py-0.5 font-bold text-sm">Final Score</td><td class="py-0.5 text-right font-bold text-sm" th:text="${scoreCalculation}">0.00 &times; 1.00 + 0.00 = 0</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <!-- Files Scope & Density Explanation -->
+                            <div class="bg-white rounded-lg p-3 border border-slate-200">
+                                <h5 class="text-xs font-bold text-slate-700 mb-2">How Files Scope &amp; Density Work</h5>
+                                <p class="text-xs text-gray-500 mb-2">Touching more files means broader impact &mdash; more review surface, more integration risk. The scope multiplier rewards breadth, but a <strong>density dampener</strong> prevents shallow changes (renames, import-only edits) from inflating the score.</p>
+                                <div class="grid grid-cols-2 gap-2 mb-2">
+                                    <div class="bg-slate-50 rounded p-2">
+                                        <p class="text-xs font-semibold text-slate-600 mb-1">Scope Multiplier</p>
+                                        <p class="text-xs text-gray-400 font-mono">1.0 + files<sup>0.75</sup> &times; 0.40 &times; density</p>
+                                        <table class="w-full text-xs mt-1 border-collapse">
+                                            <tbody class="font-mono text-gray-600">
+                                                <tr class="border-b border-gray-200"><td class="py-0.5">2 files</td><td class="text-right font-bold">1.67&times;</td></tr>
+                                                <tr class="border-b border-gray-200"><td class="py-0.5">8 files</td><td class="text-right font-bold">2.90&times;</td></tr>
+                                                <tr class="border-b border-gray-200"><td class="py-0.5">25 files</td><td class="text-right font-bold">5.47&times;</td></tr>
+                                                <tr><td class="py-0.5">50 files</td><td class="text-right font-bold">8.50&times;</td></tr>
+                                            </tbody>
+                                        </table>
+                                        <p class="text-xs text-gray-400 mt-1">Values shown at full density (1.0).</p>
+                                    </div>
+                                    <div class="bg-slate-50 rounded p-2">
+                                        <p class="text-xs font-semibold text-slate-600 mb-1">Density Dampener</p>
+                                        <p class="text-xs text-gray-400 font-mono">min(1.0, avgLinesPerFile / 10)</p>
+                                        <table class="w-full text-xs mt-1 border-collapse">
+                                            <tbody class="font-mono text-gray-600">
+                                                <tr class="border-b border-gray-200"><td class="py-0.5">&ge;10 lines/file</td><td class="text-right font-bold text-green-600">1.00</td></tr>
+                                                <tr class="border-b border-gray-200"><td class="py-0.5">5 lines/file</td><td class="text-right font-bold text-amber-600">0.50</td></tr>
+                                                <tr class="border-b border-gray-200"><td class="py-0.5">2 lines/file</td><td class="text-right font-bold text-orange-600">0.20</td></tr>
+                                                <tr><td class="py-0.5">1 line/file</td><td class="text-right font-bold text-red-600">0.10</td></tr>
+                                            </tbody>
+                                        </table>
+                                        <p class="text-xs text-gray-400 mt-1">Shallow edits get reduced scope credit.</p>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-gray-400"><strong class="text-gray-500">Example:</strong> 150 lines across 50 files (avg 3 lines/file) &rarr; density = 0.30, multiplier = 1.0 + 7.51 &times; 0.30 = <strong>3.25&times;</strong>. Same 150 lines across 8 files (avg 19 lines/file) &rarr; density = 1.00, multiplier = <strong>2.90&times;</strong>. The focused change scores similarly despite fewer files because density is full.</p>
+                            </div>
+
+                            <!-- Scaling Matrix -->
+                            <div class="bg-white rounded-lg p-3 border border-slate-200">
+                                <h5 class="text-xs font-bold text-slate-700 mb-1">How Base Effort Scales</h5>
+                                <p class="text-xs text-gray-400 mb-2">Base effort (volume &times; 1.05&times; default complexity) for representative commit sizes. Change size is the dominant factor; project size adds a mild 1&ndash;3% adjustment.</p>
+                                <table class="w-full text-xs border-collapse">
+                                    <thead>
+                                        <tr class="text-gray-400 border-b">
+                                            <th class="text-left py-1 font-normal"></th>
+                                            <th class="text-right py-1 font-normal">Small Project<br><span class="font-mono">5K lines</span></th>
+                                            <th class="text-right py-1 font-normal">Mid Project<br><span class="font-mono">30K lines</span></th>
+                                            <th class="text-right py-1 font-normal">Large Project<br><span class="font-mono">500K lines</span></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="font-mono">
+                                        <tr class="border-b">
+                                            <td class="py-1 text-gray-600 font-sans text-xs"><strong>Small</strong><br>20 lines, 2 files, 3 code blocks</td>
+                                            <td class="py-1 text-right">117</td>
+                                            <td class="py-1 text-right">118</td>
+                                            <td class="py-1 text-right">122</td>
+                                        </tr>
+                                        <tr class="border-b">
+                                            <td class="py-1 text-gray-600 font-sans text-xs"><strong>Medium</strong><br>150 lines, 8 files, 12 code blocks</td>
+                                            <td class="py-1 text-right">853</td>
+                                            <td class="py-1 text-right">859</td>
+                                            <td class="py-1 text-right">876</td>
+                                        </tr>
+                                        <tr>
+                                            <td class="py-1 text-gray-600 font-sans text-xs"><strong>Large</strong><br>500 lines, 25 files, 30 code blocks</td>
+                                            <td class="py-1 text-right">3,852</td>
+                                            <td class="py-1 text-right">3,871</td>
+                                            <td class="py-1 text-right">3,924</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                                <div class="mt-2 text-xs text-gray-400 space-y-0.5">
+                                    <p><strong class="text-gray-500">Why change size dominates:</strong> The content score formula (count<sup>0.75</sup> &times; factor) and files scope multiplier grow steeply with more lines/files/code blocks. Project size only nudges modifyMult from 1.05&times; to 1.20&times; &mdash; a 15% range.</p>
+                                    <p><strong class="text-gray-500">Diminishing returns:</strong> The 0.75 exponent ensures doubling lines adds only 1.68&times; score, not 2&times;. This prevents mega-commits from producing disproportionate scores.</p>
+                                    <p><strong class="text-gray-500">Assumptions:</strong> Default complexity (1.05&times;), clean quality (1.15&times;), no architecture bonus. Real scores include quality &amp; complexity adjustments.</p>
+                                </div>
+                            </div>
+
+                        </div>
+                    </details>
                 </div>
             </details>
 
@@ -847,37 +1040,15 @@
             </div>
 
             <!-- Commit Tags (Technical + Functional) - only show if we have at least one tag -->
-            <div th:if="${not #lists.isEmpty(technicalTags) or not #lists.isEmpty(functionalTags)}" class="bg-indigo-50 border border-indigo-200 rounded-lg p-4 mb-6">
-                <h3 class="text-sm font-semibold text-indigo-700 uppercase mb-3 flex items-center justify-center">
-                    <span class="mr-2">🏷️</span> Commit Tags (<span th:text="${#lists.size(technicalTags) + #lists.size(functionalTags)}">0</span>)
-                </h3>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <!-- Technical Tags - full width if functional tags are empty -->
-                    <div th:unless="${#lists.isEmpty(technicalTags)}"
-                         class="bg-white rounded-lg p-3 border"
-                         th:classappend="${#lists.isEmpty(functionalTags)} ? 'md:col-span-2' : ''">
-                        <p class="text-xs text-gray-500 uppercase mb-2 flex items-center">
-                            <span class="mr-1">⚙️</span> Technical (<span th:text="${#lists.size(technicalTags)}">0</span>)
-                        </p>
-                        <ul class="list-disc list-inside space-y-1">
-                            <li th:each="tag : ${technicalTags}"
-                                class="text-sm text-blue-800"
-                                th:text="${tag}">tag</li>
-                        </ul>
-                    </div>
-                    <!-- Functional Tags - full width if technical tags are empty -->
-                    <div th:unless="${#lists.isEmpty(functionalTags)}"
-                         class="bg-white rounded-lg p-3 border"
-                         th:classappend="${#lists.isEmpty(technicalTags)} ? 'md:col-span-2' : ''">
-                        <p class="text-xs text-gray-500 uppercase mb-2 flex items-center">
-                            <span class="mr-1">📦</span> Functional / Business (<span th:text="${#lists.size(functionalTags)}">0</span>)
-                        </p>
-                        <ul class="list-disc list-inside space-y-1">
-                            <li th:each="tag : ${functionalTags}"
-                                class="text-sm text-purple-800"
-                                th:text="${tag}">tag</li>
-                        </ul>
-                    </div>
+            <div th:if="${not #lists.isEmpty(technicalTags) or not #lists.isEmpty(functionalTags)}" class="bg-white border border-slate-200 rounded-lg p-4 mb-6">
+                <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-xs text-gray-500 uppercase font-semibold mr-1">Tags</span>
+                    <span th:each="tag : ${technicalTags}"
+                          class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
+                          th:text="${tag}">tag</span>
+                    <span th:each="tag : ${functionalTags}"
+                          class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800"
+                          th:text="${tag}">tag</span>
                 </div>
             </div>
             
@@ -1239,9 +1410,9 @@
                                 <span class="px-2 py-0.5 rounded text-xs font-medium"
                                       th:data-change-class="${file.changeType}"
                                       th:text="${file.changeType}">MODIFY</span>
-                                <span th:if="${not #lists.isEmpty(file.affectedSymbols)}"
+                                <span th:if="${not #lists.isEmpty(file.affectedCodeBlocks)}"
                                       class="px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700"
-                                      th:text="'🔧 ' + ${#lists.size(file.affectedSymbols)} + ' symbol' + (${#lists.size(file.affectedSymbols) > 1} ? 's' : '')">🔧 2 symbols</span>
+                                      th:text="'🔧 ' + ${#lists.size(file.affectedCodeBlocks)} + ' code block' + (${#lists.size(file.affectedCodeBlocks) > 1} ? 's' : '')">🔧 2 code blocks</span>
                             </div>
                         </div>
                         <div class="flex items-center space-x-2">
@@ -1257,44 +1428,44 @@
                     
                     <!-- Collapsible Content -->
                     <div th:id="'file-content-' + ${fileStat.index}" class="collapsible-content expanded">
-                        <!-- Affected Symbols - Enhanced View -->
-                        <div th:if="${not #lists.isEmpty(file.affectedSymbols)}" class="px-4 py-3 bg-gradient-to-r from-purple-50 to-blue-50 border-b">
+                        <!-- Affected Code Blocks - Enhanced View -->
+                        <div th:if="${not #lists.isEmpty(file.affectedCodeBlocks)}" class="px-4 py-3 bg-gradient-to-r from-purple-50 to-blue-50 border-b">
                             <div class="flex items-center justify-between mb-2">
                                 <p class="text-xs font-semibold text-purple-700">
-                                    🔧 Affected Symbols (<span th:text="${#lists.size(file.affectedSymbols)}">0</span>)
+                                    🔧 Affected Code Blocks (<span th:text="${#lists.size(file.affectedCodeBlocks)}">0</span>)
                                 </p>
                             </div>
                             <div class="space-y-1.5">
-                                <div th:each="symbol, symStat : ${file.affectedSymbols}"
-                                     class="symbol-entry bg-white rounded border border-gray-200 px-3 py-2 text-xs">
+                                <div th:each="codeBlock, symStat : ${file.affectedCodeBlocks}"
+                                     class="codeblock-entry bg-white rounded border border-gray-200 px-3 py-2 text-xs">
                                     <div class="flex items-center justify-between">
                                         <div class="flex items-center space-x-2 min-w-0 flex-1">
                                             <span class="text-base flex-shrink-0"
-                                                  th:text="${symbol.constructor} ? '🏗️' : '🔧'">🔧</span>
+                                                  th:text="${codeBlock.constructor} ? '🏗️' : '🔧'">🔧</span>
                                             <div class="min-w-0 flex-1">
-                                                <span class="font-mono font-semibold text-gray-800" th:text="${symbol.name}">methodName</span>
-                                                <span th:if="${symbol.containerName}" class="text-gray-400 ml-1">
-                                                    in <span class="text-blue-600" th:text="${symbol.containerName}">ClassName</span>
+                                                <span class="font-mono font-semibold text-gray-800" th:text="${codeBlock.name}">methodName</span>
+                                                <span th:if="${codeBlock.containerName}" class="text-gray-400 ml-1">
+                                                    in <span class="text-blue-600" th:text="${codeBlock.containerName}">ClassName</span>
                                                 </span>
-                                                <span th:if="${symbol.signature}" class="text-gray-400 font-mono ml-1 truncate" th:text="${symbol.signature}">: void</span>
+                                                <span th:if="${codeBlock.signature}" class="text-gray-400 font-mono ml-1 truncate" th:text="${codeBlock.signature}">: void</span>
                                             </div>
                                         </div>
                                         <div class="flex items-center space-x-2 flex-shrink-0 ml-2">
-                                            <span class="text-[10px] text-gray-400 font-mono" th:text="'L' + ${symbol.lineRange}">L10-20</span>
-                                            <span th:if="${symbol.callerCount > 0}">
+                                            <span class="text-[10px] text-gray-400 font-mono" th:text="'L' + ${codeBlock.lineRange}">L10-20</span>
+                                            <span th:if="${codeBlock.callerCount > 0}">
                                                 <button class="text-[10px] px-1.5 py-0.5 rounded font-medium bg-orange-100 text-orange-700 hover:bg-orange-200 cursor-pointer"
                                                         th:onclick="'toggleCallers(this)'">
-                                                    📞 <span th:text="${symbol.callerCount}">1</span> callers
+                                                    📞 <span th:text="${codeBlock.callerCount}">1</span> callers
                                                 </button>
                                             </span>
                                         </div>
                                     </div>
                                     <!-- Expandable callers list -->
-                                    <div th:if="${!symbol.callers.isEmpty()}"
+                                    <div th:if="${!codeBlock.callers.isEmpty()}"
                                          class="hidden mt-2 pt-2 border-t border-gray-100 callers-list">
                                         <p class="text-[10px] text-gray-500 mb-1">Called by:</p>
                                         <div class="space-y-0.5 ml-2">
-                                            <div th:each="caller : ${symbol.callers}" class="flex items-center space-x-1 text-[10px] text-gray-500 hover:text-gray-700">
+                                            <div th:each="caller : ${codeBlock.callers}" class="flex items-center space-x-1 text-[10px] text-gray-500 hover:text-gray-700">
                                                 <span class="text-orange-400">↖</span>
                                                 <span th:text="${caller.name}" class="font-medium font-mono">callerMethod</span>
                                                 <span class="text-gray-300">•</span>
@@ -1360,8 +1531,8 @@
                     <h2 class="text-xl font-bold text-gray-800 mb-1">🧠 Code Complexity Analysis (PMD Metrics)</h2>
                     <p class="text-sm text-gray-500">
                         Cyclomatic &amp; Cognitive complexity metrics. 
-                        <span th:if="${highRiskMethodCount > 0}" class="font-semibold text-red-600" th:text="${highRiskMethodCount} + ' high-risk symbol(s)'">0 high-risk symbols</span>
-                        <span th:if="${highRiskMethodCount == 0}" class="font-semibold text-green-600">No high-risk symbols detected</span>
+                        <span th:if="${highRiskMethodCount > 0}" class="font-semibold text-red-600" th:text="${highRiskMethodCount} + ' high-risk code block(s)'">0 high-risk code blocks</span>
+                        <span th:if="${highRiskMethodCount == 0}" class="font-semibold text-green-600">No high-risk code blocks detected</span>
                         <span class="text-gray-400 mx-2">|</span>
                         Max cognitive complexity: <span class="font-semibold" th:data-complexity-class="${maxCognitiveComplexity}" th:text="${maxCognitiveComplexity}">0</span>
                     </p>
@@ -1393,9 +1564,9 @@
                         <span th:data-coverage-text="${coverageLevel}"
                               class="font-semibold" th:text="${#numbers.formatDecimal(overallCoveragePercent, 1, 1)} + '%'">0%</span> overall
                         <span th:if="${uncoveredMethodCount > 0}" class="text-gray-400 mx-1">|</span>
-                        <span th:if="${uncoveredMethodCount > 0}" class="font-semibold text-red-600" th:text="${uncoveredMethodCount} + ' uncovered symbol(s)'">0 uncovered</span>
+                        <span th:if="${uncoveredMethodCount > 0}" class="font-semibold text-red-600" th:text="${uncoveredMethodCount} + ' uncovered code block(s)'">0 uncovered</span>
                         <span th:if="${partialMethodCount > 0}" class="text-gray-400 mx-1">|</span>
-                        <span th:if="${partialMethodCount > 0}" class="font-semibold text-orange-600" th:text="${partialMethodCount} + ' partial symbol(s)'">0 partial</span>
+                        <span th:if="${partialMethodCount > 0}" class="font-semibold text-orange-600" th:text="${partialMethodCount} + ' partial code block(s)'">0 partial</span>
                     </p>
                 </div>
                 <div class="flex items-center gap-3">
@@ -1884,7 +2055,7 @@
         
         // Toggle callers list expansion
         function toggleCallers(button) {
-            const symbolDiv = button.closest('.symbol-entry');
+            const symbolDiv = button.closest('.codeblock-entry');
             const callersList = symbolDiv.querySelector('.callers-list');
             if (callersList) {
                 callersList.classList.toggle('hidden');

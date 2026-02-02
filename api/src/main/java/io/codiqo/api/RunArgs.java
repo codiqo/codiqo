@@ -133,6 +133,12 @@ public class RunArgs {
     @Nullable
     private double defaultComplexityMultiplier = 1.05;
     @Nullable
+    private double volumeExponent = 0.75;
+    @Nullable
+    private double filesScopeFactor = 0.40;
+    @Nullable
+    private double fileDensityThreshold = 10.0;
+    @Nullable
     private double coverageLowThreshold = 50.0;
     @Nullable
     private double coverageCriticalThreshold = 10.0;
@@ -143,13 +149,13 @@ public class RunArgs {
     @Nullable
     private double linesLogFactor = 5.0;
     @Nullable
-    private double methodsModifiedLogFactor = 6.0;
+    private double codeBlocksModifiedLogFactor = 8.0;
     @Nullable
-    private double methodsAddedLogFactor = 8.0;
+    private double codeBlocksAddedLogFactor = 6.0;
     @Nullable
-    private double classesModifiedLogFactor = 5.0;
+    private double classesModifiedLogFactor = 7.0;
     @Nullable
-    private double classesAddedLogFactor = 8.0;
+    private double classesAddedLogFactor = 5.0;
     @Nullable
     private int complexityTrivialMax = 5;
     @Nullable
@@ -215,7 +221,7 @@ public class RunArgs {
     @Nullable
     private int truncateSourceLines = 25;
     @Nullable
-    private double architectureBonusFactor = 0.01;
+    private double architectureBonusFactor = 0.015;
     @Nullable
     private double pmdPriority1Penalty = -0.05;
     @Nullable
@@ -308,6 +314,10 @@ public class RunArgs {
     private int coverageImpactLowMin = 60;
     @Nullable
     private int coverageImpactPoorMin = 50;
+    @Nullable
+    private int fanOutHighThreshold = 10;
+    @Nullable
+    private int npathComplexThreshold = 200;
 
     public Optional<ProjectSpec> owner(File filePath) {
         return projects.stream().filter(proj -> proj.contains(filePath)).findAny();

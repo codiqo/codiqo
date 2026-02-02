@@ -13,7 +13,6 @@ import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
 
 public class ModuleLevelMetricsPopulator implements SubmissionPopulator {
-
     @Override
     public void accept(SubmissionContext ctx) {
         for (Entry<File, Collection<CodeBlockInfo>> entry : ctx.getIndex().getBlocks().asMap().entrySet()) {
@@ -48,7 +47,7 @@ public class ModuleLevelMetricsPopulator implements SubmissionPopulator {
                         tracker.addModuleCoverageBranches(coveredBranches, missedBranches);
 
                         javaBlock.metrics().subscribe(metrics -> {
-                            tracker.addModuleLines(metrics.ncss().orElse(metrics.lineCount()));
+                            tracker.addModuleLines(metrics.ncss());
                             tracker.addModuleComplexity(metrics.cyclo());
                         });
 

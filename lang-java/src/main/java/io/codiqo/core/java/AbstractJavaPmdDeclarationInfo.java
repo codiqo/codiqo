@@ -62,7 +62,7 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
         int lineCount = MetricsUtil.computeMetric(JavaMetrics.LINES_OF_CODE, node, MetricOptions.emptyOptions());
         int cyclo = MetricsUtil.computeMetric(JavaMetrics.CYCLO, node, MetricOptions.emptyOptions());
         int cognitive = MetricsUtil.computeMetric(JavaMetrics.COGNITIVE_COMPLEXITY, node, MetricOptions.emptyOptions());
-        Optional<Integer> ncss = Optional.ofNullable(MetricsUtil.computeMetric(JavaMetrics.NCSS, node, MetricOptions.emptyOptions()));
+        int ncss = Optional.ofNullable(MetricsUtil.computeMetric(JavaMetrics.NCSS, node, MetricOptions.emptyOptions())).orElse(0);
         long npath = MetricsUtil.computeMetric(JavaMetrics.NPATH_COMP, node, MetricOptions.emptyOptions());
         int fanOut = MetricsUtil.computeMetric(JavaMetrics.FAN_OUT, node, MetricOptions.emptyOptions());
 
@@ -84,7 +84,7 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
                 return cognitive;
             }
             @Override
-            public Optional<Integer> ncss() {
+            public int ncss() {
                 return ncss;
             }
             @Override
@@ -97,7 +97,7 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
             }
             @Override
             public String toString() {
-                return String.format("lines: %d, cyclo: %d, cognitive: %d, ncss: %s", lineCount(), cyclo(), cognitive(), ncss());
+                return String.format("lines: %d, cyclo: %d, cognitive: %d, ncss: %d", lineCount(), cyclo(), cognitive(), ncss());
             }
         };
     }).cache();

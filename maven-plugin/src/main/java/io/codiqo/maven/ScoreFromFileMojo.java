@@ -14,6 +14,7 @@ import java.util.Optional;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.time.StopWatch;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -27,6 +28,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.util.StdDateFormat;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisResultModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
@@ -89,23 +91,22 @@ public class ScoreFromFileMojo extends AbstractMojo {
             getLog().info("scoring from file: " + inputFile.getAbsolutePath());
             getLog().info("LLM model: " + llmModel);
             getLog().info("base URL: " + llmBaseUrl);
-            getLog().info("Files in submission: " + submission.getFiles().size());
-            getLog().info("Method changes: " + request.getMethodChanges().size());
-            int totalCallers = request.getMethodChanges().stream().mapToInt(m -> m.getCallerCount()).sum();
-            getLog().info("Total callers: " + totalCallers);
+            getLog().info("files in submission: " + submission.getFiles().size());
+            getLog().info("code block changes: " + request.getCodeBlockChanges().size());
+            getLog().info("total callers: " + request.getCodeBlockChanges().stream().mapToInt(m -> m.getCallerCount()).sum());
 
             VolumeScoreCalculator volumeCalc = new VolumeScoreCalculator(args);
             VolumeScoreCalculator.CpdPreComputed cpdPre = volumeCalc.calculateCpdPenalty(request);
             VolumeScoreCalculator.StaticAnalysisPreComputed saPre = volumeCalc.calculateStaticAnalysisPenalty(request);
-            getLog().info("CPD: effectivePenalty=" + cpdPre.getEffectivePenalty()
-                    + ", category=" + cpdPre.getCategory()
-                    + ", recommendedImpact=" + cpdPre.getRecommendedImpact());
-            getLog().info("Static Analysis: total=" + saPre.getErrorCount()
-                    + ", introduced=" + saPre.getIntroducedCount()
-                    + ", preExisting=" + saPre.getPreExistingCount()
-                    + ", recommendedImpact=" + saPre.getRecommendedImpact());
+            getLog().info("CPD effectivePenalty: " + cpdPre.getEffectivePenalty());
+            getLog().info("CPD category: " + cpdPre.getCategory());
+            getLog().info("CPD recommendedImpact: " + cpdPre.getRecommendedImpact());
+            getLog().info("static analysis total: " + saPre.getErrorCount());
+            getLog().info("static analysis introduced: " + saPre.getIntroducedCount());
+            getLog().info("static analysis preExisting: " + saPre.getPreExistingCount());
+            getLog().info("static analysis recommendedImpact: " + saPre.getRecommendedImpact());
 
-            long startTime = System.currentTimeMillis();
+            StopWatch stopWatch = StopWatch.createStarted();
             ScoringResult result;
             try (LlmScoringClient client = new LlmScoringClient(args)) {
                 result = client.score(request, promptContext, new ScoringClient.StreamingHandler() {
@@ -120,34 +121,33 @@ public class ScoreFromFileMojo extends AbstractMojo {
                     }
                     @Override
                     public void onToolCall(String toolName) {
-                        getLog().info("Tool call: " + toolName);
+                        getLog().info("tool call: " + toolName);
                     }
                 });
             }
-            Duration duration = Duration.ofMillis(System.currentTimeMillis() - startTime);
+            stopWatch.stop();
 
             LlmScoringResponse response = result.getResponse();
             getLog().info("--- LLM SCORING RESULTS ---");
-            getLog().info("Duration: " + duration.toMillis() + "ms");
-            getLog().info("Tokens: " + result.getTotalTokens()
-                    + " (prompt: " + result.getPromptTokens()
-                    + ", completion: " + result.getCompletionTokens() + ")");
-            getLog().info("Score: " + response.getScore());
-            getLog().info("Classification: " + response.getChangeClassification());
-            getLog().info("Score Calculation: " + response.getScoreCalculation());
-            getLog().info("Senior Review: " + response.getRequiresSeniorReview() + "/10");
-            getLog().info("Summary: " + response.getSummary());
+            getLog().info("duration: " + stopWatch);
+            getLog().info("tokens total: " + result.getTotalTokens());
+            getLog().info("tokens prompt: " + result.getPromptTokens());
+            getLog().info("tokens completion: " + result.getCompletionTokens());
+            getLog().info("score: " + response.getScore());
+            getLog().info("classification: " + response.getChangeClassification());
+            getLog().info("score calculation: " + response.getScoreCalculation());
+            getLog().info("senior review: " + response.getRequiresSeniorReview() + "/10");
+            getLog().info("summary: " + response.getSummary());
             if (Objects.nonNull(response.getBugs())) {
-                int blocking = CollectionUtils.size(response.getBugs().getBlocking());
-                int major = CollectionUtils.size(response.getBugs().getMajor());
-                int minor = CollectionUtils.size(response.getBugs().getMinor());
-                getLog().info("Bugs: " + blocking + " blocking, " + major + " major, " + minor + " minor");
+                getLog().info("bugs blocking: " + CollectionUtils.size(response.getBugs().getBlocking()));
+                getLog().info("bugs major: " + CollectionUtils.size(response.getBugs().getMajor()));
+                getLog().info("bugs minor: " + CollectionUtils.size(response.getBugs().getMinor()));
             }
 
             if (dumpAnalysis) {
                 FileUtils.forceMkdir(outputDirectory);
-                generateHtmlReport(args, submission, result, request, duration);
-                dumpResultYaml(submission, result, duration, args);
+                generateHtmlReport(args, submission, result, request, stopWatch);
+                dumpResultYaml(submission, result, stopWatch, args);
             }
         } catch (Exception err) {
             throw new MojoFailureException(err);
@@ -179,14 +179,19 @@ public class ScoreFromFileMojo extends AbstractMojo {
         }
         return toReturn;
     }
-    private void generateHtmlReport(RunArgs args, AnalysisSubmissionModel submission, ScoringResult result, LlmScoringRequest request, Duration duration) throws IOException {
+    private void generateHtmlReport(
+            RunArgs args,
+            AnalysisSubmissionModel submission,
+            ScoringResult result,
+            LlmScoringRequest request,
+            StopWatch stopWatch) throws IOException {
         HtmlReportBuilder builder = new HtmlReportBuilder(args);
         CommitModel commit = submission.getCommit();
 
         ReportContext.ReportContextBuilder contextBuilder = ReportContext.builder()
                 .repositoryName(submission.getProject().getName())
                 .llmModel(llmModel)
-                .analysisDuration(duration);
+                .analysisDuration(Duration.ofMillis(stopWatch.getTime()));
 
         if (Objects.nonNull(commit)) {
             contextBuilder
@@ -211,7 +216,7 @@ public class ScoreFromFileMojo extends AbstractMojo {
         }
         getLog().info("HTML report: " + htmlFile.getAbsolutePath());
     }
-    private void dumpResultYaml(AnalysisSubmissionModel submission, ScoringResult result, Duration duration, RunArgs args) throws IOException {
+    private void dumpResultYaml(AnalysisSubmissionModel submission, ScoringResult result, StopWatch stopWatch, RunArgs args) throws IOException {
         AnalysisResultModel analysisResult = new AnalysisResultModel();
 
         analysisResult.setProject(submission.getProject());
@@ -225,7 +230,7 @@ public class ScoreFromFileMojo extends AbstractMojo {
 
         LlmResponseMapper mapper = new LlmResponseMapper();
         mapper.mapToAnalysisResult(result.getResponse(), analysisResult);
-        analysisResult.setLlmAnalysis(LlmResponseMapper.mapLlmAnalysis(result, duration, args.getLlmModel()));
+        analysisResult.setLlmAnalysis(LlmResponseMapper.mapLlmAnalysis(result, Duration.ofMillis(stopWatch.getTime()), args.getLlmModel()));
 
         ObjectMapper yamlMapper = new YAMLMapper();
         yamlMapper.setDefaultPropertyInclusion(Include.NON_NULL);
