@@ -1,6 +1,5 @@
 package io.codiqo.llm;
 
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -17,7 +16,7 @@ import io.codiqo.llm.schema.LlmScoringRequest.ChangeSummary;
 import io.codiqo.llm.schema.LlmScoringRequest.DiagnosticInfo;
 import io.codiqo.llm.schema.LlmScoringRequest.DuplicationInfo;
 import io.codiqo.llm.schema.LlmScoringRequest.DuplicationInfo.CloneDetail;
-import io.codiqo.llm.schema.LlmScoringRequest.MethodChange;
+import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
 import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.Value;
@@ -26,26 +25,28 @@ import lombok.Value;
 public class VolumeScoreCalculator {
     private static final int ROUNDING_PRECISION = 2;
     private static final int CPD_ROUNDING_PRECISION = 1;
+    private static final double FULL_DENSITY = 1.0;
 
     private final RunArgs args;
 
     public PreComputedScores calculate(LlmScoringRequest request, long projectTotalLines) {
         ChangeSummary changeSummary = request.getChangeSummary();
+        double exponent = args.getVolumeExponent();
         double sizeFactor = Math.cbrt(projectTotalLines) / args.getSizeFactorDivisor();
         double modifyMult = 1.0 + Math.min(sizeFactor * args.getModifyMultiplierScale(), args.getModifyMultiplierCap());
         double addMult = 1.0 + args.getAddMultiplierScale() / (1.0 + sizeFactor);
         int linesChanged = changeSummary.getTotalLinesChanged();
-        double relativeAdj = 1.0;
-        if (linesChanged > 0 && projectTotalLines > 0) {
-            relativeAdj = 1.0 + args.getRelativeAdjustmentFactor() * Math.log((double) projectTotalLines / linesChanged);
-            relativeAdj = Math.max(args.getRelativeAdjustmentMin(), Math.min(relativeAdj, args.getRelativeAdjustmentMax()));
-        }
-        double linesScore = logScore(linesChanged, args.getLinesLogFactor(), relativeAdj);
-        double methodsModifiedScore = logScore(changeSummary.getMethodsModified(), args.getMethodsModifiedLogFactor(), modifyMult);
-        double methodsAddedScore = logScore(changeSummary.getMethodsAdded(), args.getMethodsAddedLogFactor(), addMult);
-        double classesModifiedScore = logScore(changeSummary.getClassesModified(), args.getClassesModifiedLogFactor(), modifyMult);
-        double classesAddedScore = logScore(changeSummary.getClassesAdded(), args.getClassesAddedLogFactor(), addMult);
-        double totalVolumeScore = linesScore + methodsModifiedScore + methodsAddedScore + classesModifiedScore + classesAddedScore;
+        int filesChanged = changeSummary.getTotalFilesChanged();
+        double linesScore = powerScore(linesChanged, args.getLinesLogFactor(), 1.0, exponent);
+        double codeBlocksModifiedScore = powerScore(changeSummary.getCodeBlocksModified(), args.getCodeBlocksModifiedLogFactor(), modifyMult, exponent);
+        double codeBlocksAddedScore = powerScore(changeSummary.getCodeBlocksAdded(), args.getCodeBlocksAddedLogFactor(), addMult, exponent);
+        double classesModifiedScore = powerScore(changeSummary.getClassesModified(), args.getClassesModifiedLogFactor(), modifyMult, exponent);
+        double classesAddedScore = powerScore(changeSummary.getClassesAdded(), args.getClassesAddedLogFactor(), addMult, exponent);
+        double contentScore = linesScore + codeBlocksModifiedScore + codeBlocksAddedScore + classesModifiedScore + classesAddedScore;
+        double rawScopeBonus = powerScore(filesChanged, args.getFilesScopeFactor(), 1.0, exponent);
+        double fileDensity = calculateFileDensity(linesChanged, filesChanged, args.getFileDensityThreshold());
+        double filesScopeMultiplier = FULL_DENSITY + rawScopeBonus * fileDensity;
+        double totalVolumeScore = contentScore * filesScopeMultiplier;
         double baseEffort = totalVolumeScore * args.getDefaultComplexityMultiplier();
 
         CpdPreComputed cpd = calculateCpdPenalty(request);
@@ -55,13 +56,16 @@ public class VolumeScoreCalculator {
                 .sizeFactor(Precision.round(sizeFactor, ROUNDING_PRECISION))
                 .modifyMult(Precision.round(modifyMult, ROUNDING_PRECISION))
                 .addMult(Precision.round(addMult, ROUNDING_PRECISION))
-                .relativeAdj(Precision.round(relativeAdj, ROUNDING_PRECISION))
                 .linesChanged(linesChanged)
                 .linesScore(Precision.round(linesScore, ROUNDING_PRECISION))
-                .methodsModified(changeSummary.getMethodsModified())
-                .methodsModifiedScore(Precision.round(methodsModifiedScore, ROUNDING_PRECISION))
-                .methodsAdded(changeSummary.getMethodsAdded())
-                .methodsAddedScore(Precision.round(methodsAddedScore, ROUNDING_PRECISION))
+                .filesChanged(filesChanged)
+                .contentScore(Precision.round(contentScore, ROUNDING_PRECISION))
+                .filesScopeMultiplier(Precision.round(filesScopeMultiplier, ROUNDING_PRECISION))
+                .fileDensity(Precision.round(fileDensity, ROUNDING_PRECISION))
+                .codeBlocksModified(changeSummary.getCodeBlocksModified())
+                .codeBlocksModifiedScore(Precision.round(codeBlocksModifiedScore, ROUNDING_PRECISION))
+                .codeBlocksAdded(changeSummary.getCodeBlocksAdded())
+                .codeBlocksAddedScore(Precision.round(codeBlocksAddedScore, ROUNDING_PRECISION))
                 .classesModified(changeSummary.getClassesModified())
                 .classesModifiedScore(Precision.round(classesModifiedScore, ROUNDING_PRECISION))
                 .classesAdded(changeSummary.getClassesAdded())
@@ -125,10 +129,10 @@ public class VolumeScoreCalculator {
     public StaticAnalysisPreComputed calculateStaticAnalysisPenalty(LlmScoringRequest request) {
         Set<String> introducedErrorRules = Sets.newHashSet();
         Set<String> preExistingErrorRules = Sets.newHashSet();
-        if (Objects.nonNull(request.getMethodChanges())) {
-            for (MethodChange method : request.getMethodChanges()) {
-                if (Objects.nonNull(method.getDiagnostics())) {
-                    for (DiagnosticInfo diag : method.getDiagnostics()) {
+        if (Objects.nonNull(request.getCodeBlockChanges())) {
+            for (CodeBlockChange codeBlock : request.getCodeBlockChanges()) {
+                if (Objects.nonNull(codeBlock.getDiagnostics())) {
+                    for (DiagnosticInfo diag : codeBlock.getDiagnostics()) {
                         if (BooleanUtils.and(new boolean[]{diag.getSeverity() == LlmScoringRequest.DiagnosticSeverity.ERROR, Objects.nonNull(diag.getRuleId())})) {
                             if (diag.isIntroducedInCommit()) {
                                 introducedErrorRules.add(diag.getRuleId());
@@ -157,11 +161,18 @@ public class VolumeScoreCalculator {
         }
         return new StaticAnalysisPreComputed(totalCount, introducedCount, preExistingCount, category, Precision.round(impact, ROUNDING_PRECISION));
     }
-    private static double logScore(int count, double logFactor, double multiplier) {
-        if (count > 0) {
-            return Math.log(1.0 + count) * logFactor * multiplier;
+    private static double calculateFileDensity(int linesChanged, int filesChanged, double threshold) {
+        if (filesChanged <= 0) {
+            return FULL_DENSITY;
         }
-        return BigDecimal.ZERO.doubleValue();
+        double avgLinesPerFile = (double) linesChanged / filesChanged;
+        return Math.min(FULL_DENSITY, avgLinesPerFile / threshold);
+    }
+    private static double powerScore(int count, double scoreFactor, double multiplier, double exponent) {
+        if (count > 0) {
+            return Math.pow(count, exponent) * scoreFactor * multiplier;
+        }
+        return 0.0;
     }
 
     @Value
@@ -170,13 +181,16 @@ public class VolumeScoreCalculator {
         double sizeFactor;
         double modifyMult;
         double addMult;
-        double relativeAdj;
         int linesChanged;
         double linesScore;
-        int methodsModified;
-        double methodsModifiedScore;
-        int methodsAdded;
-        double methodsAddedScore;
+        int filesChanged;
+        double contentScore;
+        double filesScopeMultiplier;
+        double fileDensity;
+        int codeBlocksModified;
+        double codeBlocksModifiedScore;
+        int codeBlocksAdded;
+        double codeBlocksAddedScore;
         int classesModified;
         double classesModifiedScore;
         int classesAdded;

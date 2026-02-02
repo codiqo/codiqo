@@ -30,7 +30,7 @@ public class LlmScoringRequest {
 
     private ChangeSummary changeSummary;
     private List<FileChange> fileChanges;
-    private List<MethodChange> methodChanges;
+    private List<CodeBlockChange> codeBlockChanges;
     private CoverageInfo coverage;
     private ComplexityMetrics complexity;
     private DuplicationInfo duplication;
@@ -68,9 +68,9 @@ public class LlmScoringRequest {
         private int linesDeleted;
         private int linesModified;
 
-        private int methodsAdded;
-        private int methodsModified;
-        private int methodsDeleted;
+        private int codeBlocksAdded;
+        private int codeBlocksModified;
+        private int codeBlocksDeleted;
         private int classesAdded;
         private int classesModified;
         private int classesDeleted;
@@ -107,16 +107,16 @@ public class LlmScoringRequest {
     }
 
     /**
-     * Method-level change information - CRITICAL for scoring.
-     * Distinguishes NEW methods from MODIFIED methods.
+     * Code block change information - CRITICAL for scoring.
+     * Distinguishes NEW code blocks from MODIFIED code blocks.
      */
     @Data
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class MethodChange {
+    public static class CodeBlockChange {
         private String className;
-        private String methodName;
+        private String name;
         private String signature;
         private String fullyQualifiedName;
 
@@ -143,6 +143,8 @@ public class LlmScoringRequest {
         private int cognitiveComplexity;
         private int nestingDepth;
         private int parameterCount;
+        private int fanOut;
+        private long npath;
 
         /**
          * For MODIFY: the complexity BEFORE the change

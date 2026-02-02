@@ -1338,6 +1338,15 @@ components:
         nestingDepth:
           type: integer
           minimum: 0
+        fanOut:
+          type: integer
+          minimum: 0
+          description: Number of distinct external classes used by the method
+        npath:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Number of acyclic execution paths through the method
         halstead:
           $ref: '#/components/schemas/HalsteadMetricsModel'
         maintainabilityIndex:
@@ -1742,33 +1751,49 @@ components:
     VolumeScoreModel:
       type: object
       description: |
-        Volume-based effort score calculation using logarithmic scaling.
-        Formula: score = ln(1 + count) × log_factor × multiplier
+        Volume-based effort score calculation using power-law scaling.
+        Formula: score = count^exponent × score_factor × multiplier
       properties:
         linesChanged:
           type: integer
           minimum: 0
-          description: Total lines of code changed in the commit
+          description: Total effective lines of code changed (imports excluded)
         linesScore:
           type: number
           format: double
-          description: Score from lines changed (logarithmic with relative adjustment)
-        methodsModified:
+          description: Score from lines changed (power-law scaling)
+        filesChanged:
           type: integer
           minimum: 0
-          description: Number of existing methods modified
-        methodsModifiedScore:
+          description: Number of files changed in the commit
+        contentScore:
           type: number
           format: double
-          description: Score for modifying methods (with complexity bonus)
-        methodsAdded:
+          description: Sum of content dimension scores (lines, code blocks, classes) before files multiplier
+        filesScopeMultiplier:
+          type: number
+          format: double
+          description: Scope multiplier from files changed, dampened by content density
+        fileDensity:
+          type: number
+          format: double
+          description: Content density dampening factor (0.0-1.0). Reduces file scope multiplier when per-file changes are trivial.
+        codeBlocksModified:
           type: integer
           minimum: 0
-          description: Number of new methods added
-        methodsAddedScore:
+          description: Number of existing code blocks modified
+        codeBlocksModifiedScore:
           type: number
           format: double
-          description: Score for adding methods (with clean code bonus)
+          description: Score for modifying code blocks (with complexity bonus)
+        codeBlocksAdded:
+          type: integer
+          minimum: 0
+          description: Number of new code blocks added
+        codeBlocksAddedScore:
+          type: number
+          format: double
+          description: Score for adding code blocks (with clean code bonus)
         classesModified:
           type: integer
           minimum: 0
@@ -1803,12 +1828,6 @@ components:
           description: |
             Multiplier for addition operations.
             Formula: 1.0 + (0.1 / (1.0 + sizeFactor))
-        relativeAdjustment:
-          type: number
-          format: double
-          description: |
-            Adjustment factor relative to project size.
-            Formula: clamp(1 + 0.1 * ln(project_lines / changed_lines), 0.8, 1.3)
         totalVolumeScore:
           type: number
           format: double
@@ -2036,7 +2055,7 @@ components:
     NewCodeQualityModel:
       type: object
       properties:
-        methodsAdded:
+        codeBlocksAdded:
           type: integer
           default: 0
         avgComplexity:
@@ -2054,7 +2073,7 @@ components:
     ModifyCodeQualityModel:
       type: object
       properties:
-        methodsModified:
+        codeBlocksModified:
           type: integer
           default: 0
         improvedQuality:

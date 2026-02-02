@@ -4,12 +4,19 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.logging.Logger;
+
+import com.google.common.collect.Maps;
 
 import org.thymeleaf.TemplateEngine;
 import org.thymeleaf.context.Context;
 import org.thymeleaf.templatemode.TemplateMode;
 import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver;
+
+import org.apache.commons.collections4.CollectionUtils;
 
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -24,6 +31,7 @@ import io.codiqo.llm.schema.LlmScoringRequest;
 import lombok.SneakyThrows;
 
 public class ThymeleafPromptBuilder implements PromptBuilder {
+    private static final Logger LOG = Logger.getLogger(ThymeleafPromptBuilder.class.getName());
     private static final String TEMPLATE_SYSTEM_PROMPT = "system-prompt";
     private static final String TEMPLATE_USER_PROMPT = "user-message";
     private static final String TEMPLATE_WEB_SEARCH_RESULTS = "web-search-results";
@@ -64,7 +72,13 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     public UserMessageResult buildUserMessageWithScores(LlmScoringRequest request, PromptContext context) {
         Context ctx = createContext(context);
         ctx.setVariable("request", request);
-        ctx.setVariable("requestJson", mapper.writeValueAsString(request));
+
+        Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> savedSlices = stripSourceSlices(request);
+        String requestJson = mapper.writeValueAsString(request);
+        restoreSourceSlices(savedSlices);
+
+        ctx.setVariable("requestJson", requestJson);
+        logRequestJsonBreakdown(request, requestJson);
 
         PreComputedScores preComputedScores = volumeCalculator.calculate(request, context.getProjectTotalLines());
         ctx.setVariable("preComputedScores", preComputedScores);
@@ -72,6 +86,61 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
 
         String message = templateEngine.process(TEMPLATE_USER_PROMPT, ctx);
         return new UserMessageResult(message, preComputedScores);
+    }
+    @SneakyThrows
+    private void logRequestJsonBreakdown(LlmScoringRequest request, String totalJson) {
+        int totalSize = totalJson.length();
+        int fileChangesSize = serializeSize(request.getFileChanges(), Collections.emptyList());
+        int methodChangesSize = serializeSize(request.getCodeBlockChanges(), Collections.emptyList());
+        int duplicationSize = serializeSize(request.getDuplication(), "null");
+        int coverageSize = serializeSize(request.getCoverage(), "null");
+
+        int diffSize = 0;
+        int sourceSliceSize = 0;
+        if (Objects.nonNull(request.getFileChanges())) {
+            for (LlmScoringRequest.FileChange fc : request.getFileChanges()) {
+                if (Objects.nonNull(fc.getDiff())) {
+                    diffSize += fc.getDiff().length();
+                }
+            }
+        }
+        if (Objects.nonNull(request.getDuplication()) && Objects.nonNull(request.getDuplication().getCloneDetails())) {
+            for (LlmScoringRequest.DuplicationInfo.CloneDetail cd : request.getDuplication().getCloneDetails()) {
+                if (Objects.nonNull(cd.getLocations())) {
+                    for (LlmScoringRequest.DuplicationInfo.CloneLocation loc : cd.getLocations()) {
+                        if (Objects.nonNull(loc.getSourceSlice())) {
+                            sourceSliceSize += loc.getSourceSlice().length();
+                        }
+                    }
+                }
+            }
+        }
+
+        LOG.info(String.format("requestJson breakdown: total=%d, fileChanges=%d (diffs=%d), methodChanges=%d, duplication=%d (sourceSlices=%d), coverage=%d",
+                totalSize, fileChangesSize, diffSize, methodChangesSize, duplicationSize, sourceSliceSize, coverageSize));
+    }
+    @SneakyThrows
+    private int serializeSize(Object value, Object fallback) {
+        return mapper.writeValueAsString(Objects.nonNull(value) ? value : fallback).length();
+    }
+    private static Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> stripSourceSlices(LlmScoringRequest request) {
+        Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> saved = Maps.newIdentityHashMap();
+        if (Objects.nonNull(request.getDuplication()) && CollectionUtils.isNotEmpty(request.getDuplication().getCloneDetails())) {
+            for (LlmScoringRequest.DuplicationInfo.CloneDetail cd : request.getDuplication().getCloneDetails()) {
+                if (CollectionUtils.isNotEmpty(cd.getLocations())) {
+                    for (LlmScoringRequest.DuplicationInfo.CloneLocation loc : cd.getLocations()) {
+                        if (Objects.nonNull(loc.getSourceSlice())) {
+                            saved.put(loc, loc.getSourceSlice());
+                            loc.setSourceSlice(null);
+                        }
+                    }
+                }
+            }
+        }
+        return saved;
+    }
+    private static void restoreSourceSlices(Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> saved) {
+        saved.forEach(LlmScoringRequest.DuplicationInfo.CloneLocation::setSourceSlice);
     }
     @Override
     public String buildWebSearchResults(String query, List<WebSearchResultItem> results) {
@@ -94,13 +163,17 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         ctx.setVariable("ARCHITECTURE_PENALTY_CAP", args.getArchitecturePenaltyCap());
         ctx.setVariable("QUALITY_GATE_PENALTY_CAP", args.getQualityGatePenaltyCap());
         ctx.setVariable("lines_log_factor", args.getLinesLogFactor());
-        ctx.setVariable("methods_mod_log_factor", args.getMethodsModifiedLogFactor());
-        ctx.setVariable("methods_add_log_factor", args.getMethodsAddedLogFactor());
+        ctx.setVariable("code_blocks_mod_log_factor", args.getCodeBlocksModifiedLogFactor());
+        ctx.setVariable("code_blocks_add_log_factor", args.getCodeBlocksAddedLogFactor());
         ctx.setVariable("classes_mod_log_factor", args.getClassesModifiedLogFactor());
         ctx.setVariable("classes_add_log_factor", args.getClassesAddedLogFactor());
+        ctx.setVariable("file_scope_factor", args.getFilesScopeFactor());
+        ctx.setVariable("volume_exponent", args.getVolumeExponent());
         ctx.setVariable("trivial_max", args.getComplexityTrivialMax());
         ctx.setVariable("moderate_max", args.getComplexityModerateMax());
         ctx.setVariable("complex_max", args.getComplexityComplexMax());
+        ctx.setVariable("fanout_high_threshold", args.getFanOutHighThreshold());
+        ctx.setVariable("npath_complex_threshold", args.getNpathComplexThreshold());
         ctx.setVariable("modify_trivial_mult", args.getModifyTrivialMultiplier());
         ctx.setVariable("modify_moderate_mult", args.getModifyModerateMultiplier());
         ctx.setVariable("modify_complex_mult", args.getModifyComplexMultiplier());

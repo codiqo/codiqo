@@ -2,6 +2,7 @@ package io.codiqo.llm.client;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.logging.Logger;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -33,6 +34,7 @@ import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringResponse;
 
 public class LlmScoringClient implements ScoringClient {
+    private static final Logger LOG = Logger.getLogger(LlmScoringClient.class.getName());
     private static final int MAX_TOOL_CALLS = Byte.MAX_VALUE;
 
     private final OpenAIClient client;
@@ -49,6 +51,7 @@ public class LlmScoringClient implements ScoringClient {
     private final boolean enableWebSearch;
 
     public LlmScoringClient(RunArgs args) {
+        LOG.info("configuring OpenAI client: timeout=" + args.getReadTimeout());
         OpenAIOkHttpClient.Builder builder = OpenAIOkHttpClient.builder();
         builder.timeout(args.getReadTimeout());
 
@@ -87,6 +90,7 @@ public class LlmScoringClient implements ScoringClient {
         String userMessage = userMessageResult.getMessage();
         PreComputedScores preComputedScores = userMessageResult.getPreComputedScores();
         int promptLength = systemPrompt.length() + userMessage.length();
+        LOG.info("prompt size: system=" + systemPrompt.length() + " user=" + userMessage.length() + " total=" + promptLength + " chars");
 
         ChatCompletionCreateParams.Builder paramsBuilder = ChatCompletionCreateParams.builder();
         paramsBuilder.model(model);
@@ -156,12 +160,17 @@ public class LlmScoringClient implements ScoringClient {
             }
 
             String rawContent = streamResult.getContent().toString();
+            LOG.info("raw response length: " + rawContent.length() + " chars, finishReason: " + streamResult.getFinishReason());
+            if (rawContent.length() < 500) {
+                LOG.warning("short/empty response body: " + rawContent);
+            }
             LlmScoringResponse scoringResponse = objectMapper.readValue(rawContent, LlmScoringResponse.class);
 
             finalScoreCalculator.apply(scoringResponse, preComputedScores);
 
             ScoringResult result = ScoringResult.builder()
                     .response(scoringResponse)
+                    .preComputedScores(preComputedScores)
                     .rawJson(rawContent)
                     .thinking(scoringResponse.getThinking())
                     .promptTokens(totalPromptTokens)

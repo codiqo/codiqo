@@ -55,7 +55,8 @@ public class FinalScoreCalculator {
 
         double architectureBonus = architectureImpactScore * baseEffort * args.getArchitectureBonusFactor() * qualityFactor;
         architectureBonus = Precision.round(architectureBonus, ROUNDING_PRECISION);
-        String bonusCalculation = String.format("%d × %.2f × %.2f × %.2f = %.2f",
+        String bonusCalculation = String.format(
+                "Impact Score (%d/10) × Base Effort (%.2f) × Bonus Factor (%.3f) × Quality Factor (%.2f) = +%.2f",
                 architectureImpactScore,
                 baseEffort,
                 args.getArchitectureBonusFactor(),

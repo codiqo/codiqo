@@ -239,10 +239,14 @@ public class LlmResponseMapper {
         VolumeScoreModel toReturn = new VolumeScoreModel();
         toReturn.setLinesChanged(volumeScore.getLinesChanged());
         toReturn.setLinesScore(volumeScore.getLinesScore());
-        toReturn.setMethodsModified(volumeScore.getMethodsModified());
-        toReturn.setMethodsModifiedScore(volumeScore.getMethodsModifiedScore());
-        toReturn.setMethodsAdded(volumeScore.getMethodsAdded());
-        toReturn.setMethodsAddedScore(volumeScore.getMethodsAddedScore());
+        toReturn.setFilesChanged(volumeScore.getFilesChanged());
+        toReturn.setContentScore(volumeScore.getContentScore());
+        toReturn.setFilesScopeMultiplier(volumeScore.getFilesScopeMultiplier());
+        toReturn.setFileDensity(volumeScore.getFileDensity());
+        toReturn.setCodeBlocksModified(volumeScore.getCodeBlocksModified());
+        toReturn.setCodeBlocksModifiedScore(volumeScore.getCodeBlocksModifiedScore());
+        toReturn.setCodeBlocksAdded(volumeScore.getCodeBlocksAdded());
+        toReturn.setCodeBlocksAddedScore(volumeScore.getCodeBlocksAddedScore());
         toReturn.setClassesModified(volumeScore.getClassesModified());
         toReturn.setClassesModifiedScore(volumeScore.getClassesModifiedScore());
         toReturn.setClassesAdded(volumeScore.getClassesAdded());
@@ -250,7 +254,6 @@ public class LlmResponseMapper {
         toReturn.setSizeFactor(volumeScore.getSizeFactor());
         toReturn.setModifyMultiplier(volumeScore.getModifyMultiplier());
         toReturn.setAddMultiplier(volumeScore.getAddMultiplier());
-        toReturn.setRelativeAdjustment(volumeScore.getRelativeAdjustment());
         toReturn.setTotalVolumeScore(volumeScore.getTotalVolumeScore());
         return toReturn;
     }
