@@ -1,16 +1,13 @@
 package io.codiqo.llm;
 
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.thymeleaf.TemplateEngine;
@@ -26,13 +23,10 @@ import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
 import io.codiqo.llm.client.ScoringClient.ScoringResult;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringRequest.CallerInfo;
+import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
 import io.codiqo.llm.schema.LlmScoringRequest.DuplicationInfo;
 import io.codiqo.llm.schema.LlmScoringRequest.DuplicationInfo.CloneDetail;
-import io.codiqo.llm.schema.LlmScoringRequest.DuplicationInfo.CloneFromExisting;
-import io.codiqo.llm.schema.LlmScoringRequest.DuplicationInfo.CloneLocation;
-import io.codiqo.llm.schema.LlmScoringRequest.DuplicationInfo.NewCloneGroup;
 import io.codiqo.llm.schema.LlmScoringRequest.FileChange;
-import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import io.codiqo.llm.schema.LlmScoringResponse.ArchitectureAnalysis;
 import io.codiqo.llm.schema.LlmScoringResponse.ArchitectureEffortBonus;
@@ -55,43 +49,27 @@ import lombok.Value;
 
 public class HtmlReportBuilder implements ReportBuilder {
     private static final String TEMPLATE_COMMIT_ANALYSIS = "commit-analysis";
-    private static final String TEMPLATE_CPD_REPORT = "cpd-report";
-    private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
-    private static final double SCORE_GAUGE_CIRCUMFERENCE = 314;
-    private static final double SCORE_GAUGE_FACTOR = 3.14;
-    private static final int MAX_SCORE_FOR_GAUGE = 100;
-    private static final int MAX_SIGNATURE_LENGTH = 80;
 
     private final RunArgs args;
     private final TemplateEngine templateEngine;
-    private final TemplateEngine textTemplateEngine;
 
     public HtmlReportBuilder(RunArgs args) {
-        this.args = args;
+        this.args = Objects.requireNonNull(args);
+
         ClassLoaderTemplateResolver htmlResolver = new ClassLoaderTemplateResolver();
         htmlResolver.setPrefix("thymeleaf/html/");
         htmlResolver.setSuffix(".html");
         htmlResolver.setTemplateMode(TemplateMode.HTML);
         htmlResolver.setCharacterEncoding(StandardCharsets.UTF_8.name());
         htmlResolver.setCacheable(true);
+
         templateEngine = new TemplateEngine();
         templateEngine.setTemplateResolver(htmlResolver);
-        ClassLoaderTemplateResolver textResolver = new ClassLoaderTemplateResolver();
-        textResolver.setPrefix("thymeleaf/templates/");
-        textResolver.setSuffix(".txt");
-        textResolver.setTemplateMode(TemplateMode.TEXT);
-        textResolver.setCharacterEncoding(StandardCharsets.UTF_8.name());
-        textResolver.setCacheable(true);
-        textTemplateEngine = new TemplateEngine();
-        textTemplateEngine.setTemplateResolver(textResolver);
     }
     @Override
     public String buildReport(ScoringResult result, LlmScoringRequest request, ReportContext reportContext) {
         Context ctx = new Context(Locale.ENGLISH);
-
         LlmScoringResponse response = result.getResponse();
-        double totalScore = response.getScore();
-        double scoreGaugeOffset = SCORE_GAUGE_CIRCUMFERENCE - Math.min(MAX_SCORE_FOR_GAUGE, totalScore) * SCORE_GAUGE_FACTOR;
 
         ctx.setVariable("commitId", reportContext.getCommitId());
         ctx.setVariable("commitIdShort", reportContext.getCommitId());
@@ -100,18 +78,18 @@ public class HtmlReportBuilder implements ReportBuilder {
         ctx.setVariable("timestamp", reportContext.getTimestamp());
         ctx.setVariable("message", reportContext.getCommitMessage());
         ctx.setVariable("mergeCommit", reportContext.isMergeCommit());
+        ctx.setVariable("revertCommit", reportContext.isRevertCommit());
+        ctx.setVariable("revertedCommitId", reportContext.getRevertedCommitId());
         ctx.setVariable("gpgSignature", false);
         ctx.setVariable("repositoryName", reportContext.getRepositoryName());
-        ctx.setVariable("generatedAt", LocalDateTime.now().format(TIMESTAMP_FORMAT));
+        ctx.setVariable("generatedAt", LocalDateTime.now());
         ctx.setVariable("branches", Optional.ofNullable(reportContext.getBranches()).orElse(Collections.emptyList()));
         ctx.setVariable("llmModel", reportContext.getLlmModel());
-        ctx.setVariable("llmInputTokensFormatted", formatNumber(result.getPromptTokens()));
-        ctx.setVariable("llmOutputTokensFormatted", formatNumber(result.getCompletionTokens()));
-        ctx.setVariable("llmTotalTokensFormatted", formatNumber(result.getTotalTokens()));
+        ctx.setVariable("llmInputTokens", result.getPromptTokens());
+        ctx.setVariable("llmOutputTokens", result.getCompletionTokens());
         ctx.setVariable("llmTotalTokens", result.getTotalTokens());
-        ctx.setVariable("llmDuration", formatDuration(reportContext.getAnalysisDuration()));
-        ctx.setVariable("totalScore", (int) totalScore);
-        ctx.setVariable("totalScoreFormatted", String.format("%.1f", totalScore));
+        ctx.setVariable("llmDurationMillis", reportContext.getAnalysisDuration().toMillis());
+        ctx.setVariable("totalScore", response.getScore());
         ctx.setVariable("scoreThresholdHuge", args.getScoreThresholdHuge());
         ctx.setVariable("scoreThresholdLarge", args.getScoreThresholdLarge());
         ctx.setVariable("scoreThresholdMedium", args.getScoreThresholdMedium());
@@ -125,73 +103,78 @@ public class HtmlReportBuilder implements ReportBuilder {
         ctx.setVariable("complexityModerateDisplay", args.getComplexityModerateDisplayThreshold());
         ctx.setVariable("similarityCritical", args.getSimilarityCriticalThreshold());
         ctx.setVariable("similarityMajor", args.getSimilarityMajorThreshold());
-        ctx.setVariable("scoreGaugeOffset", String.format("%.2f", scoreGaugeOffset));
         ctx.setVariable("changeClassification", response.getChangeClassification());
         ctx.setVariable("scoreCalculation", response.getScoreCalculation());
         ctx.setVariable("seniorReviewScore", response.getRequiresSeniorReview());
-        ctx.setVariable("volumeExponent", formatScore(args.getVolumeExponent()));
-        ctx.setVariable("filesScopeFactor", formatScore(args.getFilesScopeFactor()));
-        ctx.setVariable("fileDensityThreshold", formatScore(args.getFileDensityThreshold()));
-        ctx.setVariable("linesLogFactor", formatScore(args.getLinesLogFactor()));
-        ctx.setVariable("codeBlocksModLogFactor", formatScore(args.getCodeBlocksModifiedLogFactor()));
-        ctx.setVariable("codeBlocksAddLogFactor", formatScore(args.getCodeBlocksAddedLogFactor()));
-        ctx.setVariable("classesModLogFactor", formatScore(args.getClassesModifiedLogFactor()));
-        ctx.setVariable("classesAddLogFactor", formatScore(args.getClassesAddedLogFactor()));
-        ctx.setVariable("architectureBonusFactor", formatScore(args.getArchitectureBonusFactor()));
-        ctx.setVariable("qualityMultiplierMin", formatScore(args.getQualityMultiplierMin()));
-        ctx.setVariable("qualityMultiplierMax", formatScore(args.getQualityMultiplierMax()));
+        ctx.setVariable("volumeExponent", args.getVolumeExponent());
+        ctx.setVariable("filesScopeFactor", args.getFilesScopeFactor());
+        ctx.setVariable("fileDensityThreshold", args.getFileDensityThreshold());
+        ctx.setVariable("linesLogFactor", args.getLinesLogFactor());
+        ctx.setVariable("codeBlocksModLogFactor", args.getCodeBlocksModifiedLogFactor());
+        ctx.setVariable("codeBlocksAddLogFactor", args.getCodeBlocksAddedLogFactor());
+        ctx.setVariable("classesModLogFactor", args.getClassesModifiedLogFactor());
+        ctx.setVariable("classesAddLogFactor", args.getClassesAddedLogFactor());
+        ctx.setVariable("architectureBonusFactor", args.getArchitectureBonusFactor());
+        ctx.setVariable("qualityMultiplierMin", args.getQualityMultiplierMin());
+        ctx.setVariable("qualityMultiplierMax", args.getQualityMultiplierMax());
         ctx.setVariable("complexityTrivialMax", args.getComplexityTrivialMax());
         ctx.setVariable("complexityModerateMax", args.getComplexityModerateMax());
         ctx.setVariable("complexityComplexMax", args.getComplexityComplexMax());
+        ctx.setVariable("llmSummary", response.getSummary());
+        ctx.setVariable("llmThinking", response.getThinking());
+
         populateEffortBreakdown(ctx, response, result.getPreComputedScores());
         populateQualityMultiplier(ctx, response);
         populateArchitectureBonus(ctx, response);
         populateRiskAssessment(ctx, response);
-        ctx.setVariable("llmSummary", response.getSummary());
-        ctx.setVariable("llmThinking", response.getThinking());
+        populateStaticAnalysisReview(ctx, response);
+
         populateBlastRadius(ctx, response, request);
+        populateCpdDetails(ctx, request);
+
         List<String> techTags = Collections.emptyList();
         if (Objects.nonNull(response.getTags()) && Objects.nonNull(response.getTags().getTechnical())) {
             techTags = response.getTags().getTechnical();
         }
         ctx.setVariable("technicalTags", techTags);
+
         List<String> funcTags = Collections.emptyList();
         if (Objects.nonNull(response.getTags()) && Objects.nonNull(response.getTags().getFunctional())) {
             funcTags = response.getTags().getFunctional();
         }
         ctx.setVariable("functionalTags", funcTags);
+
         List<DimensionView> dimScores = Collections.emptyList();
         if (Objects.nonNull(response.getQualityDimensions())) {
             dimScores = buildDimensionScores(response.getQualityDimensions());
         }
         ctx.setVariable("dimensionScores", dimScores);
+
         int criticalCount = 0;
         if (Objects.nonNull(response.getBugs()) && Objects.nonNull(response.getBugs().getBlocking())) {
             criticalCount = response.getBugs().getBlocking().size();
         }
+
         int majorCount = 0;
         if (Objects.nonNull(response.getBugs()) && Objects.nonNull(response.getBugs().getMajor())) {
             majorCount = response.getBugs().getMajor().size();
         }
+
         int minorCount = 0;
         if (Objects.nonNull(response.getBugs()) && Objects.nonNull(response.getBugs().getMinor())) {
             minorCount = response.getBugs().getMinor().size();
         }
+
         ctx.setVariable("criticalFindings", criticalCount);
         ctx.setVariable("majorFindings", majorCount);
         ctx.setVariable("minorFindings", minorCount);
-        List<FindingView> findings = buildFindings(response);
-        ctx.setVariable("findings", findings);
-        List<String> recommendations = Optional.ofNullable(response.getSeniorReviewReasons()).orElse(Collections.emptyList());
-        ctx.setVariable("recommendations", recommendations);
-        populateStaticAnalysisReview(ctx, response);
-        int totalFiles = Objects.nonNull(request.getFileChanges()) ? request.getFileChanges().size() : 0;
-        ctx.setVariable("totalFilesChanged", totalFiles);
+        ctx.setVariable("findings", buildFindings(response));
+        ctx.setVariable("recommendations", Optional.ofNullable(response.getSeniorReviewReasons()).orElse(Collections.emptyList()));
+        ctx.setVariable("totalFilesChanged", request.getFileChanges().size());
         ctx.setVariable("javaFilesChanged", countJavaFiles(request));
-        ctx.setVariable("totalAffectedCodeBlocks", countAffectedCodeBlocks(request));
+        ctx.setVariable("totalAffectedCodeBlocks", request.getCodeBlockChanges().size());
         ctx.setVariable("confirmedErrorCount", countConfirmedErrors(response));
         ctx.setVariable("files", buildFileViews(request));
-        populateCpdDetails(ctx, request);
         ctx.setVariable("highRiskMethodCount", 0);
         ctx.setVariable("maxCognitiveComplexity", 0);
         ctx.setVariable("complexityAnalysis", Collections.emptyList());
@@ -201,363 +184,47 @@ public class HtmlReportBuilder implements ReportBuilder {
         ctx.setVariable("missedLines", 0);
         ctx.setVariable("coverageAnalysis", Collections.emptyList());
         ctx.setVariable("similarityMatches", Collections.emptyList());
+
         return templateEngine.process(TEMPLATE_COMMIT_ANALYSIS, ctx);
-    }
-    private static void populateEffortBreakdown(Context ctx, LlmScoringResponse response, PreComputedScores preComputed) {
-        EffortBreakdown breakdown = response.getEffortBreakdown();
-        if (Objects.isNull(breakdown)) {
-            ctx.setVariable("volumeScore", null);
-            ctx.setVariable("complexityMultiplier", null);
-            ctx.setVariable("baseEffortScore", "0.00");
-            return;
-        }
-        VolumeScore volume = breakdown.getVolumeScore();
-        ctx.setVariable("volumeScore", volume);
-        if (Objects.nonNull(preComputed)) {
-            ctx.setVariable("linesChanged", preComputed.getLinesChanged());
-            ctx.setVariable("linesScore", formatScore(preComputed.getLinesScore()));
-            ctx.setVariable("filesChanged", preComputed.getFilesChanged());
-            ctx.setVariable("contentScore", formatScore(preComputed.getContentScore()));
-            ctx.setVariable("filesScopeMultiplier", formatScore(preComputed.getFilesScopeMultiplier()));
-            ctx.setVariable("fileDensity", formatScore(preComputed.getFileDensity()));
-            ctx.setVariable("codeBlocksModified", preComputed.getCodeBlocksModified());
-            ctx.setVariable("codeBlocksModifiedScore", formatScore(preComputed.getCodeBlocksModifiedScore()));
-            ctx.setVariable("codeBlocksAdded", preComputed.getCodeBlocksAdded());
-            ctx.setVariable("codeBlocksAddedScore", formatScore(preComputed.getCodeBlocksAddedScore()));
-            ctx.setVariable("classesModified", preComputed.getClassesModified());
-            ctx.setVariable("classesModifiedScore", formatScore(preComputed.getClassesModifiedScore()));
-            ctx.setVariable("classesAdded", preComputed.getClassesAdded());
-            ctx.setVariable("classesAddedScore", formatScore(preComputed.getClassesAddedScore()));
-            ctx.setVariable("totalVolumeScore", formatScore(preComputed.getVolumeScore()));
-            ctx.setVariable("sizeFactor", formatScore(preComputed.getSizeFactor()));
-            ctx.setVariable("volModifyMult", formatScore(preComputed.getModifyMult()));
-            ctx.setVariable("volAddMult", formatScore(preComputed.getAddMult()));
-        } else if (Objects.nonNull(volume)) {
-            ctx.setVariable("linesChanged", volume.getLinesChanged());
-            ctx.setVariable("linesScore", formatScore(volume.getLinesScore()));
-            ctx.setVariable("filesChanged", volume.getFilesChanged());
-            ctx.setVariable("contentScore", formatScore(volume.getContentScore()));
-            ctx.setVariable("filesScopeMultiplier", formatScore(volume.getFilesScopeMultiplier()));
-            ctx.setVariable("fileDensity", formatScore(volume.getFileDensity()));
-            ctx.setVariable("codeBlocksModified", volume.getCodeBlocksModified());
-            ctx.setVariable("codeBlocksModifiedScore", formatScore(volume.getCodeBlocksModifiedScore()));
-            ctx.setVariable("codeBlocksAdded", volume.getCodeBlocksAdded());
-            ctx.setVariable("codeBlocksAddedScore", formatScore(volume.getCodeBlocksAddedScore()));
-            ctx.setVariable("classesModified", volume.getClassesModified());
-            ctx.setVariable("classesModifiedScore", formatScore(volume.getClassesModifiedScore()));
-            ctx.setVariable("classesAdded", volume.getClassesAdded());
-            ctx.setVariable("classesAddedScore", formatScore(volume.getClassesAddedScore()));
-            ctx.setVariable("totalVolumeScore", formatScore(volume.getTotalVolumeScore()));
-            ctx.setVariable("sizeFactor", formatScore(volume.getSizeFactor()));
-            ctx.setVariable("volModifyMult", formatScore(volume.getModifyMultiplier()));
-            ctx.setVariable("volAddMult", formatScore(volume.getAddMultiplier()));
-        }
-        ComplexityMultiplier complexity = breakdown.getComplexityMultiplier();
-        ctx.setVariable("complexityMultiplier", complexity);
-        if (Objects.nonNull(complexity)) {
-            ctx.setVariable("avgModifyComplexity", formatScore(complexity.getAvgModifyComplexity()));
-            ctx.setVariable("modifyMultiplier", formatScore(complexity.getModifyMultiplier()));
-            ctx.setVariable("avgCreateComplexity", formatScore(complexity.getAvgCreateComplexity()));
-            ctx.setVariable("createMultiplier", formatScore(complexity.getCreateMultiplier()));
-            ctx.setVariable("combinedComplexityMultiplier", formatScore(complexity.getCombinedMultiplier()));
-        }
-        ctx.setVariable("baseEffortScore", formatScore(breakdown.getBaseEffortScore()));
-    }
-    private static void populateQualityMultiplier(Context ctx, LlmScoringResponse response) {
-        QualityMultiplier qm = response.getQualityMultiplier();
-        ctx.setVariable("qualityMultiplier", qm);
-        if (Objects.isNull(qm)) {
-            ctx.setVariable("cpdAnalysis", null);
-            ctx.setVariable("staticAnalysisQuality", null);
-            ctx.setVariable("coverageQuality", null);
-            ctx.setVariable("architectureQuality", null);
-            ctx.setVariable("qualityGateAnalysis", null);
-            ctx.setVariable("qualityMultiplierCalculation", null);
-            return;
-        }
-        ctx.setVariable("finalQualityMultiplier", formatScore(qm.getFinalMultiplier()));
-        ctx.setVariable("qualityMultiplierPositive", qm.getFinalMultiplier() >= 1.0);
-        CpdAnalysis cpd = qm.getCpdAnalysis();
-        ctx.setVariable("cpdAnalysis", cpd);
-        double cpdImpactValue = 0.0;
-        if (Objects.nonNull(cpd)) {
-            cpdImpactValue = cpd.getImpact();
-            ctx.setVariable("cpdDuplicationPercent", formatScore(cpd.getDuplicationPercent()));
-            ctx.setVariable("cpdImpact", formatImpact(cpd.getImpact()));
-        }
-        StaticAnalysisImpact sa = qm.getStaticAnalysis();
-        ctx.setVariable("staticAnalysisQuality", sa);
-        double saImpactValue = 0.0;
-        if (Objects.nonNull(sa)) {
-            saImpactValue = sa.getImpact();
-            ctx.setVariable("pmdViolationsInChanges", sa.getPmdViolationsInChanges());
-            ctx.setVariable("spotbugsIssuesInChanges", sa.getSpotbugsIssuesInChanges());
-            ctx.setVariable("staticAnalysisImpact", formatImpact(sa.getImpact()));
-            ctx.setVariable("staticAnalysisClean", sa.getImpact() > 0);
-        }
-        CoverageAnalysis cov = qm.getCoverageAnalysis();
-        ctx.setVariable("coverageQuality", cov);
-        double covImpactValue = 0.0;
-        if (Objects.nonNull(cov)) {
-            covImpactValue = cov.getImpact();
-            ctx.setVariable("qualityCoveragePercent", formatScore(cov.getCoveragePercent()));
-            ctx.setVariable("coverageImpact", formatImpact(cov.getImpact()));
-        }
-        ArchitectureAnalysis arch = qm.getArchitectureAnalysis();
-        ctx.setVariable("architectureQuality", arch);
-        double archImpactValue = 0.0;
-        if (Objects.nonNull(arch)) {
-            archImpactValue = arch.getPenaltyImpact();
-            ctx.setVariable("solidViolations", Optional.ofNullable(arch.getSolidViolations()).orElse(Collections.emptyList()));
-            ctx.setVariable("architectureIssues", Optional.ofNullable(arch.getArchitectureIssues()).orElse(Collections.emptyList()));
-            ctx.setVariable("architecturePenalty", formatImpact(arch.getPenaltyImpact()));
-        }
-        QualityGateAnalysis qg = qm.getQualityGateAnalysis();
-        ctx.setVariable("qualityGateAnalysis", qg);
-        double qgImpactValue = 0.0;
-        if (Objects.nonNull(qg)) {
-            qgImpactValue = qg.getImpact();
-            ctx.setVariable("failedQualityGates", Optional.ofNullable(qg.getFailedGates()).orElse(Collections.emptyList()));
-            ctx.setVariable("qualityGateImpact", formatImpact(qg.getImpact()));
-        }
-        String calculation = buildQualityMultiplierCalculation(cpdImpactValue, saImpactValue, covImpactValue, archImpactValue, qgImpactValue, qm.getFinalMultiplier());
-        ctx.setVariable("qualityMultiplierCalculation", calculation);
-    }
-    private static String buildQualityMultiplierCalculation(double cpd, double sa, double cov, double arch, double qg, double finalMult) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("1.0");
-        if (cpd != 0) {
-            sb.append(cpd > 0 ? " + " : " ").append(String.format("%.2f", cpd)).append(" (CPD)");
-        }
-        if (sa != 0) {
-            sb.append(sa > 0 ? " + " : " ").append(String.format("%.2f", sa)).append(" (SA)");
-        }
-        if (cov != 0) {
-            sb.append(cov > 0 ? " + " : " ").append(String.format("%.2f", cov)).append(" (Cov)");
-        }
-        if (arch != 0) {
-            sb.append(arch > 0 ? " + " : " ").append(String.format("%.2f", arch)).append(" (Arch)");
-        }
-        if (qg != 0) {
-            sb.append(qg > 0 ? " + " : " ").append(String.format("%.2f", qg)).append(" (QG)");
-        }
-        sb.append(" = ").append(String.format("%.2f", finalMult));
-        return sb.toString();
-    }
-    private static void populateArchitectureBonus(Context ctx, LlmScoringResponse response) {
-        ArchitectureEffortBonus bonus = response.getArchitectureEffortBonus();
-        ctx.setVariable("architectureBonus", bonus);
-        if (Objects.nonNull(bonus)) {
-            ctx.setVariable("architectureImpactScore", bonus.getArchitectureImpactScore());
-            ctx.setVariable("qualityFactor", formatScore(bonus.getQualityFactor()));
-            ctx.setVariable("bonusBaseEffort", formatScore(bonus.getBaseEffort()));
-            ctx.setVariable("bonusCalculation", bonus.getBonusCalculation());
-            ctx.setVariable("bonusPoints", formatScore(bonus.getBonusPoints()));
-        }
-    }
-    private static void populateRiskAssessment(Context ctx, LlmScoringResponse response) {
-        RiskAssessment risk = response.getRiskAssessment();
-        ctx.setVariable("riskAssessment", risk);
-        if (Objects.nonNull(risk)) {
-            ctx.setVariable("riskScore", risk.getRiskScore());
-            String riskLevel = null;
-            if (Objects.nonNull(risk.getRiskLevel())) {
-                riskLevel = risk.getRiskLevel().name().toLowerCase();
-            }
-            ctx.setVariable("riskLevel", riskLevel);
-        }
     }
     private void populateCpdDetails(Context ctx, LlmScoringRequest request) {
         DuplicationInfo dup = request.getDuplication();
         if (Objects.isNull(dup) || CollectionUtils.isEmpty(dup.getCloneDetails())) {
             ctx.setVariable("cpdDuplicationCount", 0);
-            ctx.setVariable("cpdDuplications", Collections.emptyList());
-            ctx.setVariable("cpdMarkdownReport", "");
+            ctx.setVariable("cpdDuplication", null);
+            ctx.setVariable("cpdEffectivePenalty", 0.0);
             return;
         }
         List<CloneDetail> clones = dup.getCloneDetails();
         ctx.setVariable("cpdDuplicationCount", clones.size());
-        ctx.setVariable("cpdDuplications", clones);
-        long introducedCount = clones.stream().filter(CloneDetail::isIntroducedInCommit).count();
-        long testOnlyCount = clones.stream().filter(CloneDetail::isAllTestCode).count();
-        long selfDupCount = clones.stream().filter(CloneDetail::isSelfDuplication).count();
-        long crossFileCount = clones.stream().filter(CloneDetail::isCrossFile).count();
+        ctx.setVariable("cpdDuplication", dup);
+        ctx.setVariable("cpdMaxClonesToShow", args.getMaxClonesToShow());
+
+        long introducedCount = 0;
+        long testOnlyCount = 0;
+        long selfDupCount = 0;
+        long crossFileCount = 0;
         double effectivePenalty = 0;
         for (CloneDetail clone : clones) {
             if (clone.isIntroducedInCommit()) {
+                introducedCount++;
                 effectivePenalty += clone.isAllTestCode() ? args.getTestCodePenaltyWeight() : 1.0;
             }
-        }
-        String penaltyCategory;
-        String penaltyImpact;
-        String penaltyExplanation;
-        if (effectivePenalty <= 1) {
-            penaltyCategory = "✅ Excellent";
-            penaltyImpact = "+5% score bonus";
-            penaltyExplanation = "Minimal or no copy-pasting. Great job!";
-        } else if (effectivePenalty <= 3) {
-            penaltyCategory = "✅ Good";
-            penaltyImpact = "No change";
-            penaltyExplanation = "Some duplication, but acceptable.";
-        } else if (effectivePenalty <= 6) {
-            penaltyCategory = "⚠️ Needs Attention";
-            penaltyImpact = "-10% score penalty";
-            penaltyExplanation = "Consider refactoring duplicated code.";
-        } else if (effectivePenalty <= 10) {
-            penaltyCategory = "🔴 Too Much";
-            penaltyImpact = "-20% score penalty";
-            penaltyExplanation = "Significant copy-pasting detected. Please refactor.";
-        } else {
-            penaltyCategory = "🔴 Excessive";
-            penaltyImpact = "-30% score penalty";
-            penaltyExplanation = "Excessive duplication. Refactoring required.";
-        }
-        List<CpdCloneView> introducedClones = Lists.newArrayList();
-        for (CloneDetail clone : clones) {
-            if (clone.isIntroducedInCommit()) {
-                introducedClones.add(buildCpdCloneView(clone));
+            if (clone.isAllTestCode()) {
+                testOnlyCount++;
+            }
+            if (clone.isSelfDuplication()) {
+                selfDupCount++;
+            }
+            if (clone.isCrossFile()) {
+                crossFileCount++;
             }
         }
-        List<CpdExistingView> clonesFromExisting = Lists.newArrayList();
-        if (CollectionUtils.isNotEmpty(dup.getClonesFromExisting())) {
-            for (CloneFromExisting existing : dup.getClonesFromExisting()) {
-                List<String> sourceLocations = Lists.newArrayList();
-                for (String src : existing.getSourceSignatures()) {
-                    sourceLocations.add(formatSignatureAsLocation(src));
-                }
-                clonesFromExisting.add(CpdExistingView.builder()
-                        .affectedLocation(formatSignatureAsLocation(existing.getAffectedSignature()))
-                        .sourceLocations(sourceLocations)
-                        .build());
-            }
-        }
-        List<CpdNewGroupView> newCloneGroups = Lists.newArrayList();
-        if (CollectionUtils.isNotEmpty(dup.getNewClones())) {
-            for (NewCloneGroup group : dup.getNewClones()) {
-                List<String> memberLocations = Lists.newArrayList();
-                for (String sig : group.getMemberSignatures()) {
-                    memberLocations.add(formatSignatureAsLocation(sig));
-                }
-                newCloneGroups.add(CpdNewGroupView.builder()
-                        .memberCount(group.getMemberSignatures().size())
-                        .memberLocations(memberLocations)
-                        .build());
-            }
-        }
-        int maxToShow = args.getMaxClonesToShow();
-        List<CpdCloneView> detailedClones = Lists.newArrayList();
-        for (int i = 0; i < Math.min(clones.size(), maxToShow); i++) {
-            detailedClones.add(buildCpdCloneView(clones.get(i)));
-        }
-        int remainingCloneCount = Math.max(0, clones.size() - maxToShow);
-        Context cpdCtx = new Context(Locale.ENGLISH);
-        cpdCtx.setVariable("totalClones", clones.size());
-        cpdCtx.setVariable("totalDuplicatedLines", dup.getTotalDuplicatedLines());
-        cpdCtx.setVariable("duplicatedPercentage", dup.getDuplicatedPercentage());
-        cpdCtx.setVariable("introducedCount", introducedCount);
-        cpdCtx.setVariable("preExistingCount", clones.size() - introducedCount);
-        cpdCtx.setVariable("testOnlyCount", testOnlyCount);
-        cpdCtx.setVariable("productionCount", clones.size() - testOnlyCount);
-        cpdCtx.setVariable("selfDupCount", selfDupCount);
-        cpdCtx.setVariable("crossFileCount", crossFileCount);
-        cpdCtx.setVariable("penaltyCategory", penaltyCategory);
-        cpdCtx.setVariable("penaltyImpact", penaltyImpact);
-        cpdCtx.setVariable("penaltyExplanation", penaltyExplanation);
-        cpdCtx.setVariable("introducedClones", introducedClones);
-        cpdCtx.setVariable("clonesFromExisting", clonesFromExisting);
-        cpdCtx.setVariable("newCloneGroups", newCloneGroups);
-        cpdCtx.setVariable("detailedClones", detailedClones);
-        cpdCtx.setVariable("remainingCloneCount", remainingCloneCount);
-        ctx.setVariable("cpdMarkdownReport", textTemplateEngine.process(TEMPLATE_CPD_REPORT, cpdCtx));
-    }
-    private CpdCloneView buildCpdCloneView(CloneDetail clone) {
-        List<CpdLocationView> locations = Lists.newArrayList();
-        String firstSourceSlice = null;
-        for (CloneLocation loc : clone.getLocations()) {
-            String fileName = Objects.nonNull(loc.getFile())
-                    ? loc.getFile().substring(Math.max(0, loc.getFile().lastIndexOf('/') + 1))
-                    : "unknown";
-            String methodInfo = Objects.nonNull(loc.getMethodSignature())
-                    ? " in `" + truncateSignature(loc.getMethodSignature()) + "`"
-                    : "";
-            String locStatus = loc.isIntroducedInCommit()
-                    ? "**INTRODUCED** (" + loc.getLinesOverlappingDiff() + " lines overlap with diff)"
-                    : "pre-existing";
-            int overlapPercent = (int) (loc.getLinesOverlappingDiff() * 100.0 / Math.max(clone.getLineCount(), 1));
-            locations.add(CpdLocationView.builder()
-                    .fileName(fileName)
-                    .testCode(loc.isTestCode())
-                    .introduced(loc.isIntroducedInCommit())
-                    .startLine(loc.getStartLine())
-                    .endLine(loc.getEndLine())
-                    .linesOverlapping(loc.getLinesOverlappingDiff())
-                    .overlapPercent(overlapPercent)
-                    .methodInfo(methodInfo)
-                    .locStatus(locStatus)
-                    .build());
-            if (Objects.isNull(firstSourceSlice) && Objects.nonNull(loc.getSourceSlice()) && !loc.getSourceSlice().isEmpty()) {
-                firstSourceSlice = loc.getSourceSlice();
-            }
-        }
-        String truncatedSource = truncateSource(firstSourceSlice);
-        return CpdCloneView.builder()
-                .introduced(clone.isIntroducedInCommit())
-                .testCode(clone.isAllTestCode())
-                .selfDuplication(clone.isSelfDuplication())
-                .lineCount(clone.getLineCount())
-                .locations(locations)
-                .truncatedSource(truncatedSource)
-                .build();
-    }
-    private String truncateSource(String source) {
-        if (Objects.isNull(source) || source.isEmpty()) {
-            return "";
-        }
-        String[] lines = source.split("\n");
-        if (lines.length > args.getMaxSourceLines()) {
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < args.getTruncateSourceLines(); i++) {
-                sb.append(lines[i]).append("\n");
-            }
-            sb.append("// ... truncated (").append(lines.length - args.getTruncateSourceLines()).append(" more lines) ...\n");
-            return sb.toString();
-        }
-        if (source.endsWith("\n")) {
-            return source;
-        }
-        return source + "\n";
-    }
-    private static String formatSignatureAsLocation(String signature) {
-        if (Objects.isNull(signature) || signature.isEmpty()) {
-            return "unknown";
-        }
-        String result = signature;
-        int parenIdx = result.indexOf('(');
-        if (parenIdx > 0) {
-            result = result.substring(0, parenIdx);
-        }
-        result = result.replace('/', '.');
-        String[] parts = result.split("\\.");
-        if (parts.length >= 2) {
-            return parts[parts.length - 2] + "." + parts[parts.length - 1] + "()";
-        } else if (parts.length == 1) {
-            return parts[0] + "()";
-        }
-        return result;
-    }
-    private static String truncateSignature(String signature) {
-        if (Objects.isNull(signature)) {
-            return "unknown";
-        }
-        String result = signature;
-        int lastSlash = result.lastIndexOf('/');
-        if (lastSlash > 0) {
-            result = result.substring(lastSlash + 1);
-        }
-        if (result.length() > MAX_SIGNATURE_LENGTH) {
-            return result.substring(0, MAX_SIGNATURE_LENGTH - 3) + "...";
-        }
-        return result;
+        ctx.setVariable("cpdEffectivePenalty", effectivePenalty);
+        ctx.setVariable("cpdIntroducedCount", introducedCount);
+        ctx.setVariable("cpdTestOnlyCount", testOnlyCount);
+        ctx.setVariable("cpdSelfDupCount", selfDupCount);
+        ctx.setVariable("cpdCrossFileCount", crossFileCount);
     }
     private void populateBlastRadius(Context ctx, LlmScoringResponse response, LlmScoringRequest request) {
         BlastRadiusAnalysis br = response.getBlastRadiusAnalysis();
@@ -593,23 +260,18 @@ public class HtmlReportBuilder implements ReportBuilder {
             } else {
                 fallbackRisk = LlmScoringResponse.RiskLevel.LOW;
             }
-            ctx.setVariable("brRiskLevel", fallbackRisk.name().toLowerCase());
+            ctx.setVariable("brRiskLevel", fallbackRisk);
             ctx.setVariable("brCriticalCallers", Collections.emptyList());
             ctx.setVariable("brExplanation", null);
             ctx.setVariable("brModuleType", null);
             ctx.setVariable("brExternalImpact", null);
             return;
         }
-        String brRiskLevel = Objects.nonNull(br.getRiskLevel()) ? br.getRiskLevel().name().toLowerCase() : null;
-        ctx.setVariable("brRiskLevel", brRiskLevel);
-        List<String> criticalCallers = Optional.ofNullable(br.getCriticalCallers()).orElse(Collections.emptyList());
-        ctx.setVariable("brCriticalCallers", Lists.transform(criticalCallers,
-                c -> c.replace("<init>", ".<init>").replace("..<init>", ".<init>")));
+        ctx.setVariable("brRiskLevel", br.getRiskLevel());
+        ctx.setVariable("brCriticalCallers", Optional.ofNullable(br.getCriticalCallers()).orElse(Collections.emptyList()));
         ctx.setVariable("brExplanation", br.getExplanation());
-        String brModuleType = Objects.nonNull(br.getModuleType()) ? br.getModuleType().name().toLowerCase() : null;
-        ctx.setVariable("brModuleType", brModuleType);
-        String brExternalImpact = Objects.nonNull(br.getExternalImpactEstimate()) ? br.getExternalImpactEstimate().name().toLowerCase() : null;
-        ctx.setVariable("brExternalImpact", brExternalImpact);
+        ctx.setVariable("brModuleType", br.getModuleType());
+        ctx.setVariable("brExternalImpact", br.getExternalImpactEstimate());
         SignatureChanges sig = br.getSignatureChanges();
         ctx.setVariable("signatureChanges", sig);
         if (Objects.nonNull(sig)) {
@@ -620,6 +282,145 @@ public class HtmlReportBuilder implements ReportBuilder {
             ctx.setVariable("hasBreakingChanges", false);
             ctx.setVariable("changedSignatures", Collections.emptyList());
             ctx.setVariable("breakingChangeType", null);
+        }
+    }
+    private static void populateEffortBreakdown(Context ctx, LlmScoringResponse response, PreComputedScores preComputed) {
+        EffortBreakdown breakdown = response.getEffortBreakdown();
+        if (Objects.isNull(breakdown)) {
+            ctx.setVariable("volumeScore", null);
+            ctx.setVariable("complexityMultiplier", null);
+            ctx.setVariable("baseEffortScore", 0.0);
+            return;
+        }
+        VolumeScore volume = breakdown.getVolumeScore();
+        ctx.setVariable("volumeScore", volume);
+        if (Objects.nonNull(preComputed)) {
+            ctx.setVariable("linesChanged", preComputed.getLinesChanged());
+            ctx.setVariable("linesScore", preComputed.getLinesScore());
+            ctx.setVariable("filesChanged", preComputed.getFilesChanged());
+            ctx.setVariable("contentScore", preComputed.getContentScore());
+            ctx.setVariable("filesScopeMultiplier", preComputed.getFilesScopeMultiplier());
+            ctx.setVariable("fileDensity", preComputed.getFileDensity());
+            ctx.setVariable("codeBlocksModified", preComputed.getCodeBlocksModified());
+            ctx.setVariable("codeBlocksModifiedScore", preComputed.getCodeBlocksModifiedScore());
+            ctx.setVariable("codeBlocksAdded", preComputed.getCodeBlocksAdded());
+            ctx.setVariable("codeBlocksAddedScore", preComputed.getCodeBlocksAddedScore());
+            ctx.setVariable("classesModified", preComputed.getClassesModified());
+            ctx.setVariable("classesModifiedScore", preComputed.getClassesModifiedScore());
+            ctx.setVariable("classesAdded", preComputed.getClassesAdded());
+            ctx.setVariable("classesAddedScore", preComputed.getClassesAddedScore());
+            ctx.setVariable("totalVolumeScore", preComputed.getVolumeScore());
+            ctx.setVariable("sizeFactor", preComputed.getSizeFactor());
+            ctx.setVariable("volModifyMult", preComputed.getModifyMult());
+            ctx.setVariable("volAddMult", preComputed.getAddMult());
+        } else if (Objects.nonNull(volume)) {
+            ctx.setVariable("linesChanged", volume.getLinesChanged());
+            ctx.setVariable("linesScore", volume.getLinesScore());
+            ctx.setVariable("filesChanged", volume.getFilesChanged());
+            ctx.setVariable("contentScore", volume.getContentScore());
+            ctx.setVariable("filesScopeMultiplier", volume.getFilesScopeMultiplier());
+            ctx.setVariable("fileDensity", volume.getFileDensity());
+            ctx.setVariable("codeBlocksModified", volume.getCodeBlocksModified());
+            ctx.setVariable("codeBlocksModifiedScore", volume.getCodeBlocksModifiedScore());
+            ctx.setVariable("codeBlocksAdded", volume.getCodeBlocksAdded());
+            ctx.setVariable("codeBlocksAddedScore", volume.getCodeBlocksAddedScore());
+            ctx.setVariable("classesModified", volume.getClassesModified());
+            ctx.setVariable("classesModifiedScore", volume.getClassesModifiedScore());
+            ctx.setVariable("classesAdded", volume.getClassesAdded());
+            ctx.setVariable("classesAddedScore", volume.getClassesAddedScore());
+            ctx.setVariable("totalVolumeScore", volume.getTotalVolumeScore());
+            ctx.setVariable("sizeFactor", volume.getSizeFactor());
+            ctx.setVariable("volModifyMult", volume.getModifyMultiplier());
+            ctx.setVariable("volAddMult", volume.getAddMultiplier());
+        }
+        ComplexityMultiplier complexity = breakdown.getComplexityMultiplier();
+        ctx.setVariable("complexityMultiplier", complexity);
+        if (Objects.nonNull(complexity)) {
+            ctx.setVariable("avgModifyComplexity", complexity.getAvgModifyComplexity());
+            ctx.setVariable("modifyMultiplier", complexity.getModifyMultiplier());
+            ctx.setVariable("avgCreateComplexity", complexity.getAvgCreateComplexity());
+            ctx.setVariable("createMultiplier", complexity.getCreateMultiplier());
+            ctx.setVariable("combinedComplexityMultiplier", complexity.getCombinedMultiplier());
+        }
+        ctx.setVariable("baseEffortScore", breakdown.getBaseEffortScore());
+    }
+    private static void populateQualityMultiplier(Context ctx, LlmScoringResponse response) {
+        QualityMultiplier qm = response.getQualityMultiplier();
+        ctx.setVariable("qualityMultiplier", qm);
+        if (Objects.isNull(qm)) {
+            ctx.setVariable("cpdAnalysis", null);
+            ctx.setVariable("staticAnalysisQuality", null);
+            ctx.setVariable("coverageQuality", null);
+            ctx.setVariable("architectureQuality", null);
+            ctx.setVariable("qualityGateAnalysis", null);
+            return;
+        }
+        ctx.setVariable("finalQualityMultiplier", qm.getFinalMultiplier());
+
+        CpdAnalysis cpd = qm.getCpdAnalysis();
+        ctx.setVariable("cpdAnalysis", cpd);
+        double cpdImpact = 0.0;
+        if (Objects.nonNull(cpd)) {
+            cpdImpact = cpd.getImpact();
+            ctx.setVariable("cpdDuplicationPercent", cpd.getDuplicationPercent());
+        }
+        ctx.setVariable("cpdImpact", cpdImpact);
+
+        StaticAnalysisImpact sa = qm.getStaticAnalysis();
+        ctx.setVariable("staticAnalysisQuality", sa);
+        double saImpact = 0.0;
+        if (Objects.nonNull(sa)) {
+            saImpact = sa.getImpact();
+            ctx.setVariable("pmdViolationsInChanges", sa.getPmdViolationsInChanges());
+            ctx.setVariable("spotbugsIssuesInChanges", sa.getSpotbugsIssuesInChanges());
+        }
+        ctx.setVariable("staticAnalysisImpact", saImpact);
+
+        CoverageAnalysis cov = qm.getCoverageAnalysis();
+        ctx.setVariable("coverageQuality", cov);
+        double covImpact = 0.0;
+        if (Objects.nonNull(cov)) {
+            covImpact = cov.getImpact();
+            ctx.setVariable("qualityCoveragePercent", cov.getCoveragePercent());
+        }
+        ctx.setVariable("coverageImpact", covImpact);
+
+        ArchitectureAnalysis arch = qm.getArchitectureAnalysis();
+        ctx.setVariable("architectureQuality", arch);
+        double archPenalty = 0.0;
+        if (Objects.nonNull(arch)) {
+            archPenalty = arch.getPenaltyImpact();
+            ctx.setVariable("solidViolations", Optional.ofNullable(arch.getSolidViolations()).orElse(Collections.emptyList()));
+            ctx.setVariable("architectureIssues", Optional.ofNullable(arch.getArchitectureIssues()).orElse(Collections.emptyList()));
+        }
+        ctx.setVariable("architecturePenalty", archPenalty);
+
+        QualityGateAnalysis qg = qm.getQualityGateAnalysis();
+        ctx.setVariable("qualityGateAnalysis", qg);
+        double qgImpact = 0.0;
+        if (Objects.nonNull(qg)) {
+            qgImpact = qg.getImpact();
+            ctx.setVariable("failedQualityGates", Optional.ofNullable(qg.getFailedGates()).orElse(Collections.emptyList()));
+        }
+        ctx.setVariable("qualityGateImpact", qgImpact);
+    }
+    private static void populateArchitectureBonus(Context ctx, LlmScoringResponse response) {
+        ArchitectureEffortBonus bonus = response.getArchitectureEffortBonus();
+        ctx.setVariable("architectureBonus", bonus);
+        if (Objects.nonNull(bonus)) {
+            ctx.setVariable("architectureImpactScore", bonus.getArchitectureImpactScore());
+            ctx.setVariable("qualityFactor", bonus.getQualityFactor());
+            ctx.setVariable("bonusBaseEffort", bonus.getBaseEffort());
+            ctx.setVariable("bonusCalculation", bonus.getBonusCalculation());
+            ctx.setVariable("bonusPoints", bonus.getBonusPoints());
+        }
+    }
+    private static void populateRiskAssessment(Context ctx, LlmScoringResponse response) {
+        RiskAssessment risk = response.getRiskAssessment();
+        ctx.setVariable("riskAssessment", risk);
+        if (Objects.nonNull(risk)) {
+            ctx.setVariable("riskScore", risk.getRiskScore());
+            ctx.setVariable("riskLevel", risk.getRiskLevel());
         }
     }
     private static void populateStaticAnalysisReview(Context ctx, LlmScoringResponse response) {
@@ -645,28 +446,6 @@ public class HtmlReportBuilder implements ReportBuilder {
         int spotbugsNewCount = CollectionUtils.size(review.getSpotbugsInChangedLines());
         ctx.setVariable("totalNewIssues", pmdNewCount + spotbugsNewCount);
     }
-    private static String formatScore(double value) {
-        return String.format("%.2f", value);
-    }
-    private static String formatImpact(double value) {
-        if (value > 0) {
-            return String.format("+%.2f", value);
-        }
-        if (value < 0) {
-            return String.format("%.2f", value);
-        }
-        return "0.00";
-    }
-    private static String formatNumber(int number) {
-        return String.format("%,d", number);
-    }
-    private static String formatDuration(Duration duration) {
-        long millis = duration.toMillis();
-        long seconds = millis / 1000;
-        long minutes = seconds / 60;
-        long hours = minutes / 60;
-        return String.format("%02d:%02d:%02d.%03d", hours, minutes % 60, seconds % 60, millis % 1000);
-    }
     private static List<DimensionView> buildDimensionScores(QualityDimensions dims) {
         List<DimensionView> toReturn = Lists.newArrayList();
         addDimension(toReturn, "Architecture Impact", dims.getArchitectureImpact(), "architecture");
@@ -684,14 +463,12 @@ public class HtmlReportBuilder implements ReportBuilder {
     private static void addDimension(List<DimensionView> views, String name, DimensionScore dim, String iconType) {
         if (Objects.nonNull(dim)) {
             boolean applicable = Objects.nonNull(dim.getScore());
-            int score = applicable ? dim.getScore() : 0;
             views.add(DimensionView.builder()
                     .name(name)
                     .iconType(iconType)
-                    .score(score)
+                    .score(applicable ? dim.getScore() : 0)
                     .rationale(dim.getRationale())
                     .applicable(applicable)
-                    .scoreDisplay(applicable ? String.valueOf(score) : "N/A")
                     .build());
         }
     }
@@ -714,12 +491,12 @@ public class HtmlReportBuilder implements ReportBuilder {
         return FindingView.builder()
                 .title(bug.getTitle())
                 .description(bug.getDescription())
-                .file(sanitizePath(bug.getFile()))
-                .lineHint(Objects.nonNull(bug.getLine()) ? "line " + bug.getLine() : null)
+                .file(bug.getFile())
+                .line(bug.getLine())
                 .severity(severity)
-                .type(Objects.nonNull(bug.getType()) ? bug.getType().name() : null)
-                .confidence(Objects.nonNull(bug.getConfidence()) ? bug.getConfidence().name().toLowerCase() : null)
-                .source(Objects.nonNull(bug.getSource()) ? bug.getSource().name() : null)
+                .type(bug.getType())
+                .confidence(bug.getConfidence())
+                .source(bug.getSource())
                 .suggestedFix(bug.getSuggestedFix())
                 .suggestedFileFix(bug.getSuggestedFileFix())
                 .suggestedBlockCode(bug.getSuggestedBlockCode())
@@ -730,12 +507,6 @@ public class HtmlReportBuilder implements ReportBuilder {
             return (int) request.getFileChanges().stream()
                     .filter(f -> Objects.nonNull(f.getPath()) && "java".equals(FilenameUtils.getExtension(f.getPath())))
                     .count();
-        }
-        return 0;
-    }
-    private static int countAffectedCodeBlocks(LlmScoringRequest request) {
-        if (Objects.nonNull(request.getCodeBlockChanges())) {
-            return request.getCodeBlockChanges().size();
         }
         return 0;
     }
@@ -759,23 +530,11 @@ public class HtmlReportBuilder implements ReportBuilder {
         }
         List<FileView> toReturn = Lists.newArrayList();
         for (FileChange file : request.getFileChanges()) {
-            String originalPath = file.getPath();
-            String path = sanitizePath(originalPath);
-            String fileName;
-            if (Objects.isNull(originalPath) || originalPath.isEmpty()) {
-                fileName = "(unknown)";
-            } else if (path.contains("/")) {
-                fileName = path.substring(path.lastIndexOf('/') + 1);
-            } else {
-                fileName = path;
-            }
-            String fileType = Objects.nonNull(file.getLanguage()) ? file.getLanguage() : getFileType(path);
-            String changeType = normalizeChangeType(file.getChangeType());
             List<CodeBlockView> symbols = Lists.newArrayList();
-            List<CodeBlockChange> methods = methodsByFile.get(originalPath);
+            List<CodeBlockChange> methods = methodsByFile.get(file.getPath());
             if (Objects.isNull(methods)) {
                 for (Map.Entry<String, List<CodeBlockChange>> entry : methodsByFile.entrySet()) {
-                    if (entry.getKey().endsWith(path) || originalPath.endsWith(entry.getKey())) {
+                    if (entry.getKey().endsWith(file.getPath()) || file.getPath().endsWith(entry.getKey())) {
                         methods = entry.getValue();
                         break;
                     }
@@ -787,10 +546,9 @@ public class HtmlReportBuilder implements ReportBuilder {
                 }
             }
             toReturn.add(FileView.builder()
-                    .path(path)
-                    .fileName(fileName)
-                    .fileType(fileType)
-                    .changeType(changeType)
+                    .path(file.getPath())
+                    .language(file.getLanguage())
+                    .changeType(file.getChangeType())
                     .diff(file.getDiff())
                     .affectedCodeBlocks(symbols)
                     .build());
@@ -801,133 +559,25 @@ public class HtmlReportBuilder implements ReportBuilder {
         List<CallerView> callerViews = Lists.newArrayList();
         if (Objects.nonNull(method.getCallers())) {
             for (CallerInfo caller : method.getCallers()) {
-                String callerFile = caller.getFile();
-                if (Objects.nonNull(callerFile) && callerFile.contains("/")) {
-                    callerFile = callerFile.substring(callerFile.lastIndexOf('/') + 1);
-                }
                 callerViews.add(CallerView.builder()
                         .name(caller.getCallerMethod())
-                        .detail(caller.isTestCaller() ? "(test)" : "(prod)")
-                        .file(callerFile)
+                        .testCaller(caller.isTestCaller())
+                        .file(caller.getFile())
                         .line(caller.getLine())
                         .build());
-            }
-        }
-        String lineRange = method.getStartLine() + "-" + method.getEndLine();
-        String containerName = method.getClassName();
-        if (Objects.isNull(containerName) && Objects.nonNull(method.getFullyQualifiedName())) {
-            String fqn = method.getFullyQualifiedName();
-            int lastDot = fqn.lastIndexOf('.');
-            if (lastDot > 0) {
-                String beforeMethod = fqn.substring(0, lastDot);
-                int classNameStart = Math.max(beforeMethod.lastIndexOf('.'), beforeMethod.lastIndexOf('/'));
-                containerName = classNameStart >= 0 ? beforeMethod.substring(classNameStart + 1) : beforeMethod;
             }
         }
         return CodeBlockView.builder()
                 .name(method.getName())
                 .signature(method.getSignature())
                 .constructor(method.isConstructor())
-                .lineRange(lineRange)
-                .containerName(containerName)
+                .startLine(method.getStartLine())
+                .endLine(method.getEndLine())
+                .className(method.getClassName())
+                .fullyQualifiedName(method.getFullyQualifiedName())
                 .callerCount(method.getCallerCount())
                 .callers(callerViews)
                 .build();
-    }
-    private static String sanitizePath(String path) {
-        if (Objects.isNull(path) || path.isEmpty()) {
-            return "(unknown file)";
-        }
-        if (path.startsWith("/")) {
-            String[] markers = { "/src/main/java/", "/src/test/java/", "/src/main/resources/", "/src/test/resources/" };
-            for (String marker : markers) {
-                int idx = path.indexOf(marker);
-                if (idx >= 0) {
-                    return path.substring(idx + 1);
-                }
-            }
-            String[] moduleMarkers = { "/pom.xml", "/build.gradle" };
-            for (String marker : moduleMarkers) {
-                if (path.endsWith(marker.substring(1))) {
-                    int lastSlash = path.lastIndexOf('/');
-                    if (lastSlash > 0) {
-                        int secondLastSlash = path.lastIndexOf('/', lastSlash - 1);
-                        if (secondLastSlash >= 0) {
-                            return path.substring(secondLastSlash + 1);
-                        }
-                    }
-                    return path.substring(lastSlash + 1);
-                }
-            }
-            String[] rootPatterns = { "/dev/", "/projects/", "/workspace/", "/repo/", "/git/" };
-            for (String pattern : rootPatterns) {
-                int idx = path.indexOf(pattern);
-                if (idx >= 0) {
-                    String afterPattern = path.substring(idx + pattern.length());
-                    int nextSlash = afterPattern.indexOf('/');
-                    if (nextSlash >= 0) {
-                        return afterPattern.substring(nextSlash + 1);
-                    }
-                }
-            }
-            int lastSlash = path.lastIndexOf('/');
-            String result = lastSlash >= 0 ? path.substring(lastSlash + 1) : path;
-            while (result.startsWith("/")) {
-                result = result.substring(1);
-            }
-            return result;
-        }
-        return path;
-    }
-    private static String normalizeChangeType(LlmScoringRequest.FileChangeType changeType) {
-        if (Objects.isNull(changeType)) {
-            return "MODIFY";
-        }
-        switch (changeType) {
-            case ADDED:
-                return "NEW";
-            case MODIFIED:
-                return "MODIFY";
-            case DELETED:
-                return "DELETE";
-            case RENAMED:
-                return "RENAME";
-            default:
-                throw new IllegalArgumentException("Unknown change type: " + changeType);
-        }
-    }
-    private static String getFileType(String path) {
-        if (Objects.isNull(path)) {
-            return "unknown";
-        }
-        String extension = FilenameUtils.getExtension(path);
-        switch (extension) {
-            case "java":
-            case "kt":
-            case "scala":
-            case "py":
-            case "go":
-            case "rs":
-            case "ts":
-            case "js":
-            case "xml":
-            case "json":
-            case "sql":
-            case "properties":
-            case "gradle":
-                return extension;
-            case "yaml":
-            case "yml":
-                return "yaml";
-            case "tsx":
-                return "ts";
-            case "jsx":
-                return "js";
-            case "kts":
-                return "kt";
-            default:
-                return "unknown";
-        }
     }
     @Value
     @Builder
@@ -937,7 +587,6 @@ public class HtmlReportBuilder implements ReportBuilder {
         int score;
         String rationale;
         boolean applicable;
-        String scoreDisplay;
     }
     @Value
     @Builder
@@ -945,11 +594,11 @@ public class HtmlReportBuilder implements ReportBuilder {
         String title;
         String description;
         String file;
-        String lineHint;
+        Integer line;
         String severity;
-        String type;
-        String confidence;
-        String source;
+        LlmScoringResponse.BugType type;
+        LlmScoringResponse.Confidence confidence;
+        LlmScoringResponse.BugSource source;
         String suggestedFix;
         String suggestedFileFix;
         String suggestedBlockCode;
@@ -958,9 +607,8 @@ public class HtmlReportBuilder implements ReportBuilder {
     @Builder
     public static class FileView {
         String path;
-        String fileName;
-        String fileType;
-        String changeType;
+        String language;
+        LlmScoringRequest.FileChangeType changeType;
         String diff;
         String contentBefore;
         String contentAfter;
@@ -973,8 +621,10 @@ public class HtmlReportBuilder implements ReportBuilder {
         String name;
         String signature;
         boolean constructor;
-        String lineRange;
-        String containerName;
+        int startLine;
+        int endLine;
+        String className;
+        String fullyQualifiedName;
         int callerCount;
         @lombok.Builder.Default
         List<CallerView> callers = Lists.newArrayList();
@@ -983,46 +633,8 @@ public class HtmlReportBuilder implements ReportBuilder {
     @Builder
     public static class CallerView {
         String name;
-        String detail;
+        boolean testCaller;
         String file;
         int line;
-    }
-    @Value
-    @Builder
-    static class CpdCloneView {
-        boolean introduced;
-        boolean testCode;
-        boolean selfDuplication;
-        int lineCount;
-        @lombok.Builder.Default
-        List<CpdLocationView> locations = Lists.newArrayList();
-        String truncatedSource;
-    }
-    @Value
-    @Builder
-    static class CpdLocationView {
-        String fileName;
-        boolean testCode;
-        boolean introduced;
-        int startLine;
-        int endLine;
-        int linesOverlapping;
-        int overlapPercent;
-        String methodInfo;
-        String locStatus;
-    }
-    @Value
-    @Builder
-    static class CpdExistingView {
-        String affectedLocation;
-        @lombok.Builder.Default
-        List<String> sourceLocations = Lists.newArrayList();
-    }
-    @Value
-    @Builder
-    static class CpdNewGroupView {
-        int memberCount;
-        @lombok.Builder.Default
-        List<String> memberLocations = Lists.newArrayList();
     }
 }

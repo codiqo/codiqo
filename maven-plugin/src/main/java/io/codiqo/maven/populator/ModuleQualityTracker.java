@@ -1,5 +1,6 @@
 package io.codiqo.maven.populator;
 
+import java.util.Objects;
 import java.util.Set;
 
 import org.apache.commons.lang3.mutable.MutableDouble;
@@ -11,10 +12,6 @@ import lombok.Getter;
 
 @Getter
 public class ModuleQualityTracker {
-    // ========================================================================
-    // AFFECTED METRICS (commit-level: only what changed in this commit)
-    // ========================================================================
-
     private final MutableInt affectedFilesChanged = new MutableInt();
     private final MutableInt affectedCodeUnits = new MutableInt();
     private final MutableInt affectedTotalLines = new MutableInt();
@@ -24,13 +21,7 @@ public class ModuleQualityTracker {
     private final MutableInt affectedCoverageCount = new MutableInt();
     private final MutableDouble affectedTotalComplexity = new MutableDouble();
     private final MutableInt affectedComplexityCount = new MutableInt();
-
-    // ========================================================================
-    // MODULE METRICS (full module: ALL code units, not just changed)
-    // ========================================================================
-
     private final Set<String> moduleUniqueClasses = Sets.newHashSet();
-
     private final MutableInt moduleTotalMethods = new MutableInt();
     private final MutableInt moduleCoveredMethods = new MutableInt();
     private final MutableInt moduleTotalLines = new MutableInt();
@@ -100,7 +91,7 @@ public class ModuleQualityTracker {
         }
     }
     void addModuleUniqueClass(String className) {
-        if (className != null) {
+        if (Objects.nonNull(className)) {
             moduleUniqueClasses.add(className);
         }
     }

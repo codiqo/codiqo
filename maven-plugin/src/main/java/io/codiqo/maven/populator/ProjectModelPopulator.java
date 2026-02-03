@@ -6,6 +6,7 @@ import java.io.File;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.Path;
+import java.util.Objects;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
@@ -73,7 +74,7 @@ public class ProjectModelPopulator implements SubmissionPopulator {
                             if (StringUtils.isNotEmpty(artifact.getDownloadUrl())) {
                                 dependencyModel.setHomepage(new URI(artifact.getDownloadUrl()));
                             }
-                            if (artifact.getRepository() != null) {
+                            if (Objects.nonNull(artifact.getRepository())) {
                                 if (StringUtils.isNotEmpty(artifact.getRepository().getUrl())) {
                                     dependencyModel.setRepositoryUrl(new URI(artifact.getRepository().getUrl()));
                                 }

@@ -22,6 +22,8 @@ public class CommitModelPopulator implements SubmissionPopulator {
         commitModel.setParents(ctx.getAnalysis().getParentIds());
         commitModel.setBranches(ctx.getAnalysis().getBranches());
         commitModel.setIsMerge(ctx.getAnalysis().isMergeCommit());
+        commitModel.setIsRevert(ctx.getAnalysis().isRevertCommit());
+        commitModel.setRevertedCommitId(ctx.getAnalysis().getRevertedCommitId());
         ctx.getSubmissionModel().setCommit(commitModel);
     }
     private static void populateClientModel(SubmissionContext ctx) {

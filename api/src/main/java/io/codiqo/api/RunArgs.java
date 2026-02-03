@@ -13,11 +13,13 @@ import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Option.Builder;
 import org.apache.commons.cli.Options;
+import org.apache.commons.lang3.StringUtils;
 import org.eclipse.jgit.annotations.Nullable;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 
 import com.google.common.base.CaseFormat;
+import com.google.common.base.Splitter;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
@@ -100,6 +102,10 @@ public class RunArgs {
     private boolean llmEnableWebSearchTool = false;
     @Nullable
     private File outputDirectory;
+    @Nullable
+    private String includeBranches;
+    @Nullable
+    private String includeAuthorEmails;
     @Nullable
     private double sizeFactorDivisor = 100.0;
     @Nullable
@@ -321,6 +327,20 @@ public class RunArgs {
 
     public Optional<ProjectSpec> owner(File filePath) {
         return projects.stream().filter(proj -> proj.contains(filePath)).findAny();
+    }
+    public boolean matchesByBranch(List<String> branches) {
+        if (StringUtils.isEmpty(includeBranches)) {
+            return true;
+        }
+        List<String> patterns = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(includeBranches);
+        return branches.stream().anyMatch(branch -> patterns.stream().anyMatch(pattern -> branch.matches(pattern)));
+    }
+    public boolean matchesByAuthor(String authorEmail) {
+        if (StringUtils.isEmpty(includeAuthorEmails)) {
+            return true;
+        }
+        List<String> emails = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(includeAuthorEmails);
+        return emails.contains(authorEmail);
     }
     public static Options options() {
         Options toReturn = new Options();

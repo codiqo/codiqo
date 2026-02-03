@@ -196,6 +196,12 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.outputDirectory")
     protected File outputDirectory;
 
+    @Parameter(property = "codiqo.includeBranches")
+    protected String includeBranches;
+
+    @Parameter(property = "codiqo.includeAuthorEmails")
+    protected String includeAuthorEmails;
+
     @Override
     @SuppressWarnings("deprecation")
     public final Collection<File> apply(Artifact artifact) {
@@ -240,6 +246,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setLlmMaxTokens(llmMaxTokens);
         args.setLlmEnableWebSearchTool(llmEnableWebSearchTool);
         Optional.ofNullable(outputDirectory).ifPresent(args::setOutputDirectory);
+        Optional.ofNullable(includeBranches).ifPresent(args::setIncludeBranches);
+        Optional.ofNullable(includeAuthorEmails).ifPresent(args::setIncludeAuthorEmails);
         if (StringUtils.isNotEmpty(llmApiKey)) {
             if (llmApiKey.startsWith(ENV_PREFIX)) {
                 String envVar = llmApiKey.substring(ENV_PREFIX.length());
@@ -508,7 +516,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     }
     protected void doExecute(RunArgs args) throws Exception {
         SubmissionContext ctx = doAnalyze(args);
-        if (Objects.nonNull(ctx)) {
+        if (Objects.nonNull(ctx) && BooleanUtils.negate(ctx.getAnalysis().isRevertCommit())) {
             doLlmScoring(ctx);
         }
     }
@@ -526,6 +534,13 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                         toApply.setTrue();
                     }
                 });
+                if (BooleanUtils.or(new boolean[] {
+                        BooleanUtils.negate(args.matchesByBranch(analysis.getBranches())),
+                        BooleanUtils.negate(args.matchesByAuthor(analysis.getAuthorEmail()))
+                })) {
+                    getLog().info("commit filtered out — branch: " + analysis.getBranches() + ", author: " + analysis.getAuthorEmail());
+                    toApply.setFalse();
+                }
                 if (toApply.isTrue()) {
                     IndexingSummary index = registry.index(analysis);
                     registry.collectAndCapture(index, analysis);

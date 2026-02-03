@@ -998,6 +998,12 @@ components:
         isMerge:
           type: boolean
           default: false
+        isRevert:
+          type: boolean
+          default: false
+        revertedCommitId:
+          type: string
+          pattern: '^[a-f0-9]{40}$'
 
     ClientInfoModel:
       type: object

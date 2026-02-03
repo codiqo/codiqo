@@ -33,10 +33,13 @@ public class MavenProjectWrapper implements MavenProjectSpec {
     private String artifactId;
     private String name;
     private String packaging;
+
     @Getter(AccessLevel.NONE)
     private Optional<String> parent = Optional.empty();
+
     @Getter(AccessLevel.NONE)
     private Optional<Date> latestModified = Optional.empty();
+
     private String description;
     private String version;
     private File baseDirectory;

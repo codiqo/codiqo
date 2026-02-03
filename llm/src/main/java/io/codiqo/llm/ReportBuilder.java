@@ -21,6 +21,8 @@ public interface ReportBuilder {
         String commitMessage;
         List<String> branches;
         boolean mergeCommit;
+        boolean revertCommit;
+        String revertedCommitId;
         String repositoryName;
         String llmModel;
         Duration analysisDuration;

@@ -157,7 +157,7 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
     }
     @JsonNotification("language/actionableNotification")
     public void actionableNotification(ActionableNotification notification) {
-        if (notification.getCommands() != null) {
+        if (Objects.nonNull(notification.getCommands())) {
             for (Command cmd : notification.getCommands()) {
                 log.info(cmd.toString());
             }

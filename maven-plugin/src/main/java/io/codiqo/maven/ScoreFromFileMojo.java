@@ -13,6 +13,7 @@ import java.util.Optional;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.maven.plugin.AbstractMojo;
@@ -44,6 +45,7 @@ import io.codiqo.llm.client.ScoringClient;
 import io.codiqo.llm.client.ScoringClient.ScoringResult;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringResponse;
+import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.maven.populator.LlmScoringPopulator;
 
 @Mojo(name = "score-from-file", requiresProject = false)
@@ -80,11 +82,25 @@ public class ScoreFromFileMojo extends AbstractMojo {
     @Parameter(property = "codiqo.dumpAnalysis", defaultValue = "true")
     private boolean dumpAnalysis;
 
+    @Parameter(property = "codiqo.includeBranches")
+    private String includeBranches;
+
+    @Parameter(property = "codiqo.includeAuthorEmails")
+    private String includeAuthorEmails;
+
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
             AnalysisSubmissionModel submission = loadSubmission();
             RunArgs args = buildRunArgs();
+            CommitModel commit = submission.getCommit();
+            if (Objects.nonNull(commit) && BooleanUtils.or(new boolean[] {
+                    BooleanUtils.negate(args.matchesByBranch(Optional.ofNullable(commit.getBranches()).orElse(Collections.emptyList()))),
+                    BooleanUtils.negate(args.matchesByAuthor(commit.getAuthorEmail()))
+            })) {
+                getLog().info("commit filtered out — branch: " + commit.getBranches() + ", author: " + commit.getAuthorEmail());
+                return;
+            }
             LlmScoringRequest request = new SubmissionToRequestMapper(args).apply(submission);
             PromptContext promptContext = LlmScoringPopulator.buildPromptContext(submission, args);
 
@@ -98,9 +114,11 @@ public class ScoreFromFileMojo extends AbstractMojo {
             VolumeScoreCalculator volumeCalc = new VolumeScoreCalculator(args);
             VolumeScoreCalculator.CpdPreComputed cpdPre = volumeCalc.calculateCpdPenalty(request);
             VolumeScoreCalculator.StaticAnalysisPreComputed saPre = volumeCalc.calculateStaticAnalysisPenalty(request);
+
             getLog().info("CPD effectivePenalty: " + cpdPre.getEffectivePenalty());
             getLog().info("CPD category: " + cpdPre.getCategory());
             getLog().info("CPD recommendedImpact: " + cpdPre.getRecommendedImpact());
+
             getLog().info("static analysis total: " + saPre.getErrorCount());
             getLog().info("static analysis introduced: " + saPre.getIntroducedCount());
             getLog().info("static analysis preExisting: " + saPre.getPreExistingCount());
@@ -108,7 +126,7 @@ public class ScoreFromFileMojo extends AbstractMojo {
 
             StopWatch stopWatch = StopWatch.createStarted();
             ScoringResult result;
-            try (LlmScoringClient client = new LlmScoringClient(args)) {
+            try (LlmScoringClient client = new LlmScoringClient(args, new MavenMessageReporter(getLog()))) {
                 result = client.score(request, promptContext, new ScoringClient.StreamingHandler() {
                     private int contentChars = 0;
 
@@ -128,7 +146,7 @@ public class ScoreFromFileMojo extends AbstractMojo {
             stopWatch.stop();
 
             LlmScoringResponse response = result.getResponse();
-            getLog().info("--- LLM SCORING RESULTS ---");
+            getLog().info("LLM results:");
             getLog().info("duration: " + stopWatch);
             getLog().info("tokens total: " + result.getTotalTokens());
             getLog().info("tokens prompt: " + result.getPromptTokens());
@@ -169,6 +187,8 @@ public class ScoreFromFileMojo extends AbstractMojo {
         toReturn.setReadTimeout(Duration.ofSeconds(readTimeoutSeconds));
         toReturn.setDumpAnalysis(dumpAnalysis);
         Optional.ofNullable(outputDirectory).ifPresent(toReturn::setOutputDirectory);
+        Optional.ofNullable(includeBranches).ifPresent(toReturn::setIncludeBranches);
+        Optional.ofNullable(includeAuthorEmails).ifPresent(toReturn::setIncludeAuthorEmails);
         if (StringUtils.isNotEmpty(llmApiKey)) {
             if (llmApiKey.startsWith(ENV_PREFIX)) {
                 String envVar = llmApiKey.substring(ENV_PREFIX.length());
@@ -200,7 +220,9 @@ public class ScoreFromFileMojo extends AbstractMojo {
                     .authorEmail(commit.getAuthorEmail())
                     .commitMessage(commit.getMessage())
                     .branches(Optional.ofNullable(commit.getBranches()).orElse(Collections.emptyList()))
-                    .mergeCommit(Boolean.TRUE.equals(commit.getIsMerge()));
+                    .mergeCommit(Boolean.TRUE.equals(commit.getIsMerge()))
+                    .revertCommit(Boolean.TRUE.equals(commit.getIsRevert()))
+                    .revertedCommitId(commit.getRevertedCommitId());
             if (Objects.nonNull(commit.getTimestamp())) {
                 contextBuilder.timestamp(commit.getTimestamp().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
             }

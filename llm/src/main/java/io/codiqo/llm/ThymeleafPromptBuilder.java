@@ -7,8 +7,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.logging.Logger;
-
 import com.google.common.collect.Maps;
 
 import org.thymeleaf.TemplateEngine;
@@ -26,22 +24,24 @@ import com.fasterxml.jackson.databind.util.StdDateFormat;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.logging.Log;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import lombok.SneakyThrows;
 
 public class ThymeleafPromptBuilder implements PromptBuilder {
-    private static final Logger LOG = Logger.getLogger(ThymeleafPromptBuilder.class.getName());
     private static final String TEMPLATE_SYSTEM_PROMPT = "system-prompt";
     private static final String TEMPLATE_USER_PROMPT = "user-message";
     private static final String TEMPLATE_WEB_SEARCH_RESULTS = "web-search-results";
     private static final String TEMPLATE_PRE_COMPUTED_SCORES = "pre-computed-scores";
 
+    private final Log log;
     private final TemplateEngine templateEngine;
     private final ObjectMapper mapper;
     private final VolumeScoreCalculator volumeCalculator;
 
-    public ThymeleafPromptBuilder(RunArgs args) {
+    public ThymeleafPromptBuilder(RunArgs args, Log log) {
+        this.log = log;
         ClassLoaderTemplateResolver resolver = new ClassLoaderTemplateResolver();
         resolver.setPrefix("thymeleaf/templates/");
         resolver.setSuffix(".txt");
@@ -116,8 +116,8 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
             }
         }
 
-        LOG.info(String.format("requestJson breakdown: total=%d, fileChanges=%d (diffs=%d), methodChanges=%d, duplication=%d (sourceSlices=%d), coverage=%d",
-                totalSize, fileChangesSize, diffSize, methodChangesSize, duplicationSize, sourceSliceSize, coverageSize));
+        log.info("requestJson breakdown: total=%d, fileChanges=%d (diffs=%d), methodChanges=%d, duplication=%d (sourceSlices=%d), coverage=%d",
+                totalSize, fileChangesSize, diffSize, methodChangesSize, duplicationSize, sourceSliceSize, coverageSize);
     }
     @SneakyThrows
     private int serializeSize(Object value, Object fallback) {

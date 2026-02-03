@@ -1,5 +1,8 @@
 package io.codiqo.llm;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.StringReader;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.EnumSet;
@@ -49,6 +52,7 @@ import io.codiqo.llm.schema.LlmScoringRequest.FileChange;
 import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import lombok.SneakyThrows;
 
 @RequiredArgsConstructor
 public class SubmissionToRequestMapper implements Function<AnalysisSubmissionModel, LlmScoringRequest> {
@@ -67,6 +71,8 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .author(submission.getCommit().getAuthor())
                 .timestamp(submission.getCommit().getTimestamp().toString())
                 .branch(submission.getCommit().getBranches().get(0))
+                .revertCommit(Boolean.TRUE.equals(submission.getCommit().getIsRevert()))
+                .revertedCommitId(submission.getCommit().getRevertedCommitId())
                 .repository(submission.getProject().getId())
                 .changeSummary(mapChangeSummary(files))
                 .fileChanges(mapFileChanges(files))
@@ -578,6 +584,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         private int getEffectiveDeleted() {
             return deleted - importDeleted;
         }
+        @SneakyThrows(IOException.class)
         private static DiffStats fromPatch(String diff) {
             Patch patch = new Patch();
             byte[] diffBytes = diff.getBytes(StandardCharsets.UTF_8);
@@ -600,16 +607,19 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
             }
             int importAdded = 0;
             int importDeleted = 0;
-            for (String line : diff.split("\n")) {
-                if (line.startsWith("+") && !line.startsWith("+++")) {
-                    String content = line.substring(1).trim();
-                    if (content.startsWith(IMPORT_LINE_PATTERN)) {
-                        importAdded++;
-                    }
-                } else if (line.startsWith("-") && !line.startsWith("---")) {
-                    String content = line.substring(1).trim();
-                    if (content.startsWith(IMPORT_LINE_PATTERN)) {
-                        importDeleted++;
+            try (BufferedReader reader = new BufferedReader(new StringReader(diff))) {
+                String line;
+                while (Objects.nonNull(line = reader.readLine())) {
+                    if (line.startsWith("+") && !line.startsWith("+++")) {
+                        String content = line.substring(1).trim();
+                        if (content.startsWith(IMPORT_LINE_PATTERN)) {
+                            importAdded++;
+                        }
+                    } else if (line.startsWith("-") && !line.startsWith("---")) {
+                        String content = line.substring(1).trim();
+                        if (content.startsWith(IMPORT_LINE_PATTERN)) {
+                            importDeleted++;
+                        }
                     }
                 }
             }

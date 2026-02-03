@@ -2,7 +2,6 @@ package io.codiqo.llm.client;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.logging.Logger;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -22,6 +21,7 @@ import com.openai.models.chat.completions.ChatCompletionStreamOptions;
 import com.openai.models.chat.completions.ChatCompletionToolMessageParam;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.logging.Log;
 import io.codiqo.llm.FinalScoreCalculator;
 import io.codiqo.llm.PromptBuilder;
 import io.codiqo.llm.PromptBuilder.PromptContext;
@@ -34,9 +34,9 @@ import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringResponse;
 
 public class LlmScoringClient implements ScoringClient {
-    private static final Logger LOG = Logger.getLogger(LlmScoringClient.class.getName());
     private static final int MAX_TOOL_CALLS = Byte.MAX_VALUE;
 
+    private final Log log;
     private final OpenAIClient client;
     private final OpenAIClientWrapper wrapper;
     private final PromptBuilder promptBuilder;
@@ -48,10 +48,13 @@ public class LlmScoringClient implements ScoringClient {
     private final Double temperature;
     private final Double topP;
     private final Integer maxTokens;
+    private final int maxRetries;
     private final boolean enableWebSearch;
 
-    public LlmScoringClient(RunArgs args) {
-        LOG.info("configuring OpenAI client: timeout=" + args.getReadTimeout());
+    public LlmScoringClient(RunArgs args, Log log) {
+        this.log = Objects.requireNonNull(log);
+
+        log.info("configuring OpenAI client: timeout=" + args.getReadTimeout());
         OpenAIOkHttpClient.Builder builder = OpenAIOkHttpClient.builder();
         builder.timeout(args.getReadTimeout());
 
@@ -61,18 +64,15 @@ public class LlmScoringClient implements ScoringClient {
         if (StringUtils.isNotEmpty(args.getLlmBaseUrl())) {
             builder = builder.baseUrl(args.getLlmBaseUrl());
         }
-        if (args.getLlmMaxRetries() > 0) {
-            builder = builder.maxRetries(args.getLlmMaxRetries());
-        }
-
         this.client = builder.build();
         this.wrapper = new OpenAIClientWrapper(client);
-        this.promptBuilder = new ThymeleafPromptBuilder(args);
+        this.promptBuilder = new ThymeleafPromptBuilder(args, log);
         this.finalScoreCalculator = new FinalScoreCalculator(args);
         this.model = args.getLlmModel();
         this.temperature = args.getLlmTemperature();
         this.topP = args.getLlmTopP();
         this.maxTokens = args.getLlmMaxTokens();
+        this.maxRetries = Math.max(1, args.getLlmMaxRetries());
         this.enableWebSearch = args.isLlmEnableWebSearchTool();
         this.webSearchClient = enableWebSearch ? new OllamaWebSearchClient(args, promptBuilder) : null;
 
@@ -90,7 +90,7 @@ public class LlmScoringClient implements ScoringClient {
         String userMessage = userMessageResult.getMessage();
         PreComputedScores preComputedScores = userMessageResult.getPreComputedScores();
         int promptLength = systemPrompt.length() + userMessage.length();
-        LOG.info("prompt size: system=" + systemPrompt.length() + " user=" + userMessage.length() + " total=" + promptLength + " chars");
+        log.info("prompt size: system=" + systemPrompt.length() + " user=" + userMessage.length() + " total=" + promptLength + " chars");
 
         ChatCompletionCreateParams.Builder paramsBuilder = ChatCompletionCreateParams.builder();
         paramsBuilder.model(model);
@@ -122,7 +122,7 @@ public class LlmScoringClient implements ScoringClient {
         };
 
         for (int iteration = 0; iteration < MAX_TOOL_CALLS; iteration++) {
-            StreamingResult streamResult = wrapper.stream(paramsBuilder.build(), bridgeHandler);
+            StreamingResult streamResult = streamWithRetry(paramsBuilder.build(), bridgeHandler);
 
             totalPromptTokens += streamResult.getPromptTokens();
             totalCompletionTokens += streamResult.getCompletionTokens();
@@ -160,10 +160,7 @@ public class LlmScoringClient implements ScoringClient {
             }
 
             String rawContent = streamResult.getContent().toString();
-            LOG.info("raw response length: " + rawContent.length() + " chars, finishReason: " + streamResult.getFinishReason());
-            if (rawContent.length() < 500) {
-                LOG.warning("short/empty response body: " + rawContent);
-            }
+            log.info("raw response length: " + rawContent.length() + " chars, finishReason: " + streamResult.getFinishReason());
             LlmScoringResponse scoringResponse = objectMapper.readValue(rawContent, LlmScoringResponse.class);
 
             finalScoreCalculator.apply(scoringResponse, preComputedScores);
@@ -200,5 +197,19 @@ public class LlmScoringClient implements ScoringClient {
             return searchTool.apply(webSearchClient);
         }
         throw new IllegalArgumentException("unknown tool: " + name);
+    }
+    private StreamingResult streamWithRetry(ChatCompletionCreateParams params, OpenAIClientWrapper.StreamingHandler handler) throws Exception {
+        Exception lastException = null;
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                return wrapper.stream(params, handler);
+            } catch (Exception err) {
+                lastException = err;
+                if (attempt < maxRetries) {
+                    log.warn(String.format("streaming attempt %d/%d failed: %s, retrying", attempt, maxRetries, err.getMessage()));
+                }
+            }
+        }
+        throw lastException;
     }
 }
