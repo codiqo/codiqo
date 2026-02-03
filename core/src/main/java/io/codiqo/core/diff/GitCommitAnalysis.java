@@ -34,6 +34,8 @@ public class GitCommitAnalysis implements CommitAnalysis {
     private List<String> parentIds = Lists.newArrayList();
     private List<String> branches = Lists.newArrayList();
     private boolean mergeCommit;
+    private boolean revertCommit;
+    private String revertedCommitId;
     private int filesChanged;
     private Set<FileAnalysis> files = Sets.newLinkedHashSet();
     private List<CopyPasteDetectionSummary> cpd = Lists.newArrayList();

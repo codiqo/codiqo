@@ -27,6 +27,8 @@ public class LlmScoringRequest {
     private String timestamp;
     private String repository;
     private String branch;
+    private boolean revertCommit;
+    private String revertedCommitId;
 
     private ChangeSummary changeSummary;
     private List<FileChange> fileChanges;

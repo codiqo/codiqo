@@ -40,6 +40,7 @@ import io.codiqo.llm.client.ScoringClient;
 import io.codiqo.llm.client.ScoringClient.ScoringResult;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringResponse;
+import io.codiqo.maven.logging.MavenMessageReporter;
 import lombok.RequiredArgsConstructor;
 
 @RequiredArgsConstructor
@@ -52,7 +53,7 @@ public class LlmScoringPopulator implements SubmissionPopulator {
         AnalysisSubmissionModel submission = ctx.getSubmissionModel();
         StopWatch stopWatch = StopWatch.createStarted();
 
-        try (LlmScoringClient client = new LlmScoringClient(args)) {
+        try (LlmScoringClient client = new LlmScoringClient(args, new MavenMessageReporter(log))) {
             SubmissionToRequestMapper mapper = new SubmissionToRequestMapper(args);
             LlmScoringRequest request = mapper.apply(submission);
             PromptContext promptContext = buildPromptContext(submission, args);
@@ -111,6 +112,8 @@ public class LlmScoringPopulator implements SubmissionPopulator {
                 .commitMessage(commit.getMessage())
                 .branches(commit.getBranches())
                 .mergeCommit(Boolean.TRUE.equals(commit.getIsMerge()))
+                .revertCommit(Boolean.TRUE.equals(commit.getIsRevert()))
+                .revertedCommitId(commit.getRevertedCommitId())
                 .repositoryName(ctx.getIndex().getProjectRoot().getName())
                 .llmModel(ctx.getLlmModel())
                 .analysisDuration(duration)
@@ -118,11 +121,12 @@ public class LlmScoringPopulator implements SubmissionPopulator {
 
         String html = builder.buildReport(result, request, reportContext);
 
+        String commitSha = commit.getSha();
         File outputDir = ctx.getArgs().getOutputDirectory();
         File htmlFile;
         if (Objects.nonNull(outputDir)) {
             FileUtils.forceMkdir(outputDir);
-            htmlFile = new File(outputDir, "codiqo-analysis.html");
+            htmlFile = new File(outputDir, "codiqo-analysis-" + commitSha + ".html");
         } else {
             htmlFile = Files.createTempFile("codiqo-analysis-", ".html").toFile();
         }
@@ -156,11 +160,12 @@ public class LlmScoringPopulator implements SubmissionPopulator {
         yamlMapper.enable(SerializationFeature.INDENT_OUTPUT);
         yamlMapper.registerModule(new JavaTimeModule());
 
+        String commitSha = submission.getCommit().getSha();
         File outputDir = args.getOutputDirectory();
         File file;
         if (Objects.nonNull(outputDir)) {
             FileUtils.forceMkdir(outputDir);
-            file = new File(outputDir, "codiqo-analysis.yaml");
+            file = new File(outputDir, "codiqo-analysis-" + commitSha + ".yaml");
         } else {
             file = Files.createTempFile("codiqo-analysis-", ".yaml").toFile();
         }

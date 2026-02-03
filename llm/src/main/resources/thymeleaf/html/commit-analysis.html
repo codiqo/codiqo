@@ -5,24 +5,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title th:text="'Commit Analysis: ' + ${commitIdShort}">Commit Analysis</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@latest/styles/github-dark.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/highlight.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/java.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/kotlin.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/scala.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/python.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/go.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/rust.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/typescript.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/javascript.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/xml.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/yaml.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/json.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/sql.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/diff.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/properties.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@latest/lib/languages/gradle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked@latest/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/java.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/kotlin.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/scala.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/go.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/rust.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/typescript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/xml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/yaml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/sql.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/diff.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/properties.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/gradle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.7/marked.min.js"></script>
     <style type="text/tailwindcss">
         /* Custom scrollbar for code blocks */
         pre { scrollbar-width: thin; }
@@ -85,10 +85,8 @@
         .tab-content { @apply hidden; }
         .tab-content.active { @apply block; }
 
-        /* Score gauge */
-        .score-gauge { @apply relative; width: 100px; height: 100px; }
-        .score-gauge svg { transform: rotate(-90deg); }
-        .score-gauge .score-text { @apply absolute top-1/2 left-1/2 text-xl font-bold; transform: translate(-50%, -50%); }
+        /* Score display */
+        .score-display { @apply flex items-center justify-center rounded-full border-4 border-white/30 text-3xl font-bold text-white; width: 100px; height: 100px; }
 
         /* Markdown prose styling for LLM thinking */
         .prose h1 { @apply text-2xl font-bold mt-4 mb-2 text-gray-800; }
@@ -144,7 +142,11 @@
             <div class="flex justify-center items-center gap-3 mb-4">
                 <code class="text-blue-300 text-lg bg-slate-900/50 border border-blue-500/30 px-4 py-2 rounded-lg font-mono tracking-wide shadow-inner" th:text="${commitId}">abc1234567890def1234567890abc1234567890</code>
                 <span th:if="${mergeCommit}" class="text-xs bg-purple-500/20 text-purple-300 px-2 py-1 rounded border border-purple-500/30">🔀 Merge</span>
+                <span th:if="${revertCommit}" class="text-xs bg-amber-500/20 text-amber-300 px-2 py-1 rounded border border-amber-500/30">&#x21A9; Revert</span>
                 <span th:if="${gpgSignature}" class="text-xs bg-green-500/20 text-green-300 px-2 py-1 rounded border border-green-500/30">🔐 Signed</span>
+            </div>
+            <div th:if="${revertCommit}" class="text-center text-sm text-amber-300 mt-2">
+                Reverts commit: <code class="bg-slate-900/50 px-2 py-0.5 rounded font-mono text-xs" th:text="${revertedCommitId}"></code>
             </div>
             
             <!-- Two-column metadata table -->
@@ -171,23 +173,24 @@
                 <div th:if="${llmTotalTokens > 0}">
                     <span class="text-slate-400">Tokens:</span>
                     <span class="text-slate-200 text-xs">
-                        <span th:text="${llmInputTokensFormatted}">0</span> in /
-                        <span th:text="${llmOutputTokensFormatted}">0</span> out
-                        <span class="text-slate-400">(<span th:text="${llmTotalTokensFormatted}">0</span> total)</span>
+                        <span th:text="${#numbers.formatInteger(llmInputTokens, 1, 'COMMA')}">0</span> in /
+                        <span th:text="${#numbers.formatInteger(llmOutputTokens, 1, 'COMMA')}">0</span> out
+                        <span class="text-slate-400">(<span th:text="${#numbers.formatInteger(llmTotalTokens, 1, 'COMMA')}">0</span> total)</span>
                     </span>
                 </div>
                 <!-- API call duration -->
-                <div th:unless="${#strings.isEmpty(llmDuration)}">
+                <div th:if="${llmDurationMillis != null and llmDurationMillis > 0}"
+                     th:with="totalSec=${llmDurationMillis / 1000}, h=${totalSec / 3600}, m=${(totalSec % 3600) / 60}, s=${totalSec % 60}, ms=${llmDurationMillis % 1000}">
                     <span class="text-slate-400">Duration:</span>
-                    <span class="text-slate-200 text-xs font-mono" th:text="${llmDuration}">00:00:00.000</span>
+                    <span class="text-slate-200 text-xs font-mono" th:text="${#numbers.formatInteger(h, 2, 'NONE') + ':' + #numbers.formatInteger(m, 2, 'NONE') + ':' + #numbers.formatInteger(s, 2, 'NONE') + '.' + #numbers.formatInteger(ms, 3, 'NONE')}">00:00:00.000</span>
                 </div>
                 <div th:unless="${#strings.isEmpty(authorEmail)}">
                     <span class="text-slate-400">Email:</span>
                     <span class="text-slate-200 text-xs" th:text="${authorEmail}">email@example.com</span>
                 </div>
-                <div th:unless="${#strings.isEmpty(generatedAt)}">
+                <div th:if="${generatedAt != null}">
                     <span class="text-slate-400">Generated:</span>
-                    <span class="text-slate-200 text-xs" th:text="${generatedAt}">2024-01-01 00:00</span>
+                    <span class="text-slate-200 text-xs" th:text="${generatedAt.format(@java.time.format.DateTimeFormatter@ofPattern('yyyy-MM-dd HH:mm'))}">2024-01-01 00:00</span>
                 </div>
                 <!-- Show committer if different from author -->
                 <div th:if="${not #strings.isEmpty(committer) and not #strings.equals(committer, author)}">
@@ -241,15 +244,7 @@
                 <div class="flex-shrink-0">
                     <div class="rounded-lg p-4 text-center h-full flex flex-col justify-center items-center"
                          th:data-danger-score="${totalScore}">
-                        <div class="score-gauge mx-auto mb-2">
-                            <svg width="100" height="100" viewBox="0 0 120 120">
-                                <circle cx="60" cy="60" r="50" fill="none" stroke="#e5e7eb" stroke-width="10"/>
-                                <circle cx="60" cy="60" r="50" fill="none" stroke="white" stroke-width="10"
-                                        stroke-dasharray="314"
-                                        th:attr="stroke-dashoffset=${scoreGaugeOffset}"/>
-                            </svg>
-                            <div class="score-text text-white" th:text="${totalScoreFormatted}">85</div>
-                        </div>
+                        <div class="score-display mx-auto mb-2" th:text="${#numbers.formatDecimal(totalScore, 1, 1)}">85</div>
                         <p class="text-white font-semibold uppercase text-sm" th:text="${changeClassification}">Medium</p>
                     </div>
                 </div>
@@ -269,7 +264,7 @@
                         <!-- Base Effort -->
                         <div class="bg-slate-50 rounded-lg p-3 text-center flex flex-col justify-center border border-slate-200">
                             <p class="text-xs text-gray-500 uppercase">Base Effort</p>
-                            <p class="text-xl font-bold text-slate-800" th:text="${baseEffortScore}">68.34</p>
+                            <p class="text-xl font-bold text-slate-800" th:text="${#numbers.formatDecimal(baseEffortScore, 1, 2)}">68.34</p>
                             <p class="text-xs text-gray-400">Volume × Complexity</p>
                         </div>
 
@@ -277,16 +272,16 @@
                         <div class="bg-slate-50 rounded-lg p-3 text-center flex flex-col justify-center border border-slate-200">
                             <p class="text-xs text-gray-500 uppercase">Quality Multiplier</p>
                             <p class="text-xl font-bold"
-                               th:classappend="${qualityMultiplierPositive} ? 'text-green-600' : 'text-red-500'"
-                               th:text="${finalQualityMultiplier != null ? finalQualityMultiplier + '×' : 'N/A'}">1.15×</p>
+                               th:classappend="${finalQualityMultiplier != null and finalQualityMultiplier >= 1.0} ? 'text-green-600' : 'text-red-500'"
+                               th:text="${finalQualityMultiplier != null ? #numbers.formatDecimal(finalQualityMultiplier, 1, 2) + '×' : 'N/A'}">1.15×</p>
                             <p class="text-xs text-gray-400">CPD + Coverage + Arch</p>
                         </div>
 
                         <!-- Architecture Bonus -->
                         <div class="bg-slate-50 rounded-lg p-3 text-center flex flex-col justify-center border border-slate-200" th:if="${architectureBonus != null}">
                             <p class="text-xs text-gray-500 uppercase">Arch Bonus</p>
-                            <p class="text-xl font-bold text-slate-800" th:text="'+' + ${bonusPoints}">+4.92</p>
-                            <p class="text-xs text-gray-400">Quality Factor: <span th:text="${qualityFactor}">0.85</span></p>
+                            <p class="text-xl font-bold text-slate-800" th:text="${'+' + #numbers.formatDecimal(bonusPoints, 1, 2)}">+4.92</p>
+                            <p class="text-xs text-gray-400">Quality Factor: <span th:text="${#numbers.formatDecimal(qualityFactor, 1, 2)}">0.85</span></p>
                         </div>
                         <div class="bg-slate-50 rounded-lg p-3 text-center flex flex-col justify-center border border-slate-200" th:unless="${architectureBonus != null}">
                             <p class="text-xs text-gray-500 uppercase">Arch Bonus</p>
@@ -330,11 +325,11 @@
                                 <span class="tooltip-trigger" data-tooltip="volume-main">?</span>
                                 <div id="tooltip-volume-main" class="tooltip-popover">
                                     <strong>Volume Score Formula:</strong><br>
-                                    <code>score = count<sup th:text="${volumeExponent}">0.75</sup> × factor × multiplier</code><br><br>
+                                    <code>score = count<sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> × factor × multiplier</code><br><br>
                                     <strong>Project Size Multipliers:</strong><br>
-                                    • sizeFactor = <span th:text="${sizeFactor}">0.00</span><br>
-                                    • modifyMult = <span th:text="${volModifyMult}">1.00</span> (for modifications)<br>
-                                    • addMult = <span th:text="${volAddMult}">1.00</span> (for additions)<br><br>
+                                    • sizeFactor = <span th:text="${#numbers.formatDecimal(sizeFactor, 1, 2)}">0.00</span><br>
+                                    • modifyMult = <span th:text="${#numbers.formatDecimal(volModifyMult, 1, 2)}">1.00</span> (for modifications)<br>
+                                    • addMult = <span th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.00</span> (for additions)<br><br>
                                     Power-law scaling preserves magnitude differences while providing diminishing returns.
                                 </div>
                             </h4>
@@ -352,68 +347,68 @@
                                             Lines Changed
                                             <span class="tooltip-trigger" data-tooltip="lines">?</span>
                                             <div id="tooltip-lines" class="tooltip-popover">
-                                                <strong>Formula:</strong> <code><span th:text="${linesChanged}">0</span><sup th:text="${volumeExponent}">0.75</sup> × 5.0</code><br><br>
+                                                <strong>Formula:</strong> <code><span th:text="${linesChanged}">0</span><sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> × 5.0</code><br><br>
                                                 Power-law scaling preserves magnitude differences between small and large commits.
                                             </div>
                                         </td>
                                         <td class="py-1 text-right font-mono" th:text="${linesChanged}">0</td>
-                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${linesScore}">0.00</td>
+                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(linesScore, 1, 2)}">0.00</td>
                                     </tr>
                                     <tr th:if="${codeBlocksModified > 0}" class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
                                             Code Blocks Modified
                                             <span class="tooltip-trigger" data-tooltip="codeblocks-mod">?</span>
                                             <div id="tooltip-codeblocks-mod" class="tooltip-popover">
-                                                <strong>Formula:</strong> <code><span th:text="${codeBlocksModified}">0</span><sup th:text="${volumeExponent}">0.75</sup> × 6.0 × <span th:text="${volModifyMult}">1.00</span></code><br><br>
-                                                <strong>modifyMult = <span th:text="${volModifyMult}">1.00</span></strong> (bonus for modifying complex code)<br>
+                                                <strong>Formula:</strong> <code><span th:text="${codeBlocksModified}">0</span><sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> × 6.0 × <span th:text="${#numbers.formatDecimal(volModifyMult, 1, 2)}">1.00</span></code><br><br>
+                                                <strong>modifyMult = <span th:text="${#numbers.formatDecimal(volModifyMult, 1, 2)}">1.00</span></strong> (bonus for modifying complex code)<br>
                                                 Higher multiplier rewards touching complex code in large projects.
                                             </div>
                                         </td>
                                         <td class="py-1 text-right font-mono" th:text="${codeBlocksModified}">0</td>
-                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${codeBlocksModifiedScore}">0.00</td>
+                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(codeBlocksModifiedScore, 1, 2)}">0.00</td>
                                     </tr>
                                     <tr th:if="${codeBlocksAdded > 0}" class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
                                             Code Blocks Added
                                             <span class="tooltip-trigger" data-tooltip="codeblocks-add">?</span>
                                             <div id="tooltip-codeblocks-add" class="tooltip-popover">
-                                                <strong>Formula:</strong> <code><span th:text="${codeBlocksAdded}">0</span><sup th:text="${volumeExponent}">0.75</sup> × 8.0 × <span th:text="${volAddMult}">1.00</span></code><br><br>
-                                                <strong>addMult = <span th:text="${volAddMult}">1.00</span></strong> (adjusted for project size)<br>
+                                                <strong>Formula:</strong> <code><span th:text="${codeBlocksAdded}">0</span><sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> × 8.0 × <span th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.00</span></code><br><br>
+                                                <strong>addMult = <span th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.00</span></strong> (adjusted for project size)<br>
                                                 New code blocks have higher base factor (8.0) for new functionality.
                                             </div>
                                         </td>
                                         <td class="py-1 text-right font-mono" th:text="${codeBlocksAdded}">0</td>
-                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${codeBlocksAddedScore}">0.00</td>
+                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(codeBlocksAddedScore, 1, 2)}">0.00</td>
                                     </tr>
                                     <tr th:if="${classesModified > 0}" class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
                                             Classes Modified
                                             <span class="tooltip-trigger" data-tooltip="classes-mod">?</span>
                                             <div id="tooltip-classes-mod" class="tooltip-popover">
-                                                <strong>Formula:</strong> <code><span th:text="${classesModified}">0</span><sup th:text="${volumeExponent}">0.75</sup> × 5.0 × <span th:text="${volModifyMult}">1.00</span></code><br><br>
-                                                <strong>modifyMult = <span th:text="${volModifyMult}">1.00</span></strong><br>
+                                                <strong>Formula:</strong> <code><span th:text="${classesModified}">0</span><sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> × 5.0 × <span th:text="${#numbers.formatDecimal(volModifyMult, 1, 2)}">1.00</span></code><br><br>
+                                                <strong>modifyMult = <span th:text="${#numbers.formatDecimal(volModifyMult, 1, 2)}">1.00</span></strong><br>
                                                 Class-level changes indicate structural modifications to existing code.
                                             </div>
                                         </td>
                                         <td class="py-1 text-right font-mono" th:text="${classesModified}">0</td>
-                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${classesModifiedScore}">0.00</td>
+                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(classesModifiedScore, 1, 2)}">0.00</td>
                                     </tr>
                                     <tr th:if="${classesAdded > 0}" class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
                                             Classes Added
                                             <span class="tooltip-trigger" data-tooltip="classes-add">?</span>
                                             <div id="tooltip-classes-add" class="tooltip-popover">
-                                                <strong>Formula:</strong> <code><span th:text="${classesAdded}">0</span><sup th:text="${volumeExponent}">0.75</sup> × 8.0 × <span th:text="${volAddMult}">1.00</span></code><br><br>
-                                                <strong>addMult = <span th:text="${volAddMult}">1.00</span></strong><br>
+                                                <strong>Formula:</strong> <code><span th:text="${classesAdded}">0</span><sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> × 8.0 × <span th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.00</span></code><br><br>
+                                                <strong>addMult = <span th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.00</span></strong><br>
                                                 New classes have highest factor (8.0) for structural additions.
                                             </div>
                                         </td>
                                         <td class="py-1 text-right font-mono" th:text="${classesAdded}">0</td>
-                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${classesAddedScore}">0.00</td>
+                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(classesAddedScore, 1, 2)}">0.00</td>
                                     </tr>
                                     <tr class="border-b border-t-2 border-gray-300">
                                         <td colspan="2" class="py-1 text-gray-600 font-medium">Content Score</td>
-                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${contentScore}">0.00</td>
+                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(contentScore, 1, 2)}">0.00</td>
                                     </tr>
                                     <tr th:if="${filesChanged > 1}" class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
@@ -421,13 +416,13 @@
                                             <span class="tooltip-trigger" data-tooltip="density">?</span>
                                             <div id="tooltip-density" class="tooltip-popover">
                                                 <strong>Content Density Dampening:</strong><br>
-                                                <code>min(1.0, avgLinesPerFile / <span th:text="${fileDensityThreshold}">15.00</span>)</code><br><br>
+                                                <code>min(1.0, avgLinesPerFile / <span th:text="${#numbers.formatDecimal(fileDensityThreshold, 1, 2)}">15.00</span>)</code><br><br>
                                                 Dampens the file scope multiplier when many files have trivial changes.
                                                 avgLinesPerFile = linesChanged / filesChanged.<br>
-                                                If avg &ge; <span th:text="${fileDensityThreshold}">15.00</span> lines/file, full multiplier applies.
+                                                If avg &ge; <span th:text="${#numbers.formatDecimal(fileDensityThreshold, 1, 2)}">15.00</span> lines/file, full multiplier applies.
                                             </div>
                                         </td>
-                                        <td class="py-1 text-right font-mono" th:text="${fileDensity}">1.00</td>
+                                        <td class="py-1 text-right font-mono" th:text="${#numbers.formatDecimal(fileDensity, 1, 2)}">1.00</td>
                                         <td class="py-1 text-right text-gray-400 text-xs">dampening</td>
                                     </tr>
                                     <tr th:if="${filesChanged > 0}" class="border-b has-tooltip">
@@ -435,19 +430,19 @@
                                             Files Scope ×
                                             <span class="tooltip-trigger" data-tooltip="files">?</span>
                                             <div id="tooltip-files" class="tooltip-popover">
-                                                <strong>Formula:</strong> <code>1 + (<span th:text="${filesChanged}">0</span><sup th:text="${volumeExponent}">0.75</sup> &times; <span th:text="${filesScopeFactor}">0.50</span>) &times; <span th:text="${fileDensity}">1.00</span></code><br><br>
+                                                <strong>Formula:</strong> <code>1 + (<span th:text="${filesChanged}">0</span><sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> &times; <span th:text="${#numbers.formatDecimal(filesScopeFactor, 1, 2)}">0.50</span>) &times; <span th:text="${#numbers.formatDecimal(fileDensity, 1, 2)}">1.00</span></code><br><br>
                                                 Files act as a <strong>scope multiplier</strong> on the content score, dampened by content density.
                                                 Low density (few lines per file) reduces the scope bonus.
                                             </div>
                                         </td>
                                         <td class="py-1 text-right font-mono" th:text="${filesChanged}">0</td>
-                                        <td class="py-1 text-right font-bold text-purple-600">× <span th:text="${filesScopeMultiplier}">1.00</span></td>
+                                        <td class="py-1 text-right font-bold text-purple-600">× <span th:text="${#numbers.formatDecimal(filesScopeMultiplier, 1, 2)}">1.00</span></td>
                                     </tr>
                                 </tbody>
                                 <tfoot>
                                     <tr class="bg-blue-50">
                                         <td colspan="2" class="py-1 font-semibold text-gray-700">Total Volume</td>
-                                        <td class="py-1 text-right font-bold text-blue-700" th:text="${totalVolumeScore}">0.00</td>
+                                        <td class="py-1 text-right font-bold text-blue-700" th:text="${#numbers.formatDecimal(totalVolumeScore, 1, 2)}">0.00</td>
                                     </tr>
                                 </tfoot>
                             </table>
@@ -476,7 +471,7 @@
                                                 Higher = harder code to work with, deserves more credit.
                                             </div>
                                         </td>
-                                        <td class="py-1 text-right font-mono" th:text="${avgModifyComplexity}">0.00</td>
+                                        <td class="py-1 text-right font-mono" th:text="${#numbers.formatDecimal(avgModifyComplexity, 1, 2)}">0.00</td>
                                     </tr>
                                     <tr class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
@@ -490,7 +485,7 @@
                                                 • Highly Complex (>20): ×1.3
                                             </div>
                                         </td>
-                                        <td class="py-1 text-right font-bold text-purple-600" th:text="${modifyMultiplier}">1.00</td>
+                                        <td class="py-1 text-right font-bold text-purple-600" th:text="${#numbers.formatDecimal(modifyMultiplier, 1, 2)}">1.00</td>
                                     </tr>
                                     <tr class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
@@ -501,7 +496,7 @@
                                                 Lower is better - simple code is good design.
                                             </div>
                                         </td>
-                                        <td class="py-1 text-right font-mono" th:text="${avgCreateComplexity}">0.00</td>
+                                        <td class="py-1 text-right font-mono" th:text="${#numbers.formatDecimal(avgCreateComplexity, 1, 2)}">0.00</td>
                                     </tr>
                                     <tr class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
@@ -515,13 +510,13 @@
                                                 • Highly Complex (>20): ×0.7
                                             </div>
                                         </td>
-                                        <td class="py-1 text-right font-bold text-purple-600" th:text="${createMultiplier}">1.00</td>
+                                        <td class="py-1 text-right font-bold text-purple-600" th:text="${#numbers.formatDecimal(createMultiplier, 1, 2)}">1.00</td>
                                     </tr>
                                 </tbody>
                                 <tfoot>
                                     <tr class="bg-purple-50">
                                         <td class="py-1 font-semibold text-gray-700">Combined</td>
-                                        <td class="py-1 text-right font-bold text-purple-700" th:text="${combinedComplexityMultiplier}">1.00</td>
+                                        <td class="py-1 text-right font-bold text-purple-700" th:text="${#numbers.formatDecimal(combinedComplexityMultiplier, 1, 2)}">1.00</td>
                                     </tr>
                                 </tfoot>
                             </table>
@@ -540,15 +535,15 @@
                                 </div>
                             </h4>
                             <!-- Calculation Formula -->
-                            <div th:if="${qualityMultiplierCalculation != null}" class="bg-gradient-to-r from-green-50 to-emerald-50 rounded p-2 mb-2 border border-green-200">
+                            <div th:if="${qualityMultiplier != null}" class="bg-gradient-to-r from-green-50 to-emerald-50 rounded p-2 mb-2 border border-green-200">
                                 <p class="text-xs text-gray-500 mb-1">Calculation:</p>
-                                <p class="font-mono text-xs text-green-800 font-semibold" th:text="${qualityMultiplierCalculation}">1.0 + 0.05 (CPD) - 0.06 (SA) + 0.10 (Cov) = 1.09</p>
+                                <p class="font-mono text-xs text-green-800 font-semibold">1.0<th:block th:if="${cpdImpact != 0}"><th:block th:text="${cpdImpact > 0 ? ' + ' : ' '}"/><th:block th:text="${#numbers.formatDecimal(cpdImpact, 1, 2)}"/> (CPD)</th:block><th:block th:if="${staticAnalysisImpact != 0}"><th:block th:text="${staticAnalysisImpact > 0 ? ' + ' : ' '}"/><th:block th:text="${#numbers.formatDecimal(staticAnalysisImpact, 1, 2)}"/> (SA)</th:block><th:block th:if="${coverageImpact != 0}"><th:block th:text="${coverageImpact > 0 ? ' + ' : ' '}"/><th:block th:text="${#numbers.formatDecimal(coverageImpact, 1, 2)}"/> (Cov)</th:block><th:block th:if="${architecturePenalty != 0}"><th:block th:text="${architecturePenalty > 0 ? ' + ' : ' '}"/><th:block th:text="${#numbers.formatDecimal(architecturePenalty, 1, 2)}"/> (Arch)</th:block><th:block th:if="${qualityGateImpact != 0}"><th:block th:text="${qualityGateImpact > 0 ? ' + ' : ' '}"/><th:block th:text="${#numbers.formatDecimal(qualityGateImpact, 1, 2)}"/> (QG)</th:block> = <th:block th:text="${#numbers.formatDecimal(finalQualityMultiplier, 1, 2)}"/></p>
                             </div>
                             <table class="w-full text-xs">
                                 <tbody>
                                     <tr th:if="${cpdAnalysis != null}" class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
-                                            CPD (<span th:text="${cpdDuplicationPercent}">0</span>%)
+                                            CPD (<span th:text="${#numbers.formatDecimal(cpdDuplicationPercent, 1, 2)}">0</span>%)
                                             <span class="tooltip-trigger" data-tooltip="cpd">?</span>
                                             <div id="tooltip-cpd" class="tooltip-popover">
                                                 <strong>Copy-Paste Detection:</strong><br>
@@ -559,12 +554,12 @@
                                                 • >40%: -0.15 (severe)
                                             </div>
                                         </td>
-                                        <td class="py-1 text-right font-bold" th:classappend="${cpdImpact != null and cpdImpact.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${cpdImpact}">0.00</td>
+                                        <td class="py-1 text-right font-bold" th:classappend="${cpdImpact &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(cpdImpact > 0 ? '+' : '') + #numbers.formatDecimal(cpdImpact, 1, 2)}">0.00</td>
                                     </tr>
                                     <tr th:if="${staticAnalysisQuality != null}" class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
                                             Static Analysis
-                                            <span th:if="${staticAnalysisClean}" class="ml-1 px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-xs font-semibold">CLEAN</span>
+                                            <span th:if="${staticAnalysisImpact > 0}" class="ml-1 px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-xs font-semibold">CLEAN</span>
                                             <span class="tooltip-trigger" data-tooltip="static">?</span>
                                             <div id="tooltip-static" class="tooltip-popover">
                                                 <strong>PMD + SpotBugs (error-severity only):</strong><br><br>
@@ -578,11 +573,11 @@
                                                 Max penalty: -0.30
                                             </div>
                                         </td>
-                                        <td class="py-1 text-right font-bold" th:classappend="${staticAnalysisImpact != null and staticAnalysisImpact.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${staticAnalysisImpact}">0.00</td>
+                                        <td class="py-1 text-right font-bold" th:classappend="${staticAnalysisImpact &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(staticAnalysisImpact > 0 ? '+' : '') + #numbers.formatDecimal(staticAnalysisImpact, 1, 2)}">0.00</td>
                                     </tr>
                                     <tr th:if="${coverageQuality != null}" class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
-                                            Coverage (<span th:text="${qualityCoveragePercent}">0</span>%)
+                                            Coverage (<span th:text="${#numbers.formatDecimal(qualityCoveragePercent, 1, 2)}">0</span>%)
                                             <span class="tooltip-trigger" data-tooltip="coverage">?</span>
                                             <div id="tooltip-coverage" class="tooltip-popover">
                                                 <strong>Test Coverage Impact:</strong><br>
@@ -594,7 +589,7 @@
                                                 • <50%: -0.15 (terrible)
                                             </div>
                                         </td>
-                                        <td class="py-1 text-right font-bold" th:classappend="${coverageImpact != null and coverageImpact.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${coverageImpact}">0.00</td>
+                                        <td class="py-1 text-right font-bold" th:classappend="${coverageImpact &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(coverageImpact > 0 ? '+' : '') + #numbers.formatDecimal(coverageImpact, 1, 2)}">0.00</td>
                                     </tr>
                                     <tr th:if="${architectureQuality != null}" class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
@@ -608,7 +603,7 @@
                                                 Max penalty: -0.10
                                             </div>
                                         </td>
-                                        <td class="py-1 text-right font-bold" th:classappend="${architecturePenalty != null and architecturePenalty.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${architecturePenalty}">0.00</td>
+                                        <td class="py-1 text-right font-bold" th:classappend="${architecturePenalty &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(architecturePenalty > 0 ? '+' : '') + #numbers.formatDecimal(architecturePenalty, 1, 2)}">0.00</td>
                                     </tr>
                                     <tr th:if="${qualityGateAnalysis != null}" class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
@@ -620,15 +615,15 @@
                                                 When a dimension score is high but the quality gate requirement is not met.
                                             </div>
                                         </td>
-                                        <td class="py-1 text-right font-bold" th:classappend="${qualityGateImpact != null and qualityGateImpact.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${qualityGateImpact}">0.00</td>
+                                        <td class="py-1 text-right font-bold" th:classappend="${qualityGateImpact &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(qualityGateImpact > 0 ? '+' : '') + #numbers.formatDecimal(qualityGateImpact, 1, 2)}">0.00</td>
                                     </tr>
                                 </tbody>
                                 <tfoot>
-                                    <tr th:classappend="${qualityMultiplierPositive} ? 'bg-green-50' : 'bg-orange-50'">
+                                    <tr th:classappend="${finalQualityMultiplier != null and finalQualityMultiplier >= 1.0} ? 'bg-green-50' : 'bg-orange-50'">
                                         <td class="py-1 font-semibold text-gray-700">Final Multiplier</td>
                                         <td class="py-1 text-right font-bold"
-                                            th:classappend="${qualityMultiplierPositive} ? 'text-green-700' : 'text-orange-700'"
-                                            th:text="${finalQualityMultiplier}">1.00</td>
+                                            th:classappend="${finalQualityMultiplier != null and finalQualityMultiplier >= 1.0} ? 'text-green-700' : 'text-orange-700'"
+                                            th:text="${#numbers.formatDecimal(finalQualityMultiplier, 1, 2)}">1.00</td>
                                     </tr>
                                 </tfoot>
                             </table>
@@ -649,15 +644,15 @@
                             </div>
                             <div class="text-center bg-white rounded-lg p-3 border border-slate-200">
                                 <p class="text-gray-500 uppercase">Base Effort</p>
-                                <p class="font-bold text-lg text-slate-700" th:text="${bonusBaseEffort}">0.00</p>
+                                <p class="font-bold text-lg text-slate-700" th:text="${#numbers.formatDecimal(bonusBaseEffort, 1, 2)}">0.00</p>
                             </div>
                             <div class="text-center bg-white rounded-lg p-3 border border-slate-200">
                                 <p class="text-gray-500 uppercase">Quality Factor</p>
-                                <p class="font-bold text-lg text-slate-700" th:text="${qualityFactor}">0.00</p>
+                                <p class="font-bold text-lg text-slate-700" th:text="${#numbers.formatDecimal(qualityFactor, 1, 2)}">0.00</p>
                             </div>
                             <div class="text-center bg-white rounded-lg p-3 border border-slate-200">
                                 <p class="text-gray-500 uppercase">Bonus Points</p>
-                                <p class="font-bold text-lg text-green-700" th:text="'+' + ${bonusPoints}">+0.00</p>
+                                <p class="font-bold text-lg text-green-700" th:text="${'+' + #numbers.formatDecimal(bonusPoints, 1, 2)}">+0.00</p>
                             </div>
                         </div>
                     </div>
@@ -679,9 +674,9 @@
                                 <table class="w-full text-xs border-collapse">
                                     <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Variable</th><th class="text-left py-0.5 font-normal">Formula</th><th class="text-right py-0.5 font-normal">Value</th></tr></thead>
                                     <tbody class="font-mono">
-                                        <tr class="border-b"><td class="py-0.5 text-gray-600">sizeFactor</td><td class="py-0.5 text-gray-500">cbrt(projectTotalLines) / 100</td><td class="py-0.5 text-right font-bold" th:text="${sizeFactor}">0.31</td></tr>
-                                        <tr class="border-b"><td class="py-0.5 text-gray-600">modifyMult</td><td class="py-0.5 text-gray-500">1.0 + min(sizeFactor &times; 0.3, 0.2)</td><td class="py-0.5 text-right font-bold" th:text="${volModifyMult}">1.09</td></tr>
-                                        <tr><td class="py-0.5 text-gray-600">addMult</td><td class="py-0.5 text-gray-500">1.0 + 0.1 / (1 + sizeFactor)</td><td class="py-0.5 text-right font-bold" th:text="${volAddMult}">1.08</td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">sizeFactor</td><td class="py-0.5 text-gray-500">cbrt(projectTotalLines) / 100</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(sizeFactor, 1, 2)}">0.31</td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">modifyMult</td><td class="py-0.5 text-gray-500">1.0 + min(sizeFactor &times; 0.3, 0.2)</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(volModifyMult, 1, 2)}">1.09</td></tr>
+                                        <tr><td class="py-0.5 text-gray-600">addMult</td><td class="py-0.5 text-gray-500">1.0 + 0.1 / (1 + sizeFactor)</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.08</td></tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -689,47 +684,47 @@
                             <!-- Step 2: Content Score Components -->
                             <div class="bg-white rounded-lg p-3 border border-slate-200">
                                 <h5 class="text-xs font-bold text-slate-700 mb-1">Step 2: Content Score Components</h5>
-                                <p class="text-xs text-gray-400 mb-2">Formula: count<sup th:text="${volumeExponent}">0.75</sup> &times; factor &times; multiplier</p>
+                                <p class="text-xs text-gray-400 mb-2">Formula: count<sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> &times; factor &times; multiplier</p>
                                 <table class="w-full text-xs border-collapse">
                                     <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Metric</th><th class="text-right py-0.5 font-normal">Count</th><th class="text-right py-0.5 font-normal">Factor</th><th class="text-right py-0.5 font-normal">Mult</th><th class="text-right py-0.5 font-normal">Score</th></tr></thead>
                                     <tbody class="font-mono">
                                         <tr class="border-b">
                                             <td class="py-0.5 text-gray-600">Lines Changed</td>
                                             <td class="py-0.5 text-right" th:text="${linesChanged}">0</td>
-                                            <td class="py-0.5 text-right" th:text="${linesLogFactor}">5.0</td>
+                                            <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(linesLogFactor, 1, 1)}">5.0</td>
                                             <td class="py-0.5 text-right text-gray-400">1.0</td>
-                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${linesScore}">0.00</td>
+                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(linesScore, 1, 2)}">0.00</td>
                                         </tr>
                                         <tr th:if="${codeBlocksModified > 0}" class="border-b">
                                             <td class="py-0.5 text-gray-600">Code Blocks Modified</td>
                                             <td class="py-0.5 text-right" th:text="${codeBlocksModified}">0</td>
-                                            <td class="py-0.5 text-right" th:text="${codeBlocksModLogFactor}">6.0</td>
-                                            <td class="py-0.5 text-right" th:text="${volModifyMult}">1.09</td>
-                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${codeBlocksModifiedScore}">0.00</td>
+                                            <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(codeBlocksModLogFactor, 1, 1)}">6.0</td>
+                                            <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(volModifyMult, 1, 2)}">1.09</td>
+                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(codeBlocksModifiedScore, 1, 2)}">0.00</td>
                                         </tr>
                                         <tr th:if="${codeBlocksAdded > 0}" class="border-b">
                                             <td class="py-0.5 text-gray-600">Code Blocks Added</td>
                                             <td class="py-0.5 text-right" th:text="${codeBlocksAdded}">0</td>
-                                            <td class="py-0.5 text-right" th:text="${codeBlocksAddLogFactor}">8.0</td>
-                                            <td class="py-0.5 text-right" th:text="${volAddMult}">1.08</td>
-                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${codeBlocksAddedScore}">0.00</td>
+                                            <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(codeBlocksAddLogFactor, 1, 1)}">8.0</td>
+                                            <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.08</td>
+                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(codeBlocksAddedScore, 1, 2)}">0.00</td>
                                         </tr>
                                         <tr th:if="${classesModified > 0}" class="border-b">
                                             <td class="py-0.5 text-gray-600">Classes Modified</td>
                                             <td class="py-0.5 text-right" th:text="${classesModified}">0</td>
-                                            <td class="py-0.5 text-right" th:text="${classesModLogFactor}">5.0</td>
-                                            <td class="py-0.5 text-right" th:text="${volModifyMult}">1.09</td>
-                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${classesModifiedScore}">0.00</td>
+                                            <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(classesModLogFactor, 1, 1)}">5.0</td>
+                                            <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(volModifyMult, 1, 2)}">1.09</td>
+                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(classesModifiedScore, 1, 2)}">0.00</td>
                                         </tr>
                                         <tr th:if="${classesAdded > 0}" class="border-b">
                                             <td class="py-0.5 text-gray-600">Classes Added</td>
                                             <td class="py-0.5 text-right" th:text="${classesAdded}">0</td>
-                                            <td class="py-0.5 text-right" th:text="${classesAddLogFactor}">8.0</td>
-                                            <td class="py-0.5 text-right" th:text="${volAddMult}">1.08</td>
-                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${classesAddedScore}">0.00</td>
+                                            <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(classesAddLogFactor, 1, 1)}">8.0</td>
+                                            <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.08</td>
+                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(classesAddedScore, 1, 2)}">0.00</td>
                                         </tr>
                                     </tbody>
-                                    <tfoot><tr class="bg-blue-50"><td colspan="4" class="py-0.5 font-semibold text-gray-700">Content Score</td><td class="py-0.5 text-right font-bold text-blue-700" th:text="${contentScore}">0.00</td></tr></tfoot>
+                                    <tfoot><tr class="bg-blue-50"><td colspan="4" class="py-0.5 font-semibold text-gray-700">Content Score</td><td class="py-0.5 text-right font-bold text-blue-700" th:text="${#numbers.formatDecimal(contentScore, 1, 2)}">0.00</td></tr></tfoot>
                                 </table>
                             </div>
 
@@ -739,8 +734,8 @@
                                 <table class="w-full text-xs border-collapse">
                                     <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Variable</th><th class="text-left py-0.5 font-normal">Formula</th><th class="text-right py-0.5 font-normal">Value</th></tr></thead>
                                     <tbody class="font-mono">
-                                        <tr class="border-b"><td class="py-0.5 text-gray-600">fileDensity</td><td class="py-0.5 text-gray-500">min(1.0, avgLinesPerFile / <span th:text="${fileDensityThreshold}">15.0</span>)</td><td class="py-0.5 text-right font-bold" th:text="${fileDensity}">1.00</td></tr>
-                                        <tr><td class="py-0.5 text-gray-600">filesScopeMultiplier</td><td class="py-0.5 text-gray-500">1 + (<span th:text="${filesChanged}">0</span><sup th:text="${volumeExponent}">0.75</sup> &times; <span th:text="${filesScopeFactor}">0.50</span>) &times; <span th:text="${fileDensity}">1.00</span></td><td class="py-0.5 text-right font-bold text-purple-600">&times; <span th:text="${filesScopeMultiplier}">1.00</span></td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">fileDensity</td><td class="py-0.5 text-gray-500">min(1.0, avgLinesPerFile / <span th:text="${#numbers.formatDecimal(fileDensityThreshold, 1, 2)}">15.0</span>)</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(fileDensity, 1, 2)}">1.00</td></tr>
+                                        <tr><td class="py-0.5 text-gray-600">filesScopeMultiplier</td><td class="py-0.5 text-gray-500">1 + (<span th:text="${filesChanged}">0</span><sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> &times; <span th:text="${#numbers.formatDecimal(filesScopeFactor, 1, 2)}">0.50</span>) &times; <span th:text="${#numbers.formatDecimal(fileDensity, 1, 2)}">1.00</span></td><td class="py-0.5 text-right font-bold text-purple-600">&times; <span th:text="${#numbers.formatDecimal(filesScopeMultiplier, 1, 2)}">1.00</span></td></tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -750,7 +745,7 @@
                                 <h5 class="text-xs font-bold text-slate-700 mb-2">Step 4: Volume Score</h5>
                                 <table class="w-full text-xs border-collapse">
                                     <tbody class="font-mono">
-                                        <tr class="bg-blue-50"><td class="py-0.5 font-semibold text-gray-700">Volume Score</td><td class="py-0.5 text-gray-500"><span th:text="${contentScore}">0.00</span> &times; <span th:text="${filesScopeMultiplier}">1.00</span></td><td class="py-0.5 text-right font-bold text-blue-700" th:text="${totalVolumeScore}">0.00</td></tr>
+                                        <tr class="bg-blue-50"><td class="py-0.5 font-semibold text-gray-700">Volume Score</td><td class="py-0.5 text-gray-500"><span th:text="${#numbers.formatDecimal(contentScore, 1, 2)}">0.00</span> &times; <span th:text="${#numbers.formatDecimal(filesScopeMultiplier, 1, 2)}">1.00</span></td><td class="py-0.5 text-right font-bold text-blue-700" th:text="${#numbers.formatDecimal(totalVolumeScore, 1, 2)}">0.00</td></tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -761,10 +756,10 @@
                                 <table class="w-full text-xs border-collapse">
                                     <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Operation</th><th class="text-left py-0.5 font-normal">Avg Cyclomatic</th><th class="text-right py-0.5 font-normal">Multiplier</th></tr></thead>
                                     <tbody class="font-mono">
-                                        <tr class="border-b"><td class="py-0.5 text-gray-600">Modify (bonus for hard code)</td><td class="py-0.5" th:text="${avgModifyComplexity}">0.00</td><td class="py-0.5 text-right font-bold" th:text="${modifyMultiplier}">1.00</td></tr>
-                                        <tr class="border-b"><td class="py-0.5 text-gray-600">Create (penalty for complex new code)</td><td class="py-0.5" th:text="${avgCreateComplexity}">0.00</td><td class="py-0.5 text-right font-bold" th:text="${createMultiplier}">1.00</td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">Modify (bonus for hard code)</td><td class="py-0.5" th:text="${#numbers.formatDecimal(avgModifyComplexity, 1, 2)}">0.00</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(modifyMultiplier, 1, 2)}">1.00</td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">Create (penalty for complex new code)</td><td class="py-0.5" th:text="${#numbers.formatDecimal(avgCreateComplexity, 1, 2)}">0.00</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(createMultiplier, 1, 2)}">1.00</td></tr>
                                     </tbody>
-                                    <tfoot><tr class="bg-purple-50"><td colspan="2" class="py-0.5 font-semibold text-gray-700">Combined</td><td class="py-0.5 text-right font-bold text-purple-700">&times; <span th:text="${combinedComplexityMultiplier}">1.00</span></td></tr></tfoot>
+                                    <tfoot><tr class="bg-purple-50"><td colspan="2" class="py-0.5 font-semibold text-gray-700">Combined</td><td class="py-0.5 text-right font-bold text-purple-700">&times; <span th:text="${#numbers.formatDecimal(combinedComplexityMultiplier, 1, 2)}">1.00</span></td></tr></tfoot>
                                 </table>
                                 <p class="text-xs text-gray-400 mt-1">Modify: trivial 1.0&times; &rarr; moderate 1.1&times; &rarr; complex 1.2&times; &rarr; highly complex 1.3&times;. Create: trivial 1.1&times; &rarr; moderate 1.0&times; &rarr; complex 0.9&times; &rarr; highly complex 0.7&times;.</p>
                             </div>
@@ -774,46 +769,46 @@
                                 <h5 class="text-xs font-bold text-slate-700 mb-2">Step 6: Base Effort</h5>
                                 <table class="w-full text-xs border-collapse">
                                     <tbody class="font-mono">
-                                        <tr class="bg-slate-100"><td class="py-0.5 font-semibold text-gray-700">Base Effort</td><td class="py-0.5 text-gray-500"><span th:text="${totalVolumeScore}">0.00</span> &times; <span th:text="${combinedComplexityMultiplier}">1.05</span></td><td class="py-0.5 text-right font-bold text-slate-800" th:text="${baseEffortScore}">0.00</td></tr>
+                                        <tr class="bg-slate-100"><td class="py-0.5 font-semibold text-gray-700">Base Effort</td><td class="py-0.5 text-gray-500"><span th:text="${#numbers.formatDecimal(totalVolumeScore, 1, 2)}">0.00</span> &times; <span th:text="${#numbers.formatDecimal(combinedComplexityMultiplier, 1, 2)}">1.05</span></td><td class="py-0.5 text-right font-bold text-slate-800" th:text="${#numbers.formatDecimal(baseEffortScore, 1, 2)}">0.00</td></tr>
                                     </tbody>
                                 </table>
                             </div>
 
                             <!-- Step 7: Quality Multiplier -->
                             <div th:if="${qualityMultiplier != null}" class="bg-white rounded-lg p-3 border border-slate-200">
-                                <h5 class="text-xs font-bold text-slate-700 mb-2">Step 7: Quality Multiplier <span class="font-normal text-gray-400">[<span th:text="${qualityMultiplierMin}">0.50</span>&ndash;<span th:text="${qualityMultiplierMax}">1.20</span>]</span></h5>
+                                <h5 class="text-xs font-bold text-slate-700 mb-2">Step 7: Quality Multiplier <span class="font-normal text-gray-400">[<span th:text="${#numbers.formatDecimal(qualityMultiplierMin, 1, 2)}">0.50</span>&ndash;<span th:text="${#numbers.formatDecimal(qualityMultiplierMax, 1, 2)}">1.20</span>]</span></h5>
                                 <table class="w-full text-xs border-collapse">
                                     <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Dimension</th><th class="text-right py-0.5 font-normal">Impact</th></tr></thead>
                                     <tbody class="font-mono">
                                         <tr th:if="${cpdAnalysis != null}" class="border-b">
-                                            <td class="py-0.5 text-gray-600">CPD (<span th:text="${cpdDuplicationPercent}">0</span>%)</td>
-                                            <td class="py-0.5 text-right font-bold" th:classappend="${cpdImpact != null and cpdImpact.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${cpdImpact}">0.00</td>
+                                            <td class="py-0.5 text-gray-600">CPD (<span th:text="${#numbers.formatDecimal(cpdDuplicationPercent, 1, 2)}">0</span>%)</td>
+                                            <td class="py-0.5 text-right font-bold" th:classappend="${cpdImpact &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(cpdImpact > 0 ? '+' : '') + #numbers.formatDecimal(cpdImpact, 1, 2)}">0.00</td>
                                         </tr>
                                         <tr th:if="${staticAnalysisQuality != null}" class="border-b">
                                             <td class="py-0.5 text-gray-600">Static Analysis</td>
-                                            <td class="py-0.5 text-right font-bold" th:classappend="${staticAnalysisImpact != null and staticAnalysisImpact.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${staticAnalysisImpact}">0.00</td>
+                                            <td class="py-0.5 text-right font-bold" th:classappend="${staticAnalysisImpact &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(staticAnalysisImpact > 0 ? '+' : '') + #numbers.formatDecimal(staticAnalysisImpact, 1, 2)}">0.00</td>
                                         </tr>
                                         <tr th:if="${coverageQuality != null}" class="border-b">
-                                            <td class="py-0.5 text-gray-600">Coverage (<span th:text="${qualityCoveragePercent}">0</span>%)</td>
-                                            <td class="py-0.5 text-right font-bold" th:classappend="${coverageImpact != null and coverageImpact.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${coverageImpact}">0.00</td>
+                                            <td class="py-0.5 text-gray-600">Coverage (<span th:text="${#numbers.formatDecimal(qualityCoveragePercent, 1, 2)}">0</span>%)</td>
+                                            <td class="py-0.5 text-right font-bold" th:classappend="${coverageImpact &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(coverageImpact > 0 ? '+' : '') + #numbers.formatDecimal(coverageImpact, 1, 2)}">0.00</td>
                                         </tr>
                                         <tr th:if="${architectureQuality != null}" class="border-b">
                                             <td class="py-0.5 text-gray-600">Architecture</td>
-                                            <td class="py-0.5 text-right font-bold" th:classappend="${architecturePenalty != null and architecturePenalty.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${architecturePenalty}">0.00</td>
+                                            <td class="py-0.5 text-right font-bold" th:classappend="${architecturePenalty &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(architecturePenalty > 0 ? '+' : '') + #numbers.formatDecimal(architecturePenalty, 1, 2)}">0.00</td>
                                         </tr>
                                         <tr th:if="${qualityGateAnalysis != null}" class="border-b">
                                             <td class="py-0.5 text-gray-600">Quality Gate</td>
-                                            <td class="py-0.5 text-right font-bold" th:classappend="${qualityGateImpact != null and qualityGateImpact.startsWith('-')} ? 'text-red-600' : 'text-green-600'" th:text="${qualityGateImpact}">0.00</td>
+                                            <td class="py-0.5 text-right font-bold" th:classappend="${qualityGateImpact &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(qualityGateImpact > 0 ? '+' : '') + #numbers.formatDecimal(qualityGateImpact, 1, 2)}">0.00</td>
                                         </tr>
                                     </tbody>
                                     <tfoot>
-                                        <tr th:classappend="${qualityMultiplierPositive} ? 'bg-green-50' : 'bg-orange-50'">
+                                        <tr th:classappend="${finalQualityMultiplier != null and finalQualityMultiplier >= 1.0} ? 'bg-green-50' : 'bg-orange-50'">
                                             <td class="py-0.5 font-semibold text-gray-700">Final Multiplier</td>
-                                            <td class="py-0.5 text-right font-bold" th:classappend="${qualityMultiplierPositive} ? 'text-green-700' : 'text-orange-700'">&times; <span th:text="${finalQualityMultiplier}">1.00</span></td>
+                                            <td class="py-0.5 text-right font-bold" th:classappend="${finalQualityMultiplier != null and finalQualityMultiplier >= 1.0} ? 'text-green-700' : 'text-orange-700'">&times; <span th:text="${#numbers.formatDecimal(finalQualityMultiplier, 1, 2)}">1.00</span></td>
                                         </tr>
                                     </tfoot>
                                 </table>
-                                <p th:if="${qualityMultiplierCalculation != null}" class="text-xs text-gray-400 mt-1 font-mono" th:text="${qualityMultiplierCalculation}">1.0 + 0.05 (CPD) + 0.05 (SA) = 1.10</p>
+                                <p th:if="${qualityMultiplier != null}" class="text-xs text-gray-400 mt-1 font-mono">1.0<th:block th:if="${cpdImpact != 0}"><th:block th:text="${cpdImpact > 0 ? ' + ' : ' '}"/><th:block th:text="${#numbers.formatDecimal(cpdImpact, 1, 2)}"/> (CPD)</th:block><th:block th:if="${staticAnalysisImpact != 0}"><th:block th:text="${staticAnalysisImpact > 0 ? ' + ' : ' '}"/><th:block th:text="${#numbers.formatDecimal(staticAnalysisImpact, 1, 2)}"/> (SA)</th:block><th:block th:if="${coverageImpact != 0}"><th:block th:text="${coverageImpact > 0 ? ' + ' : ' '}"/><th:block th:text="${#numbers.formatDecimal(coverageImpact, 1, 2)}"/> (Cov)</th:block><th:block th:if="${architecturePenalty != 0}"><th:block th:text="${architecturePenalty > 0 ? ' + ' : ' '}"/><th:block th:text="${#numbers.formatDecimal(architecturePenalty, 1, 2)}"/> (Arch)</th:block><th:block th:if="${qualityGateImpact != 0}"><th:block th:text="${qualityGateImpact > 0 ? ' + ' : ' '}"/><th:block th:text="${#numbers.formatDecimal(qualityGateImpact, 1, 2)}"/> (QG)</th:block> = <th:block th:text="${#numbers.formatDecimal(finalQualityMultiplier, 1, 2)}"/></p>
                             </div>
 
                             <!-- Step 8: Architecture Bonus -->
@@ -823,9 +818,9 @@
                                     <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Variable</th><th class="text-right py-0.5 font-normal">Value</th></tr></thead>
                                     <tbody class="font-mono">
                                         <tr class="border-b"><td class="py-0.5 text-gray-600">Impact Score</td><td class="py-0.5 text-right" th:text="${architectureImpactScore} + '/10'">0/10</td></tr>
-                                        <tr class="border-b"><td class="py-0.5 text-gray-600">Quality Factor</td><td class="py-0.5 text-right" th:text="${qualityFactor}">0.00</td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">Quality Factor</td><td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(qualityFactor, 1, 2)}">0.00</td></tr>
                                     </tbody>
-                                    <tfoot><tr class="bg-green-50"><td class="py-0.5 font-semibold text-gray-700">Bonus</td><td class="py-0.5 text-right font-bold text-green-700">+ <span th:text="${bonusPoints}">0.00</span></td></tr></tfoot>
+                                    <tfoot><tr class="bg-green-50"><td class="py-0.5 font-semibold text-gray-700">Bonus</td><td class="py-0.5 text-right font-bold text-green-700">+ <span th:text="${#numbers.formatDecimal(bonusPoints, 1, 2)}">0.00</span></td></tr></tfoot>
                                 </table>
                                 <p class="text-xs text-gray-400 mt-1 font-mono" th:text="${bonusCalculation}">Impact &times; BaseEffort &times; 0.015 &times; QualityFactor = +0.00</p>
                             </div>
@@ -923,10 +918,10 @@
             <!-- Risk Assessment - Compact single row -->
             <div th:if="${riskAssessment != null}" class="mb-6">
                 <div class="rounded-lg px-4 py-3 border flex items-center justify-between"
-                     th:data-risk-class="${riskLevel}">
+                     th:data-risk-class="${riskLevel != null ? riskLevel.name().toLowerCase() : ''}">
                     <div class="flex items-center gap-3">
-                        <span class="text-xl" th:data-risk-emoji="${riskLevel}">🟢</span>
-                        <span class="font-semibold uppercase" th:text="${riskLevel}">Low</span>
+                        <span class="text-xl" th:data-risk-emoji="${riskLevel != null ? riskLevel.name().toLowerCase() : ''}">🟢</span>
+                        <span class="font-semibold uppercase" th:text="${riskLevel != null ? riskLevel.name().toLowerCase() : ''}">Low</span>
                         <span class="text-xs opacity-70">Risk Level</span>
                     </div>
                     <div class="flex items-baseline">
@@ -974,9 +969,9 @@
             <div th:if="${blastRadius != null or brTotalCallers > 0}" class="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-6">
                 <h3 class="text-sm font-semibold text-orange-700 uppercase mb-3 flex items-center justify-between">
                     <span><span class="mr-2">💥</span> Blast Radius Analysis</span>
-                    <span th:unless="${#strings.isEmpty(brModuleType)}" class="text-xs font-normal px-2 py-1 rounded"
-                          th:data-module-class="${brModuleType}"
-                          th:data-module-label="${brModuleType}">Leaf Application</span>
+                    <span th:if="${brModuleType != null}" class="text-xs font-normal px-2 py-1 rounded"
+                          th:data-module-class="${brModuleType.name().toLowerCase()}"
+                          th:data-module-label="${brModuleType.name().toLowerCase()}">Leaf Application</span>
                 </h3>
 
                 <!-- Caller Counts -->
@@ -996,8 +991,8 @@
                     <div class="bg-white rounded-lg p-3 border text-center">
                         <p class="text-xs text-gray-500 uppercase">Risk Level</p>
                         <p class="text-lg font-bold uppercase"
-                           th:data-risk-class="${brRiskLevel}"
-                           th:text="${brRiskLevel}">Low</p>
+                           th:data-risk-class="${brRiskLevel != null ? brRiskLevel.name().toLowerCase() : ''}"
+                           th:text="${brRiskLevel != null ? brRiskLevel.name().toLowerCase() : ''}">Low</p>
                     </div>
                 </div>
 
@@ -1006,7 +1001,7 @@
                     <div class="flex items-center mb-2">
                         <span class="text-xl mr-2">⚠️</span>
                         <span class="font-semibold text-red-700">Breaking API Changes Detected</span>
-                        <span th:unless="${#strings.isEmpty(breakingChangeType)}" class="ml-2 text-xs bg-red-200 text-red-800 px-2 py-0.5 rounded" th:text="${breakingChangeType}">parameter_added</span>
+                        <span th:if="${breakingChangeType != null}" class="ml-2 text-xs bg-red-200 text-red-800 px-2 py-0.5 rounded" th:text="${breakingChangeType.name().toLowerCase()}">parameter_added</span>
                     </div>
                     <ul th:unless="${#lists.isEmpty(changedSignatures)}" class="list-disc list-inside text-sm text-red-700 ml-6">
                         <li th:each="sig : ${changedSignatures}" th:text="${sig}">methodSignature()</li>
@@ -1014,12 +1009,12 @@
                 </div>
 
                 <!-- External Impact -->
-                <div th:unless="${#strings.isEmpty(brExternalImpact)}" class="mb-4">
+                <div th:if="${brExternalImpact != null}" class="mb-4">
                     <div class="flex items-center justify-between bg-white rounded-lg p-3 border">
                         <span class="text-sm text-gray-600">External Consumer Impact Estimate:</span>
                         <span class="text-sm font-bold uppercase px-3 py-1 rounded"
-                              th:data-ext-impact="${brExternalImpact}"
-                              th:text="${brExternalImpact}">Unknown</span>
+                              th:data-ext-impact="${brExternalImpact.name().toLowerCase()}"
+                              th:text="${brExternalImpact.name().toLowerCase()}">Unknown</span>
                     </div>
                 </div>
 
@@ -1074,7 +1069,7 @@
                             </div>
                             <span class="text-sm font-bold min-w-12 text-right"
                                   th:data-dim-score-class="${dim.score}" th:data-dim-applicable="${dim.applicable}"
-                                  th:text="${dim.scoreDisplay} + (${dim.applicable} ? '/10' : '')">8/10</span>
+                                  th:text="${dim.applicable ? dim.score + '/10' : 'N/A'}">8/10</span>
                         </div>
                     </div>
                 </div>
@@ -1129,18 +1124,18 @@
                                     <div class="flex-1 min-w-0">
                                         <div class="flex items-center flex-wrap gap-2 mb-1">
                                             <h4 class="font-semibold text-gray-800" th:text="${finding.title}">Finding Title</h4>
-                                            <span th:unless="${#strings.isEmpty(finding.type)}" class="text-xs px-2 py-0.5 bg-gray-200 text-gray-700 rounded"
-                                                  th:switch="${finding.type}"><th:block th:case="'SECURITY'">🔐 Security</th:block><th:block th:case="'CONCURRENCY'">⚡ Concurrency</th:block><th:block th:case="'DATA_CORRUPTION'">💾 Data Corruption</th:block><th:block th:case="'LOGIC'">🧠 Logic</th:block><th:block th:case="'RESOURCE_LEAK'">💧 Resource Leak</th:block><th:block th:case="'NULL_POINTER'">❌ Null Pointer</th:block><th:block th:case="'ARCHITECTURE'">🏗️ Architecture</th:block><th:block th:case="*">❓ Other</th:block></span>
-                                            <span th:unless="${#strings.isEmpty(finding.confidence)}" class="text-xs px-2 py-0.5 rounded"
-                                                  th:data-confidence-class="${finding.confidence}"
-                                                  th:text="${finding.confidence} + ' confidence'">confidence</span>
-                                            <span th:unless="${#strings.isEmpty(finding.source)}" class="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded"
-                                                  th:text="${finding.source}">LLM</span>
+                                            <span th:if="${finding.type != null}" class="text-xs px-2 py-0.5 bg-gray-200 text-gray-700 rounded"
+                                                  th:switch="${finding.type.name()}"><th:block th:case="'SECURITY'">🔐 Security</th:block><th:block th:case="'CONCURRENCY'">⚡ Concurrency</th:block><th:block th:case="'DATA_CORRUPTION'">💾 Data Corruption</th:block><th:block th:case="'LOGIC'">🧠 Logic</th:block><th:block th:case="'RESOURCE_LEAK'">💧 Resource Leak</th:block><th:block th:case="'NULL_POINTER'">❌ Null Pointer</th:block><th:block th:case="'ARCHITECTURE'">🏗️ Architecture</th:block><th:block th:case="*">❓ Other</th:block></span>
+                                            <span th:if="${finding.confidence != null}" class="text-xs px-2 py-0.5 rounded"
+                                                  th:data-confidence-class="${finding.confidence.name().toLowerCase()}"
+                                                  th:text="${finding.confidence.name().toLowerCase()} + ' confidence'">confidence</span>
+                                            <span th:if="${finding.source != null}" class="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded"
+                                                  th:text="${finding.source.name()}">LLM</span>
                                         </div>
                                         <p class="text-sm text-gray-600 mt-1" th:text="${#strings.defaultString(finding.description, 'No description')}">Description</p>
                                         <div class="mt-2 text-xs text-gray-500" th:unless="${#strings.isEmpty(finding.file)}">
                                             <span class="font-mono bg-gray-200 px-1 rounded" th:text="${finding.file}">File.java</span>
-                                            <code th:unless="${#strings.isEmpty(finding.lineHint)}" class="ml-2 text-gray-700" th:text="${finding.lineHint}">line hint</code>
+                                            <code th:if="${finding.line != null}" class="ml-2 text-gray-700" th:text="'line ' + ${finding.line}">line 42</code>
                                         </div>
                                         <!-- Suggested Fix (legacy text field, shown only when suggestedFileFix is absent) -->
                                         <div th:if="${#strings.isEmpty(finding.suggestedFileFix) and not #strings.isEmpty(finding.suggestedFix)}" class="mt-3 bg-green-50 border border-green-200 rounded p-2">
@@ -1381,17 +1376,216 @@
                 </button>
             </div>
 
-            <div id="cpd-content" class="collapsible-content expanded">
-                <div id="cpd-markdown-content" class="prose max-w-none bg-gray-50 rounded-lg p-4 border border-gray-200 max-h-[600px] overflow-y-auto">
-                    <!-- Markdown will be rendered here by JavaScript -->
+            <div id="cpd-content" class="collapsible-content expanded" th:with="clones=${cpdDuplication.cloneDetails}">
+
+                <!-- Quick Summary -->
+                <div class="bg-gray-50 rounded-lg p-4 border border-gray-200 mb-4">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-2">Quick Summary</h3>
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="border-b">
+                                <th class="text-left py-1 text-gray-600">What</th>
+                                <th class="text-right py-1 text-gray-600">Count</th>
+                                <th class="text-left py-1 pl-4 text-gray-600">What It Means</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="border-b">
+                                <td class="py-1 font-semibold">Duplicated Blocks</td>
+                                <td class="py-1 text-right" th:text="${#lists.size(clones)}">0</td>
+                                <td class="py-1 pl-4 text-gray-500">Code blocks that appear more than once and touch your changes</td>
+                            </tr>
+                            <tr class="border-b">
+                                <td class="py-1">Duplicated Lines</td>
+                                <td class="py-1 text-right" th:text="${cpdDuplication.totalDuplicatedLines}">0</td>
+                                <td class="py-1 pl-4 text-gray-500">Total lines of duplicated code</td>
+                            </tr>
+                            <tr>
+                                <td class="py-1">Duplication Rate</td>
+                                <td class="py-1 text-right" th:text="${#numbers.formatDecimal(cpdDuplication.duplicatedPercentage, 1, 1) + '%'}">0.0%</td>
+                                <td class="py-1 pl-4 text-gray-500">Percentage of changed code that is duplicated</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Score Impact Breakdown -->
+                <div class="bg-gray-50 rounded-lg p-4 border border-gray-200 mb-4">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-2">Score Impact Breakdown</h3>
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="border-b">
+                                <th class="text-left py-1 text-gray-600">Category</th>
+                                <th class="text-right py-1 text-gray-600">Count</th>
+                                <th class="text-left py-1 pl-4 text-gray-600">Score Impact</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="border-b">
+                                <td class="py-1 text-red-600 font-semibold">🔴 Introduced (you created)</td>
+                                <td class="py-1 text-right" th:text="${cpdIntroducedCount}">0</td>
+                                <td class="py-1 pl-4 text-gray-500">Penalized</td>
+                            </tr>
+                            <tr class="border-b">
+                                <td class="py-1 text-green-600">✅ Pre-existing (not your fault)</td>
+                                <td class="py-1 text-right" th:text="${#lists.size(clones) - cpdIntroducedCount}">0</td>
+                                <td class="py-1 pl-4 text-gray-500">No penalty</td>
+                            </tr>
+                            <tr class="border-b">
+                                <td class="py-1">🧪 In test code</td>
+                                <td class="py-1 text-right" th:text="${cpdTestOnlyCount}">0</td>
+                                <td class="py-1 pl-4 text-gray-500">1/5 weight if introduced</td>
+                            </tr>
+                            <tr class="border-b">
+                                <td class="py-1">⚙️ In production code</td>
+                                <td class="py-1 text-right" th:text="${#lists.size(clones) - cpdTestOnlyCount}">0</td>
+                                <td class="py-1 pl-4 text-gray-500">Full weight if introduced</td>
+                            </tr>
+                            <tr th:if="${cpdSelfDupCount > 0}" class="border-b">
+                                <td class="py-1">⚠️ Self-duplication</td>
+                                <td class="py-1 text-right" th:text="${cpdSelfDupCount}">0</td>
+                                <td class="py-1 pl-4 text-gray-500">Should refactor</td>
+                            </tr>
+                            <tr th:if="${cpdCrossFileCount > 0}">
+                                <td class="py-1">📁 Cross-file</td>
+                                <td class="py-1 text-right" th:text="${cpdCrossFileCount}">0</td>
+                                <td class="py-1 pl-4 text-gray-500">Consider shared utility</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Introduced Clones Detail -->
+                <div th:if="${cpdIntroducedCount > 0}" class="bg-red-50 rounded-lg p-4 border border-red-200 mb-4">
+                    <h3 class="text-sm font-semibold text-red-700 mb-1">🔴 Why These Are "Introduced"</h3>
+                    <p class="text-xs text-red-600 mb-3">A clone is marked <strong>introduced</strong> when ≥40% of its lines overlap with your diff. 🧪 = test code (1/5 penalty weight), ⚙️ = production code (full penalty)</p>
+                    <div th:each="clone, cloneStat : ${clones}" th:if="${clone.introducedInCommit}" class="mb-3 pl-2 border-l-2 border-red-300">
+                        <p class="text-sm font-semibold">
+                            <span th:text="${cloneStat.count}">1</span>.
+                            <span th:text="${clone.allTestCode ? '🧪' : '⚙️'}">⚙️</span> Clone
+                            (<span th:text="${clone.lineCount}">0</span> lines)
+                        </p>
+                        <ul class="text-xs text-gray-700 ml-4 mt-1">
+                            <li th:each="loc : ${clone.locations}" class="mb-0.5">
+                                <span th:text="${loc.testCode ? '🧪' : '⚙️'}">⚙️</span>
+                                <code class="bg-gray-100 px-1 rounded" th:text="${loc.file}">file</code>
+                                lines <span th:text="${loc.startLine + '-' + loc.endLine}">0-0</span>:
+                                <strong th:text="${loc.linesOverlappingDiff + '/' + clone.lineCount + ' lines overlap (' + (loc.linesOverlappingDiff * 100 / clone.lineCount) + '%)'}">overlap</strong>
+                                <span th:if="${loc.introducedInCommit}" class="text-red-600 font-semibold"> ← INTRODUCED</span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Penalty Rating -->
+                <div class="bg-gray-50 rounded-lg p-4 border border-gray-200 mb-4">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-2">Your Score Impact</h3>
+                    <!-- Excellent -->
+                    <div th:if="${cpdEffectivePenalty <= 1}">
+                        <p class="text-sm"><strong>Overall Rating:</strong> <span class="text-green-600">✅ Excellent</span></p>
+                        <p class="text-sm"><strong>Score Effect:</strong> +5% score bonus</p>
+                        <p class="text-xs text-gray-500 italic">Minimal or no copy-pasting. Great job!</p>
+                    </div>
+                    <!-- Good -->
+                    <div th:if="${cpdEffectivePenalty > 1 and cpdEffectivePenalty <= 3}">
+                        <p class="text-sm"><strong>Overall Rating:</strong> <span class="text-green-600">✅ Good</span></p>
+                        <p class="text-sm"><strong>Score Effect:</strong> No change</p>
+                        <p class="text-xs text-gray-500 italic">Some duplication, but acceptable.</p>
+                    </div>
+                    <!-- Needs Attention -->
+                    <div th:if="${cpdEffectivePenalty > 3 and cpdEffectivePenalty <= 6}">
+                        <p class="text-sm"><strong>Overall Rating:</strong> <span class="text-yellow-600">⚠️ Needs Attention</span></p>
+                        <p class="text-sm"><strong>Score Effect:</strong> -10% score penalty</p>
+                        <p class="text-xs text-gray-500 italic">Consider refactoring duplicated code.</p>
+                    </div>
+                    <!-- Too Much -->
+                    <div th:if="${cpdEffectivePenalty > 6 and cpdEffectivePenalty <= 10}">
+                        <p class="text-sm"><strong>Overall Rating:</strong> <span class="text-red-600">🔴 Too Much</span></p>
+                        <p class="text-sm"><strong>Score Effect:</strong> -20% score penalty</p>
+                        <p class="text-xs text-gray-500 italic">Significant copy-pasting detected. Please refactor.</p>
+                    </div>
+                    <!-- Excessive -->
+                    <div th:if="${cpdEffectivePenalty > 10}">
+                        <p class="text-sm"><strong>Overall Rating:</strong> <span class="text-red-600">🔴 Excessive</span></p>
+                        <p class="text-sm"><strong>Score Effect:</strong> -30% score penalty</p>
+                        <p class="text-xs text-gray-500 italic">Excessive duplication. Refactoring required.</p>
+                    </div>
+                </div>
+
+                <!-- Clones From Existing Code -->
+                <div th:if="${not #lists.isEmpty(cpdDuplication.clonesFromExisting)}" class="bg-yellow-50 rounded-lg p-4 border border-yellow-200 mb-4">
+                    <h3 class="text-sm font-semibold text-yellow-700 mb-2">⚠️ Code Copied From Existing (Unchanged) Code</h3>
+                    <p class="text-xs text-gray-600 mb-3">Your new/modified code duplicates existing code that you didn't touch:</p>
+                    <div th:each="existing, existStat : ${cpdDuplication.clonesFromExisting}" class="mb-3 pl-2 border-l-2 border-yellow-300">
+                        <p class="text-sm font-semibold">
+                            <span th:text="${existStat.count}">1</span>.
+                            Your code in: <code class="bg-gray-100 px-1 rounded" th:text="${existing.affectedSignature}">signature</code>
+                        </p>
+                        <p class="text-xs text-gray-600 ml-4">Duplicates existing code in:</p>
+                        <ul class="text-xs text-gray-700 ml-6">
+                            <li th:each="src : ${existing.sourceSignatures}">
+                                <code class="bg-gray-100 px-1 rounded" th:text="${src}">source</code>
+                            </li>
+                        </ul>
+                    </div>
+                    <p class="text-xs text-blue-600 mt-2">💡 <strong>Suggestion:</strong> Extract the common code into a shared utility method.</p>
+                </div>
+
+                <!-- New Clone Groups (copy-pasted within commit) -->
+                <div th:if="${not #lists.isEmpty(cpdDuplication.newClones)}" class="bg-red-50 rounded-lg p-4 border border-red-200 mb-4">
+                    <h3 class="text-sm font-semibold text-red-700 mb-2">🔴 Copy-Pasted Within This Commit</h3>
+                    <p class="text-xs text-gray-600 mb-3">You wrote the same code multiple times in this commit:</p>
+                    <div th:each="group, groupStat : ${cpdDuplication.newClones}" class="mb-3 pl-2 border-l-2 border-red-300">
+                        <p class="text-sm font-semibold">
+                            Group <span th:text="${groupStat.count}">1</span>
+                            (<span th:text="${#lists.size(group.memberSignatures)}">0</span> copies):
+                        </p>
+                        <ul class="text-xs text-gray-700 ml-4">
+                            <li th:each="sig : ${group.memberSignatures}">
+                                <code class="bg-gray-100 px-1 rounded" th:text="${sig}">signature</code>
+                            </li>
+                        </ul>
+                    </div>
+                    <p class="text-xs text-blue-600 mt-2">💡 <strong>Suggestion:</strong> Write the code once and call it from other places.</p>
+                </div>
+
+                <!-- Detailed Clone View -->
+                <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-3">Detailed View</h3>
+                    <p class="text-xs text-gray-500 mb-3">Below are the exact locations where duplicate code was found:</p>
+                    <div th:each="clone, cloneStat : ${clones}" th:if="${cloneStat.index < cpdMaxClonesToShow}" class="mb-4 p-3 border rounded-lg" th:classappend="${clone.introducedInCommit ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-white'}">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="text-sm font-semibold" th:text="'#' + ${cloneStat.count}">1</span>
+                            <span th:if="${clone.introducedInCommit}" class="text-xs px-2 py-0.5 bg-red-100 text-red-700 rounded-full">🔴 New (affects your score)</span>
+                            <span th:unless="${clone.introducedInCommit}" class="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">✅ Already existed (no penalty)</span>
+                            <span class="text-xs text-gray-500" th:text="${(clone.allTestCode ? 'Test Code' : 'Production Code') + ' | ' + clone.lineCount + ' lines'}">info</span>
+                            <span th:if="${clone.selfDuplication}" class="text-xs text-yellow-600">⚠️ Copy-paste within same commit</span>
+                        </div>
+                        <div class="text-xs space-y-1 ml-4">
+                            <div th:each="loc, locStat : ${clone.locations}" class="flex items-start gap-1">
+                                <span th:text="${locStat.count + '.'}">1.</span>
+                                <span th:text="${loc.testCode ? '🧪 TEST' : '⚙️ PROD'}" class="font-semibold">PROD</span>
+                                <code class="bg-gray-100 px-1 rounded font-semibold" th:text="${loc.file + ':' + loc.startLine + '-' + loc.endLine}">file:0-0</code>
+                                <span th:if="${loc.methodSignature != null}" class="text-gray-500">
+                                    in <code class="bg-gray-100 px-1 rounded" th:text="${loc.methodSignature}">method</code>
+                                </span>
+                                <span>→</span>
+                                <span th:if="${loc.introducedInCommit}" class="text-red-600 font-semibold" th:text="'INTRODUCED (' + ${loc.linesOverlappingDiff} + ' lines overlap with diff)'">INTRODUCED</span>
+                                <span th:unless="${loc.introducedInCommit}" class="text-gray-500">pre-existing</span>
+                            </div>
+                        </div>
+                        <!-- Source slice from first location -->
+                        <div th:if="${not #lists.isEmpty(clone.locations) and clone.locations[0].sourceSlice != null and not #strings.isEmpty(clone.locations[0].sourceSlice)}">
+                            <p class="text-xs text-gray-500 mt-2 mb-1 font-semibold">Duplicated Code:</p>
+                            <pre class="text-xs bg-gray-800 text-gray-100 rounded p-2 overflow-x-auto max-h-48"><code class="language-java" th:text="${clone.locations[0].sourceSlice}">source</code></pre>
+                        </div>
+                    </div>
+                    <p th:if="${#lists.size(clones) > cpdMaxClonesToShow}" class="text-xs text-gray-500 italic text-center">
+                        ... and <span th:text="${#lists.size(clones) - cpdMaxClonesToShow}">0</span> more clones (see full analysis in data)
+                    </p>
                 </div>
             </div>
         </section>
-
-        <!-- Store CPD Markdown for JavaScript rendering -->
-        <script th:if="${cpdDuplicationCount > 0}" th:inline="javascript">
-            var cpdMarkdownRaw = /*[[${cpdMarkdownReport}]]*/ '';
-        </script>
 
         <!-- Changed Files Section -->
         <section class="bg-white rounded-lg shadow-md p-6 mb-6">
@@ -1399,17 +1593,17 @@
             
             <div class="space-y-4">
                 <div th:each="file, fileStat : ${files}" class="border rounded-lg overflow-hidden"
-                     th:data-file-type="${file.fileType}">
+                     th:data-file-type="${file.language}">
                     <!-- File Header -->
                     <div class="bg-gray-50 px-4 py-3 flex items-center justify-between cursor-pointer"
                          th:onclick="'toggleCollapsible(\'file-content-' + ${fileStat.index} + '\')'">
                         <div class="flex items-center space-x-3">
-                            <span class="text-xl" th:switch="${file.fileType}"><th:block th:case="'java'">☕</th:block><th:block th:case="'kt'">🇰</th:block><th:block th:case="'scala'">🇸</th:block><th:block th:case="'py'">🐍</th:block><th:block th:case="'go'">🐹</th:block><th:block th:case="'rs'">⚙️</th:block><th:block th:case="'ts'">🟨</th:block><th:block th:case="'js'">🟨</th:block><th:block th:case="'sql'">🗃️</th:block><th:block th:case="'properties'">⚙️</th:block><th:block th:case="'gradle'">🐘</th:block><th:block th:case="*">📄</th:block></span>
+                            <span class="text-xl" th:switch="${file.language}"><th:block th:case="'java'">☕</th:block><th:block th:case="'kt'">🇰</th:block><th:block th:case="'scala'">🇸</th:block><th:block th:case="'py'">🐍</th:block><th:block th:case="'go'">🐹</th:block><th:block th:case="'rs'">⚙️</th:block><th:block th:case="'ts'">🟨</th:block><th:block th:case="'js'">🟨</th:block><th:block th:case="'sql'">🗃️</th:block><th:block th:case="'properties'">⚙️</th:block><th:block th:case="'gradle'">🐘</th:block><th:block th:case="*">📄</th:block></span>
                             <div class="flex items-center flex-wrap gap-2">
                                 <span class="font-mono text-sm" th:text="${file.path}">path/to/file.java</span>
                                 <span class="px-2 py-0.5 rounded text-xs font-medium"
-                                      th:data-change-class="${file.changeType}"
-                                      th:text="${file.changeType}">MODIFY</span>
+                                      th:data-change-class="${file.changeType != null ? file.changeType.name() : ''}"
+                                      th:text="${file.changeType != null ? file.changeType.name() : ''}">MODIFY</span>
                                 <span th:if="${not #lists.isEmpty(file.affectedCodeBlocks)}"
                                       class="px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700"
                                       th:text="'🔧 ' + ${#lists.size(file.affectedCodeBlocks)} + ' code block' + (${#lists.size(file.affectedCodeBlocks) > 1} ? 's' : '')">🔧 2 code blocks</span>
@@ -1444,14 +1638,14 @@
                                                   th:text="${codeBlock.constructor} ? '🏗️' : '🔧'">🔧</span>
                                             <div class="min-w-0 flex-1">
                                                 <span class="font-mono font-semibold text-gray-800" th:text="${codeBlock.name}">methodName</span>
-                                                <span th:if="${codeBlock.containerName}" class="text-gray-400 ml-1">
-                                                    in <span class="text-blue-600" th:text="${codeBlock.containerName}">ClassName</span>
+                                                <span th:if="${codeBlock.className}" class="text-gray-400 ml-1">
+                                                    in <span class="text-blue-600" th:text="${codeBlock.className}">ClassName</span>
                                                 </span>
                                                 <span th:if="${codeBlock.signature}" class="text-gray-400 font-mono ml-1 truncate" th:text="${codeBlock.signature}">: void</span>
                                             </div>
                                         </div>
                                         <div class="flex items-center space-x-2 flex-shrink-0 ml-2">
-                                            <span class="text-[10px] text-gray-400 font-mono" th:text="'L' + ${codeBlock.lineRange}">L10-20</span>
+                                            <span class="text-[10px] text-gray-400 font-mono" th:text="'L' + ${codeBlock.startLine} + '-' + ${codeBlock.endLine}">L10-20</span>
                                             <span th:if="${codeBlock.callerCount > 0}">
                                                 <button class="text-[10px] px-1.5 py-0.5 rounded font-medium bg-orange-100 text-orange-700 hover:bg-orange-200 cursor-pointer"
                                                         th:onclick="'toggleCallers(this)'">
@@ -1471,7 +1665,7 @@
                                                 <span class="text-gray-300">•</span>
                                                 <span th:text="${caller.file}" class="text-blue-500">File.java</span>
                                                 <span th:if="${caller.line > 0}" class="text-gray-400" th:text="':' + ${caller.line}">:42</span>
-                                                <span th:text="${caller.detail}" class="text-gray-400"></span>
+                                                <span th:text="${caller.testCaller ? '(test)' : '(prod)'}" class="text-gray-400"></span>
                                             </div>
                                         </div>
                                     </div>
@@ -1490,7 +1684,7 @@
                         <div class="modal-content">
                             <div class="modal-header">
                                 <h3 class="text-lg font-semibold text-white">
-                                    Before: <span th:text="${file.fileName}">file.java</span>
+                                    Before: <span th:text="${file.path != null and file.path.contains('/') ? file.path.substring(file.path.lastIndexOf('/') + 1) : file.path}">file.java</span>
                                 </h3>
                                 <button th:onclick="'hideModal(\'modal-before-' + ${fileStat.index} + '\')'" 
                                         class="text-gray-400 hover:text-white text-2xl leading-none">&times;</button>
@@ -1508,7 +1702,7 @@
                         <div class="modal-content">
                             <div class="modal-header">
                                 <h3 class="text-lg font-semibold text-white">
-                                    After: <span th:text="${file.fileName}">file.java</span>
+                                    After: <span th:text="${file.path != null and file.path.contains('/') ? file.path.substring(file.path.lastIndexOf('/') + 1) : file.path}">file.java</span>
                                 </h3>
                                 <button th:onclick="'hideModal(\'modal-after-' + ${fileStat.index} + '\')'" 
                                         class="text-gray-400 hover:text-white text-2xl leading-none">&times;</button>
@@ -1777,9 +1971,10 @@
         }
         function changeTypeClass(v) {
             switch (v) {
-                case 'NEW': return 'bg-green-100 text-green-800';
-                case 'DELETE': return 'bg-red-100 text-red-800';
-                case 'MODIFY': return 'bg-blue-100 text-blue-800';
+                case 'ADDED': return 'bg-green-100 text-green-800';
+                case 'DELETED': return 'bg-red-100 text-red-800';
+                case 'MODIFIED': return 'bg-blue-100 text-blue-800';
+                case 'RENAMED': return 'bg-yellow-100 text-yellow-800';
                 default: return 'bg-gray-100 text-gray-800';
             }
         }
@@ -1960,15 +2155,10 @@
                 });
             }
             
-            // Render PMD CPD duplication report as Markdown
-            const cpdContainer = document.getElementById('cpd-markdown-content');
-            if (cpdContainer && typeof cpdMarkdownRaw !== 'undefined' && cpdMarkdownRaw) {
-                cpdContainer.innerHTML = marked.parse(cpdMarkdownRaw);
-                // Highlight code blocks in the rendered markdown (duplicated code snippets)
-                cpdContainer.querySelectorAll('pre code').forEach(block => {
-                    hljs.highlightElement(block);
-                });
-            }
+            // Highlight code blocks in CPD section
+            document.querySelectorAll('#cpd-content pre code').forEach(block => {
+                hljs.highlightElement(block);
+            });
             
             // Render PMD Complexity analysis report as Markdown
             const complexityContainer = document.getElementById('complexity-markdown-content');

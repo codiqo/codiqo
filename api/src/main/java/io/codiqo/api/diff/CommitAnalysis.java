@@ -20,6 +20,8 @@ public interface CommitAnalysis extends Iterable<FileAnalysis> {
     List<String> getParentIds();
     List<String> getBranches();
     boolean isMergeCommit();
+    boolean isRevertCommit();
+    String getRevertedCommitId();
     int getFilesChanged();
     boolean isPresent(File file, CodeBlockInfo block);
 

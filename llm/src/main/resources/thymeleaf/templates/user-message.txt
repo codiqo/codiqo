@@ -10,6 +10,9 @@
 - **Timestamp:** [(${request.timestamp})]
 - **Repository:** [(${request.repository})]
 - **Branch:** [(${request.branch})]
+[# th:if="${request.revertCommit}"]
+- **REVERT COMMIT:** This commit reverts commit [(${request.revertedCommitId})]
+[/]
 
 ---
 

@@ -16,6 +16,8 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
@@ -64,6 +66,8 @@ import io.codiqo.core.diff.GitStructuredDiff;
 import io.codiqo.core.java.JavaLanguageSpec;
 
 public class JGitDeltaAnalyzer implements DeltaAnalyzer {
+    private static final Pattern REVERT_PATTERN = Pattern.compile("This reverts commit ([a-f0-9]{40})\\.");
+
     private final Log log;
     private final LanguageProcessors registry;
     private final RunArgs args;
@@ -158,6 +162,11 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
 
         toReturn.setCommitId(commit.getName());
         toReturn.setMessage(commit.getFullMessage());
+        Matcher revertMatcher = REVERT_PATTERN.matcher(commit.getFullMessage());
+        if (revertMatcher.find()) {
+            toReturn.setRevertCommit(true);
+            toReturn.setRevertedCommitId(revertMatcher.group(1));
+        }
 
         toReturn.setAuthor(commit.getAuthorIdent().getName());
         toReturn.setAuthorEmail(commit.getAuthorIdent().getEmailAddress());

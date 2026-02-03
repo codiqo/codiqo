@@ -135,6 +135,148 @@ private void methodThree() {
 }
 ```
 
+### Method/Constructor Body Grouping
+**Use blank lines inside method and constructor bodies to separate logical groups of statements.** Each group typically creates/configures a distinct object or performs a distinct conceptual step. This creates visual "paragraphs" that make the flow readable:
+
+```java
+// Good - blank lines separate logical groups
+public HtmlReportBuilder(RunArgs args) {
+    this.args = Objects.requireNonNull(args);
+
+    ClassLoaderTemplateResolver htmlResolver = new ClassLoaderTemplateResolver();
+    htmlResolver.setPrefix("thymeleaf/html/");
+    htmlResolver.setSuffix(".html");
+    htmlResolver.setTemplateMode(TemplateMode.HTML);
+    htmlResolver.setCharacterEncoding(StandardCharsets.UTF_8.name());
+    htmlResolver.setCacheable(true);
+
+    templateEngine = new TemplateEngine();
+    templateEngine.setTemplateResolver(htmlResolver);
+
+    ClassLoaderTemplateResolver textResolver = new ClassLoaderTemplateResolver();
+    textResolver.setPrefix("thymeleaf/templates/");
+    textResolver.setSuffix(".txt");
+    textResolver.setTemplateMode(TemplateMode.TEXT);
+    textResolver.setCharacterEncoding(StandardCharsets.UTF_8.name());
+    textResolver.setCacheable(true);
+
+    textTemplateEngine = new TemplateEngine();
+    textTemplateEngine.setTemplateResolver(textResolver);
+}
+
+// Bad - wall of code without visual separation
+public HtmlReportBuilder(RunArgs args) {
+    this.args = Objects.requireNonNull(args);
+    ClassLoaderTemplateResolver htmlResolver = new ClassLoaderTemplateResolver();
+    htmlResolver.setPrefix("thymeleaf/html/");
+    htmlResolver.setSuffix(".html");
+    htmlResolver.setTemplateMode(TemplateMode.HTML);
+    htmlResolver.setCharacterEncoding(StandardCharsets.UTF_8.name());
+    htmlResolver.setCacheable(true);
+    templateEngine = new TemplateEngine();
+    templateEngine.setTemplateResolver(htmlResolver);
+    ClassLoaderTemplateResolver textResolver = new ClassLoaderTemplateResolver();
+    textResolver.setPrefix("thymeleaf/templates/");
+    textResolver.setSuffix(".txt");
+    textResolver.setTemplateMode(TemplateMode.TEXT);
+    textResolver.setCharacterEncoding(StandardCharsets.UTF_8.name());
+    textResolver.setCacheable(true);
+    textTemplateEngine = new TemplateEngine();
+    textTemplateEngine.setTemplateResolver(textResolver);
+}
+```
+
+Group boundaries typically occur:
+- After field assignments / `this.x = ...` blocks
+- Between creation + configuration of different objects
+- Before a return statement when preceded by computation
+- Between setup, execution, and result-processing phases
+- Between delegate method calls grouped by parameter affinity
+- Between each "default + conditional override" block
+
+**Delegate calls grouped by parameter affinity** — when calling multiple helper methods, group them by what they operate on and separate groups with blank lines:
+
+```java
+// Good - response-only populators together, request-dependent ones separate
+populateEffortBreakdown(ctx, response, result.getPreComputedScores());
+populateQualityMultiplier(ctx, response);
+populateArchitectureBonus(ctx, response);
+populateRiskAssessment(ctx, response);
+populateStaticAnalysisReview(ctx, response);
+
+populateBlastRadius(ctx, response, request);
+populateCpdDetails(ctx, request);
+
+// Bad - all mixed together without grouping
+populateEffortBreakdown(ctx, response, result.getPreComputedScores());
+populateQualityMultiplier(ctx, response);
+populateBlastRadius(ctx, response, request);
+populateArchitectureBonus(ctx, response);
+populateCpdDetails(ctx, request);
+populateRiskAssessment(ctx, response);
+populateStaticAnalysisReview(ctx, response);
+```
+
+**Each "default + conditional override" block is its own paragraph** — when a variable has a default value and a conditional override, that entire unit (declaration + if + setVariable) forms one paragraph:
+
+```java
+// Good - blank line between each self-contained block
+List<String> techTags = Collections.emptyList();
+if (Objects.nonNull(response.getTags()) && Objects.nonNull(response.getTags().getTechnical())) {
+    techTags = response.getTags().getTechnical();
+}
+ctx.setVariable("technicalTags", techTags);
+
+List<String> funcTags = Collections.emptyList();
+if (Objects.nonNull(response.getTags()) && Objects.nonNull(response.getTags().getFunctional())) {
+    funcTags = response.getTags().getFunctional();
+}
+ctx.setVariable("functionalTags", funcTags);
+
+// Bad - no separation between blocks
+List<String> techTags = Collections.emptyList();
+if (Objects.nonNull(response.getTags()) && Objects.nonNull(response.getTags().getTechnical())) {
+    techTags = response.getTags().getTechnical();
+}
+ctx.setVariable("technicalTags", techTags);
+List<String> funcTags = Collections.emptyList();
+if (Objects.nonNull(response.getTags()) && Objects.nonNull(response.getTags().getFunctional())) {
+    funcTags = response.getTags().getFunctional();
+}
+ctx.setVariable("functionalTags", funcTags);
+```
+
+**Batch of simple direct assignments stays together** — consecutive single-line assignments without logic don't need blank lines between them:
+
+```java
+// Good - direct assignments form one continuous block
+ctx.setVariable("commitId", reportContext.getCommitId());
+ctx.setVariable("author", reportContext.getAuthor());
+ctx.setVariable("authorEmail", reportContext.getAuthorEmail());
+ctx.setVariable("timestamp", reportContext.getTimestamp());
+ctx.setVariable("message", reportContext.getCommitMessage());
+```
+
+### Inline Single-Use Variables
+**Don't create intermediate variables that are only used once as a direct argument.** Inline the expression:
+
+```java
+// Good - inline single-use value
+ctx.setVariable("findings", buildFindings(response));
+ctx.setVariable("recommendations", Optional.ofNullable(response.getReasons()).orElse(Collections.emptyList()));
+ctx.setVariable("totalFilesChanged", request.getFileChanges().size());
+
+// Bad - unnecessary intermediate variables
+List<FindingView> findings = buildFindings(response);
+ctx.setVariable("findings", findings);
+List<String> recommendations = Optional.ofNullable(response.getReasons()).orElse(Collections.emptyList());
+ctx.setVariable("recommendations", recommendations);
+int totalFiles = request.getFileChanges().size();
+ctx.setVariable("totalFilesChanged", totalFiles);
+```
+
+Exception: Keep the variable when used more than once, when the expression is very long and naming aids readability, or when debugging requires inspecting the value.
+
 ## Magic Numbers
 
 **Extract magic numbers into named constants** to improve readability:
@@ -410,16 +552,41 @@ This ensures:
 - Consistent use of Guava factories
 - Safe iteration without null checks
 
-### Strings - Use Apache Commons
+### Strings - Use Apache Commons & Guava
+
+**Use Apache Commons for null-safe checks and defaults:**
 
 ```java
 // Good
 if (StringUtils.isBlank(input)) { ... }
 String result = StringUtils.defaultIfEmpty(value, "default");
-String joined = StringUtils.join(items, ", ");
 
 // Avoid
 if (input == null || input.trim().isEmpty()) { ... }
+```
+
+**Use Guava `Splitter` for splitting strings** — always use `trimResults()` and `omitEmptyStrings()`:
+
+```java
+// Good - Guava Splitter with trimResults and omitEmptyStrings
+List<String> items = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(input);
+List<String> lines = Splitter.on('\n').trimResults().omitEmptyStrings().splitToList(text);
+
+// Avoid - manual split + trim
+String[] items = input.split(",");
+Arrays.stream(items).map(String::trim).filter(s -> !s.isEmpty())...
+```
+
+**Use Guava `Joiner` for joining strings** — use `skipNulls()` when nulls are possible:
+
+```java
+// Good - Guava Joiner
+String joined = Joiner.on(", ").join(items);
+String joined = Joiner.on(", ").skipNulls().join(items);
+
+// Avoid
+String joined = StringUtils.join(items, ", ");
+String joined = String.join(", ", items);
 ```
 
 ### File Paths - Use Apache Commons IO
