@@ -33,6 +33,7 @@ import java.util.stream.Collectors;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.eclipse.lsp4j.CallHierarchyIncomingCall;
@@ -51,6 +52,7 @@ import org.jacoco.core.analysis.ISourceFileCoverage;
 import org.jacoco.core.data.ExecutionDataStore;
 import org.jacoco.core.tools.ExecFileLoader;
 
+import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
@@ -431,7 +433,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         }
 
         Set<Plugin> plugins = Sets.newHashSet();
-        Set<URL> current = Plugin.getAllPlugins().stream().map(Plugin::getPluginLoader).map(PluginLoader::getURL).collect(Collectors.toSet());
+        Set<String> current = Plugin.getAllPlugins().stream().map(Plugin::getPluginLoader).map(PluginLoader::getURL).map(URL::toString).collect(Collectors.toSet());
 
         try {
             Enumeration<URL> resources = getClass().getClassLoader().getResources("findbugs.xml");
@@ -443,7 +445,7 @@ public class JavaLanguageSpec implements LanguageSpec {
                     resource = jarConnection.getJarFileURL();
                 }
 
-                if (current.contains(resource)) {
+                if (current.contains(resource.toString())) {
                     continue;
                 }
 
@@ -476,6 +478,17 @@ public class JavaLanguageSpec implements LanguageSpec {
 
                             UserPreferences prefs = UserPreferences.createDefaultUserPreferences();
                             prefs.setEffort(UserPreferences.EFFORT_DEFAULT);
+
+                            Set<String> omitVisitors = Sets.newHashSet(
+                                    Splitter.on(',')
+                                            .trimResults()
+                                            .omitEmptyStrings()
+                                            .splitToList(Optional.ofNullable(args.getSpotbugsOmitVisitors()).orElse(StringUtils.EMPTY)));
+                            detectorFactory.factoryIterator().forEachRemaining(factory -> {
+                                if (omitVisitors.contains(factory.getShortName())) {
+                                    prefs.enableDetector(factory, false);
+                                }
+                            });
 
                             findBugs.setUserPreferences(prefs);
                             findBugs.setAnalysisFeatureSettings(FindBugs.DEFAULT_EFFORT);

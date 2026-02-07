@@ -2,7 +2,7 @@ package io.codiqo.maven.populator;
 
 import java.io.BufferedOutputStream;
 import java.io.File;
-import java.io.FileOutputStream;
+import java.io.OutputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -130,7 +130,7 @@ public class LlmScoringPopulator implements SubmissionPopulator {
         } else {
             htmlFile = Files.createTempFile("codiqo-analysis-", ".html").toFile();
         }
-        try (FileOutputStream stream = new FileOutputStream(htmlFile)) {
+        try (OutputStream stream = Files.newOutputStream(htmlFile.toPath())) {
             try (BufferedOutputStream bufferedStream = new BufferedOutputStream(stream)) {
                 bufferedStream.write(html.getBytes(StandardCharsets.UTF_8));
                 bufferedStream.flush();
@@ -170,7 +170,7 @@ public class LlmScoringPopulator implements SubmissionPopulator {
             file = Files.createTempFile("codiqo-analysis-", ".yaml").toFile();
         }
         String output = yamlMapper.writeValueAsString(analysisResult);
-        try (BufferedOutputStream stream = new BufferedOutputStream(new FileOutputStream(file))) {
+        try (BufferedOutputStream stream = new BufferedOutputStream(Files.newOutputStream(file.toPath()))) {
             stream.write(output.getBytes(StandardCharsets.UTF_8));
             stream.flush();
         }

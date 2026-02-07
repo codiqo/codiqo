@@ -2,7 +2,7 @@ package io.codiqo.maven.populator;
 
 import java.io.BufferedOutputStream;
 import java.io.File;
-import java.io.FileOutputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Objects;
@@ -46,7 +46,7 @@ public class OutputSerializer implements SubmissionPopulator {
                 file = Files.createTempFile("codiqo-submission-", "." + extension).toFile();
             }
             String output = mapper.writeValueAsString(ctx.getSubmissionModel());
-            try (FileOutputStream stream = new FileOutputStream(file)) {
+            try (OutputStream stream = Files.newOutputStream(file.toPath())) {
                 try (BufferedOutputStream bufferedStream = new BufferedOutputStream(stream)) {
                     bufferedStream.write(output.getBytes(StandardCharsets.UTF_8));
                     bufferedStream.flush();

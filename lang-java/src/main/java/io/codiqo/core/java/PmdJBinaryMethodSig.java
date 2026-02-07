@@ -41,7 +41,7 @@ class PmdJBinaryMethodSig implements JBinaryMethodSig {
         this.descriptor = JavaBinaryFormat.toMethodDescriptor(signature);
         this.isConstructor = BooleanUtils.or(new boolean[] {
                 signature.isConstructor(),
-                methodName.equals(JavaBinaryFormat.CONSTRUCTOR_NAME)
+                JavaBinaryFormat.CONSTRUCTOR_NAME.equals(methodName)
         });
     }
     @Override

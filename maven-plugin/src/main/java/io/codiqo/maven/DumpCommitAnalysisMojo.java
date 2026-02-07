@@ -2,7 +2,8 @@ package io.codiqo.maven;
 
 import java.io.BufferedOutputStream;
 import java.io.File;
-import java.io.FileOutputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
@@ -46,7 +47,7 @@ public class DumpCommitAnalysisMojo extends AnalyzeCommitMojo {
 
         File file = new File(outputDirectory, fileName);
         String output = mapper.writeValueAsString(submission);
-        try (FileOutputStream stream = new FileOutputStream(file)) {
+        try (OutputStream stream = Files.newOutputStream(file.toPath())) {
             try (BufferedOutputStream bufferedStream = new BufferedOutputStream(stream)) {
                 bufferedStream.write(output.getBytes(StandardCharsets.UTF_8));
                 bufferedStream.flush();

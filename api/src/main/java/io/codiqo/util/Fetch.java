@@ -70,7 +70,7 @@ public class Fetch implements Closeable {
                 return cached;
             }
 
-            throw new IllegalArgumentException("failed to download from: " + url + " status: " + response.code());
+            throw new IOException("failed to download from: " + url + " status: " + response.code());
         }
     }
     @Override

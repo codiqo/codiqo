@@ -3,7 +3,6 @@ package io.codiqo.maven;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.reflect.UndeclaredThrowableException;
 import java.net.URI;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -57,7 +56,6 @@ import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.repository.RemoteRepository;
 import org.eclipse.aether.resolution.ArtifactResult;
 import org.eclipse.aether.resolution.DependencyRequest;
-import org.eclipse.aether.resolution.DependencyResolutionException;
 import org.eclipse.aether.resolution.DependencyResult;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.Constants;
@@ -175,6 +173,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.spotbugsPriorityThreshold", defaultValue = "2")
     protected int spotbugsPriorityThreshold;
 
+    @Parameter(property = "codiqo.spotbugsOmitVisitors")
+    protected String spotbugsOmitVisitors;
+
     @Parameter(property = "codiqo.llm.model", defaultValue = "gpt-oss:120b-cloud")
     protected String llmModel;
 
@@ -203,23 +204,20 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     protected String includeAuthorEmails;
 
     @Override
+    @SneakyThrows
     @SuppressWarnings("deprecation")
     public final Collection<File> apply(Artifact artifact) {
-        try {
-            CollectRequest collect = new CollectRequest();
-            collect.setRoot(new org.eclipse.aether.graph.Dependency(artifact, null));
-            collect.setRepositories(remoteRepos);
-            DependencyRequest req = new DependencyRequest(collect, null);
-            DependencyResult result = repositorySystem.resolveDependencies(mavenSession.getRepositorySession(), req);
-            return result
-                    .getArtifactResults()
-                    .stream()
-                    .map(ArtifactResult::getArtifact)
-                    .map(Artifact::getFile)
-                    .collect(ImmutableList.toImmutableList());
-        } catch (DependencyResolutionException err) {
-            throw new UndeclaredThrowableException(err);
-        }
+        CollectRequest collect = new CollectRequest();
+        collect.setRoot(new org.eclipse.aether.graph.Dependency(artifact, null));
+        collect.setRepositories(remoteRepos);
+        DependencyRequest req = new DependencyRequest(collect, null);
+        DependencyResult result = repositorySystem.resolveDependencies(mavenSession.getRepositorySession(), req);
+        return result
+                .getArtifactResults()
+                .stream()
+                .map(ArtifactResult::getArtifact)
+                .map(Artifact::getFile)
+                .collect(ImmutableList.toImmutableList());
     }
     @Override
     public final void execute() throws MojoExecutionException, MojoFailureException {
@@ -240,6 +238,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setIgnoreComplexity(ignoreComplexity);
         args.setPmdMinPriority(pmdMinPriority);
         args.setSpotbugsPriorityThreshold(spotbugsPriorityThreshold);
+        Optional.ofNullable(spotbugsOmitVisitors).ifPresent(args::setSpotbugsOmitVisitors);
         args.setLlmModel(llmModel);
         args.setLlmBaseUrl(llmBaseUrl);
         args.setLlmTemperature(llmTemperature);
