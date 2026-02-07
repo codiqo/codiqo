@@ -1,7 +1,7 @@
 package io.codiqo.core;
 
 import java.io.File;
-import java.io.FileInputStream;
+import java.io.InputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
@@ -78,7 +78,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         this.args = Objects.requireNonNull(args);
         this.processors = Lists.newArrayList(new JavaLanguageSpec(logFactory, args, fetch));
 
-        forEach(processor -> extensions.addAll(processor.lang().getExtensions()));
+        processors.forEach(processor -> extensions.addAll(processor.lang().getExtensions()));
     }
     @Override
     public void collectAndCapture(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
@@ -164,7 +164,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                                      */
                                     try {
                                         if (FilenameUtils.isExtension(file.getName(), processor.lang().getExtensions())) {
-                                            try (FileInputStream input = new FileInputStream(file)) {
+                                            try (InputStream input = Files.newInputStream(file.toPath())) {
                                                 String source = IOUtils.toString(input, StandardCharsets.UTF_8);
                                                 processor.parse(file, source).forEach(block -> {
                                                     blocks.put(file, block);

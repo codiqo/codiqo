@@ -56,7 +56,7 @@
         <jakarta.validation-api.version>3.1.1</jakarta.validation-api.version>
         <lombok.version>1.18.42</lombok.version>
         <gson.version>2.13.2</gson.version>
-        <jackson.version>2.20.1</jackson.version>
+        <jackson.version>2.21.0</jackson.version>
         <snakeyaml.version>2.4</snakeyaml.version>
         <okio.version>3.16.4</okio.version>
         <okhttp.version>5.3.2</okhttp.version>
@@ -69,16 +69,14 @@
         <ztexec.version>1.12</ztexec.version>
         <jarchivelib.version>1.2.0</jarchivelib.version>
         <lsp4j.version>0.24.0</lsp4j.version>
-        <pmd.version>7.19.0</pmd.version>
-        <spotbugs.version>4.9.3</spotbugs.version>
+        <pmd.version>7.21.0</pmd.version>
+        <spotbugs.version>4.9.8</spotbugs.version>
         <findbugs.sec.version>1.14.0</findbugs.sec.version>
-        <findbugs.contrib.version>7.6.11</findbugs.contrib.version>
+        <findbugs.contrib.version>7.7.4</findbugs.contrib.version>
         <jacoco.version>0.8.14</jacoco.version>
         <classgraph.version>4.8.184</classgraph.version>
         <openapi.version>4.16.1</openapi.version>
         <thymeleaf.version>3.1.3.RELEASE</thymeleaf.version>
-        <swagger.version>2.2.41</swagger.version>
-        <swagger.parser.version>2.1.37</swagger.parser.version>
         <commons-lang3.version>3.20.0</commons-lang3.version>
         <commons-collections4.version>4.5.0</commons-collections4.version>
         <commons-cli.version>1.11.0</commons-cli.version>
@@ -93,8 +91,6 @@
         <maven.invoker.version>3.3.0</maven.invoker.version>
         <scala.binary.version>2.13</scala.binary.version>
         <scala.version>${scala.binary.version}.18</scala.version>
-        <sentry.version>8.29.0</sentry.version>
-        <docker.version>3.7.0</docker.version>
         <!-- -->
         <!-- TESTING -->
         <!-- -->
@@ -121,6 +117,7 @@
         <version.site.plugin>4.0.0-M16</version.site.plugin>
         <version.gpg.plugin>3.2.8</version.gpg.plugin>
         <version.license.plugin>2.7.0</version.license.plugin>
+        <version.pmd.plugin>3.28.0</version.pmd.plugin>
         <version.docker.plugin>0.48.0</version.docker.plugin>
         <version.openapi.plugin>7.17.0</version.openapi.plugin>
         <version.buildhelper.plugin>3.6.1</version.buildhelper.plugin>
@@ -174,20 +171,6 @@
                 <groupId>org.testcontainers</groupId>
                 <artifactId>testcontainers-bom</artifactId>
                 <version>${testcontainers.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <dependency>
-                <groupId>io.sentry</groupId>
-                <artifactId>sentry-bom</artifactId>
-                <version>${sentry.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <dependency>
-                <groupId>com.github.docker-java</groupId>
-                <artifactId>docker-java-bom</artifactId>
-                <version>${docker.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -687,51 +670,6 @@
                 <artifactId>org.eclipse.lsp4j.jsonrpc</artifactId>
                 <version>${lsp4j.version}</version>
             </dependency>
-            <dependency>
-                <groupId>io.swagger.core.v3</groupId>
-                <artifactId>swagger-core-jakarta</artifactId>
-                <version>${swagger.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.swagger.core.v3</groupId>
-                <artifactId>swagger-models-jakarta</artifactId>
-                <version>${swagger.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.swagger.core.v3</groupId>
-                <artifactId>swagger-annotations-jakarta</artifactId>
-                <version>${swagger.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.swagger.core.v3</groupId>
-                <artifactId>swagger-jaxrs2-jakarta</artifactId>
-                <version>${swagger.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.swagger.core.v3</groupId>
-                <artifactId>swagger-jaxrs2-servlet-initializer-v2-jakarta</artifactId>
-                <version>${swagger.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.swagger.core.v3</groupId>
-                <artifactId>swagger-integration-jakarta</artifactId>
-                <version>${swagger.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.swagger.parser.v3</groupId>
-                <artifactId>swagger-parser</artifactId>
-                <version>${swagger.parser.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.sentry</groupId>
-                <artifactId>sentry</artifactId>
-                <version>${sentry.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.sentry</groupId>
-                <artifactId>sentry-logback</artifactId>
-                <version>${sentry.version}</version>
-            </dependency>
         </dependencies>
     </dependencyManagement>
     <build>
@@ -971,6 +909,84 @@
                     </configuration>
                 </plugin>
                 <plugin>
+                    <groupId>com.github.spotbugs</groupId>
+                    <artifactId>spotbugs-maven-plugin</artifactId>
+                    <version>${spotbugs.version}.2</version>
+                    <dependencies>
+                        <dependency>
+                            <groupId>com.github.spotbugs</groupId>
+                            <artifactId>spotbugs</artifactId>
+                            <version>${spotbugs.version}</version>
+                        </dependency>
+                    </dependencies>
+                    <configuration>
+                        <threshold>High</threshold>
+                        <effort>Max</effort>
+                        <failOnError>true</failOnError>
+                        <omitVisitors>CyclomaticComplexity</omitVisitors>
+                        <plugins>
+                            <plugin>
+                                <groupId>com.h3xstream.findsecbugs</groupId>
+                                <artifactId>findsecbugs-plugin</artifactId>
+                                <version>${findbugs.sec.version}</version>
+                            </plugin>
+                            <plugin>
+                                <groupId>com.mebigfatguy.fb-contrib</groupId>
+                                <artifactId>fb-contrib</artifactId>
+                                <version>${findbugs.contrib.version}</version>
+                            </plugin>
+                        </plugins>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <goals>
+                                <goal>check</goal>
+                            </goals>
+                            <phase>verify</phase>
+                        </execution>
+                    </executions>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-pmd-plugin</artifactId>
+                    <version>${version.pmd.plugin}</version>
+                    <dependencies>
+                        <dependency>
+                            <groupId>net.sourceforge.pmd</groupId>
+                            <artifactId>pmd-core</artifactId>
+                            <version>${pmd.version}</version>
+                        </dependency>
+                        <dependency>
+                            <groupId>net.sourceforge.pmd</groupId>
+                            <artifactId>pmd-java</artifactId>
+                            <version>${pmd.version}</version>
+                        </dependency>
+                    </dependencies>
+                    <configuration>
+                        <minimumPriority>1</minimumPriority>
+                        <failOnViolation>true</failOnViolation>
+                        <printFailingErrors>true</printFailingErrors>
+                        <linkXRef>false</linkXRef>
+                        <rulesets>
+                            <ruleset>category/java/bestpractices.xml</ruleset>
+                            <ruleset>category/java/codestyle.xml</ruleset>
+                            <ruleset>category/java/design.xml</ruleset>
+                            <ruleset>category/java/errorprone.xml</ruleset>
+                            <ruleset>category/java/performance.xml</ruleset>
+                            <ruleset>category/java/multithreading.xml</ruleset>
+                            <ruleset>category/java/security.xml</ruleset>
+                        </rulesets>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <goals>
+                                <goal>check</goal>
+                            </goals>
+                            <phase>verify</phase>
+                        </execution>
+                    </executions>
+                </plugin>
+                <plugin>
                     <groupId>org.openapitools</groupId>
                     <artifactId>openapi-generator-maven-plugin</artifactId>
                     <version>${version.openapi.plugin}</version>
@@ -1006,6 +1022,14 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>com.github.spotbugs</groupId>
+                <artifactId>spotbugs-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-pmd-plugin</artifactId>
             </plugin>
             <plugin>
                 <groupId>org.jacoco</groupId>

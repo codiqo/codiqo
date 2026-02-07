@@ -2,7 +2,7 @@ package io.codiqo.maven;
 
 import java.io.BufferedOutputStream;
 import java.io.File;
-import java.io.FileOutputStream;
+import java.nio.file.Files;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -232,7 +232,7 @@ public class ScoreFromFileMojo extends AbstractMojo {
 
         String commitSha = submission.getCommit().getSha();
         File htmlFile = new File(outputDirectory, "codiqo-analysis-" + commitSha + ".html");
-        try (BufferedOutputStream stream = new BufferedOutputStream(new FileOutputStream(htmlFile))) {
+        try (BufferedOutputStream stream = new BufferedOutputStream(Files.newOutputStream(htmlFile.toPath()))) {
             stream.write(html.getBytes(StandardCharsets.UTF_8));
             stream.flush();
         }
@@ -263,7 +263,7 @@ public class ScoreFromFileMojo extends AbstractMojo {
         String commitSha = submission.getCommit().getSha();
         File file = new File(outputDirectory, "codiqo-analysis-" + commitSha + ".yaml");
         String output = yamlMapper.writeValueAsString(analysisResult);
-        try (BufferedOutputStream stream = new BufferedOutputStream(new FileOutputStream(file))) {
+        try (BufferedOutputStream stream = new BufferedOutputStream(Files.newOutputStream(file.toPath()))) {
             stream.write(output.getBytes(StandardCharsets.UTF_8));
             stream.flush();
         }

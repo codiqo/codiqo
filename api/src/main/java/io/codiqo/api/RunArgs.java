@@ -38,6 +38,8 @@ public class RunArgs {
     @Nullable
     private Integer spotbugsPriorityThreshold = Priorities.HIGH_PRIORITY;
     @Nullable
+    private String spotbugsOmitVisitors;
+    @Nullable
     private boolean includeUntracked = true;
     @Nullable
     private boolean autoBuild = false;

@@ -56,7 +56,7 @@ import net.sourceforge.pmd.reporting.RuleViolation;
 
 @RequiredArgsConstructor
 public class FileAnalysisPopulator implements SubmissionPopulator {
-    private static final Function<Integer, DiagnosticModel.SeverityEnum> spotbugsPriorityMapper = priority -> {
+    private static final Function<Integer, DiagnosticModel.SeverityEnum> SPOTBUGS_PRIORITY_MAPPER = priority -> {
         if (priority == Priorities.HIGH_PRIORITY) {
             return DiagnosticModel.SeverityEnum.ERROR;
         } else if (priority == Priorities.NORMAL_PRIORITY) {
@@ -65,7 +65,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             return DiagnosticModel.SeverityEnum.INFO;
         }
     };
-    private static final Function<Integer, DiagnosticModel.SeverityEnum> pmdPriorityMapper = priority -> {
+    private static final Function<Integer, DiagnosticModel.SeverityEnum> PMD_PRIORITY_MAPPER = priority -> {
         if (priority == RulePriority.HIGH.getPriority()) {
             return DiagnosticModel.SeverityEnum.ERROR;
         } else if (priority == RulePriority.MEDIUM.getPriority()) {
@@ -327,7 +327,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             diagnosticModel.setMessage(bug.getMessage());
             diagnosticModel.setCategory(bug.getBugPattern().getCategory());
 
-            diagnosticModel.setSeverity(spotbugsPriorityMapper.apply(bug.getPriority()));
+            diagnosticModel.setSeverity(SPOTBUGS_PRIORITY_MAPPER.apply(bug.getPriority()));
 
             Optional.ofNullable(bug.getPrimarySourceLineAnnotation()).ifPresent(srcLine -> {
                 LocationModel diagLocation = new LocationModel();
@@ -350,7 +350,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             diagnosticModel.setRuleId(violation.getRule().getName());
             diagnosticModel.setMessage(violation.getDescription());
             diagnosticModel.setCategory(violation.getRule().getRuleSetName());
-            diagnosticModel.setSeverity(pmdPriorityMapper.apply(violation.getRule().getPriority().getPriority()));
+            diagnosticModel.setSeverity(PMD_PRIORITY_MAPPER.apply(violation.getRule().getPriority().getPriority()));
 
             LocationModel diagLocation = new LocationModel();
             diagLocation.setStartLine(violation.getBeginLine());
