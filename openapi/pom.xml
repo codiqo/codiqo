@@ -15,12 +15,24 @@
             <artifactId>jakarta.annotation-api</artifactId>
         </dependency>
         <dependency>
+            <groupId>jakarta.validation</groupId>
+            <artifactId>jakarta.validation-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.ws.rs</groupId>
+            <artifactId>jakarta.ws.rs-api</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
@@ -108,13 +120,65 @@
                                 <generateApiDocumentation>true</generateApiDocumentation>
                                 <generateModelDocumentation>true</generateModelDocumentation>
                                 <generateBuilders>true</generateBuilders>
-                                <supportUrlQuery>true</supportUrlQuery>
+                                <supportUrlQuery>false</supportUrlQuery>
                                 <useBeanValidation>false</useBeanValidation>
                                 <performBeanValidation>false</performBeanValidation>
                             </configOptions>
 
                             <generateApiTests>false</generateApiTests>
                             <generateModelTests>false</generateModelTests>
+                            <importMappings>
+                                <importMapping>Date=java.util.Date</importMapping>
+                                <importMapping>Objects=java.util.Objects</importMapping>
+                                <importMapping>Locale=java.util.Locale</importMapping>
+                            </importMappings>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>generate-codiqo-server</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                        <configuration>
+                            <inputSpec>${project.basedir}/src/main/resources/codiqo.yaml</inputSpec>
+                            <generatorName>jaxrs-spec</generatorName>
+                            <!--templateDirectory>${project.basedir}/src/main/resources/openapi/templates</templateDirectory-->
+
+                            <apiPackage>io.codiqo.server.api</apiPackage>
+                            <modelPackage>io.codiqo.server.model</modelPackage>
+
+                            <configOptions>                                
+                                <dateLibrary>java8</dateLibrary>
+                                <useJakartaEe>true</useJakartaEe>
+                                <bigDecimalAsString>true</bigDecimalAsString>
+                                <caseInsensitiveResponseHeaders>true</caseInsensitiveResponseHeaders>
+                                <failOnUnknownProperties>false</failOnUnknownProperties>
+                                <serializationLibrary>jackson</serializationLibrary>
+                                <useGzipFeature>true</useGzipFeature>
+                                <openApiNullable>false</openApiNullable>
+                                <legacyDiscriminatorBehavior>false</legacyDiscriminatorBehavior>
+                                <discriminatorCaseSensitive>true</discriminatorCaseSensitive>
+                                <hideGenerationTimestamp>true</hideGenerationTimestamp>
+                                <generateApiDocumentation>true</generateApiDocumentation>
+                                <generateModelDocumentation>true</generateModelDocumentation>
+                                <generateBuilders>true</generateBuilders>
+                                <supportUrlQuery>false</supportUrlQuery>
+                                <useBeanValidation>true</useBeanValidation>
+                                <performBeanValidation>true</performBeanValidation>
+                                <interfaceOnly>true</interfaceOnly>
+                                <supportAsync>true</supportAsync>
+                                <useSwaggerAnnotations>false</useSwaggerAnnotations>
+                                <sourceFolder>jaxrs</sourceFolder>
+                            </configOptions>
+
+                            <generateApiTests>false</generateApiTests>
+                            <generateModelTests>false</generateModelTests>
+                            <importMappings>
+                                <importMapping>Date=java.util.Date</importMapping>
+                                <importMapping>Objects=java.util.Objects</importMapping>
+                                <importMapping>Locale=java.util.Locale</importMapping>
+                            </importMappings>
                         </configuration>
                     </execution>
                 </executions>
@@ -140,6 +204,9 @@
                             <resources>
                                 <resource>
                                     <directory>${project.build.directory}/generated-sources/openapi/src/main/java</directory>
+                                </resource>
+                                <resource>
+                                    <directory>${project.build.directory}/generated-sources/openapi/jaxrs</directory>
                                 </resource>
                             </resources>
                         </configuration>
