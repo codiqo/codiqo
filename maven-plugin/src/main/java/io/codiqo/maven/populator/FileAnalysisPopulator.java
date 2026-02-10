@@ -141,7 +141,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         codeUnitModel.setModifiers(javaBlock.getModifiers());
         codeUnitModel.setSignature(javaBlock.getSignature());
         codeUnitModel.setIsTrivial(javaBlock.isTrivial());
-        codeUnitModel.setJava(infoModel);
+        codeUnitModel.setJavaInfo(infoModel);
 
         switch (fileAnalysis.getChangeType()) {
             case ADD:

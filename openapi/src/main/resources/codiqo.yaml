@@ -590,15 +590,15 @@ components:
         homepage:
           type: string
           format: uri
-        maven:
+        mavenInfo:
           $ref: '#/components/schemas/MavenDependencyModel'
-        npm:
+        npmInfo:
           $ref: '#/components/schemas/NpmDependencyModel'
-        pypi:
+        pypiInfo:
           $ref: '#/components/schemas/PypiDependencyModel'
-        go:
+        goInfo:
           $ref: '#/components/schemas/GoDependencyModel'
-        cargo:
+        cargoInfo:
           $ref: '#/components/schemas/CargoDependencyModel'
 
     MavenDependencyModel:
@@ -922,11 +922,11 @@ components:
             type: string
         quality:
           $ref: '#/components/schemas/ModuleQualityModel'
-        maven:
+        mavenInfo:
           $ref: '#/components/schemas/MavenModuleModel'
-        npm:
+        npmInfo:
           $ref: '#/components/schemas/NpmModuleModel'
-        python:
+        pythonInfo:
           $ref: '#/components/schemas/PythonModuleModel'
 
     MavenModuleModel:
@@ -1113,7 +1113,7 @@ components:
           type: array
           items:
             type: string
-        java:
+        javaInfo:
           $ref: '#/components/schemas/JavaInfoModel'
         callers:
           type: array
@@ -1504,9 +1504,9 @@ components:
         documentation:
           type: string
           format: uri
-        pmd:
+        pmdInfo:
           $ref: '#/components/schemas/PmdPropertiesModel'
-        spotbugs:
+        spotbugsInfo:
           $ref: '#/components/schemas/SpotbugsPropertiesModel'
         isPreExisting:
           type: boolean

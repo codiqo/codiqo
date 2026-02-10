@@ -511,10 +511,10 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         return METHOD_OR_CONSTRUCTOR.contains(kind);
     }
     private static Optional<String> extractPackageName(CodeUnitModel codeUnit) {
-        return Optional.ofNullable(codeUnit.getJava()).map(JavaInfoModel::getPackageName);
+        return Optional.ofNullable(codeUnit.getJavaInfo()).map(JavaInfoModel::getPackageName);
     }
     private static String extractClassName(CodeUnitModel codeUnit) {
-        JavaInfoModel java = codeUnit.getJava();
+        JavaInfoModel java = codeUnit.getJavaInfo();
         if (Objects.nonNull(java) && Objects.nonNull(java.getClassName())) {
             return java.getClassName();
         }

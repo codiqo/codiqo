@@ -65,7 +65,7 @@ public class ProjectModelPopulator implements SubmissionPopulator {
                             mavenDependencyModel.setType(artifact.getType());
 
                             DependencyModel dependencyModel = new DependencyModel();
-                            dependencyModel.setMaven(mavenDependencyModel);
+                            dependencyModel.setMavenInfo(mavenDependencyModel);
                             dependencyModel.setName(artifact.getId());
                             dependencyModel.setVersion(artifact.getVersion());
                             dependencyModel.setOptional(artifact.isOptional());
@@ -103,7 +103,7 @@ public class ProjectModelPopulator implements SubmissionPopulator {
                 mavenSpec.parent().ifPresent(parentId -> mavenModuleModel.setParent(parentId));
 
                 ModuleModel moduleModel = new ModuleModel();
-                moduleModel.setMaven(mavenModuleModel);
+                moduleModel.setMavenInfo(mavenModuleModel);
                 moduleModel.setId(spec.getId());
                 moduleModel.setName(mavenSpec.getName());
                 moduleModel.setBaseDirectory(projectDir.toString());
