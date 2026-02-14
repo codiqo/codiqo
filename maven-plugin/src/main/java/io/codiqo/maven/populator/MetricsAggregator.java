@@ -1,6 +1,12 @@
 package io.codiqo.maven.populator;
 
+import java.util.List;
 import java.util.Objects;
+
+import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.math3.stat.descriptive.rank.Percentile;
+
+import com.google.common.collect.Lists;
 
 import io.codiqo.client.model.FullProjectCoverageModel;
 import io.codiqo.client.model.ModuleFullCoverageModel;
@@ -63,6 +69,7 @@ public class MetricsAggregator implements SubmissionPopulator {
                 // module-level violations (all code, not just changed)
                 qualityModel.setTotalPmdViolationsInModule(tracker.getModuleTotalPmdViolations().intValue());
                 qualityModel.setTotalSpotbugsIssuesInModule(tracker.getModuleTotalSpotbugsIssues().intValue());
+                qualityModel.setCriticalViolations(tracker.getCriticalViolations());
 
                 /**
                  * module-level totals
@@ -193,5 +200,25 @@ public class MetricsAggregator implements SubmissionPopulator {
         ctx.getProjectModel().setTotalMethods(ctx.getIndex().getBlocks().size());
         ctx.getProjectModel().setTotalLines(fullTotalLinesInProject);
         ctx.getSubmissionModel().setProjectMetrics(projectMetricsModel);
+
+        int linesQuantile = computeLinesQuantile(ctx);
+        ctx.setLinesPerMethodQuantile(linesQuantile);
+        projectMetricsModel.setLinesPerMethodQuantile(linesQuantile);
+    }
+    private static int computeLinesQuantile(SubmissionContext ctx) {
+        List<Integer> allLines = Lists.newArrayList();
+        for (ModuleModel moduleModel : ctx.getProjectModel().getModules()) {
+            ModuleQualityTracker tracker = ctx.getQualityTrackers().getIfPresent(moduleModel.getId());
+            if (Objects.nonNull(tracker)) {
+                allLines.addAll(tracker.getModuleLinesPerMethod());
+            }
+        }
+        if (CollectionUtils.isEmpty(allLines)) {
+            return 0;
+        }
+
+        double quantileLevel = ctx.getArgs().getNcssQuantile() * 100.0;
+        double[] values = allLines.stream().mapToDouble(Integer::doubleValue).toArray();
+        return (int) new Percentile().evaluate(values, quantileLevel);
     }
 }

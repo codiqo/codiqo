@@ -77,7 +77,7 @@
 
         /* Collapsible sections */
         .collapsible-content { @apply max-h-0 overflow-hidden; transition: max-height 0.3s ease-out; }
-        .collapsible-content.expanded { max-height: 2000px; }
+        .collapsible-content.expanded { max-height: 10000px; overflow: hidden; }
 
         /* Tab styles */
         .tab-button { @apply py-3 px-6 border-b-2 border-transparent transition-all; }
@@ -134,10 +134,10 @@
     </style>
 </head>
 <body class="bg-gray-50 text-gray-900">
-    <div class="container mx-auto px-4 py-8">
-        
+    <div class="mx-auto py-4">
+
         <!-- Header with Commit Info -->
-        <header class="bg-gradient-to-br from-slate-800 via-slate-700 to-blue-900 border border-slate-600 rounded-lg shadow-lg p-5 mb-6">
+        <header class="bg-gradient-to-br from-slate-800 via-slate-700 to-blue-900 px-6 py-5 mb-4">
             <!-- Centered Commit ID -->
             <div class="flex justify-center items-center gap-3 mb-4">
                 <code class="text-blue-300 text-lg bg-slate-900/50 border border-blue-500/30 px-4 py-2 rounded-lg font-mono tracking-wide shadow-inner" th:text="${commitId}">abc1234567890def1234567890abc1234567890</code>
@@ -235,7 +235,7 @@
         </header>
 
         <!-- LLM Scoring Section -->
-        <section class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <section class="px-6 mb-4">
             <h2 class="text-xl font-bold text-gray-800 mb-4">📊 Contribution Analysis</h2>
 
             <!-- Main Score Display - Horizontal layout with equal heights -->
@@ -344,15 +344,28 @@
                                 <tbody>
                                     <tr class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
-                                            Lines Changed
+                                            Lines Changed <span th:if="${effectiveLines != null and effectiveLines != linesChanged}" class="text-amber-600 text-xs">(density capped)</span>
                                             <span class="tooltip-trigger" data-tooltip="lines">?</span>
                                             <div id="tooltip-lines" class="tooltip-popover">
-                                                <strong>Formula:</strong> <code><span th:text="${linesChanged}">0</span><sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> × 5.0</code><br><br>
+                                                <strong>Score formula:</strong> <code><span th:text="${effectiveLines != null ? effectiveLines : linesChanged}">0</span><sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> &times; <span th:text="${#numbers.formatDecimal(linesLogFactor, 1, 1)}">2.5</span></code><br><br>
                                                 Power-law scaling preserves magnitude differences between small and large commits.
                                             </div>
                                         </td>
-                                        <td class="py-1 text-right font-mono" th:text="${linesChanged}">0</td>
+                                        <td class="py-1 text-right font-mono"><span th:if="${effectiveLines != null and effectiveLines != linesChanged}" th:text="${linesChanged}" class="text-gray-400 line-through mr-1">0</span> <span th:text="${effectiveLines != null ? effectiveLines : linesChanged}">0</span></td>
                                         <td class="py-1 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(linesScore, 1, 2)}">0.00</td>
+                                    </tr>
+                                    <tr th:if="${effectiveLines != null and effectiveLines != linesChanged}" class="border-b">
+                                        <td colspan="3" class="py-1">
+                                            <div class="bg-amber-50 border border-amber-200 rounded px-3 py-1.5 text-xs text-amber-800">
+                                                <strong>Density cap:</strong>
+                                                per-method cap (P<span th:text="${ncssQuantilePercent}">75</span>=<code th:text="${linesPerMethodQuantile}">20</code> lines &times;
+                                                <code th:text="${#numbers.formatDecimal(linesDensityCapMultiplier, 1, 1)}">1.5</code>) summed across
+                                                <code th:text="${codeBlocksModified + codeBlocksAdded}">10</code> methods =
+                                                <code th:text="${effectiveLines}">90</code> max effective lines
+                                                <span class="text-amber-600 ml-1">(<span th:text="${linesChanged}">349</span> raw &rarr; <span th:text="${effectiveLines}">90</span>)</span>
+                                                <div class="text-[10px] text-amber-600 mt-1">P<span th:text="${ncssQuantilePercent}">75</span> = <span th:text="${ncssQuantilePercent}">75</span>th percentile of lines per method across all project methods. Each method capped individually at P<span th:text="${ncssQuantilePercent}">75</span> &times; <span th:text="${#numbers.formatDecimal(linesDensityCapMultiplier, 1, 1)}">1.5</span>.</div>
+                                            </div>
+                                        </td>
                                     </tr>
                                     <tr th:if="${codeBlocksModified > 0}" class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
@@ -539,94 +552,102 @@
                                 <p class="text-xs text-gray-500 mb-1">Calculation:</p>
                                 <p class="font-mono text-xs text-green-800 font-semibold">1.0<th:block th:if="${cpdImpact != 0}"><th:block th:text="${cpdImpact > 0 ? ' + ' : ' '}"/><th:block th:text="${#numbers.formatDecimal(cpdImpact, 1, 2)}"/> (CPD)</th:block><th:block th:if="${staticAnalysisImpact != 0}"><th:block th:text="${staticAnalysisImpact > 0 ? ' + ' : ' '}"/><th:block th:text="${#numbers.formatDecimal(staticAnalysisImpact, 1, 2)}"/> (SA)</th:block><th:block th:if="${coverageImpact != 0}"><th:block th:text="${coverageImpact > 0 ? ' + ' : ' '}"/><th:block th:text="${#numbers.formatDecimal(coverageImpact, 1, 2)}"/> (Cov)</th:block><th:block th:if="${architecturePenalty != 0}"><th:block th:text="${architecturePenalty > 0 ? ' + ' : ' '}"/><th:block th:text="${#numbers.formatDecimal(architecturePenalty, 1, 2)}"/> (Arch)</th:block><th:block th:if="${qualityGateImpact != 0}"><th:block th:text="${qualityGateImpact > 0 ? ' + ' : ' '}"/><th:block th:text="${#numbers.formatDecimal(qualityGateImpact, 1, 2)}"/> (QG)</th:block> = <th:block th:text="${#numbers.formatDecimal(finalQualityMultiplier, 1, 2)}"/></p>
                             </div>
-                            <table class="w-full text-xs">
-                                <tbody>
-                                    <tr th:if="${cpdAnalysis != null}" class="border-b has-tooltip">
-                                        <td class="py-1 text-gray-500">
-                                            CPD (<span th:text="${#numbers.formatDecimal(cpdDuplicationPercent, 1, 2)}">0</span>%)
-                                            <span class="tooltip-trigger" data-tooltip="cpd">?</span>
-                                            <div id="tooltip-cpd" class="tooltip-popover">
-                                                <strong>Copy-Paste Detection:</strong><br>
-                                                • 0-5%: +0.05 (clean)<br>
-                                                • 6-15%: 0 (acceptable)<br>
-                                                • 16-25%: -0.05 (moderate)<br>
-                                                • 26-40%: -0.10 (high)<br>
-                                                • >40%: -0.15 (severe)
-                                            </div>
-                                        </td>
-                                        <td class="py-1 text-right font-bold" th:classappend="${cpdImpact &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(cpdImpact > 0 ? '+' : '') + #numbers.formatDecimal(cpdImpact, 1, 2)}">0.00</td>
-                                    </tr>
-                                    <tr th:if="${staticAnalysisQuality != null}" class="border-b has-tooltip">
-                                        <td class="py-1 text-gray-500">
-                                            Static Analysis
-                                            <span th:if="${staticAnalysisImpact > 0}" class="ml-1 px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-xs font-semibold">CLEAN</span>
-                                            <span class="tooltip-trigger" data-tooltip="static">?</span>
-                                            <div id="tooltip-static" class="tooltip-popover">
-                                                <strong>PMD + SpotBugs (error-severity only):</strong><br><br>
-                                                <strong>CLEAN bonus (+0.05):</strong><br>
-                                                Awarded when zero error-severity violations<br>
-                                                are introduced in this commit.<br>
-                                                No new bugs = you get a score bonus!<br><br>
-                                                <strong>Penalties (per introduced error):</strong><br>
-                                                • Introduced error: -0.05<br>
-                                                • Pre-existing error: -0.01<br>
-                                                Max penalty: -0.30
-                                            </div>
-                                        </td>
-                                        <td class="py-1 text-right font-bold" th:classappend="${staticAnalysisImpact &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(staticAnalysisImpact > 0 ? '+' : '') + #numbers.formatDecimal(staticAnalysisImpact, 1, 2)}">0.00</td>
-                                    </tr>
-                                    <tr th:if="${coverageQuality != null}" class="border-b has-tooltip">
-                                        <td class="py-1 text-gray-500">
-                                            Coverage (<span th:text="${#numbers.formatDecimal(qualityCoveragePercent, 1, 2)}">0</span>%)
-                                            <span class="tooltip-trigger" data-tooltip="coverage">?</span>
-                                            <div id="tooltip-coverage" class="tooltip-popover">
-                                                <strong>Test Coverage Impact:</strong><br>
-                                                • ≥90%: +0.10 (excellent)<br>
-                                                • 80-89%: +0.05 (good)<br>
-                                                • 70-79%: 0 (acceptable)<br>
-                                                • 60-69%: -0.05 (low)<br>
-                                                • 50-59%: -0.10 (poor)<br>
-                                                • <50%: -0.15 (terrible)
-                                            </div>
-                                        </td>
-                                        <td class="py-1 text-right font-bold" th:classappend="${coverageImpact &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(coverageImpact > 0 ? '+' : '') + #numbers.formatDecimal(coverageImpact, 1, 2)}">0.00</td>
-                                    </tr>
-                                    <tr th:if="${architectureQuality != null}" class="border-b has-tooltip">
-                                        <td class="py-1 text-gray-500">
-                                            Architecture
-                                            <span class="tooltip-trigger" data-tooltip="arch">?</span>
-                                            <div id="tooltip-arch" class="tooltip-popover">
-                                                <strong>SOLID/Architecture Issues:</strong><br>
-                                                • Minor style: -0.01/issue<br>
-                                                • SOLID violation: -0.02/issue<br>
-                                                • Major architecture: -0.03/issue<br>
-                                                Max penalty: -0.10
-                                            </div>
-                                        </td>
-                                        <td class="py-1 text-right font-bold" th:classappend="${architecturePenalty &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(architecturePenalty > 0 ? '+' : '') + #numbers.formatDecimal(architecturePenalty, 1, 2)}">0.00</td>
-                                    </tr>
-                                    <tr th:if="${qualityGateAnalysis != null}" class="border-b has-tooltip">
-                                        <td class="py-1 text-gray-500">
-                                            Quality Gate
-                                            <span class="tooltip-trigger" data-tooltip="gate">?</span>
-                                            <div id="tooltip-gate" class="tooltip-popover">
-                                                <strong>Quality Gate Failures:</strong><br>
-                                                -0.03 per failed gate.<br><br>
-                                                When a dimension score is high but the quality gate requirement is not met.
-                                            </div>
-                                        </td>
-                                        <td class="py-1 text-right font-bold" th:classappend="${qualityGateImpact &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(qualityGateImpact > 0 ? '+' : '') + #numbers.formatDecimal(qualityGateImpact, 1, 2)}">0.00</td>
-                                    </tr>
-                                </tbody>
-                                <tfoot>
-                                    <tr th:classappend="${finalQualityMultiplier != null and finalQualityMultiplier >= 1.0} ? 'bg-green-50' : 'bg-orange-50'">
-                                        <td class="py-1 font-semibold text-gray-700">Final Multiplier</td>
-                                        <td class="py-1 text-right font-bold"
-                                            th:classappend="${finalQualityMultiplier != null and finalQualityMultiplier >= 1.0} ? 'text-green-700' : 'text-orange-700'"
-                                            th:text="${#numbers.formatDecimal(finalQualityMultiplier, 1, 2)}">1.00</td>
-                                    </tr>
-                                </tfoot>
-                            </table>
+                            <div class="space-y-1.5">
+                                <!-- CPD -->
+                                <div th:if="${cpdAnalysis != null}" class="flex items-start justify-between py-1 border-b border-gray-100">
+                                    <div>
+                                        <span class="text-xs text-gray-600 font-medium">CPD</span>
+                                        <span th:if="${cpdImpact >= 0}" class="ml-1 px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-[10px] font-semibold">CLEAN</span>
+                                        <span th:if="${cpdImpact &lt; 0}" class="ml-1 px-1.5 py-0.5 bg-red-100 text-red-700 rounded text-[10px] font-semibold"
+                                              th:text="${#numbers.formatDecimal(cpdDuplicationPercent, 1, 1)} + '% duplication'">5% duplication</span>
+                                        <div th:if="${cpdImpact >= 0}" class="text-[10px] text-gray-400 mt-0.5">0 introduced clones &rarr; clean bonus</div>
+                                    </div>
+                                    <span class="text-xs font-bold ml-2 whitespace-nowrap"
+                                          th:classappend="${cpdImpact &lt; 0} ? 'text-red-600' : 'text-green-600'"
+                                          th:text="${(cpdImpact > 0 ? '+' : '') + #numbers.formatDecimal(cpdImpact, 1, 2)}">+0.05</span>
+                                </div>
+                                <!-- Static Analysis -->
+                                <div th:if="${staticAnalysisQuality != null}" class="flex items-start justify-between py-1 border-b border-gray-100">
+                                    <div>
+                                        <span class="text-xs text-gray-600 font-medium">Static Analysis</span>
+                                        <span th:if="${staticAnalysisImpact >= 0}" class="ml-1 px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-[10px] font-semibold">CLEAN</span>
+                                        <span th:if="${staticAnalysisImpact &lt; 0}" class="ml-1 px-1.5 py-0.5 bg-red-100 text-red-700 rounded text-[10px] font-semibold">HAS ERRORS</span>
+                                        <div th:if="${staticAnalysisImpact >= 0}" class="text-[10px] text-gray-400 mt-0.5">0 error-severity violations &rarr; clean bonus (warnings have zero weight)</div>
+                                        <div th:if="${staticAnalysisImpact &lt; 0}" class="text-[10px] text-red-500 mt-0.5">Error-severity violations found (only severity=ERROR counts)</div>
+                                    </div>
+                                    <span class="text-xs font-bold ml-2 whitespace-nowrap"
+                                          th:classappend="${staticAnalysisImpact &lt; 0} ? 'text-red-600' : 'text-green-600'"
+                                          th:text="${(staticAnalysisImpact > 0 ? '+' : '') + #numbers.formatDecimal(staticAnalysisImpact, 1, 2)}">+0.05</span>
+                                </div>
+                                <!-- Coverage -->
+                                <div th:if="${coverageQuality != null}" class="py-1 border-b border-gray-100">
+                                    <div class="flex items-start justify-between">
+                                        <div>
+                                            <span class="text-xs text-gray-600 font-medium">Test Coverage</span>
+                                            <span th:if="${coverageImpact >= 0.05}" class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-700"
+                                                  th:text="${#numbers.formatDecimal(qualityCoveragePercent, 1, 0)} + '% coverage'">90% coverage</span>
+                                            <span th:if="${coverageImpact >= 0 and coverageImpact &lt; 0.05}" class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-gray-100 text-gray-600"
+                                                  th:text="${#numbers.formatDecimal(qualityCoveragePercent, 1, 0)} + '% coverage'">75% coverage</span>
+                                            <span th:if="${coverageImpact &lt; 0}" class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-700"
+                                                  th:text="${#numbers.formatDecimal(qualityCoveragePercent, 1, 0)} + '% coverage'">0% coverage</span>
+                                        </div>
+                                        <span class="text-xs font-bold ml-2 whitespace-nowrap"
+                                              th:classappend="${coverageImpact &lt; 0} ? 'text-red-600' : 'text-green-600'"
+                                              th:text="${(coverageImpact > 0 ? '+' : '') + #numbers.formatDecimal(coverageImpact, 1, 2)}">-0.15</span>
+                                    </div>
+                                    <div th:if="${coverageImpact &lt; 0}" class="text-[10px] text-red-500 mt-0.5"><span th:text="${#numbers.formatDecimal(qualityCoveragePercent, 1, 0)}">0</span>% changed-line coverage &rarr; penalty (&lt;50% = -0.15, 50-59% = -0.10, 60-69% = -0.05)</div>
+                                    <div th:if="${coverageImpact >= 0}" class="text-[10px] text-gray-400 mt-0.5"><span th:text="${#numbers.formatDecimal(qualityCoveragePercent, 1, 0)}">70</span>% changed-line coverage &rarr; <th:block th:text="${coverageImpact > 0 ? 'bonus' : 'acceptable'}">acceptable</th:block></div>
+                                </div>
+                                <!-- Architecture -->
+                                <div th:if="${architectureQuality != null}" class="py-1 border-b border-gray-100">
+                                    <div class="flex items-start justify-between">
+                                        <div>
+                                            <span class="text-xs text-gray-600 font-medium">Architecture</span>
+                                            <span th:if="${architecturePenalty == 0}" class="ml-1 px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-[10px] font-semibold">OK</span>
+                                            <span th:if="${architecturePenalty &lt; 0}" class="ml-1 px-1.5 py-0.5 bg-red-100 text-red-700 rounded text-[10px] font-semibold">ISSUES</span>
+                                        </div>
+                                        <span class="text-xs font-bold ml-2 whitespace-nowrap"
+                                              th:classappend="${architecturePenalty &lt; 0} ? 'text-red-600' : 'text-green-600'"
+                                              th:text="${(architecturePenalty > 0 ? '+' : '') + #numbers.formatDecimal(architecturePenalty, 1, 2)}">0.00</span>
+                                    </div>
+                                    <div th:if="${architecturePenalty &lt; 0}" class="mt-0.5">
+                                        <ul th:if="${!#lists.isEmpty(solidViolations)}" class="text-[10px] text-red-500 list-disc ml-3">
+                                            <li th:each="v : ${solidViolations}" th:text="${v}">violation</li>
+                                        </ul>
+                                        <ul th:if="${!#lists.isEmpty(architectureIssues)}" class="text-[10px] text-red-500 list-disc ml-3">
+                                            <li th:each="v : ${architectureIssues}" th:text="${v}">issue</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                                <!-- Quality Gate -->
+                                <div th:if="${qualityGateAnalysis != null}" class="py-1 border-b border-gray-100">
+                                    <div class="flex items-start justify-between">
+                                        <div>
+                                            <span class="text-xs text-gray-600 font-medium">Quality Gate</span>
+                                            <span th:if="${qualityGateImpact == 0}" class="ml-1 px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-[10px] font-semibold">PASS</span>
+                                            <span th:if="${qualityGateImpact &lt; 0}" class="ml-1 px-1.5 py-0.5 bg-red-100 text-red-700 rounded text-[10px] font-semibold"
+                                                  th:text="${#lists.size(failedQualityGates)} + ' gates failed'">3 gates failed</span>
+                                        </div>
+                                        <span class="text-xs font-bold ml-2 whitespace-nowrap"
+                                              th:classappend="${qualityGateImpact &lt; 0} ? 'text-red-600' : 'text-green-600'"
+                                              th:text="${(qualityGateImpact > 0 ? '+' : '') + #numbers.formatDecimal(qualityGateImpact, 1, 2)}">-0.15</span>
+                                    </div>
+                                    <div th:if="${qualityGateImpact &lt; 0 and !#lists.isEmpty(failedQualityGates)}" class="mt-0.5">
+                                        <ul class="text-[10px] text-red-500 list-disc ml-3">
+                                            <li th:each="gate : ${failedQualityGates}" th:text="${gate}">Architecture Impact - coverage 0% &lt; 80%</li>
+                                        </ul>
+                                        <div class="text-[10px] text-gray-400 mt-0.5">-0.03 per gate &times; <span th:text="${#lists.size(failedQualityGates)}">6</span> = <span th:text="${#numbers.formatDecimal(qualityGateImpact, 1, 2)}">-0.15</span> (capped at <span th:text="${#numbers.formatDecimal(-qualityGatePenaltyCap, 1, 2)}">-0.15</span>)</div>
+                                    </div>
+                                </div>
+                                <!-- Final Multiplier -->
+                                <div class="flex items-center justify-between py-1.5 mt-1 rounded px-2"
+                                     th:classappend="${finalQualityMultiplier != null and finalQualityMultiplier >= 1.0} ? 'bg-green-50' : 'bg-orange-50'">
+                                    <span class="text-xs font-semibold text-gray-700">Final Multiplier</span>
+                                    <span class="text-xs font-bold"
+                                          th:classappend="${finalQualityMultiplier != null and finalQualityMultiplier >= 1.0} ? 'text-green-700' : 'text-orange-700'"
+                                          th:text="${#numbers.formatDecimal(finalQualityMultiplier, 1, 2)}">0.77</span>&times;
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -674,6 +695,9 @@
                                 <table class="w-full text-xs border-collapse">
                                     <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Variable</th><th class="text-left py-0.5 font-normal">Formula</th><th class="text-right py-0.5 font-normal">Value</th></tr></thead>
                                     <tbody class="font-mono">
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">projectTotalLines</td><td class="py-0.5 text-gray-500">total lines of code in project</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatInteger(projectTotalLines, 1, 'COMMA')}">30000</td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">projectTotalMethods</td><td class="py-0.5 text-gray-500">total methods in project</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatInteger(projectTotalMethods, 1, 'COMMA')}">1500</td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">linesPerMethodP<span th:text="${ncssQuantilePercent}">75</span></td><td class="py-0.5 text-gray-500"><span th:text="${ncssQuantilePercent}">75</span>th percentile of lines per method</td><td class="py-0.5 text-right font-bold" th:text="${linesPerMethodQuantile}">20</td></tr>
                                         <tr class="border-b"><td class="py-0.5 text-gray-600">sizeFactor</td><td class="py-0.5 text-gray-500">cbrt(projectTotalLines) / 100</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(sizeFactor, 1, 2)}">0.31</td></tr>
                                         <tr class="border-b"><td class="py-0.5 text-gray-600">modifyMult</td><td class="py-0.5 text-gray-500">1.0 + min(sizeFactor &times; 0.3, 0.2)</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(volModifyMult, 1, 2)}">1.09</td></tr>
                                         <tr><td class="py-0.5 text-gray-600">addMult</td><td class="py-0.5 text-gray-500">1.0 + 0.1 / (1 + sizeFactor)</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.08</td></tr>
@@ -689,11 +713,16 @@
                                     <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Metric</th><th class="text-right py-0.5 font-normal">Count</th><th class="text-right py-0.5 font-normal">Factor</th><th class="text-right py-0.5 font-normal">Mult</th><th class="text-right py-0.5 font-normal">Score</th></tr></thead>
                                     <tbody class="font-mono">
                                         <tr class="border-b">
-                                            <td class="py-0.5 text-gray-600">Lines Changed</td>
-                                            <td class="py-0.5 text-right" th:text="${linesChanged}">0</td>
+                                            <td class="py-0.5 text-gray-600">Lines Changed <span th:if="${effectiveLines != null and effectiveLines != linesChanged}" class="text-amber-600">(capped)</span></td>
+                                            <td class="py-0.5 text-right"><span th:if="${effectiveLines != null and effectiveLines != linesChanged}" th:text="${linesChanged}" class="text-gray-400 line-through mr-1">0</span> <span th:text="${effectiveLines != null ? effectiveLines : linesChanged}">0</span></td>
                                             <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(linesLogFactor, 1, 1)}">5.0</td>
                                             <td class="py-0.5 text-right text-gray-400">1.0</td>
                                             <td class="py-0.5 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(linesScore, 1, 2)}">0.00</td>
+                                        </tr>
+                                        <tr th:if="${effectiveLines != null and effectiveLines != linesChanged}" class="border-b">
+                                            <td colspan="5" class="py-0.5">
+                                                <span class="text-amber-700 text-[10px]">cap = &Sigma; min(method_lines, <span th:text="${linesPerMethodQuantile}">20</span> P<span th:text="${ncssQuantilePercent}">75</span> lines &times; <span th:text="${#numbers.formatDecimal(linesDensityCapMultiplier, 1, 1)}">1.5</span>) across <span th:text="${codeBlocksModified + codeBlocksAdded}">10</span> methods = <span th:text="${effectiveLines}">90</span></span>
+                                            </td>
                                         </tr>
                                         <tr th:if="${codeBlocksModified > 0}" class="border-b">
                                             <td class="py-0.5 text-gray-600">Code Blocks Modified</td>
@@ -778,32 +807,37 @@
                             <div th:if="${qualityMultiplier != null}" class="bg-white rounded-lg p-3 border border-slate-200">
                                 <h5 class="text-xs font-bold text-slate-700 mb-2">Step 7: Quality Multiplier <span class="font-normal text-gray-400">[<span th:text="${#numbers.formatDecimal(qualityMultiplierMin, 1, 2)}">0.50</span>&ndash;<span th:text="${#numbers.formatDecimal(qualityMultiplierMax, 1, 2)}">1.20</span>]</span></h5>
                                 <table class="w-full text-xs border-collapse">
-                                    <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Dimension</th><th class="text-right py-0.5 font-normal">Impact</th></tr></thead>
+                                    <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Dimension</th><th class="text-left py-0.5 font-normal">Reason</th><th class="text-right py-0.5 font-normal">Impact</th></tr></thead>
                                     <tbody class="font-mono">
                                         <tr th:if="${cpdAnalysis != null}" class="border-b">
-                                            <td class="py-0.5 text-gray-600">CPD (<span th:text="${#numbers.formatDecimal(cpdDuplicationPercent, 1, 2)}">0</span>%)</td>
+                                            <td class="py-0.5 text-gray-600">CPD</td>
+                                            <td class="py-0.5 text-gray-400 font-sans text-[10px]" th:text="${cpdImpact >= 0 ? '0 introduced clones' : #numbers.formatDecimal(cpdDuplicationPercent, 1, 1) + '% duplication'}">clean</td>
                                             <td class="py-0.5 text-right font-bold" th:classappend="${cpdImpact &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(cpdImpact > 0 ? '+' : '') + #numbers.formatDecimal(cpdImpact, 1, 2)}">0.00</td>
                                         </tr>
                                         <tr th:if="${staticAnalysisQuality != null}" class="border-b">
                                             <td class="py-0.5 text-gray-600">Static Analysis</td>
+                                            <td class="py-0.5 text-gray-400 font-sans text-[10px]" th:text="${staticAnalysisImpact >= 0 ? '0 error-severity violations' : 'has error-severity violations'}">clean</td>
                                             <td class="py-0.5 text-right font-bold" th:classappend="${staticAnalysisImpact &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(staticAnalysisImpact > 0 ? '+' : '') + #numbers.formatDecimal(staticAnalysisImpact, 1, 2)}">0.00</td>
                                         </tr>
                                         <tr th:if="${coverageQuality != null}" class="border-b">
-                                            <td class="py-0.5 text-gray-600">Coverage (<span th:text="${#numbers.formatDecimal(qualityCoveragePercent, 1, 2)}">0</span>%)</td>
+                                            <td class="py-0.5 text-gray-600">Coverage</td>
+                                            <td class="py-0.5 text-gray-400 font-sans text-[10px]" th:text="${#numbers.formatDecimal(qualityCoveragePercent, 1, 0)} + '% changed-line coverage'">0% coverage</td>
                                             <td class="py-0.5 text-right font-bold" th:classappend="${coverageImpact &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(coverageImpact > 0 ? '+' : '') + #numbers.formatDecimal(coverageImpact, 1, 2)}">0.00</td>
                                         </tr>
                                         <tr th:if="${architectureQuality != null}" class="border-b">
                                             <td class="py-0.5 text-gray-600">Architecture</td>
+                                            <td class="py-0.5 text-gray-400 font-sans text-[10px]" th:text="${architecturePenalty == 0 ? 'no issues' : (#lists.size(solidViolations) + #lists.size(architectureIssues)) + ' issues found'}">no issues</td>
                                             <td class="py-0.5 text-right font-bold" th:classappend="${architecturePenalty &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(architecturePenalty > 0 ? '+' : '') + #numbers.formatDecimal(architecturePenalty, 1, 2)}">0.00</td>
                                         </tr>
                                         <tr th:if="${qualityGateAnalysis != null}" class="border-b">
                                             <td class="py-0.5 text-gray-600">Quality Gate</td>
+                                            <td class="py-0.5 text-gray-400 font-sans text-[10px]" th:text="${qualityGateImpact == 0 ? 'all gates passed' : #lists.size(failedQualityGates) + ' gates failed'}">all passed</td>
                                             <td class="py-0.5 text-right font-bold" th:classappend="${qualityGateImpact &lt; 0} ? 'text-red-600' : 'text-green-600'" th:text="${(qualityGateImpact > 0 ? '+' : '') + #numbers.formatDecimal(qualityGateImpact, 1, 2)}">0.00</td>
                                         </tr>
                                     </tbody>
                                     <tfoot>
                                         <tr th:classappend="${finalQualityMultiplier != null and finalQualityMultiplier >= 1.0} ? 'bg-green-50' : 'bg-orange-50'">
-                                            <td class="py-0.5 font-semibold text-gray-700">Final Multiplier</td>
+                                            <td colspan="2" class="py-0.5 font-semibold text-gray-700">Final Multiplier</td>
                                             <td class="py-0.5 text-right font-bold" th:classappend="${finalQualityMultiplier != null and finalQualityMultiplier >= 1.0} ? 'text-green-700' : 'text-orange-700'">&times; <span th:text="${#numbers.formatDecimal(finalQualityMultiplier, 1, 2)}">1.00</span></td>
                                         </tr>
                                     </tfoot>
@@ -1588,7 +1622,7 @@
         </section>
 
         <!-- Changed Files Section -->
-        <section class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <section class="px-6 mb-4">
             <h2 class="text-xl font-bold text-gray-800 mb-4">📁 Changed Files</h2>
             
             <div class="space-y-4">
@@ -1714,6 +1748,52 @@
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Other Violations Section - ERROR-severity violations across all module code -->
+        <section th:if="${criticalViolationCount > 0}" class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h2 class="text-xl font-bold text-gray-800 mb-1">🔴 Other Violations in Project</h2>
+                    <p class="text-sm text-gray-500">
+                        <span class="font-semibold text-red-600" th:text="${criticalViolationCount}">0</span>
+                        ERROR-severity violation(s) found across project modules (PMD HIGH, SpotBugs HIGH_PRIORITY).
+                        These pre-existing issues are opportunities for code cleanup.
+                    </p>
+                </div>
+                <button onclick="toggleCollapsible('critical-violations-content')" class="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded text-gray-600">
+                    Toggle Details
+                </button>
+            </div>
+
+            <div id="critical-violations-content" class="collapsible-content">
+                <div class="overflow-x-auto overflow-y-auto" style="max-height: 500px;">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-100">
+                            <tr>
+                                <th class="text-left p-2 font-semibold">Tool</th>
+                                <th class="text-left p-2 font-semibold">Rule</th>
+                                <th class="text-left p-2 font-semibold">File</th>
+                                <th class="text-center p-2 font-semibold">Line</th>
+                                <th class="text-left p-2 font-semibold">Message</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr th:each="v : ${criticalViolations}" class="border-b hover:bg-gray-50">
+                                <td class="p-2">
+                                    <span th:if="${v.tool == 'spotbugs'}" class="px-1.5 py-0.5 text-xs font-medium bg-purple-100 text-purple-700 rounded">SpotBugs</span>
+                                    <span th:if="${v.tool == 'pmd'}" class="px-1.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded">PMD</span>
+                                    <span th:if="${v.tool != 'spotbugs' and v.tool != 'pmd'}" class="px-1.5 py-0.5 text-xs font-medium bg-gray-100 text-gray-700 rounded" th:text="${v.tool}">tool</span>
+                                </td>
+                                <td class="p-2 font-mono text-xs text-orange-700" th:text="${v.ruleId}">rule</td>
+                                <td class="p-2 text-xs text-blue-600 max-w-[300px] truncate" th:title="${v.file}" th:text="${v.file}">file.java</td>
+                                <td class="p-2 text-center text-gray-500" th:text="${v.line > 0 ? v.line : '-'}">0</td>
+                                <td class="p-2 text-xs text-gray-600 max-w-[400px]" th:text="${v.message}">message</td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </section>

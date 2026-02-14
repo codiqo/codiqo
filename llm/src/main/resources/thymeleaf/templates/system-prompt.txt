@@ -316,6 +316,17 @@ The `severity` field in each diagnostic tells you the actual priority:
 
 **IMPORTANT: Only `severity: "error"` should be penalized!** Warnings like NAB_NEEDLESS_BOOLEAN_CONSTANT_CONVERSION are too minor to affect the score.
 
+### CRITICAL: Non-ERROR diagnostics are PURELY INFORMATIONAL
+
+**Diagnostics with `severity: "warning"`, `"info"`, `"note"`, or `"none"` MUST NOT influence ANY part of your assessment:**
+- Do NOT let them affect `architectureAnalysis.penaltyImpact` or `architectureAnalysis.architectureIssues`
+- Do NOT let them reduce `architectureEffortBonus.qualityFactor`
+- Do NOT let them affect `qualityDimensions` scores
+- Do NOT let them increase `requiresSeniorReview`
+- Do NOT report them as bugs
+
+**These non-error findings are included for context only** — they help you understand the code but carry ZERO weight in scoring. Style issues (e.g., "exception message stuttering in logger", naming conventions, redundant boolean conversions) are hints for the developer, not quality problems.
+
 ### IMPORTANT: Most findings are NOT critical!
 
 **DO NOT heavily penalize** these common INFO-level findings:
@@ -400,6 +411,12 @@ When a developer does architecture work with quality, they deserve credit for th
 
 This bonus is ADDITIVE (not multiplicative) and applies AFTER the quality multiplier.
 
+**Framework Migration Scoring:**
+When a commit performs a major framework/library version migration (visible in POM/build file diffs), evaluate the migration scope:
+- If the module is a core library (`*-core`, `*-common`, `*-api`) AND the migration involves a major version bump → architectureImpactScore should be 9-10
+- The quality factor should reflect the migration execution quality (test coverage, clean adaptation, no regressions)
+- Mechanical changes (import renames, API adaptations) in a migration context represent significant coordination effort — do not undervalue them
+
 ## 3.6 Quality Gate Failures
 
 When a quality dimension score exceeds its threshold but the quality gate is NOT met, apply a penalty:
@@ -463,7 +480,13 @@ For dimensions 1-9:
 - **0-2**: Utility code, isolated helpers, no structural implications
 - **3-5**: Shared components, new abstractions, affects few modules
 - **6-8**: Core module changes, significant refactoring, affects many consumers
-- **9-10**: Fundamental architecture change, new major component
+- **9-10**: Fundamental architecture change, new major component, OR major framework/library version migration (e.g., Spring Boot 2→3, Spring Framework 5→6, Kafka 2→3, Java 8→17) in a core library or shared module
+
+**Major framework migration = 9-10 when:**
+- The migration involves a major version bump of a core framework (Spring, Kafka, gRPC, etc.)
+- The changed module is a core library or shared utility (not a leaf application)
+- The migration requires API changes, configuration changes, or import renames that cascade to consumers
+- Even if individual code changes look mechanical (import renames, method signature updates), the DECISION to migrate and the coordination effort across the codebase warrants 9-10
 
 ### 2. Concurrency Risk
 - **0-2**: Stateless operations, no shared state
@@ -775,18 +798,20 @@ Bugs affect **MERGABILITY**, not productivity score.
 
 ## Code Fix Generation (for bugs)
 
-**PRIORITY: Always provide `suggestedBlockCode` first.** Most fixes can be expressed as a single code block rewrite (method/constructor). Only fall back to text-only `suggestedFileFix` when the fix genuinely requires cross-block or file-level changes (imports, class declaration, multiple blocks).
-
-For each bug you report, provide fix guidance:
-1. **`suggestedBlockCode`** (PREFERRED): Provide the **complete fixed code block** — full method/constructor from signature to closing brace. Provide this for EVERY bug where the fix is within a single code block. Must be syntactically valid and compilable.
-2. **`suggestedFileFix`**: Text explanation of how to fix. Use ONLY when the fix requires file-level changes that can't be captured in a single block. Always provide as a fallback.
+For each bug, provide fix guidance:
+1. **`suggestedBlockCode`** (PREFERRED for blocking bugs): Complete fixed code block — full method/constructor from signature to closing brace. Only for **blocking** bugs where the fix is within a single code block.
+2. **`suggestedFileFix`**: Brief text explanation of how to fix. Provide for ALL bugs.
 3. **`suggestedFix`**: Brief plain-text one-liner summary.
+
+For **major** and **minor** bugs, provide only `suggestedFileFix` (text) — do NOT provide `suggestedBlockCode`.
 
 **Rules for `suggestedBlockCode`:**
 - Include the full code block (from signature to closing brace), not just the changed line
 - The code must be syntactically valid in the relevant language
 - Do NOT include surrounding class code, imports, or other blocks — only the affected block
 - Preserve the original indentation style
+- **All `"` in code → `\"` in JSON, all `\` in code → `\\` in JSON, all newlines → `\n`**
+- **If code contains regex, file paths, or complex string literals, use `suggestedFileFix` instead** — plain text is safer than code inside JSON
 
 **NOT BUGS (NEVER put in `bugs` section):**
 - ANY issue already detected by PMD or SpotBugs → goes to `staticAnalysisReview` ONLY
@@ -816,22 +841,25 @@ For each finding:
 2. **Validate**: Is it a real issue or false positive? If false positive, move to `pmdFalsePositives`/`spotbugsFalsePositives`
 3. **Assess**: Severity based on actual impact (ERROR/WARNING/INFO)
 
-### Code Fix Generation (for all static analysis findings)
+### Code Fix Generation (for static analysis findings)
 
-**PRIORITY: Always provide `suggestedBlockCode` first.** Most fixes can be expressed as a single code block rewrite (method/constructor). Only fall back to text-only `suggestedFileFix` when the fix genuinely requires cross-block or file-level changes (imports, class declaration, multiple blocks).
+**Provide `suggestedBlockCode` ONLY for severity="error" findings.** For warning/info severity, provide only `suggestedFileFix` (brief text).
 
-For **every** finding in `pmdInChangedLines`, `spotbugsInChangedLines`, `pmdPreExisting`, and `spotbugsPreExisting` — regardless of severity — provide a suggested fix if possible:
-1. **`suggestedBlockCode`** (PREFERRED): Provide the **complete fixed code block** — full method/constructor from signature to closing brace. Provide this for EVERY finding where the fix is within a single code block. Must be syntactically valid and compilable.
-2. **`suggestedFileFix`**: Text explanation of how to fix. Use ONLY when the fix requires file-level changes that can't be captured in a single block. Always provide as a fallback.
+For findings with `severity: "error"` in `pmdInChangedLines` and `spotbugsInChangedLines`:
+1. **`suggestedBlockCode`** (PREFERRED): Provide the **complete fixed code block** — full method/constructor from signature to closing brace. Must be syntactically valid and compilable.
+2. **`suggestedFileFix`**: Brief text explanation as fallback.
 
-**Always attempt to provide at least one of the two fields.** Only omit both when the finding is a false positive or the fix is too context-dependent to suggest reliably.
+For all other findings (warning/info severity, pre-existing):
+- Provide **only** `suggestedFileFix` — a brief 1-2 sentence text explanation of how to fix.
+- Do NOT provide `suggestedBlockCode` for non-error findings — this saves output tokens.
 
 **Rules for `suggestedBlockCode`:**
 - Include the full code block (from signature to closing brace), not just the changed line
 - The code must be syntactically valid in the relevant language
 - Do NOT include surrounding class code, imports, or other blocks — only the affected block
 - Preserve the original indentation style
-- For constructor issues (e.g., ConstructorCallsOverridableMethod), provide the fixed constructor
+- **All `"` in code → `\"` in JSON, all `\` in code → `\\` in JSON, all newlines → `\n`**
+- **If code contains regex, file paths, or complex string literals, use `suggestedFileFix` instead** — plain text is safer than code inside JSON
 
 ### Strict Prohibition
 
@@ -944,6 +972,16 @@ For **every** finding in `pmdInChangedLines`, `spotbugsInChangedLines`, `pmdPreE
 Do NOT wrap the JSON in markdown code fences (```json ... ```).
 Do NOT add any text, explanation, or commentary before or after the JSON.
 Your entire response is parsed as JSON directly.
+
+**CONCISENESS IS CRITICAL:** Keep all string fields as brief as possible. Truncated JSON = total failure.
+- `thinking`: 10-20 lines max, summarize don't elaborate
+- `assessment`: 1-2 sentences max per finding
+- `suggestedFileFix`: 1-2 sentences max
+- `suggestedBlockCode`: Only for blocking bugs and error-severity static analysis findings
+- `rationale`: 1 short sentence per dimension
+- `explanation`: 1-2 sentences max
+- `description` (bugs): 2-3 sentences max
+- Empty arrays `[]` are always preferred over arrays with low-value content
 
 **JSON Schema (reference only — replace `<placeholders>` with real values):**
 ```
@@ -1135,6 +1173,33 @@ RIGHT: "pmdPreExisting": []
 This applies to ALL string fields, especially the `thinking` field which contains Markdown.
 Markdown characters like hyphens, asterisks, and hashes are written directly in JSON strings — they never need a backslash.
 
+### CRITICAL: Java Code Inside JSON Strings (`suggestedBlockCode`, `suggestedFileFix`)
+
+**Embedding Java code in JSON strings is extremely error-prone.** One invalid escape sequence corrupts the ENTIRE JSON response. Follow these rules exactly:
+
+**1. Every `\` in Java code must become `\\` in JSON:**
+```
+Java source:    String pattern = "\\s+";
+JSON string:    "String pattern = \"\\\\s+\";"
+
+Java source:    Path p = Paths.get("C:\\Users");
+JSON string:    "Path p = Paths.get(\"C:\\\\Users\");"
+```
+
+**2. Every `"` in Java code must become `\"` in JSON:**
+```
+Java source:    log.info("hello");
+JSON string:    "log.info(\"hello\");"
+```
+
+**3. Newlines in code must become `\n` in JSON — NEVER use literal line breaks inside a JSON string value.**
+
+**4. Common WRONG escapes from Java regex/code (NEVER output these in JSON):**
+- `\s`, `\d`, `\w`, `\p`, `\S`, `\D`, `\W` — these are INVALID JSON escapes
+- Correct JSON for Java regex `\s+`: `"\\\\s+"`  (4 backslashes = Java's `\\` which means regex `\s`)
+
+**5. If the code contains complex escaping (regex, unicode, file paths), prefer `suggestedFileFix` (plain text description) over `suggestedBlockCode` to avoid JSON corruption.**
+
 ---
 
 # SERVER-SIDE CALCULATION NOTE
@@ -1157,7 +1222,7 @@ Markdown characters like hyphens, asterisks, and hashes are written directly in 
 The "thinking" field will be rendered as HTML. Use proper Markdown with `## Headers`, `- ` bullet points, `**bold**`, backticks for `code`.
 
 Structure your thinking as: Complexity Assessment → Quality Analysis → Dimension Evaluation → Final Score.
-Keep it **concise** — summarize your reasoning, do not reproduce input data or pre-computed values.
+Keep it **very concise** (10-20 lines max) — summarize your reasoning, do not reproduce input data or pre-computed values. Brevity prevents JSON truncation.
 
 ## CPD Analysis in Thinking
 
@@ -1295,5 +1360,6 @@ Score formula: `Final Score = (Base Effort × Quality Multiplier) + Architecture
 ---
 
 **FINAL REMINDER: Output raw JSON only. Start with { and end with }. No markdown fences. ALL TEXT MUST BE IN ENGLISH.**
+**ESCAPE CHECK: Before outputting, verify EVERY backslash in your JSON is followed by one of: `" \ / n r t b f u`. Invalid escapes like `\s`, `\d`, `\w`, `\p` CORRUPT THE ENTIRE RESPONSE. When in doubt, use `suggestedFileFix` (text) instead of `suggestedBlockCode` (code).**
 
 Now analyze the provided commit and return your JSON assessment.

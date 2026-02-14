@@ -19,6 +19,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.SortedSet;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -26,7 +27,6 @@ import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
-import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.commons.lang3.time.StopWatch;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.lib.Repository;
@@ -36,6 +36,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.MultimapBuilder;
+import com.google.common.collect.Multimaps;
 import com.google.common.collect.Sets;
 
 import io.codiqo.api.IndexingSummary;
@@ -57,7 +58,6 @@ import io.codiqo.api.logging.LogFactory;
 import io.codiqo.core.java.JavaLanguageSpec;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.util.Fetch;
-import lombok.SneakyThrows;
 import net.sourceforge.pmd.cpd.CPDConfiguration;
 import net.sourceforge.pmd.cpd.CpdAnalysis;
 import net.sourceforge.pmd.cpd.Mark;
@@ -114,12 +114,12 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     @Override
     public IndexingSummary index(CommitAnalysis analysis) throws IOException {
         IndexingSummaryBuilder toReturn = IndexingSummary.builder();
-        Multimap<File, CodeBlockInfo> blocks = MultimapBuilder.hashKeys().linkedHashSetValues().build();
+        Multimap<File, CodeBlockInfo> blocks = Multimaps.synchronizedMultimap(MultimapBuilder.hashKeys().linkedHashSetValues().build());
         List<Path> totalFiles = Lists.newArrayList();
         List<Path> ignoredFiles = Lists.newArrayList();
         List<Path> skippedFiles = Lists.newArrayList();
-        MutableInt skippedTrivial = new MutableInt();
-        MutableInt totalSymbols = new MutableInt();
+        AtomicInteger skippedTrivial = new AtomicInteger();
+        AtomicInteger totalSymbols = new AtomicInteger();
 
         File projectRoot = args.getGit().getWorkTree();
         try (Repository repo = new FileRepositoryBuilder().setGitDir(new File(projectRoot, ".git")).readEnvironment().findGitDir().build()) {
@@ -141,63 +141,20 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                 public FileVisitResult visitFile(Path path, BasicFileAttributes attrs) {
                     if (indexed.contains(path)) {
                         File file = path.toFile();
-                        /**
-                         * quick opt in / out by extensions
-                         */
                         if (FilenameUtils.isExtension(file.getName(), extensions)) {
-                            try {
-                                args.owner(file).ifPresent(prj -> {
-                                    Optional<Date> opt = prj.latestModified();
-                                    FileTime fileTime = attrs.lastModifiedTime();
-                                    if (Objects.nonNull(fileTime)) {
-                                        Date date = Date.from(fileTime.toInstant());
-                                        if (opt.isEmpty()) {
-                                            prj.setLatestModified(date);
-                                        } else if (opt.get().before(date)) {
-                                            prj.setLatestModified(date);
-                                        }
+                            args.owner(file).ifPresent(prj -> {
+                                Optional<Date> opt = prj.latestModified();
+                                FileTime fileTime = attrs.lastModifiedTime();
+                                if (Objects.nonNull(fileTime)) {
+                                    Date date = Date.from(fileTime.toInstant());
+                                    if (opt.isEmpty()) {
+                                        prj.setLatestModified(date);
+                                    } else if (opt.get().before(date)) {
+                                        prj.setLatestModified(date);
                                     }
-                                });
-                                forEach(processor -> {
-                                    /**
-                                     * parse all interested code blocks from the all files (supposed to be quick i.e. AST tree walk)
-                                     */
-                                    try {
-                                        if (FilenameUtils.isExtension(file.getName(), processor.lang().getExtensions())) {
-                                            try (InputStream input = Files.newInputStream(file.toPath())) {
-                                                String source = IOUtils.toString(input, StandardCharsets.UTF_8);
-                                                processor.parse(file, source).forEach(block -> {
-                                                    blocks.put(file, block);
-                                                    /**
-                                                     * link code blocks to affected blocks for later analysis (i.e. violations, coverage, complexity, etc.)
-                                                     */
-                                                    for (FileAnalysis fileAnalysis : analysis) {
-                                                        if (fileAnalysis.getFile().equals(file)) {
-                                                            for (AffectedSymbolInfo symbolInfo : fileAnalysis.getPotentiallyAffectedSymbols()) {
-                                                                if (symbolInfo.getLocation().equals(block.getLocation())) {
-                                                                    block.accept(symbolInfo);
-                                                                    symbolInfo.accept(block);
-                                                                    break;
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-
-                                                    if (block.isTrivial()) {
-                                                        skippedTrivial.incrementAndGet();
-                                                    } else {
-                                                        totalSymbols.incrementAndGet();
-                                                    }
-                                                });
-                                            }
-                                        }
-                                    } catch (IOException err) {
-                                        ExceptionUtils.wrapAndThrow(err);
-                                    }
-                                });
-                            } finally {
-                                totalFiles.add(path);
-                            }
+                                }
+                            });
+                            totalFiles.add(path);
                         } else {
                             skippedFiles.add(path);
                         }
@@ -207,14 +164,55 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                     return FileVisitResult.CONTINUE;
                 }
             });
+
+            totalFiles.parallelStream().forEach(path -> {
+                File file = path.toFile();
+                forEach(processor -> {
+                    for (;;) {
+                        try {
+                            if (FilenameUtils.isExtension(file.getName(), processor.lang().getExtensions())) {
+                                try (InputStream input = Files.newInputStream(file.toPath())) {
+                                    String source = IOUtils.toString(input, StandardCharsets.UTF_8);
+                                    processor.parse(file, source).forEach(block -> {
+                                        blocks.put(file, block);
+                                        /**
+                                         * link code blocks to affected blocks for later analysis (i.e. violations, coverage, complexity, etc.)
+                                         */
+                                        for (FileAnalysis fileAnalysis : analysis) {
+                                            if (fileAnalysis.getFile().equals(file)) {
+                                                for (AffectedSymbolInfo symbolInfo : fileAnalysis.getPotentiallyAffectedSymbols()) {
+                                                    if (symbolInfo.getLocation().equals(block.getLocation())) {
+                                                        block.accept(symbolInfo);
+                                                        symbolInfo.accept(block);
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        if (block.isTrivial()) {
+                                            skippedTrivial.incrementAndGet();
+                                        } else {
+                                            totalSymbols.incrementAndGet();
+                                        }
+                                    });
+                                }
+                            }
+                            return;
+                        } catch (IOException err) {
+                            ExceptionUtils.wrapAndThrow(err);
+                        }
+                    }
+                });
+            });
             stopWatch.stop();
 
             log.info("indexed %d symbols from %d files (skipped: %d, ignored: %d, trivial: %d) in %s",
-                    totalSymbols.toInteger(),
+                    totalSymbols.get(),
                     totalFiles.size(),
                     skippedFiles.size(),
                     ignoredFiles.size(),
-                    skippedTrivial.toInteger(),
+                    skippedTrivial.get(),
                     stopWatch.toString());
 
             return toReturn
@@ -223,8 +221,8 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                     .totalFiles(totalFiles)
                     .skippedFiles(skippedFiles)
                     .ignoredFiles(ignoredFiles)
-                    .skippedTrivial(skippedTrivial.toInteger())
-                    .totalNonTrivial(totalSymbols.toInteger())
+                    .skippedTrivial(skippedTrivial.get())
+                    .totalNonTrivial(totalSymbols.get())
                     .took(stopWatch)
                     .build();
         }
@@ -274,7 +272,6 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                                         .lineCount(match.getLineCount())
                                         .marks(match.getMarkSet().stream().map(new Function<Mark, PmdDuplicationMark>() {
                                             @Override
-                                            @SneakyThrows
                                             public PmdDuplicationMark apply(Mark mark) {
                                                 return PmdDuplicationMark.builder()
                                                         .mark(mark)

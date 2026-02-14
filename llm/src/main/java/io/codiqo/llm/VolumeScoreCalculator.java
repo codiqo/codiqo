@@ -29,15 +29,16 @@ public class VolumeScoreCalculator {
 
     private final RunArgs args;
 
-    public PreComputedScores calculate(LlmScoringRequest request, long projectTotalLines) {
+    public PreComputedScores calculate(LlmScoringRequest request, long projectTotalLines, int projectTotalMethods, int linesPerMethodQuantile) {
         ChangeSummary changeSummary = request.getChangeSummary();
         double exponent = args.getVolumeExponent();
         double sizeFactor = Math.cbrt(projectTotalLines) / args.getSizeFactorDivisor();
         double modifyMult = 1.0 + Math.min(sizeFactor * args.getModifyMultiplierScale(), args.getModifyMultiplierCap());
         double addMult = 1.0 + args.getAddMultiplierScale() / (1.0 + sizeFactor);
         int linesChanged = changeSummary.getTotalLinesChanged();
+        int effectiveLines = applyLinesDensityCap(linesChanged, request.getCodeBlockChanges(), linesPerMethodQuantile);
         int filesChanged = changeSummary.getTotalFilesChanged();
-        double linesScore = powerScore(linesChanged, args.getLinesLogFactor(), 1.0, exponent);
+        double linesScore = powerScore(effectiveLines, args.getLinesLogFactor(), 1.0, exponent);
         double codeBlocksModifiedScore = powerScore(changeSummary.getCodeBlocksModified(), args.getCodeBlocksModifiedLogFactor(), modifyMult, exponent);
         double codeBlocksAddedScore = powerScore(changeSummary.getCodeBlocksAdded(), args.getCodeBlocksAddedLogFactor(), addMult, exponent);
         double classesModifiedScore = powerScore(changeSummary.getClassesModified(), args.getClassesModifiedLogFactor(), modifyMult, exponent);
@@ -53,10 +54,14 @@ public class VolumeScoreCalculator {
         StaticAnalysisPreComputed sa = calculateStaticAnalysisPenalty(request);
 
         return PreComputedScores.builder()
+                .projectTotalLines(projectTotalLines)
+                .projectTotalMethods(projectTotalMethods)
+                .linesPerMethodQuantile(linesPerMethodQuantile)
                 .sizeFactor(Precision.round(sizeFactor, ROUNDING_PRECISION))
                 .modifyMult(Precision.round(modifyMult, ROUNDING_PRECISION))
                 .addMult(Precision.round(addMult, ROUNDING_PRECISION))
                 .linesChanged(linesChanged)
+                .effectiveLines(effectiveLines)
                 .linesScore(Precision.round(linesScore, ROUNDING_PRECISION))
                 .filesChanged(filesChanged)
                 .contentScore(Precision.round(contentScore, ROUNDING_PRECISION))
@@ -161,6 +166,24 @@ public class VolumeScoreCalculator {
         }
         return new StaticAnalysisPreComputed(totalCount, introducedCount, preExistingCount, category, Precision.round(impact, ROUNDING_PRECISION));
     }
+    private int applyLinesDensityCap(int linesChanged, List<CodeBlockChange> codeBlocks, int linesPerMethodQuantile) {
+        if (CollectionUtils.isEmpty(codeBlocks) || linesPerMethodQuantile <= 0) {
+            return linesChanged;
+        }
+
+        int maxPerBlock = (int) (linesPerMethodQuantile * args.getLinesDensityCapMultiplier());
+        int maxEffectiveLines = 0;
+        for (CodeBlockChange block : codeBlocks) {
+            if (block.isDelete()) {
+                continue;
+            }
+            maxEffectiveLines += Math.min(block.getLinesOfCode(), maxPerBlock);
+        }
+        if (maxEffectiveLines <= 0) {
+            return linesChanged;
+        }
+        return Math.min(linesChanged, maxEffectiveLines);
+    }
     private static double calculateFileDensity(int linesChanged, int filesChanged, double threshold) {
         if (filesChanged <= 0) {
             return FULL_DENSITY;
@@ -178,10 +201,14 @@ public class VolumeScoreCalculator {
     @Value
     @Builder
     public static class PreComputedScores {
+        long projectTotalLines;
+        int projectTotalMethods;
+        int linesPerMethodQuantile;
         double sizeFactor;
         double modifyMult;
         double addMult;
         int linesChanged;
+        int effectiveLines;
         double linesScore;
         int filesChanged;
         double contentScore;

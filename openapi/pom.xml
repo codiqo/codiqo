@@ -143,7 +143,6 @@
                         <configuration>
                             <inputSpec>${project.basedir}/src/main/resources/codiqo.yaml</inputSpec>
                             <generatorName>jaxrs-spec</generatorName>
-                            <!--templateDirectory>${project.basedir}/src/main/resources/openapi/templates</templateDirectory-->
 
                             <apiPackage>io.codiqo.server.api</apiPackage>
                             <modelPackage>io.codiqo.server.model</modelPackage>
@@ -168,6 +167,7 @@
                                 <performBeanValidation>true</performBeanValidation>
                                 <interfaceOnly>true</interfaceOnly>
                                 <supportAsync>true</supportAsync>
+                                <returnResponse>true</returnResponse>
                                 <useSwaggerAnnotations>false</useSwaggerAnnotations>
                                 <sourceFolder>jaxrs</sourceFolder>
                             </configOptions>

@@ -18,6 +18,8 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.apache.commons.math3.stat.descriptive.rank.Percentile;
 import org.eclipse.jgit.patch.FileHeader;
 import org.eclipse.jgit.patch.FormatError;
 import org.eclipse.jgit.patch.HunkHeader;
@@ -52,7 +54,6 @@ import io.codiqo.llm.schema.LlmScoringRequest.FileChange;
 import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
-import lombok.SneakyThrows;
 
 @RequiredArgsConstructor
 public class SubmissionToRequestMapper implements Function<AnalysisSubmissionModel, LlmScoringRequest> {
@@ -247,9 +248,10 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         int totalCyclomatic = 0;
         int totalCognitive = 0;
         int maxComplexity = 0;
-        int methodCount = 0;
         int newHighComplexity = 0;
         int modifiedHighComplexity = 0;
+        List<Integer> perMethodCyclomatic = Lists.newArrayList();
+
         for (FileChangeModel file : files) {
             if (CollectionUtils.isEmpty(file.getCodeUnits())) {
                 continue;
@@ -265,7 +267,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                     totalCyclomatic += cyclomatic;
                     totalCognitive += cognitive;
                     maxComplexity = Math.max(maxComplexity, cyclomatic);
-                    methodCount++;
+                    perMethodCyclomatic.add(cyclomatic);
                     if (cyclomatic > args.getHighComplexityThreshold()) {
                         OperationEnum operation = codeUnit.getOperation();
                         if (operation == OperationEnum.NEW) {
@@ -277,12 +279,19 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 }
             }
         }
-        double avgComplexity = methodCount > 0 ? (double) totalCyclomatic / methodCount : BigDecimal.ZERO.doubleValue();
+
+        double quantileLevel = args.getNcssQuantile() * 100.0;
+        double complexityQuantile = 0;
+        if (CollectionUtils.isNotEmpty(perMethodCyclomatic)) {
+            double[] values = perMethodCyclomatic.stream().mapToDouble(Integer::doubleValue).toArray();
+            complexityQuantile = new Percentile().evaluate(values, quantileLevel);
+        }
+
         return ComplexityMetrics.builder()
                 .totalCyclomaticComplexity(totalCyclomatic)
                 .totalCognitiveComplexity(totalCognitive)
                 .maxMethodComplexity(maxComplexity)
-                .averageMethodComplexity(avgComplexity)
+                .methodComplexityQuantile(complexityQuantile)
                 .newHighComplexityMethods(newHighComplexity)
                 .modifiedHighComplexityMethods(modifiedHighComplexity)
                 .complexityThreshold(args.getHighComplexityThreshold())
@@ -359,6 +368,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         int codeBlocksDeleted = 0;
         int classesAdded = 0;
         int classesModified = 0;
+        int filesWithCodeBlockChanges = 0;
         Set<String> packagesAffected = Sets.newHashSet();
         for (FileChangeModel file : files) {
             DiffStats stats = DiffStats.fromPatch(file.getDiff());
@@ -367,10 +377,15 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
             if (CollectionUtils.isEmpty(file.getCodeUnits())) {
                 continue;
             }
+            boolean fileHasCodeBlockChange = false;
             for (CodeUnitModel codeUnit : file.getCodeUnits()) {
                 SymbolKindModel kind = codeUnit.getKind();
                 OperationEnum operation = codeUnit.getOperation();
                 if (isMethodOrConstructor(kind)) {
+                    if (Boolean.TRUE.equals(codeUnit.getIsTrivial())) {
+                        continue;
+                    }
+                    fileHasCodeBlockChange = true;
                     if (operation == OperationEnum.NEW) {
                         codeBlocksAdded++;
                     } else if (operation == OperationEnum.MODIFY) {
@@ -387,9 +402,12 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 }
                 extractPackageName(codeUnit).ifPresent(packagesAffected::add);
             }
+            if (fileHasCodeBlockChange) {
+                filesWithCodeBlockChanges++;
+            }
         }
         return ChangeSummary.builder()
-                .totalFilesChanged(files.size())
+                .totalFilesChanged(filesWithCodeBlockChanges)
                 .totalLinesChanged(linesAdded + linesDeleted)
                 .linesAdded(linesAdded)
                 .linesDeleted(linesDeleted)
@@ -487,6 +505,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         }
     }
     private static void mapMetrics(MetricsModel metrics, CodeBlockChange.CodeBlockChangeBuilder builder) {
+        builder.linesOfCode(Optional.ofNullable(metrics.getLinesOfCode()).orElse(BigDecimal.ZERO.intValue()));
         builder.cyclomaticComplexity(Optional.ofNullable(metrics.getCyclomaticComplexity()).orElse(BigDecimal.ZERO.intValue()));
         builder.cognitiveComplexity(Optional.ofNullable(metrics.getCognitiveComplexity()).orElse(BigDecimal.ZERO.intValue()));
         builder.parameterCount(Optional.ofNullable(metrics.getParameterCount()).orElse(BigDecimal.ZERO.intValue()));
@@ -584,7 +603,6 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         private int getEffectiveDeleted() {
             return deleted - importDeleted;
         }
-        @SneakyThrows(IOException.class)
         private static DiffStats fromPatch(String diff) {
             Patch patch = new Patch();
             byte[] diffBytes = diff.getBytes(StandardCharsets.UTF_8);
@@ -622,6 +640,8 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                         }
                     }
                 }
+            } catch (IOException err) {
+                ExceptionUtils.wrapAndThrow(err);
             }
             return new DiffStats(added, deleted, importAdded, importDeleted);
         }

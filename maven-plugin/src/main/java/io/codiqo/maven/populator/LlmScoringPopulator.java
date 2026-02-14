@@ -4,14 +4,16 @@ import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.OutputStream;
 import java.io.IOException;
-import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.Duration;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.time.StopWatch;
@@ -25,9 +27,13 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import io.codiqo.api.RunArgs;
+import com.google.common.collect.Maps;
+
 import io.codiqo.client.model.AnalysisResultModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CommitModel;
+import io.codiqo.client.model.DiagnosticModel;
+import io.codiqo.client.model.ModuleModel;
 import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.client.model.ProjectQualityModel;
 import io.codiqo.llm.HtmlReportBuilder;
@@ -117,6 +123,7 @@ public class LlmScoringPopulator implements SubmissionPopulator {
                 .repositoryName(ctx.getIndex().getProjectRoot().getName())
                 .llmModel(ctx.getLlmModel())
                 .analysisDuration(duration)
+                .criticalViolationsByModule(extractCriticalViolations(submission))
                 .build();
 
         String html = builder.buildReport(result, request, reportContext);
@@ -184,11 +191,13 @@ public class LlmScoringPopulator implements SubmissionPopulator {
         int totalFiles = 0;
         int totalMethods = 0;
         int codeUnitsAffected = 0;
+        int linesPerMethodQuantile = 0;
 
         if (Objects.nonNull(projectMetrics)) {
-            totalLines = Optional.ofNullable(projectMetrics.getTotalLines()).orElse(BigDecimal.ZERO.intValue());
-            totalFiles = Optional.ofNullable(projectMetrics.getTotalFiles()).orElse(BigDecimal.ZERO.intValue());
-            totalMethods = Optional.ofNullable(projectMetrics.getTotalMethods()).orElse(BigDecimal.ZERO.intValue());
+            totalLines = Optional.ofNullable(projectMetrics.getTotalLines()).orElse(0);
+            totalFiles = Optional.ofNullable(projectMetrics.getTotalFiles()).orElse(0);
+            totalMethods = Optional.ofNullable(projectMetrics.getTotalMethods()).orElse(0);
+            linesPerMethodQuantile = Optional.ofNullable(projectMetrics.getLinesPerMethodQuantile()).orElse(0);
         }
 
         if (Objects.nonNull(projectQuality) && Objects.nonNull(projectQuality.getCodeUnitsAffected())) {
@@ -200,6 +209,18 @@ public class LlmScoringPopulator implements SubmissionPopulator {
                 .projectTotalFiles(totalFiles)
                 .projectTotalMethods(totalMethods)
                 .codeUnitsAffected(codeUnitsAffected)
+                .linesPerMethodQuantile(linesPerMethodQuantile)
                 .build();
+    }
+    public static Map<String, List<DiagnosticModel>> extractCriticalViolations(AnalysisSubmissionModel submission) {
+        Map<String, List<DiagnosticModel>> toReturn = Maps.newHashMap();
+        if (Objects.nonNull(submission.getProject()) && CollectionUtils.isNotEmpty(submission.getProject().getModules())) {
+            for (ModuleModel module : submission.getProject().getModules()) {
+                if (Objects.nonNull(module.getQuality()) && CollectionUtils.isNotEmpty(module.getQuality().getCriticalViolations())) {
+                    toReturn.put(module.getId(), module.getQuality().getCriticalViolations());
+                }
+            }
+        }
+        return toReturn;
     }
 }

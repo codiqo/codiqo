@@ -48,7 +48,7 @@
 | Total Cyclomatic | [(${request.complexity != null ? request.complexity.totalCyclomaticComplexity : 0})] |
 | Total Cognitive | [(${request.complexity != null ? request.complexity.totalCognitiveComplexity : 0})] |
 | Max Code Block Complexity | [(${request.complexity != null ? request.complexity.maxMethodComplexity : 0})] |
-| Average Code Block Complexity | [(${request.complexity != null ? request.complexity.averageMethodComplexity : 0})] |
+| P[(${ncss_quantile_percent})] Code Block Complexity | [(${request.complexity != null ? request.complexity.methodComplexityQuantile : 0})] |
 
 ---
 

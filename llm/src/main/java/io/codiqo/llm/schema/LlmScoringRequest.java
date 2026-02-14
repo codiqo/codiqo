@@ -141,6 +141,7 @@ public class LlmScoringRequest {
         /**
          * Complexity metrics (CRITICAL for scoring)
          */
+        private int linesOfCode;
         private int cyclomaticComplexity;
         private int cognitiveComplexity;
         private int nestingDepth;
@@ -307,7 +308,7 @@ public class LlmScoringRequest {
         private int totalCyclomaticComplexity;
         private int totalCognitiveComplexity;
         private int maxMethodComplexity;
-        private double averageMethodComplexity;
+        private double methodComplexityQuantile;
 
         private int complexityDelta; // Positive = more complex overall
         private int newHighComplexityMethods; // New methods with high complexity (bad)

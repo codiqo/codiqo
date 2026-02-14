@@ -290,6 +290,10 @@ components:
           minimum: 0
           maximum: 100
           description: Average test coverage percentage across all code
+        linesPerMethodQuantile:
+          type: integer
+          minimum: 0
+          description: Configurable quantile (default P75) of NCSS per method across all project methods
 
     ProjectQualityModel:
       type: object
@@ -524,6 +528,11 @@ components:
           description: Total lines of code in the entire module (not just changed)
         fullCoverage:
           $ref: '#/components/schemas/ModuleFullCoverageModel'
+        criticalViolations:
+          type: array
+          description: ERROR-severity violations across all code in this module (PMD HIGH, SpotBugs HIGH_PRIORITY)
+          items:
+            $ref: '#/components/schemas/DiagnosticModel'
 
     # ==========================================================================
     # Dependencies - Top-level shared registry
@@ -1487,6 +1496,9 @@ components:
           enum: [pmd, spotbugs, checkstyle, errorprone, eslint, pylint, ruff, clippy, other]
         ruleId:
           type: string
+        filePath:
+          type: string
+          description: Source file path relative to project root (set for module-level diagnostics)
         severity:
           type: string
           enum: [error, warning, info, note, none]

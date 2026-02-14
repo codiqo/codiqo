@@ -36,6 +36,7 @@ import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
+import org.apache.commons.lang3.time.StopWatch;
 import org.eclipse.lsp4j.CallHierarchyIncomingCall;
 import org.eclipse.lsp4j.CallHierarchyItem;
 import org.eclipse.lsp4j.DocumentSymbol;
@@ -51,6 +52,7 @@ import org.jacoco.core.analysis.IPackageCoverage;
 import org.jacoco.core.analysis.ISourceFileCoverage;
 import org.jacoco.core.data.ExecutionDataStore;
 import org.jacoco.core.tools.ExecFileLoader;
+import org.slf4j.event.Level;
 
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
@@ -88,7 +90,6 @@ import io.codiqo.jdtls.Lsp4jGitAffectedSymbolInfo;
 import io.codiqo.lang.spec.JBinaryMethodSig;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.util.Fetch;
-import lombok.SneakyThrows;
 import lombok.experimental.Delegate;
 import net.sourceforge.pmd.PMDConfiguration;
 import net.sourceforge.pmd.PmdAnalysis;
@@ -124,7 +125,6 @@ import net.sourceforge.pmd.lang.java.types.JTypeMirror;
 import net.sourceforge.pmd.lang.java.types.OverloadSelectionResult;
 import net.sourceforge.pmd.lang.rule.RulePriority;
 import net.sourceforge.pmd.reporting.Report;
-import net.sourceforge.pmd.reporting.RuleViolation;
 
 public class JavaLanguageSpec implements LanguageSpec {
     public static final EnumSet<SymbolKind> TYPES = EnumSet.of(SymbolKind.Class, SymbolKind.Interface, SymbolKind.Enum);
@@ -342,193 +342,34 @@ public class JavaLanguageSpec implements LanguageSpec {
     }
     @Override
     public void captureViolations(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
-        PMDConfiguration cfg = new PMDConfiguration(LanguageRegistry.singleton(lang()));
-        cfg.setReporter(log);
-        cfg.setDefaultLanguageVersion(lang().getDefaultVersion());
-        cfg.setIgnoreIncrementalAnalysis(true);
-        cfg.setFailOnViolation(false);
-        cfg.setFailOnError(true);
-        cfg.setSourceEncoding(StandardCharsets.UTF_8);
-        cfg.setMinimumPriority(RulePriority.valueOf(args.getPmdMinPriority().toUpperCase()));
-        pmdRules.forEach(cfg::addRuleSet);
-
-        try (PmdAnalysis pmd = PmdAnalysis.create(cfg)) {
-            MutableBoolean toApply = new MutableBoolean();
-
-            for (File sourceFile : summary.getBlocks().keySet()) {
-                if (FilenameUtils.isExtension(sourceFile.getName(), language.getExtensions())) {
-                    if (pmd.files().addFile(sourceFile.toPath().normalize())) {
-                        toApply.setTrue();
-                    }
-                }
-            }
-
-            if (toApply.isTrue()) {
-                Report report = pmd.performAnalysisAndCollectReport();
-                List<RuleViolation> violations = report.getViolations();
-                violations.forEach(violation -> {
-                    Range<Integer> markRange = Range.closed(violation.getLocation().getStartLine(), violation.getLocation().getEndLine());
-
-                    for (File sourceFile : summary.getBlocks().keySet()) {
-                        if (violation.getFileId().getAbsolutePath().equals(sourceFile.getAbsolutePath())) {
-                            Collection<CodeBlockInfo> blocks = summary.getBlocks().get(sourceFile);
-                            for (CodeBlockInfo block : blocks) {
-                                Range<Integer> blockRange = Range.closed(block.getLocation().getStartLine(), block.getLocation().getEndLine());
-                                if (blockRange.encloses(markRange)) {
-                                    log.info("detected PMD violation for %s : line(%d:%d-%d:%d)  %s",
-                                            block,
-                                            violation.getBeginLine(),
-                                            violation.getBeginColumn(),
-                                            violation.getEndLine(),
-                                            violation.getEndColumn(),
-                                            violation.getDescription());
-                                    block.pmdViolation(violation);
-                                }
-                            }
-                        }
-                    }
-                });
-            }
-        }
-
-        // Create SpotBugs projects from ALL indexed modules (not just affected files)
-        Map<ProjectSpec, edu.umd.cs.findbugs.Project> projects = Maps.newHashMap();
-        for (ProjectSpec project : summary.getProjects()) {
-            if (project instanceof MavenProjectSpec) {
-                if (project.getOutputDirectory().exists()) {
-                    MavenProjectSpec mvn = (MavenProjectSpec) project;
-                    projects.computeIfAbsent(project, new Function<>() {
-                        @Override
-                        @SneakyThrows
-                        public edu.umd.cs.findbugs.Project apply(ProjectSpec target) {
-                            edu.umd.cs.findbugs.Project spotbugs = new edu.umd.cs.findbugs.Project();
-                            spotbugs.setProjectName(target.getName());
-                            spotbugs.addFile(target.getOutputDirectory().getAbsolutePath());
-
-                            mvn.getCompileClasspathElements().stream().forEach(new Consumer<>() {
-                                @Override
-                                public void accept(File element) {
-                                    spotbugs.addAuxClasspathEntry(element.getAbsolutePath());
-                                }
-                            });
-                            mvn.getTestClasspathElements().stream().forEach(new Consumer<>() {
-                                @Override
-                                public void accept(File element) {
-                                    spotbugs.addAuxClasspathEntry(element.getAbsolutePath());
-                                }
-                            });
-
-                            for (File dir : mvn.getCompileSourceRoots()) {
-                                spotbugs.addSourceDirs(Collections.singletonList(dir.getAbsolutePath()));
-                            }
-                            for (File dir : mvn.getTestCompileSourceRoots()) {
-                                spotbugs.addSourceDirs(Collections.singletonList(dir.getAbsolutePath()));
-                            }
-
-                            return spotbugs;
-                        }
-                    });
-                }
-            }
-        }
-
-        Set<Plugin> plugins = Sets.newHashSet();
-        Set<String> current = Plugin.getAllPlugins().stream().map(Plugin::getPluginLoader).map(PluginLoader::getURL).map(URL::toString).collect(Collectors.toSet());
-
-        try {
-            Enumeration<URL> resources = getClass().getClassLoader().getResources("findbugs.xml");
-            while (resources.hasMoreElements()) {
-                URL resource = resources.nextElement();
-                String path = resource.toString();
-                if (path.startsWith("jar:")) {
-                    JarURLConnection jarConnection = (JarURLConnection) resource.openConnection();
-                    resource = jarConnection.getJarFileURL();
-                }
-
-                if (current.contains(resource.toString())) {
-                    continue;
-                }
-
-                try {
-                    plugins.add(Plugin.addCustomPlugin(resource));
-                } catch (DuplicatePluginIdException err) {
-
-                }
-            }
-        } catch (Exception err) {
-            ExceptionUtils.wrapAndThrow(err);
-        }
-
-        UnhiddenDetectorFactoryCollection detectorFactory = new UnhiddenDetectorFactoryCollection(plugins);
-        DetectorFactoryCollection.resetInstance(detectorFactory);
-
-        projects.values().parallelStream().forEach(new Consumer<>() {
-            @Override
-            @SneakyThrows
-            public void accept(edu.umd.cs.findbugs.Project spotbugs) {
-                try (StringWriter writer = new StringWriter()) {
-                    try (PrintWriter printer = new PrintWriter(writer)) {
-                        BugCollectionBugReporter bugReporter = new BugCollectionBugReporter(spotbugs, printer);
-                        bugReporter.setPriorityThreshold(args.getSpotbugsPriorityThreshold());
-
-                        try (FindBugs2 findBugs = new FindBugs2()) {
-                            findBugs.setProject(spotbugs);
-                            findBugs.setBugReporter(bugReporter);
-                            findBugs.setDetectorFactoryCollection(detectorFactory);
-
-                            UserPreferences prefs = UserPreferences.createDefaultUserPreferences();
-                            prefs.setEffort(UserPreferences.EFFORT_DEFAULT);
-
-                            Set<String> omitVisitors = Sets.newHashSet(
-                                    Splitter.on(',')
-                                            .trimResults()
-                                            .omitEmptyStrings()
-                                            .splitToList(Optional.ofNullable(args.getSpotbugsOmitVisitors()).orElse(StringUtils.EMPTY)));
-                            detectorFactory.factoryIterator().forEachRemaining(factory -> {
-                                if (omitVisitors.contains(factory.getShortName())) {
-                                    prefs.enableDetector(factory, false);
-                                }
-                            });
-
-                            findBugs.setUserPreferences(prefs);
-                            findBugs.setAnalysisFeatureSettings(FindBugs.DEFAULT_EFFORT);
-                            findBugs.execute();
-
-                            BugCollection bugCollection = bugReporter.getBugCollection();
-                            for (BugInstance bug : bugCollection) {
-                                SourceLineAnnotation sourceLine = bug.getPrimarySourceLineAnnotation();
-                                Range<Integer> markRange = Range.closed(sourceLine.getStartLine(), sourceLine.getEndLine());
-
-                                for (File sourceFile : summary.getBlocks().keySet()) {
-                                    if (sourceFile.toPath().normalize().endsWith(sourceLine.getSourcePath())) {
-                                        Collection<CodeBlockInfo> blocks = summary.getBlocks().get(sourceFile);
-                                        for (CodeBlockInfo block : blocks) {
-                                            Range<Integer> blockRange = Range.closed(block.getLocation().getStartLine(), block.getLocation().getEndLine());
-                                            if (blockRange.encloses(markRange)) {
-                                                log.info("detected spotbug violation for %s : line(%d-%d)  %s ( %s )",
-                                                        block,
-                                                        sourceLine.getStartLine(),
-                                                        sourceLine.getEndLine(),
-                                                        bug.getType(),
-                                                        bug.getMessage());
-                                                if (block instanceof JavaCodeBlockInfo) {
-                                                    ((JavaCodeBlockInfo) block).spotbug(bug);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } finally {
-                    spotbugs.close();
-                }
-            }
-        });
+        capturePmdViolations(summary, analysis);
+        captureSpotbugsViolations(summary, analysis);
     }
     @Override
     public void captureCoverage(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
+        captureJacocoCoverage(summary, analysis);
+    }
+    @Override
+    public int hashCode() {
+        return language.hashCode();
+    }
+    @Override
+    public boolean equals(Object other) {
+        return Objects.equals(language, ((JavaLanguageSpec) other).language);
+    }
+    @Override
+    public String toString() {
+        return language.toString();
+    }
+    @Override
+    public void close() throws IOException {
+        if (Objects.nonNull(importer)) {
+            importer.close();
+        }
+    }
+    private void captureJacocoCoverage(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
+        StopWatch stopWatch = StopWatch.createStarted();
+
         ExecFileLoader loader = new ExecFileLoader();
         List<File> outputDirectories = Lists.newArrayList();
 
@@ -545,7 +386,8 @@ public class JavaLanguageSpec implements LanguageSpec {
                     Optional<Date> lm = project.latestModified();
                     if (lm.isPresent()) {
                         Date latestModified = lm.get();
-                        log.info("checking coverage file %s modified time %s against project's latest modified time %s",
+                        log.log(Level.TRACE,
+                                "checking coverage file %s modified time %s against project's latest modified time %s",
                                 file.getAbsolutePath(),
                                 fileTime.toInstant(),
                                 latestModified.toInstant());
@@ -692,26 +534,223 @@ public class JavaLanguageSpec implements LanguageSpec {
                 }
             }
         });
+        stopWatch.stop();
 
+        log.info("jacoco coverage analysis completed in %s", stopWatch);
         log.info("coverage analysis: %d files affected matched, %d unmatched, %d lines with coverage", matched.get(), unmatched.get(), linesWithCoverage.get());
     }
-    @Override
-    public int hashCode() {
-        return language.hashCode();
-    }
-    @Override
-    public boolean equals(Object other) {
-        return Objects.equals(language, ((JavaLanguageSpec) other).language);
-    }
-    @Override
-    public String toString() {
-        return language.toString();
-    }
-    @Override
-    public void close() throws IOException {
-        if (Objects.nonNull(importer)) {
-            importer.close();
+    private void capturePmdViolations(IndexingSummary summary, CommitAnalysis analysis) {
+        PMDConfiguration cfg = new PMDConfiguration(LanguageRegistry.singleton(lang()));
+        cfg.setReporter(log);
+        cfg.setDefaultLanguageVersion(lang().getDefaultVersion());
+        cfg.setIgnoreIncrementalAnalysis(true);
+        cfg.setFailOnViolation(false);
+        cfg.setFailOnError(true);
+        cfg.setSourceEncoding(StandardCharsets.UTF_8);
+        cfg.setMinimumPriority(RulePriority.valueOf(args.getPmdMinPriority().toUpperCase()));
+        cfg.setThreads(Runtime.getRuntime().availableProcessors());
+        pmdRules.forEach(cfg::addRuleSet);
+
+        StopWatch pmdWatch = StopWatch.createStarted();
+        try (PmdAnalysis pmd = PmdAnalysis.create(cfg)) {
+            MutableBoolean toApply = new MutableBoolean();
+
+            for (File sourceFile : summary.getBlocks().keySet()) {
+                if (FilenameUtils.isExtension(sourceFile.getName(), language.getExtensions())) {
+                    if (pmd.files().addFile(sourceFile.toPath().normalize())) {
+                        toApply.setTrue();
+                    }
+                }
+            }
+
+            if (toApply.isTrue()) {
+                Map<String, File> filesByAbsolutePath = Maps.newHashMap();
+                for (File sourceFile : summary.getBlocks().keySet()) {
+                    filesByAbsolutePath.put(sourceFile.getAbsolutePath(), sourceFile);
+                }
+
+                Report report = pmd.performAnalysisAndCollectReport();
+                report.getViolations().forEach(violation -> {
+                    File sourceFile = filesByAbsolutePath.get(violation.getFileId().getAbsolutePath());
+                    if (Objects.nonNull(sourceFile)) {
+                        Range<Integer> markRange = Range.closed(violation.getLocation().getStartLine(), violation.getLocation().getEndLine());
+                        Collection<CodeBlockInfo> blocks = summary.getBlocks().get(sourceFile);
+                        for (CodeBlockInfo block : blocks) {
+                            Range<Integer> blockRange = Range.closed(block.getLocation().getStartLine(), block.getLocation().getEndLine());
+                            if (blockRange.encloses(markRange)) {
+                                block.pmdViolation(violation);
+                                if (analysis.isPresent(sourceFile, block)) {
+                                    log.info("detected PMD violation for %s : line(%d:%d-%d:%d)  %s",
+                                            block,
+                                            violation.getBeginLine(),
+                                            violation.getBeginColumn(),
+                                            violation.getEndLine(),
+                                            violation.getEndColumn(),
+                                            violation.getDescription());
+                                }
+                            }
+                        }
+                    }
+                });
+            }
         }
+
+        pmdWatch.stop();
+        log.info("PMD analysis completed in %s", pmdWatch);
+    }
+    private void captureSpotbugsViolations(IndexingSummary summary, CommitAnalysis analysis) {
+        Map<ProjectSpec, edu.umd.cs.findbugs.Project> projects = Maps.newHashMap();
+        for (ProjectSpec project : summary.getProjects()) {
+            if (project instanceof MavenProjectSpec) {
+                if (project.getOutputDirectory().exists()) {
+                    MavenProjectSpec mvn = (MavenProjectSpec) project;
+                    projects.computeIfAbsent(project, target -> {
+                        edu.umd.cs.findbugs.Project spotbugs = new edu.umd.cs.findbugs.Project();
+                        spotbugs.setProjectName(target.getName());
+                        spotbugs.addFile(target.getOutputDirectory().getAbsolutePath());
+
+                        mvn.getCompileClasspathElements().stream().forEach(element -> spotbugs.addAuxClasspathEntry(element.getAbsolutePath()));
+                        mvn.getTestClasspathElements().stream().forEach(element -> spotbugs.addAuxClasspathEntry(element.getAbsolutePath()));
+
+                        for (File dir : mvn.getCompileSourceRoots()) {
+                            spotbugs.addSourceDirs(Collections.singletonList(dir.getAbsolutePath()));
+                        }
+                        for (File dir : mvn.getTestCompileSourceRoots()) {
+                            spotbugs.addSourceDirs(Collections.singletonList(dir.getAbsolutePath()));
+                        }
+
+                        return spotbugs;
+                    });
+                }
+            }
+        }
+
+        Set<Plugin> plugins = Sets.newHashSet();
+        Set<String> current = Plugin.getAllPlugins()
+                .stream()
+                .map(Plugin::getPluginLoader)
+                .map(PluginLoader::getURL)
+                .map(URL::toString)
+                .collect(Collectors.toSet());
+
+        try {
+            Enumeration<URL> resources = getClass().getClassLoader().getResources("findbugs.xml");
+            while (resources.hasMoreElements()) {
+                URL resource = resources.nextElement();
+                String path = resource.toString();
+                if (path.startsWith("jar:")) {
+                    JarURLConnection jarConnection = (JarURLConnection) resource.openConnection();
+                    resource = jarConnection.getJarFileURL();
+                }
+
+                if (current.contains(resource.toString())) {
+                    continue;
+                }
+
+                try {
+                    Plugin customPlugin = Plugin.addCustomPlugin(resource);
+                    log.info("loaded custom spotbugs plugin from %s with id '%s'", resource, customPlugin.getPluginId());
+                    plugins.add(customPlugin);
+                } catch (DuplicatePluginIdException err) {
+
+                }
+            }
+        } catch (Exception err) {
+            ExceptionUtils.wrapAndThrow(err);
+        }
+
+        UnhiddenDetectorFactoryCollection detectorFactory = new UnhiddenDetectorFactoryCollection(plugins);
+        DetectorFactoryCollection.resetInstance(detectorFactory);
+
+        Set<Path> sourceRoots = Sets.newHashSet();
+        for (ProjectSpec project : projects.keySet()) {
+            if (project instanceof MavenProjectSpec) {
+                MavenProjectSpec mvn = (MavenProjectSpec) project;
+                mvn.getCompileSourceRoots().forEach(dir -> sourceRoots.add(dir.toPath().normalize()));
+                mvn.getTestCompileSourceRoots().forEach(dir -> sourceRoots.add(dir.toPath().normalize()));
+            }
+        }
+
+        Map<String, File> filesBySourcePath = Maps.newHashMap();
+        for (File sourceFile : summary.getBlocks().keySet()) {
+            Path normalized = sourceFile.toPath().normalize();
+            for (Path rootPath : sourceRoots) {
+                if (normalized.startsWith(rootPath)) {
+                    filesBySourcePath.put(rootPath.relativize(normalized).toString(), sourceFile);
+                    break;
+                }
+            }
+        }
+
+        StopWatch spotbugsWatch = StopWatch.createStarted();
+        projects.values().parallelStream().forEach(spotbugs -> {
+            try (StringWriter writer = new StringWriter()) {
+                try (PrintWriter printer = new PrintWriter(writer)) {
+                    BugCollectionBugReporter bugReporter = new BugCollectionBugReporter(spotbugs, printer);
+                    bugReporter.setPriorityThreshold(args.getSpotbugsPriorityThreshold());
+
+                    try (FindBugs2 findBugs = new FindBugs2()) {
+                        findBugs.setProject(spotbugs);
+                        findBugs.setBugReporter(bugReporter);
+                        findBugs.setDetectorFactoryCollection(detectorFactory);
+                        findBugs.setNoClassOk(false);
+                        findBugs.setScanNestedArchives(false);
+
+                        UserPreferences prefs = UserPreferences.createDefaultUserPreferences();
+                        prefs.setEffort(UserPreferences.EFFORT_DEFAULT);
+
+                        Set<String> omitVisitors = Sets.newHashSet(
+                                Splitter.on(',')
+                                        .trimResults()
+                                        .omitEmptyStrings()
+                                        .splitToList(Optional.ofNullable(args.getSpotbugsOmitVisitors()).orElse(StringUtils.EMPTY)));
+                        detectorFactory.factoryIterator().forEachRemaining(factory -> {
+                            if (omitVisitors.contains(factory.getShortName())) {
+                                prefs.enableDetector(factory, false);
+                            }
+                        });
+
+                        findBugs.setUserPreferences(prefs);
+                        findBugs.setAnalysisFeatureSettings(FindBugs.DEFAULT_EFFORT);
+                        findBugs.execute();
+
+                        BugCollection bugCollection = bugReporter.getBugCollection();
+                        for (BugInstance bug : bugCollection) {
+                            SourceLineAnnotation sourceLine = bug.getPrimarySourceLineAnnotation();
+                            Range<Integer> markRange = Range.closed(sourceLine.getStartLine(), sourceLine.getEndLine());
+
+                            File sourceFile = filesBySourcePath.get(sourceLine.getSourcePath());
+                            if (Objects.nonNull(sourceFile)) {
+                                Collection<CodeBlockInfo> blocks = summary.getBlocks().get(sourceFile);
+                                for (CodeBlockInfo block : blocks) {
+                                    Range<Integer> blockRange = Range.closed(block.getLocation().getStartLine(), block.getLocation().getEndLine());
+                                    if (blockRange.encloses(markRange)) {
+                                        if (block instanceof JavaCodeBlockInfo) {
+                                            ((JavaCodeBlockInfo) block).spotbug(bug);
+                                        }
+                                        if (analysis.isPresent(sourceFile, block)) {
+                                            log.info("detected spotbug violation for %s : line(%d-%d)  %s ( %s )",
+                                                    block,
+                                                    sourceLine.getStartLine(),
+                                                    sourceLine.getEndLine(),
+                                                    bug.getType(),
+                                                    bug.getMessage());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (Exception err) {
+                ExceptionUtils.wrapAndThrow(err);
+            } finally {
+                spotbugs.close();
+            }
+        });
+
+        spotbugsWatch.stop();
+        log.info("spotbugs analysis completed in %s", spotbugsWatch);
     }
 
     private static class UnhiddenDetectorFactoryCollection extends DetectorFactoryCollection {

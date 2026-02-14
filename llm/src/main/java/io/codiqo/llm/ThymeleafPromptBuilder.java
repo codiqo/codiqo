@@ -78,50 +78,23 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         restoreSourceSlices(savedSlices);
 
         ctx.setVariable("requestJson", requestJson);
-        logRequestJsonBreakdown(request, requestJson);
 
-        PreComputedScores preComputedScores = volumeCalculator.calculate(request, context.getProjectTotalLines());
+        PreComputedScores preComputedScores = volumeCalculator.calculate(request, context.getProjectTotalLines(), context.getProjectTotalMethods(), context.getLinesPerMethodQuantile());
+        logPromptMetrics(request, preComputedScores, requestJson);
         ctx.setVariable("preComputedScores", preComputedScores);
         ctx.setVariable("preComputedScoresSection", buildPreComputedScoresSection(preComputedScores));
 
         String message = templateEngine.process(TEMPLATE_USER_PROMPT, ctx);
         return new UserMessageResult(message, preComputedScores);
     }
-    @SneakyThrows
-    private void logRequestJsonBreakdown(LlmScoringRequest request, String totalJson) {
-        int totalSize = totalJson.length();
-        int fileChangesSize = serializeSize(request.getFileChanges(), Collections.emptyList());
-        int methodChangesSize = serializeSize(request.getCodeBlockChanges(), Collections.emptyList());
-        int duplicationSize = serializeSize(request.getDuplication(), "null");
-        int coverageSize = serializeSize(request.getCoverage(), "null");
-
-        int diffSize = 0;
-        int sourceSliceSize = 0;
-        if (Objects.nonNull(request.getFileChanges())) {
-            for (LlmScoringRequest.FileChange fc : request.getFileChanges()) {
-                if (Objects.nonNull(fc.getDiff())) {
-                    diffSize += fc.getDiff().length();
-                }
-            }
-        }
-        if (Objects.nonNull(request.getDuplication()) && Objects.nonNull(request.getDuplication().getCloneDetails())) {
-            for (LlmScoringRequest.DuplicationInfo.CloneDetail cd : request.getDuplication().getCloneDetails()) {
-                if (Objects.nonNull(cd.getLocations())) {
-                    for (LlmScoringRequest.DuplicationInfo.CloneLocation loc : cd.getLocations()) {
-                        if (Objects.nonNull(loc.getSourceSlice())) {
-                            sourceSliceSize += loc.getSourceSlice().length();
-                        }
-                    }
-                }
-            }
-        }
-
-        log.info("requestJson breakdown: total=%d, fileChanges=%d (diffs=%d), methodChanges=%d, duplication=%d (sourceSlices=%d), coverage=%d",
-                totalSize, fileChangesSize, diffSize, methodChangesSize, duplicationSize, sourceSliceSize, coverageSize);
-    }
-    @SneakyThrows
-    private int serializeSize(Object value, Object fallback) {
-        return mapper.writeValueAsString(Objects.nonNull(value) ? value : fallback).length();
+    private void logPromptMetrics(LlmScoringRequest request, PreComputedScores scores, String requestJson) {
+        LlmScoringRequest.ChangeSummary cs = request.getChangeSummary();
+        log.info("prompt: files=%d, methods=%d, lines=%d (effective=%d) | json=%d chars",
+                cs.getTotalFilesChanged(),
+                cs.getCodeBlocksModified() + cs.getCodeBlocksAdded(),
+                cs.getTotalLinesChanged(),
+                scores.getEffectiveLines(),
+                requestJson.length());
     }
     private static Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> stripSourceSlices(LlmScoringRequest request) {
         Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> saved = Maps.newIdentityHashMap();
@@ -237,6 +210,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         ctx.setVariable("cov_acceptable_min", args.getCoverageImpactAcceptableMin());
         ctx.setVariable("cov_low_min", args.getCoverageImpactLowMin());
         ctx.setVariable("cov_poor_min", args.getCoverageImpactPoorMin());
+        ctx.setVariable("ncss_quantile_percent", (int) (args.getNcssQuantile() * 100));
         return ctx;
     }
 }
