@@ -147,6 +147,10 @@ public class RunArgs {
     @Nullable
     private double fileDensityThreshold = 10.0;
     @Nullable
+    private double linesDensityCapMultiplier = 1.5;
+    @Nullable
+    private double ncssQuantile = 0.75;
+    @Nullable
     private double coverageLowThreshold = 50.0;
     @Nullable
     private double coverageCriticalThreshold = 10.0;
@@ -155,7 +159,7 @@ public class RunArgs {
     @Nullable
     private int highComplexityThreshold = 10;
     @Nullable
-    private double linesLogFactor = 5.0;
+    private double linesLogFactor = 2.5;
     @Nullable
     private double codeBlocksModifiedLogFactor = 8.0;
     @Nullable
@@ -344,6 +348,10 @@ public class RunArgs {
         List<String> emails = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(includeAuthorEmails);
         return emails.contains(authorEmail);
     }
+    public void validate() {
+        this.ncssQuantile = Math.max(0.75, this.ncssQuantile);
+        this.llmMaxRetries = (short) Math.max(1, this.llmMaxRetries);
+    }
     public static Options options() {
         Options toReturn = new Options();
         Field[] fields = RunArgs.class.getDeclaredFields();
@@ -396,6 +404,7 @@ public class RunArgs {
                 }
             }
         }
+        toReturn.validate();
         return toReturn;
     }
 }

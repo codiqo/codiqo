@@ -18,6 +18,8 @@ import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
+import io.codiqo.client.model.DiagnosticModel;
+
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
 import io.codiqo.llm.client.ScoringClient.ScoringResult;
@@ -109,6 +111,8 @@ public class HtmlReportBuilder implements ReportBuilder {
         ctx.setVariable("volumeExponent", args.getVolumeExponent());
         ctx.setVariable("filesScopeFactor", args.getFilesScopeFactor());
         ctx.setVariable("fileDensityThreshold", args.getFileDensityThreshold());
+        ctx.setVariable("linesDensityCapMultiplier", args.getLinesDensityCapMultiplier());
+        ctx.setVariable("ncssQuantilePercent", (int) (args.getNcssQuantile() * 100));
         ctx.setVariable("linesLogFactor", args.getLinesLogFactor());
         ctx.setVariable("codeBlocksModLogFactor", args.getCodeBlocksModifiedLogFactor());
         ctx.setVariable("codeBlocksAddLogFactor", args.getCodeBlocksAddedLogFactor());
@@ -117,6 +121,7 @@ public class HtmlReportBuilder implements ReportBuilder {
         ctx.setVariable("architectureBonusFactor", args.getArchitectureBonusFactor());
         ctx.setVariable("qualityMultiplierMin", args.getQualityMultiplierMin());
         ctx.setVariable("qualityMultiplierMax", args.getQualityMultiplierMax());
+        ctx.setVariable("qualityGatePenaltyCap", args.getQualityGatePenaltyCap());
         ctx.setVariable("complexityTrivialMax", args.getComplexityTrivialMax());
         ctx.setVariable("complexityModerateMax", args.getComplexityModerateMax());
         ctx.setVariable("complexityComplexMax", args.getComplexityComplexMax());
@@ -184,6 +189,8 @@ public class HtmlReportBuilder implements ReportBuilder {
         ctx.setVariable("missedLines", 0);
         ctx.setVariable("coverageAnalysis", Collections.emptyList());
         ctx.setVariable("similarityMatches", Collections.emptyList());
+
+        populateCriticalViolations(ctx, reportContext);
 
         return templateEngine.process(TEMPLATE_COMMIT_ANALYSIS, ctx);
     }
@@ -295,7 +302,11 @@ public class HtmlReportBuilder implements ReportBuilder {
         VolumeScore volume = breakdown.getVolumeScore();
         ctx.setVariable("volumeScore", volume);
         if (Objects.nonNull(preComputed)) {
+            ctx.setVariable("projectTotalLines", preComputed.getProjectTotalLines());
+            ctx.setVariable("projectTotalMethods", preComputed.getProjectTotalMethods());
+            ctx.setVariable("linesPerMethodQuantile", preComputed.getLinesPerMethodQuantile());
             ctx.setVariable("linesChanged", preComputed.getLinesChanged());
+            ctx.setVariable("effectiveLines", preComputed.getEffectiveLines());
             ctx.setVariable("linesScore", preComputed.getLinesScore());
             ctx.setVariable("filesChanged", preComputed.getFilesChanged());
             ctx.setVariable("contentScore", preComputed.getContentScore());
@@ -579,6 +590,30 @@ public class HtmlReportBuilder implements ReportBuilder {
                 .callers(callerViews)
                 .build();
     }
+    private static void populateCriticalViolations(Context ctx, ReportContext reportContext) {
+        Map<String, List<DiagnosticModel>> byModule = reportContext.getCriticalViolationsByModule();
+        List<CriticalViolationView> allViolations = Lists.newArrayList();
+        for (Map.Entry<String, List<DiagnosticModel>> entry : byModule.entrySet()) {
+            String moduleId = entry.getKey();
+            for (DiagnosticModel diag : entry.getValue()) {
+                int startLine = 0;
+                if (Objects.nonNull(diag.getLocation())) {
+                    startLine = Optional.ofNullable(diag.getLocation().getStartLine()).orElse(0);
+                }
+                allViolations.add(CriticalViolationView.builder()
+                        .module(moduleId)
+                        .tool(Objects.nonNull(diag.getTool()) ? diag.getTool().getValue() : "unknown")
+                        .ruleId(diag.getRuleId())
+                        .file(Optional.ofNullable(diag.getFilePath()).orElse(""))
+                        .line(startLine)
+                        .message(diag.getMessage())
+                        .category(Optional.ofNullable(diag.getCategory()).orElse(""))
+                        .build());
+            }
+        }
+        ctx.setVariable("criticalViolations", allViolations);
+        ctx.setVariable("criticalViolationCount", allViolations.size());
+    }
     @Value
     @Builder
     public static class DimensionView {
@@ -636,5 +671,16 @@ public class HtmlReportBuilder implements ReportBuilder {
         boolean testCaller;
         String file;
         int line;
+    }
+    @Value
+    @Builder
+    public static class CriticalViolationView {
+        String module;
+        String tool;
+        String ruleId;
+        String file;
+        int line;
+        String message;
+        String category;
     }
 }

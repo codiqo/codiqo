@@ -197,6 +197,7 @@ public class ScoreFromFileMojo extends AbstractMojo {
                 toReturn.setLlmApiKey(llmApiKey);
             }
         }
+        toReturn.validate();
         return toReturn;
     }
     private void generateHtmlReport(
@@ -211,7 +212,8 @@ public class ScoreFromFileMojo extends AbstractMojo {
         ReportContext.ReportContextBuilder contextBuilder = ReportContext.builder()
                 .repositoryName(submission.getProject().getName())
                 .llmModel(llmModel)
-                .analysisDuration(Duration.ofMillis(stopWatch.getTime()));
+                .analysisDuration(Duration.ofMillis(stopWatch.getTime()))
+                .criticalViolationsByModule(LlmScoringPopulator.extractCriticalViolations(submission));
 
         if (Objects.nonNull(commit)) {
             contextBuilder

@@ -1,9 +1,13 @@
 package io.codiqo.llm.client;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Objects;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -35,6 +39,8 @@ import io.codiqo.llm.schema.LlmScoringResponse;
 
 public class LlmScoringClient implements ScoringClient {
     private static final int MAX_TOOL_CALLS = Byte.MAX_VALUE;
+    private static final String FINISH_REASON_STOP = "stop";
+    private static final String FINISH_REASON_LENGTH = "length";
 
     private final Log log;
     private final OpenAIClient client;
@@ -72,7 +78,7 @@ public class LlmScoringClient implements ScoringClient {
         this.temperature = args.getLlmTemperature();
         this.topP = args.getLlmTopP();
         this.maxTokens = args.getLlmMaxTokens();
-        this.maxRetries = Math.max(1, args.getLlmMaxRetries());
+        this.maxRetries = args.getLlmMaxRetries();
         this.enableWebSearch = args.isLlmEnableWebSearchTool();
         this.webSearchClient = enableWebSearch ? new OllamaWebSearchClient(args, promptBuilder) : null;
 
@@ -159,9 +165,38 @@ public class LlmScoringClient implements ScoringClient {
                 continue;
             }
 
-            String rawContent = streamResult.getContent().toString();
-            log.info("raw response length: " + rawContent.length() + " chars, finishReason: " + streamResult.getFinishReason());
-            LlmScoringResponse scoringResponse = objectMapper.readValue(rawContent, LlmScoringResponse.class);
+            String rawContent = null;
+            LlmScoringResponse scoringResponse = null;
+            Exception lastError = null;
+
+            for (int responseAttempt = 1; responseAttempt <= maxRetries; responseAttempt++) {
+                rawContent = streamResult.getContent().toString();
+                log.info("raw response length: " + rawContent.length() + " chars, finishReason: " + streamResult.getFinishReason());
+
+                if (FINISH_REASON_STOP.equals(streamResult.getFinishReason())) {
+                    try {
+                        scoringResponse = deserializeResponse(rawContent);
+                        break;
+                    } catch (Exception err) {
+                        lastError = err;
+                    }
+                } else if (FINISH_REASON_LENGTH.equals(streamResult.getFinishReason())) {
+                    lastError = new IOException("response truncated (finishReason=length)");
+                } else {
+                    lastError = new IOException("unexpected finishReason: " + streamResult.getFinishReason());
+                }
+
+                if (responseAttempt < maxRetries) {
+                    log.warn("retrying due to malformed LLM response (" + responseAttempt + "/" + maxRetries + ")");
+                    streamResult = streamWithRetry(paramsBuilder.build(), bridgeHandler);
+                    totalPromptTokens += streamResult.getPromptTokens();
+                    totalCompletionTokens += streamResult.getCompletionTokens();
+                }
+            }
+
+            if (Objects.isNull(scoringResponse)) {
+                throw lastError;
+            }
 
             finalScoreCalculator.apply(scoringResponse, preComputedScores);
 
@@ -189,6 +224,17 @@ public class LlmScoringClient implements ScoringClient {
         }
         if (Objects.nonNull(webSearchClient)) {
             webSearchClient.close();
+        }
+    }
+    private LlmScoringResponse deserializeResponse(String rawContent) throws Exception {
+        try {
+            return objectMapper.readValue(rawContent, LlmScoringResponse.class);
+        } catch (IOException err) {
+            File dumpFile = File.createTempFile("codiqo-llm-response-", ".json");
+            FileUtils.write(dumpFile, rawContent, StandardCharsets.UTF_8);
+            log.error("failed to parse LLM response: " + err.getMessage());
+            log.error("raw LLM response dumped to: " + dumpFile.getAbsolutePath());
+            throw err;
         }
     }
     private Object executeTool(String name, String arguments) throws Exception {

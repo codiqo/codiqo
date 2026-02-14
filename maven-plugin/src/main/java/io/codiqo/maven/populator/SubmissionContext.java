@@ -52,6 +52,8 @@ public class SubmissionContext {
     private final Map<String, ModuleFullCoverageModel> moduleFullCoverages = Maps.newHashMap();
 
     @Setter
+    private int linesPerMethodQuantile;
+    @Setter
     private LlmScoringResponse llmScoringResponse;
     @Setter
     private ScoringResult llmScoringResult;

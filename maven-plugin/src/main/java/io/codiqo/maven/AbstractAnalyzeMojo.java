@@ -92,7 +92,6 @@ import io.codiqo.maven.populator.SubmissionContext;
 import io.codiqo.util.Fetch;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
-import lombok.SneakyThrows;
 
 abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Artifact, Collection<File>> {
     private static final String ENV_PREFIX = "env:";
@@ -204,20 +203,25 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     protected String includeAuthorEmails;
 
     @Override
-    @SneakyThrows
     @SuppressWarnings("deprecation")
     public final Collection<File> apply(Artifact artifact) {
-        CollectRequest collect = new CollectRequest();
-        collect.setRoot(new org.eclipse.aether.graph.Dependency(artifact, null));
-        collect.setRepositories(remoteRepos);
-        DependencyRequest req = new DependencyRequest(collect, null);
-        DependencyResult result = repositorySystem.resolveDependencies(mavenSession.getRepositorySession(), req);
-        return result
-                .getArtifactResults()
-                .stream()
-                .map(ArtifactResult::getArtifact)
-                .map(Artifact::getFile)
-                .collect(ImmutableList.toImmutableList());
+        for (;;) {
+            try {
+                CollectRequest collect = new CollectRequest();
+                collect.setRoot(new org.eclipse.aether.graph.Dependency(artifact, null));
+                collect.setRepositories(remoteRepos);
+                DependencyRequest req = new DependencyRequest(collect, null);
+                DependencyResult result = repositorySystem.resolveDependencies(mavenSession.getRepositorySession(), req);
+                return result
+                        .getArtifactResults()
+                        .stream()
+                        .map(ArtifactResult::getArtifact)
+                        .map(Artifact::getFile)
+                        .collect(ImmutableList.toImmutableList());
+            } catch (Exception err) {
+                ExceptionUtils.wrapAndThrow(err);
+            }
+        }
     }
     @Override
     public final void execute() throws MojoExecutionException, MojoFailureException {
@@ -255,6 +259,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 args.setLlmApiKey(llmApiKey);
             }
         }
+        args.validate();
         try (InputStream stream = Resources.getResource("codiqo.versions").openStream()) {
             Properties versions = new Properties();
             versions.load(stream);
@@ -288,12 +293,17 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 .filter(reactor -> BooleanUtils.negate(NON_CODE_PACKAGINGS.contains(reactor.getPackaging())))
                 .filter(reactor -> CollectionUtils.isEmpty(reactor.getModules())).filter(new Predicate<>() {
                     @Override
-                    @SneakyThrows
                     public boolean test(MavenProject reactor) {
-                        return BooleanUtils.or(new boolean[] {
-                                CollectionUtils.isNotEmpty(reactor.getCompileClasspathElements()),
-                                CollectionUtils.isNotEmpty(reactor.getTestClasspathElements()),
-                        });
+                        for (;;) {
+                            try {
+                                return BooleanUtils.or(new boolean[] {
+                                        CollectionUtils.isNotEmpty(reactor.getCompileClasspathElements()),
+                                        CollectionUtils.isNotEmpty(reactor.getTestClasspathElements()),
+                                });
+                            } catch (Exception err) {
+                                ExceptionUtils.wrapAndThrow(err);
+                            }
+                        }
                     }
                 }).forEach(prj -> {
                     MavenProjectWrapper toReturn = new MavenProjectWrapper();

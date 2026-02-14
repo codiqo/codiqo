@@ -1,13 +1,16 @@
 package io.codiqo.maven.populator;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
 import org.apache.commons.lang3.mutable.MutableDouble;
 import org.apache.commons.lang3.mutable.MutableInt;
 
+import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
+import io.codiqo.client.model.DiagnosticModel;
 import lombok.Getter;
 
 @Getter
@@ -35,6 +38,8 @@ public class ModuleQualityTracker {
     private final MutableInt moduleComplexityCount = new MutableInt();
     private final MutableInt moduleTotalPmdViolations = new MutableInt();
     private final MutableInt moduleTotalSpotbugsIssues = new MutableInt();
+    private final List<Integer> moduleLinesPerMethod = Lists.newArrayList();
+    private final List<DiagnosticModel> criticalViolations = Lists.newArrayList();
 
     void incrementFilesChanged() {
         affectedFilesChanged.increment();
@@ -73,6 +78,7 @@ public class ModuleQualityTracker {
     }
     void addModuleLines(int lines) {
         moduleTotalLines.add(lines);
+        moduleLinesPerMethod.add(lines);
     }
     void addModuleCoverageLines(int covered, int missed) {
         moduleCoveredLines.add(covered);
@@ -100,6 +106,9 @@ public class ModuleQualityTracker {
     }
     void addModuleSpotbugsIssues(int count) {
         moduleTotalSpotbugsIssues.add(count);
+    }
+    void addCriticalViolation(DiagnosticModel violation) {
+        criticalViolations.add(violation);
     }
     int getModuleUncoveredMethods() {
         return moduleTotalMethods.intValue() - moduleCoveredMethods.intValue();

@@ -1,8 +1,11 @@
 package io.codiqo.llm.client;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.Objects;
 import java.util.function.Function;
+
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import com.fasterxml.jackson.annotation.JsonClassDescription;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
@@ -11,7 +14,6 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import lombok.SneakyThrows;
 
 @JsonClassDescription("Search the web for information about library dependencies, breaking changes, migration guides, and technical documentation. Use this tool when you need to verify breaking changes, understand migration paths, or find documentation about library upgrades.")
 public class WebSearchTool implements Function<OllamaWebSearchClient, WebSearchTool.WebSearchResult> {
@@ -25,14 +27,19 @@ public class WebSearchTool implements Function<OllamaWebSearchClient, WebSearchT
     public Integer maxResults;
 
     @Override
-    @SneakyThrows
     public WebSearchResult apply(OllamaWebSearchClient client) {
-        int max = Objects.nonNull(maxResults) ? Math.min(Math.max(maxResults, BigDecimal.ONE.intValue()), MAX_RESULTS) : DEFAULT_RESULTS;
-        String markdown = client.searchAsMarkdown(query, max);
-        return WebSearchResult.builder()
-                .query(query)
-                .content(markdown)
-                .build();
+        for (;;) {
+            try {
+                int max = Objects.nonNull(maxResults) ? Math.min(Math.max(maxResults, BigDecimal.ONE.intValue()), MAX_RESULTS) : DEFAULT_RESULTS;
+                String markdown = client.searchAsMarkdown(query, max);
+                return WebSearchResult.builder()
+                        .query(query)
+                        .content(markdown)
+                        .build();
+            } catch (IOException err) {
+                ExceptionUtils.wrapAndThrow(err);
+            }
+        }
     }
 
     @Data

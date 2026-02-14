@@ -2,7 +2,11 @@ package io.codiqo.llm;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 
+import com.google.common.collect.Maps;
+
+import io.codiqo.client.model.DiagnosticModel;
 import io.codiqo.llm.client.ScoringClient.ScoringResult;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import lombok.Builder;
@@ -26,5 +30,7 @@ public interface ReportBuilder {
         String repositoryName;
         String llmModel;
         Duration analysisDuration;
+        @Builder.Default
+        Map<String, List<DiagnosticModel>> criticalViolationsByModule = Maps.newHashMap();
     }
 }

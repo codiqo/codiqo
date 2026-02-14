@@ -1,3 +1,69 @@
+# CLAUDE.md
+
+Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+
+**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+
+## 1. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+## 2. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+## 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it - don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+## 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+---
+
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
 # Codiqo Development Guidelines
 
 ## Code Organization
@@ -952,6 +1018,65 @@ try {
     throw new ProcessingException("Failed to process: " + context, e);
 }
 ```
+
+### ExceptionUtils.wrapAndThrow — Always Wrap with `for (;;) {}`
+
+`ExceptionUtils.wrapAndThrow(err)` always throws, but the compiler doesn't know that. **Always** wrap the entire try-catch in `for (;;) {}` — both for methods returning a value and void methods. Void methods add `return;` at the end of the try block. The `for (;;)` gets its own `{}` block with `try` properly indented inside:
+
+```java
+// Good - non-void: for(;;) {} wraps the try-catch
+public Result apply(Input input) {
+    for (;;) {
+        try {
+            return doWork(input);
+        } catch (Exception err) {
+            ExceptionUtils.wrapAndThrow(err);
+        }
+    }
+}
+
+// Good - void: for(;;) {} wraps the try-catch, return; at end of try block
+public void accept(Context ctx) {
+    for (;;) {
+        try {
+            doWork(ctx);
+            return;
+        } catch (Exception err) {
+            ExceptionUtils.wrapAndThrow(err);
+        }
+    }
+}
+
+// Bad - for(;;) try on same line without {} block
+public Result apply(Input input) {
+    for (;;) try {
+        return doWork(input);
+    } catch (Exception err) {
+        ExceptionUtils.wrapAndThrow(err);
+    }
+}
+
+// Bad - fake return value after wrapAndThrow, triggers PMD violations
+public Result apply(Input input) {
+    try {
+        return doWork(input);
+    } catch (Exception err) {
+        ExceptionUtils.wrapAndThrow(err);
+        return null;
+    }
+}
+
+// Bad - plain try-catch without for(;;), even for void methods
+public void accept(Context ctx) {
+    try {
+        doWork(ctx);
+    } catch (Exception err) {
+        ExceptionUtils.wrapAndThrow(err);
+    }
+}
+```
+
+**When the try-catch wraps only part of the method body** (setup code before try, or code after), `for (;;) {}` still applies to the try-catch block itself — just ensure `return;` is placed correctly within the try block.
 
 ## Avoid Over-Engineering
 

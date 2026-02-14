@@ -11,7 +11,7 @@ Project Normalization:
   addMult: [(${#numbers.formatDecimal(scores.addMult, 1, 2)})]
 
 Content Score Components (formula: count^exponent × factor × multiplier):
-  linesChanged: [(${scores.linesChanged})] -> linesScore: [(${#numbers.formatDecimal(scores.linesScore, 1, 2)})]
+  linesChanged: [(${scores.linesChanged})] (effective: [(${scores.effectiveLines})]) -> linesScore: [(${#numbers.formatDecimal(scores.linesScore, 1, 2)})]
   codeBlocksModified: [(${scores.codeBlocksModified})] -> score: [(${#numbers.formatDecimal(scores.codeBlocksModifiedScore, 1, 2)})]
   codeBlocksAdded: [(${scores.codeBlocksAdded})] -> score: [(${#numbers.formatDecimal(scores.codeBlocksAddedScore, 1, 2)})]
   classesModified: [(${scores.classesModified})] -> score: [(${#numbers.formatDecimal(scores.classesModifiedScore, 1, 2)})]
