@@ -32,8 +32,8 @@ public class IndexModelPopulator implements SubmissionPopulator {
                 ctx.getArgs().owner(fileAnalysis.getFile()).ifPresent(spec -> refModel.setModule(spec.getId()));
                 affectedSymbol.block().ifPresent(block -> {
                     refModel.setSignature(block.getSignature());
+                    indexModel.getCodeUnits().add(refModel);
                 });
-                indexModel.getCodeUnits().add(refModel);
             }
         }
         ctx.getSubmissionModel().setIndex(indexModel);

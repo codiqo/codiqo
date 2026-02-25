@@ -19,6 +19,7 @@ public interface JBinaryMethodSig extends JMethodSig, JavaBinarySignatureFormatt
     String getMethodName();
     String getMethodDescriptor();
     JavaNode getCall();
+    boolean isInterfaceCall();
     Optional<ClassInfo> classInfo();
     Optional<Artifact> artifact();
 }

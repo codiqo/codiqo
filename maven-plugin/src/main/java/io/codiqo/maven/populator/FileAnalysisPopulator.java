@@ -24,6 +24,7 @@ import org.jacoco.core.analysis.ICounter;
 import org.jacoco.core.analysis.ILine;
 
 import edu.umd.cs.findbugs.BugInstance;
+import edu.umd.cs.findbugs.MethodAnnotation;
 import edu.umd.cs.findbugs.Priorities;
 import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.diff.FileAnalysis;
@@ -33,11 +34,14 @@ import io.codiqo.client.model.CoverageCounterModel;
 import io.codiqo.client.model.CoverageModel;
 import io.codiqo.client.model.DiagnosticModel;
 import io.codiqo.client.model.FileChangeModel;
+import io.codiqo.client.model.JavaAnnotationModel;
 import io.codiqo.client.model.JavaInfoModel;
 import io.codiqo.client.model.LineCoverageModel;
 import io.codiqo.client.model.LocationModel;
 import io.codiqo.client.model.MethodCallModel;
 import io.codiqo.client.model.MetricsModel;
+import io.codiqo.client.model.PmdPropertiesModel;
+import io.codiqo.client.model.SpotbugsPropertiesModel;
 import io.codiqo.client.model.SymbolKindModel;
 import io.codiqo.jdtls.Lsp4jAffectedSymbolInfo;
 import io.codiqo.lang.spec.JBinaryMethodSig;
@@ -46,11 +50,14 @@ import io.codiqo.lang.spec.JavaConstructorBlockInfo;
 import io.codiqo.lang.spec.JavaMethodBlockInfo;
 import io.codiqo.lang.spec.JavaBinarySignatureFormatter.BinarySignatureData;
 import lombok.RequiredArgsConstructor;
+import net.sourceforge.pmd.lang.java.ast.ASTAnnotation;
 import net.sourceforge.pmd.lang.java.ast.ASTAnonymousClassDeclaration;
 import net.sourceforge.pmd.lang.java.ast.ASTConstructorDeclaration;
 import net.sourceforge.pmd.lang.java.ast.ASTMethodDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTMethodReference;
 import net.sourceforge.pmd.lang.java.ast.ASTThrowsList;
 import net.sourceforge.pmd.lang.java.ast.ASTTypeParameters;
+import net.sourceforge.pmd.lang.java.ast.Annotatable;
 import net.sourceforge.pmd.lang.rule.RulePriority;
 import net.sourceforge.pmd.reporting.RuleViolation;
 
@@ -164,7 +171,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
 
         populateCoverage(javaBlock, codeUnitModel);
         populateMethodCalls(javaBlock, infoModel);
-        populateDiagnostics(javaBlock, codeUnitModel);
+        populateDiagnostics(javaBlock, codeUnitModel, fileAnalysis.getNewPath());
         populateTypeInfo(javaBlock, codeUnitModel, infoModel);
         populateMetrics(ctx, fileAnalysis, javaBlock, codeUnitModel);
         populateAffectedCoverage(ctx, fileAnalysis, javaBlock);
@@ -252,6 +259,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         javaBlock.coverage().subscribe(cov -> {
             if (cov.hasCoverageData()) {
                 CoverageModel coverageModel = new CoverageModel();
+                coverageModel.setTool(CoverageModel.ToolEnum.JACOCO);
                 coverageModel.setCoveredLines(cov.getCovered() + cov.getPartial());
                 coverageModel.setMissedLines(cov.getMissed());
                 coverageModel.setLinePercent(cov.lineCoveragePercent());
@@ -301,11 +309,15 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             BinarySignatureData signatureData = methodCall.toBinarySignature();
 
             MethodCallModel methodCallModel = new MethodCallModel();
+            methodCallModel.setOwner(signatureData.getOwnerClass());
+            methodCallModel.setName(signatureData.getMethodName());
+            methodCallModel.setDescriptor(signatureData.getDescriptor());
             methodCallModel.setTargetSignature(signatureData.getDescriptor());
             methodCallModel.setTargetClass(signatureData.getOwnerClass());
             methodCallModel.setTargetMethod(signatureData.getMethodName());
             methodCallModel.setIsStatic(methodCall.isStatic());
             methodCallModel.setIsConstructor(methodCall.isConstructor());
+            methodCallModel.setInvocationKind(resolveInvocationKind(methodCall));
 
             LocationModel callLocation = new LocationModel();
             callLocation.setStartLine(methodCall.getBeginLine());
@@ -319,15 +331,25 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             infoModel.getMethodCalls().add(methodCallModel);
         }
     }
-    private static void populateDiagnostics(JavaCodeBlockInfo javaBlock, CodeUnitModel codeUnitModel) {
+    private static void populateDiagnostics(JavaCodeBlockInfo javaBlock, CodeUnitModel codeUnitModel, String filePath) {
         for (BugInstance bug : javaBlock.getSpotbugs()) {
             DiagnosticModel diagnosticModel = new DiagnosticModel();
             diagnosticModel.setTool(DiagnosticModel.ToolEnum.SPOTBUGS);
             diagnosticModel.setRuleId(bug.getBugPattern().getType());
             diagnosticModel.setMessage(bug.getMessage());
             diagnosticModel.setCategory(bug.getBugPattern().getCategory());
-
+            diagnosticModel.setFilePath(filePath);
             diagnosticModel.setSeverity(SPOTBUGS_PRIORITY_MAPPER.apply(bug.getPriority()));
+
+            SpotbugsPropertiesModel spotbugsInfo = new SpotbugsPropertiesModel();
+            spotbugsInfo.setBugCategory(bug.getBugPattern().getCategory());
+            spotbugsInfo.setBugRank(bug.getBugRank());
+            spotbugsInfo.setConfidence(resolveSpotbugsConfidence(bug.getPriority()));
+            MethodAnnotation primaryMethod = bug.getPrimaryMethod();
+            if (Objects.nonNull(primaryMethod)) {
+                spotbugsInfo.setMethodSignature(primaryMethod.getFullMethod(bug.getPrimaryClass()));
+            }
+            diagnosticModel.setSpotbugsInfo(spotbugsInfo);
 
             Optional.ofNullable(bug.getPrimarySourceLineAnnotation()).ifPresent(srcLine -> {
                 LocationModel diagLocation = new LocationModel();
@@ -350,7 +372,18 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             diagnosticModel.setRuleId(violation.getRule().getName());
             diagnosticModel.setMessage(violation.getDescription());
             diagnosticModel.setCategory(violation.getRule().getRuleSetName());
+            diagnosticModel.setFilePath(filePath);
             diagnosticModel.setSeverity(PMD_PRIORITY_MAPPER.apply(violation.getRule().getPriority().getPriority()));
+
+            PmdPropertiesModel pmdInfo = new PmdPropertiesModel();
+            pmdInfo.setRuleSet(violation.getRule().getRuleSetName());
+            pmdInfo.setPriority(violation.getRule().getPriority().getPriority());
+            Optional.ofNullable(violation.getRule().getExternalInfoUrl()).ifPresent(url -> {
+                if (StringUtils.isNotEmpty(url)) {
+                    pmdInfo.setExternalInfoUrl(URI.create(url));
+                }
+            });
+            diagnosticModel.setPmdInfo(pmdInfo);
 
             LocationModel diagLocation = new LocationModel();
             diagLocation.setStartLine(violation.getBeginLine());
@@ -358,12 +391,6 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             diagLocation.setEndLine(violation.getEndLine());
             diagLocation.setEndColumn(violation.getEndColumn());
             diagnosticModel.setLocation(diagLocation);
-
-            Optional.ofNullable(violation.getRule().getExternalInfoUrl()).ifPresent(url -> {
-                if (StringUtils.isNotEmpty(url)) {
-                    diagnosticModel.setDocumentation(URI.create(url));
-                }
-            });
 
             codeUnitModel.getDiagnostics().add(diagnosticModel);
         }
@@ -377,6 +404,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             codeUnitModel.setKind(SymbolKindModel.CONSTRUCTOR);
             Optional.ofNullable(typeParameters).ifPresent(t -> t.forEach(tp -> infoModel.getTypeParameters().add(tp.getName())));
             Optional.ofNullable(throwsList).ifPresent(l -> l.forEach(tt -> infoModel.getThrowsTypes().add(tt.getSimpleName())));
+            populateAnnotations(constructor, infoModel);
 
         } else if (javaBlock instanceof JavaMethodBlockInfo) {
             ASTMethodDeclaration method = ((JavaMethodBlockInfo) javaBlock).getMethod();
@@ -386,6 +414,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             codeUnitModel.setKind(SymbolKindModel.METHOD);
             Optional.ofNullable(typeParameters).ifPresent(t -> t.forEach(tp -> infoModel.getTypeParameters().add(tp.getName())));
             Optional.ofNullable(throwsList).ifPresent(l -> l.forEach(tt -> infoModel.getThrowsTypes().add(tt.getSimpleName())));
+            populateAnnotations(method, infoModel);
         }
     }
     private static void populateMetrics(SubmissionContext ctx, FileAnalysis fileAnalysis, JavaCodeBlockInfo javaBlock, CodeUnitModel codeUnitModel) {
@@ -397,6 +426,13 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             metricsModel.setLogicalLinesOfCode(metrics.ncss());
             metricsModel.setFanOut(metrics.fanOut());
             metricsModel.setNpath(metrics.npath());
+
+            if (javaBlock instanceof JavaMethodBlockInfo) {
+                metricsModel.setParameterCount(((JavaMethodBlockInfo) javaBlock).getMethod().getArity());
+            } else if (javaBlock instanceof JavaConstructorBlockInfo) {
+                metricsModel.setParameterCount(((JavaConstructorBlockInfo) javaBlock).getConstructor().getArity());
+            }
+
             codeUnitModel.setMetrics(metricsModel);
 
             fileAnalysis.project().ifPresent(spec -> {
@@ -418,5 +454,35 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
                 });
             }
         });
+    }
+    private static void populateAnnotations(Annotatable declaration, JavaInfoModel infoModel) {
+        for (ASTAnnotation annotation : declaration.getDeclaredAnnotations()) {
+            JavaAnnotationModel annotationModel = new JavaAnnotationModel();
+            annotationModel.setName(annotation.getSimpleName());
+            annotationModel.setQualifiedName(annotation.getTypeMirror().getSymbol().getBinaryName());
+            infoModel.getAnnotations().add(annotationModel);
+        }
+    }
+    private static MethodCallModel.InvocationKindEnum resolveInvocationKind(JBinaryMethodSig methodCall) {
+        if (methodCall.isConstructor()) {
+            return MethodCallModel.InvocationKindEnum.INVOKESPECIAL;
+        } else if (methodCall.isStatic()) {
+            return MethodCallModel.InvocationKindEnum.INVOKESTATIC;
+        } else if (methodCall.getCall() instanceof ASTMethodReference) {
+            return MethodCallModel.InvocationKindEnum.REFERENCE;
+        } else if (methodCall.isInterfaceCall()) {
+            return MethodCallModel.InvocationKindEnum.INVOKEINTERFACE;
+        } else {
+            return MethodCallModel.InvocationKindEnum.INVOKEVIRTUAL;
+        }
+    }
+    private static SpotbugsPropertiesModel.ConfidenceEnum resolveSpotbugsConfidence(int priority) {
+        if (priority == Priorities.HIGH_PRIORITY) {
+            return SpotbugsPropertiesModel.ConfidenceEnum.HIGH;
+        } else if (priority == Priorities.NORMAL_PRIORITY) {
+            return SpotbugsPropertiesModel.ConfidenceEnum.MEDIUM;
+        } else {
+            return SpotbugsPropertiesModel.ConfidenceEnum.LOW;
+        }
     }
 }

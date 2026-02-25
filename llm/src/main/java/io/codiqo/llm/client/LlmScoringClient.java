@@ -90,7 +90,11 @@ public class LlmScoringClient implements ScoringClient {
                 .build();
     }
     @Override
-    public ScoringResult score(LlmScoringRequest request, PromptContext context, StreamingHandler handler) throws Exception {
+    public ScoringResult score(ScoringClient.Params params) throws Exception {
+        LlmScoringRequest request = params.getRequest();
+        PromptContext context = params.getContext();
+        StreamingHandler handler = params.getHandler();
+
         String systemPrompt = promptBuilder.buildSystemPrompt(context);
         UserMessageResult userMessageResult = promptBuilder.buildUserMessageWithScores(request, context);
         String userMessage = userMessageResult.getMessage();

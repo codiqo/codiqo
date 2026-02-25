@@ -14,8 +14,17 @@ import io.codiqo.llm.schema.LlmScoringResponse;
 import lombok.Builder;
 import lombok.Value;
 
-public interface ScoringClient extends Closeable {
-    ScoringResult score(LlmScoringRequest request, PromptContext context, StreamingHandler handler) throws Exception;
+public interface ScoringClient extends Scorer<ScoringClient.Params, ScoringClient.ScoringResult>, Closeable {
+    @Value
+    @Builder
+    class Params {
+        LlmScoringRequest request;
+        PromptContext context;
+        StreamingHandler handler;
+    }
+
+    @Override
+    ScoringResult score(Params params) throws Exception;
 
     @Value
     @Builder
