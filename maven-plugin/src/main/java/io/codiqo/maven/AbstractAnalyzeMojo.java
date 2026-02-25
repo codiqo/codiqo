@@ -76,6 +76,7 @@ import io.codiqo.api.LanguageProcessors;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.LogFactory;
+import io.codiqo.client.model.ScoringConfigModel;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.maven.logging.MavenLogFactory;
@@ -291,18 +292,15 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         Set<URI> jars = Sets.newLinkedHashSet();
         projects.stream()
                 .filter(reactor -> BooleanUtils.negate(NON_CODE_PACKAGINGS.contains(reactor.getPackaging())))
-                .filter(reactor -> CollectionUtils.isEmpty(reactor.getModules())).filter(new Predicate<>() {
-                    @Override
-                    public boolean test(MavenProject reactor) {
-                        for (;;) {
-                            try {
-                                return BooleanUtils.or(new boolean[] {
-                                        CollectionUtils.isNotEmpty(reactor.getCompileClasspathElements()),
-                                        CollectionUtils.isNotEmpty(reactor.getTestClasspathElements()),
-                                });
-                            } catch (Exception err) {
-                                ExceptionUtils.wrapAndThrow(err);
-                            }
+                .filter(reactor -> CollectionUtils.isEmpty(reactor.getModules())).filter(reactor -> {
+                    for (;;) {
+                        try {
+                            return BooleanUtils.or(new boolean[] {
+                                    CollectionUtils.isNotEmpty(reactor.getCompileClasspathElements()),
+                                    CollectionUtils.isNotEmpty(reactor.getTestClasspathElements()),
+                            });
+                        } catch (Exception err) {
+                            ExceptionUtils.wrapAndThrow(err);
                         }
                     }
                 }).forEach(prj -> {
@@ -436,7 +434,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     "verify",
                     "-DskipTests=true",
                     "-Djacoco.skip=true",
-                    "-Dmaven.javadoc.skip=true"));
+                    "-Dmaven.javadoc.skip=true",
+                    "-Dmdep.analyze.skip=true"));
         } else {
             request.addArgs(ImmutableList.of(
                     "clean",
@@ -445,7 +444,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     "-DfailIfNoTests=false",
                     "-Djacoco.skip=false",
                     "-Dmaven.test.failure.ignore=true",
-                    "-Dmaven.javadoc.skip=true"));
+                    "-Dmaven.javadoc.skip=true",
+                    "-Dmdep.analyze.skip=true"));
         }
         request.setBatchMode(true);
         request.setThreads(String.valueOf(mavenSession.getRequest().getDegreeOfConcurrency()));
@@ -526,8 +526,181 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     protected void doExecute(RunArgs args) throws Exception {
         SubmissionContext ctx = doAnalyze(args);
         if (Objects.nonNull(ctx) && BooleanUtils.negate(ctx.getAnalysis().isRevertCommit())) {
+            ctx.getSubmissionModel().setScoringConfig(mapScoringConfig(args));
             doLlmScoring(ctx);
         }
+    }
+    private static ScoringConfigModel mapScoringConfig(RunArgs args) {
+        ScoringConfigModel toReturn = new ScoringConfigModel();
+
+        toReturn.setCommitId(args.getCommitId());
+        toReturn.setJdtlsVersion(args.getJdtlsVersion());
+        toReturn.setPmdMinPriority(args.getPmdMinPriority());
+        toReturn.setSpotbugsPriorityThreshold(args.getSpotbugsPriorityThreshold());
+        toReturn.setSpotbugsOmitVisitors(args.getSpotbugsOmitVisitors());
+
+        toReturn.setIncludeUntracked(args.isIncludeUntracked());
+        toReturn.setAutoBuild(args.isAutoBuild());
+        toReturn.setDumpAnalysis(args.isDumpAnalysis());
+        toReturn.setIgnoreCoverage(args.isIgnoreCoverage());
+        toReturn.setIgnoreComplexity(args.isIgnoreComplexity());
+        toReturn.setIgnoreCpd(args.isIgnoreCpd());
+        toReturn.setIgnoreDiagnostics(args.isIgnoreDiagnostics());
+
+        toReturn.setImportTimeout(Optional.ofNullable(args.getImportTimeout()).map(Duration::toString).orElse(null));
+        toReturn.setConnectTimeout(Optional.ofNullable(args.getConnectTimeout()).map(Duration::toString).orElse(null));
+        toReturn.setReadTimeout(Optional.ofNullable(args.getReadTimeout()).map(Duration::toString).orElse(null));
+
+        toReturn.setMaxRequests(args.getMaxRequests());
+        toReturn.setMaxRequestsPerHost(args.getMaxRequestsPerHost());
+        toReturn.setCpdMinimumTileSize(args.getCpdMinimumTileSize());
+        toReturn.setCpdIntroducedThreshold(args.getCpdIntroducedThreshold());
+
+        toReturn.setLlmModel(args.getLlmModel());
+        toReturn.setLlmBaseUrl(args.getLlmBaseUrl());
+        toReturn.setLlmTemperature(args.getLlmTemperature());
+        toReturn.setLlmTopP(args.getLlmTopP());
+        toReturn.setLlmMaxTokens(args.getLlmMaxTokens());
+        toReturn.setLlmMaxRetries(Optional.ofNullable(args.getLlmMaxRetries()).map(Short::intValue).orElse(null));
+        toReturn.setLlmEnableWebSearchTool(args.isLlmEnableWebSearchTool());
+
+        toReturn.setIncludeBranches(args.getIncludeBranches());
+        toReturn.setIncludeAuthorEmails(args.getIncludeAuthorEmails());
+
+        toReturn.setSizeFactorDivisor(args.getSizeFactorDivisor());
+        toReturn.setModifyMultiplierScale(args.getModifyMultiplierScale());
+        toReturn.setModifyMultiplierCap(args.getModifyMultiplierCap());
+        toReturn.setAddMultiplierScale(args.getAddMultiplierScale());
+        toReturn.setRelativeAdjustmentFactor(args.getRelativeAdjustmentFactor());
+        toReturn.setRelativeAdjustmentMin(args.getRelativeAdjustmentMin());
+        toReturn.setRelativeAdjustmentMax(args.getRelativeAdjustmentMax());
+        toReturn.setQualityMultiplierMin(args.getQualityMultiplierMin());
+        toReturn.setQualityMultiplierMax(args.getQualityMultiplierMax());
+
+        toReturn.setStaticAnalysisPenaltyCap(args.getStaticAnalysisPenaltyCap());
+        toReturn.setStaticAnalysisIntroducedPenalty(args.getStaticAnalysisIntroducedPenalty());
+        toReturn.setStaticAnalysisPreExistingPenalty(args.getStaticAnalysisPreExistingPenalty());
+        toReturn.setStaticAnalysisCleanBonus(args.getStaticAnalysisCleanBonus());
+        toReturn.setArchitecturePenaltyCap(args.getArchitecturePenaltyCap());
+        toReturn.setQualityGatePenaltyCap(args.getQualityGatePenaltyCap());
+
+        toReturn.setDefaultComplexityMultiplier(args.getDefaultComplexityMultiplier());
+        toReturn.setVolumeExponent(args.getVolumeExponent());
+        toReturn.setFilesScopeFactor(args.getFilesScopeFactor());
+        toReturn.setFileDensityThreshold(args.getFileDensityThreshold());
+        toReturn.setLinesDensityCapMultiplier(args.getLinesDensityCapMultiplier());
+        toReturn.setNcssQuantile(args.getNcssQuantile());
+
+        toReturn.setCoverageLowThreshold(args.getCoverageLowThreshold());
+        toReturn.setCoverageCriticalThreshold(args.getCoverageCriticalThreshold());
+        toReturn.setCoverageHighThreshold(args.getCoverageHighThreshold());
+        toReturn.setHighComplexityThreshold(args.getHighComplexityThreshold());
+
+        toReturn.setLinesLogFactor(args.getLinesLogFactor());
+        toReturn.setCodeBlocksModifiedLogFactor(args.getCodeBlocksModifiedLogFactor());
+        toReturn.setCodeBlocksAddedLogFactor(args.getCodeBlocksAddedLogFactor());
+        toReturn.setClassesModifiedLogFactor(args.getClassesModifiedLogFactor());
+        toReturn.setClassesAddedLogFactor(args.getClassesAddedLogFactor());
+
+        toReturn.setComplexityTrivialMax(args.getComplexityTrivialMax());
+        toReturn.setComplexityModerateMax(args.getComplexityModerateMax());
+        toReturn.setComplexityComplexMax(args.getComplexityComplexMax());
+
+        toReturn.setModifyTrivialMultiplier(args.getModifyTrivialMultiplier());
+        toReturn.setModifyModerateMultiplier(args.getModifyModerateMultiplier());
+        toReturn.setModifyComplexMultiplier(args.getModifyComplexMultiplier());
+        toReturn.setModifyHighlyComplexMultiplier(args.getModifyHighlyComplexMultiplier());
+        toReturn.setCreateTrivialMultiplier(args.getCreateTrivialMultiplier());
+        toReturn.setCreateModerateMultiplier(args.getCreateModerateMultiplier());
+        toReturn.setCreateComplexMultiplier(args.getCreateComplexMultiplier());
+        toReturn.setCreateHighlyComplexMultiplier(args.getCreateHighlyComplexMultiplier());
+
+        toReturn.setCpdCleanBonus(args.getCpdCleanBonus());
+        toReturn.setCpdModeratePenalty(args.getCpdModeratePenalty());
+        toReturn.setCpdHighPenalty(args.getCpdHighPenalty());
+        toReturn.setCpdSeverePenalty(args.getCpdSeverePenalty());
+        toReturn.setCpdCleanThreshold(args.getCpdCleanThreshold());
+        toReturn.setCpdAcceptableThreshold(args.getCpdAcceptableThreshold());
+        toReturn.setCpdModerateThreshold(args.getCpdModerateThreshold());
+        toReturn.setCpdHighThreshold(args.getCpdHighThreshold());
+        toReturn.setTestCodePenaltyWeight(args.getTestCodePenaltyWeight());
+
+        toReturn.setScoreThresholdHuge(args.getScoreThresholdHuge());
+        toReturn.setScoreThresholdLarge(args.getScoreThresholdLarge());
+        toReturn.setScoreThresholdMedium(args.getScoreThresholdMedium());
+        toReturn.setScoreThresholdSmall(args.getScoreThresholdSmall());
+
+        toReturn.setDimensionScoreCritical(args.getDimensionScoreCritical());
+        toReturn.setDimensionScoreMajor(args.getDimensionScoreMajor());
+        toReturn.setDimensionScoreModerate(args.getDimensionScoreModerate());
+
+        toReturn.setCallerThresholdHigh(args.getCallerThresholdHigh());
+        toReturn.setCallerThresholdModerate(args.getCallerThresholdModerate());
+
+        toReturn.setMaxClonesToShow(args.getMaxClonesToShow());
+        toReturn.setMaxSourceLines(args.getMaxSourceLines());
+        toReturn.setTruncateSourceLines(args.getTruncateSourceLines());
+
+        toReturn.setArchitectureBonusFactor(args.getArchitectureBonusFactor());
+
+        toReturn.setPmdPriority1Penalty(args.getPmdPriority1Penalty());
+        toReturn.setPmdPriority2Penalty(args.getPmdPriority2Penalty());
+        toReturn.setPmdPriority3Penalty(args.getPmdPriority3Penalty());
+        toReturn.setSpotbugsScariestPenalty(args.getSpotbugsScariestPenalty());
+        toReturn.setSpotbugsScaryPenalty(args.getSpotbugsScaryPenalty());
+        toReturn.setSpotbugsTroublingPenalty(args.getSpotbugsTroublingPenalty());
+
+        toReturn.setCoverageExcellentBonus(args.getCoverageExcellentBonus());
+        toReturn.setCoverageGoodBonus(args.getCoverageGoodBonus());
+        toReturn.setCoverageLowPenalty(args.getCoverageLowPenalty());
+        toReturn.setCoveragePoorPenalty(args.getCoveragePoorPenalty());
+        toReturn.setCoverageTerriblePenalty(args.getCoverageTerriblePenalty());
+
+        toReturn.setArchitectureMinorPenalty(args.getArchitectureMinorPenalty());
+        toReturn.setArchitectureSolidPenalty(args.getArchitectureSolidPenalty());
+        toReturn.setArchitectureMajorPenalty(args.getArchitectureMajorPenalty());
+        toReturn.setQualityGateFailurePenalty(args.getQualityGateFailurePenalty());
+
+        toReturn.setArchitectureImpactScoreThreshold(args.getArchitectureImpactScoreThreshold());
+        toReturn.setArchitectureImpactCoverageRequired(args.getArchitectureImpactCoverageRequired());
+        toReturn.setConcurrencyRiskThreshold(args.getConcurrencyRiskThreshold());
+        toReturn.setIntegrationSurfaceThreshold(args.getIntegrationSurfaceThreshold());
+        toReturn.setDataIntegrityThreshold(args.getDataIntegrityThreshold());
+        toReturn.setSecuritySensitivityThreshold(args.getSecuritySensitivityThreshold());
+        toReturn.setScalabilityImpactThreshold(args.getScalabilityImpactThreshold());
+        toReturn.setObservabilityThreshold(args.getObservabilityThreshold());
+        toReturn.setResilienceThreshold(args.getResilienceThreshold());
+        toReturn.setPerformanceThreshold(args.getPerformanceThreshold());
+        toReturn.setSeniorReviewThreshold(args.getSeniorReviewThreshold());
+        toReturn.setSeniorReviewCriticalThreshold(args.getSeniorReviewCriticalThreshold());
+
+        toReturn.setComplexityHighDisplayThreshold(args.getComplexityHighDisplayThreshold());
+        toReturn.setComplexityModerateDisplayThreshold(args.getComplexityModerateDisplayThreshold());
+
+        toReturn.setSimilarityCriticalThreshold(args.getSimilarityCriticalThreshold());
+        toReturn.setSimilarityMajorThreshold(args.getSimilarityMajorThreshold());
+
+        toReturn.setRiskHighDimensionThreshold(args.getRiskHighDimensionThreshold());
+        toReturn.setRiskBaseMultiplier(args.getRiskBaseMultiplier());
+        toReturn.setRiskHighDimensionPenalty(args.getRiskHighDimensionPenalty());
+        toReturn.setRiskCoreLibraryPenalty(args.getRiskCoreLibraryPenalty());
+        toReturn.setRiskBreakingChangesPenalty(args.getRiskBreakingChangesPenalty());
+        toReturn.setRiskScoreMax(args.getRiskScoreMax());
+        toReturn.setRiskLevelLowMax(args.getRiskLevelLowMax());
+        toReturn.setRiskLevelModerateMax(args.getRiskLevelModerateMax());
+        toReturn.setRiskLevelHighMax(args.getRiskLevelHighMax());
+        toReturn.setRiskLevelVeryHighMax(args.getRiskLevelVeryHighMax());
+
+        toReturn.setCoverageImpactExcellentMin(args.getCoverageImpactExcellentMin());
+        toReturn.setCoverageImpactGoodMin(args.getCoverageImpactGoodMin());
+        toReturn.setCoverageImpactAcceptableMin(args.getCoverageImpactAcceptableMin());
+        toReturn.setCoverageImpactLowMin(args.getCoverageImpactLowMin());
+        toReturn.setCoverageImpactPoorMin(args.getCoverageImpactPoorMin());
+
+        toReturn.setFanOutHighThreshold(args.getFanOutHighThreshold());
+        toReturn.setNpathComplexThreshold(args.getNpathComplexThreshold());
+
+        return toReturn;
     }
     protected SubmissionContext doAnalyze(RunArgs args) throws Exception {
         LogFactory logFactory = new MavenLogFactory(getLog());

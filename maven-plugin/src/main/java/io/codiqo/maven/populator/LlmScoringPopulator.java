@@ -2,8 +2,8 @@ package io.codiqo.maven.populator;
 
 import java.io.BufferedOutputStream;
 import java.io.File;
-import java.io.OutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.Duration;
@@ -25,10 +25,9 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.util.StdDateFormat;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-
-import io.codiqo.api.RunArgs;
 import com.google.common.collect.Maps;
 
+import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisResultModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CommitModel;
@@ -43,6 +42,7 @@ import io.codiqo.llm.ReportBuilder.ReportContext;
 import io.codiqo.llm.SubmissionToRequestMapper;
 import io.codiqo.llm.client.LlmScoringClient;
 import io.codiqo.llm.client.ScoringClient;
+import io.codiqo.llm.client.ScoringClient.Params;
 import io.codiqo.llm.client.ScoringClient.ScoringResult;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringResponse;
@@ -64,21 +64,20 @@ public class LlmScoringPopulator implements SubmissionPopulator {
             LlmScoringRequest request = mapper.apply(submission);
             PromptContext promptContext = buildPromptContext(submission, args);
 
-            ScoringResult result = client.score(request, promptContext, new ScoringClient.StreamingHandler() {
-                private int contentChars = 0;
-
-                @Override
-                public void onContent(String delta) {
-                    contentChars += delta.length();
-                    if (contentChars % 1000 < delta.length()) {
-                        log.info("LLM responding... (" + contentChars + " chars)");
-                    }
-                }
-                @Override
-                public void onToolCall(String toolName) {
-                    log.info("Tool call: " + toolName);
-                }
-            });
+            Params params = ScoringClient.Params.builder()
+                    .request(request)
+                    .context(promptContext)
+                    .handler(new ScoringClient.StreamingHandler() {
+                        @Override
+                        public void onContent(String delta) {
+                            log.info("LLM responding... (" + delta.length() + " chars)");
+                        }
+                        @Override
+                        public void onToolCall(String toolName) {
+                            log.info("Tool call: " + toolName);
+                        }
+                    }).build();
+            ScoringResult result = client.score(params);
 
             stopWatch.stop();
             Duration duration = Duration.ofMillis(stopWatch.getTime());

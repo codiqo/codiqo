@@ -71,6 +71,10 @@ class PmdJBinaryMethodSig implements JBinaryMethodSig {
         return isConstructor;
     }
     @Override
+    public boolean isInterfaceCall() {
+        return symbol.isInterface();
+    }
+    @Override
     public int getBeginLine() {
         return call.getBeginLine();
     }

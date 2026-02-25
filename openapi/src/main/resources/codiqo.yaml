@@ -93,6 +93,29 @@ paths:
       security:
         - apiKey: []
 
+  /api/v1/analyses/commit/{commitSha}:
+    get:
+      operationId: getAnalysisByCommitSha
+      tags: [Analysis]
+      summary: Get analysis result by commit SHA
+      parameters:
+        - name: commitSha
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Analysis result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisResultModel'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - apiKey: []
+
 components:
   securitySchemes:
     apiKey:
@@ -147,6 +170,8 @@ components:
           $ref: '#/components/schemas/ProjectQualityModel'
         fullProjectCoverage:
           $ref: '#/components/schemas/FullProjectCoverageModel'
+        scoringConfig:
+          $ref: '#/components/schemas/ScoringConfigModel'
 
     AnalysisAcceptedModel:
       type: object
@@ -1111,17 +1136,9 @@ components:
           type: array
           items:
             type: string
-        documentation:
-          type: string
         isTrivial:
           type: boolean
           default: false
-        parent:
-          type: string
-        children:
-          type: array
-          items:
-            type: string
         javaInfo:
           $ref: '#/components/schemas/JavaInfoModel'
         callers:
@@ -1181,12 +1198,6 @@ components:
           type: integer
           minimum: 1
         endColumn:
-          type: integer
-          minimum: 0
-        startOffset:
-          type: integer
-          minimum: 0
-        endOffset:
           type: integer
           minimum: 0
 
@@ -1341,16 +1352,7 @@ components:
         logicalLinesOfCode:
           type: integer
           minimum: 0
-        sourceLines:
-          type: integer
-          minimum: 0
-        commentLines:
-          type: integer
-          minimum: 0
         parameterCount:
-          type: integer
-          minimum: 0
-        nestingDepth:
           type: integer
           minimum: 0
         fanOut:
@@ -1362,50 +1364,6 @@ components:
           format: int64
           minimum: 0
           description: Number of acyclic execution paths through the method
-        halstead:
-          $ref: '#/components/schemas/HalsteadMetricsModel'
-        maintainabilityIndex:
-          type: number
-          format: double
-          minimum: 0
-          maximum: 100
-
-    HalsteadMetricsModel:
-      type: object
-      properties:
-        distinctOperators:
-          type: integer
-          minimum: 0
-        distinctOperands:
-          type: integer
-          minimum: 0
-        totalOperators:
-          type: integer
-          minimum: 0
-        totalOperands:
-          type: integer
-          minimum: 0
-        vocabulary:
-          type: integer
-          minimum: 0
-        length:
-          type: integer
-          minimum: 0
-        volume:
-          type: number
-          format: double
-        difficulty:
-          type: number
-          format: double
-        effort:
-          type: number
-          format: double
-        estimatedTime:
-          type: number
-          format: double
-        estimatedBugs:
-          type: number
-          format: double
 
     # ==========================================================================
     # Coverage
@@ -1520,10 +1478,6 @@ components:
           $ref: '#/components/schemas/PmdPropertiesModel'
         spotbugsInfo:
           $ref: '#/components/schemas/SpotbugsPropertiesModel'
-        isPreExisting:
-          type: boolean
-          description: Did this issue exist before this commit?
-          default: false
 
     PmdPropertiesModel:
       type: object
@@ -1639,7 +1593,7 @@ components:
       properties:
         memberSignatures:
           type: array
-          minItems: 2
+          minItems: 1
           items:
             type: string
 
@@ -2381,6 +2335,362 @@ components:
         snippet:
           type: string
           description: Content snippet/summary from the page
+
+    # ==========================================================================
+    # Scoring Config (RunArgs non-transient fields)
+    # ==========================================================================
+
+    ScoringConfigModel:
+      type: object
+      properties:
+        commitId:
+          type: string
+        jdtlsVersion:
+          type: string
+        pmdMinPriority:
+          type: string
+        spotbugsPriorityThreshold:
+          type: integer
+        spotbugsOmitVisitors:
+          type: string
+        includeUntracked:
+          type: boolean
+        autoBuild:
+          type: boolean
+        dumpAnalysis:
+          type: boolean
+        ignoreCoverage:
+          type: boolean
+        ignoreComplexity:
+          type: boolean
+        ignoreCpd:
+          type: boolean
+        ignoreDiagnostics:
+          type: boolean
+        importTimeout:
+          type: string
+          description: ISO-8601 duration
+        connectTimeout:
+          type: string
+          description: ISO-8601 duration
+        readTimeout:
+          type: string
+          description: ISO-8601 duration
+        maxRequests:
+          type: integer
+        maxRequestsPerHost:
+          type: integer
+        cpdMinimumTileSize:
+          type: integer
+        cpdIntroducedThreshold:
+          type: number
+          format: double
+        llmModel:
+          type: string
+        llmBaseUrl:
+          type: string
+        llmTemperature:
+          type: number
+          format: double
+        llmTopP:
+          type: number
+          format: double
+        llmMaxTokens:
+          type: integer
+        llmMaxRetries:
+          type: integer
+        llmEnableWebSearchTool:
+          type: boolean
+        includeBranches:
+          type: string
+        includeAuthorEmails:
+          type: string
+        sizeFactorDivisor:
+          type: number
+          format: double
+        modifyMultiplierScale:
+          type: number
+          format: double
+        modifyMultiplierCap:
+          type: number
+          format: double
+        addMultiplierScale:
+          type: number
+          format: double
+        relativeAdjustmentFactor:
+          type: number
+          format: double
+        relativeAdjustmentMin:
+          type: number
+          format: double
+        relativeAdjustmentMax:
+          type: number
+          format: double
+        qualityMultiplierMin:
+          type: number
+          format: double
+        qualityMultiplierMax:
+          type: number
+          format: double
+        staticAnalysisPenaltyCap:
+          type: number
+          format: double
+        staticAnalysisIntroducedPenalty:
+          type: number
+          format: double
+        staticAnalysisPreExistingPenalty:
+          type: number
+          format: double
+        staticAnalysisCleanBonus:
+          type: number
+          format: double
+        architecturePenaltyCap:
+          type: number
+          format: double
+        qualityGatePenaltyCap:
+          type: number
+          format: double
+        defaultComplexityMultiplier:
+          type: number
+          format: double
+        volumeExponent:
+          type: number
+          format: double
+        filesScopeFactor:
+          type: number
+          format: double
+        fileDensityThreshold:
+          type: number
+          format: double
+        linesDensityCapMultiplier:
+          type: number
+          format: double
+        ncssQuantile:
+          type: number
+          format: double
+        coverageLowThreshold:
+          type: number
+          format: double
+        coverageCriticalThreshold:
+          type: number
+          format: double
+        coverageHighThreshold:
+          type: number
+          format: double
+        highComplexityThreshold:
+          type: integer
+        linesLogFactor:
+          type: number
+          format: double
+        codeBlocksModifiedLogFactor:
+          type: number
+          format: double
+        codeBlocksAddedLogFactor:
+          type: number
+          format: double
+        classesModifiedLogFactor:
+          type: number
+          format: double
+        classesAddedLogFactor:
+          type: number
+          format: double
+        complexityTrivialMax:
+          type: integer
+        complexityModerateMax:
+          type: integer
+        complexityComplexMax:
+          type: integer
+        modifyTrivialMultiplier:
+          type: number
+          format: double
+        modifyModerateMultiplier:
+          type: number
+          format: double
+        modifyComplexMultiplier:
+          type: number
+          format: double
+        modifyHighlyComplexMultiplier:
+          type: number
+          format: double
+        createTrivialMultiplier:
+          type: number
+          format: double
+        createModerateMultiplier:
+          type: number
+          format: double
+        createComplexMultiplier:
+          type: number
+          format: double
+        createHighlyComplexMultiplier:
+          type: number
+          format: double
+        cpdCleanBonus:
+          type: number
+          format: double
+        cpdModeratePenalty:
+          type: number
+          format: double
+        cpdHighPenalty:
+          type: number
+          format: double
+        cpdSeverePenalty:
+          type: number
+          format: double
+        cpdCleanThreshold:
+          type: number
+          format: double
+        cpdAcceptableThreshold:
+          type: number
+          format: double
+        cpdModerateThreshold:
+          type: number
+          format: double
+        cpdHighThreshold:
+          type: number
+          format: double
+        testCodePenaltyWeight:
+          type: number
+          format: double
+        scoreThresholdHuge:
+          type: integer
+        scoreThresholdLarge:
+          type: integer
+        scoreThresholdMedium:
+          type: integer
+        scoreThresholdSmall:
+          type: integer
+        dimensionScoreCritical:
+          type: integer
+        dimensionScoreMajor:
+          type: integer
+        dimensionScoreModerate:
+          type: integer
+        callerThresholdHigh:
+          type: integer
+        callerThresholdModerate:
+          type: integer
+        maxClonesToShow:
+          type: integer
+        maxSourceLines:
+          type: integer
+        truncateSourceLines:
+          type: integer
+        architectureBonusFactor:
+          type: number
+          format: double
+        pmdPriority1Penalty:
+          type: number
+          format: double
+        pmdPriority2Penalty:
+          type: number
+          format: double
+        pmdPriority3Penalty:
+          type: number
+          format: double
+        spotbugsScariestPenalty:
+          type: number
+          format: double
+        spotbugsScaryPenalty:
+          type: number
+          format: double
+        spotbugsTroublingPenalty:
+          type: number
+          format: double
+        coverageExcellentBonus:
+          type: number
+          format: double
+        coverageGoodBonus:
+          type: number
+          format: double
+        coverageLowPenalty:
+          type: number
+          format: double
+        coveragePoorPenalty:
+          type: number
+          format: double
+        coverageTerriblePenalty:
+          type: number
+          format: double
+        architectureMinorPenalty:
+          type: number
+          format: double
+        architectureSolidPenalty:
+          type: number
+          format: double
+        architectureMajorPenalty:
+          type: number
+          format: double
+        qualityGateFailurePenalty:
+          type: number
+          format: double
+        architectureImpactScoreThreshold:
+          type: integer
+        architectureImpactCoverageRequired:
+          type: integer
+        concurrencyRiskThreshold:
+          type: integer
+        integrationSurfaceThreshold:
+          type: integer
+        dataIntegrityThreshold:
+          type: integer
+        securitySensitivityThreshold:
+          type: integer
+        scalabilityImpactThreshold:
+          type: integer
+        observabilityThreshold:
+          type: integer
+        resilienceThreshold:
+          type: integer
+        performanceThreshold:
+          type: integer
+        seniorReviewThreshold:
+          type: integer
+        seniorReviewCriticalThreshold:
+          type: integer
+        complexityHighDisplayThreshold:
+          type: integer
+        complexityModerateDisplayThreshold:
+          type: integer
+        similarityCriticalThreshold:
+          type: number
+          format: double
+        similarityMajorThreshold:
+          type: number
+          format: double
+        riskHighDimensionThreshold:
+          type: integer
+        riskBaseMultiplier:
+          type: integer
+        riskHighDimensionPenalty:
+          type: integer
+        riskCoreLibraryPenalty:
+          type: integer
+        riskBreakingChangesPenalty:
+          type: integer
+        riskScoreMax:
+          type: integer
+        riskLevelLowMax:
+          type: integer
+        riskLevelModerateMax:
+          type: integer
+        riskLevelHighMax:
+          type: integer
+        riskLevelVeryHighMax:
+          type: integer
+        coverageImpactExcellentMin:
+          type: integer
+        coverageImpactGoodMin:
+          type: integer
+        coverageImpactAcceptableMin:
+          type: integer
+        coverageImpactLowMin:
+          type: integer
+        coverageImpactPoorMin:
+          type: integer
+        fanOutHighThreshold:
+          type: integer
+        npathComplexThreshold:
+          type: integer
 
     # ==========================================================================
     # Error

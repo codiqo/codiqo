@@ -51,13 +51,9 @@ import lombok.Value;
 
 public class HtmlReportBuilder implements ReportBuilder {
     private static final String TEMPLATE_COMMIT_ANALYSIS = "commit-analysis";
+    private static final TemplateEngine TEMPLATE_ENGINE;
 
-    private final RunArgs args;
-    private final TemplateEngine templateEngine;
-
-    public HtmlReportBuilder(RunArgs args) {
-        this.args = Objects.requireNonNull(args);
-
+    static {
         ClassLoaderTemplateResolver htmlResolver = new ClassLoaderTemplateResolver();
         htmlResolver.setPrefix("thymeleaf/html/");
         htmlResolver.setSuffix(".html");
@@ -65,8 +61,14 @@ public class HtmlReportBuilder implements ReportBuilder {
         htmlResolver.setCharacterEncoding(StandardCharsets.UTF_8.name());
         htmlResolver.setCacheable(true);
 
-        templateEngine = new TemplateEngine();
-        templateEngine.setTemplateResolver(htmlResolver);
+        TEMPLATE_ENGINE = new TemplateEngine();
+        TEMPLATE_ENGINE.setTemplateResolver(htmlResolver);
+    }
+
+    private final RunArgs args;
+
+    public HtmlReportBuilder(RunArgs args) {
+        this.args = Objects.requireNonNull(args);
     }
     @Override
     public String buildReport(ScoringResult result, LlmScoringRequest request, ReportContext reportContext) {
@@ -192,7 +194,7 @@ public class HtmlReportBuilder implements ReportBuilder {
 
         populateCriticalViolations(ctx, reportContext);
 
-        return templateEngine.process(TEMPLATE_COMMIT_ANALYSIS, ctx);
+        return TEMPLATE_ENGINE.process(TEMPLATE_COMMIT_ANALYSIS, ctx);
     }
     private void populateCpdDetails(Context ctx, LlmScoringRequest request) {
         DuplicationInfo dup = request.getDuplication();

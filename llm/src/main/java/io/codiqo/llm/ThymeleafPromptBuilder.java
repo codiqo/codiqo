@@ -34,14 +34,10 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private static final String TEMPLATE_USER_PROMPT = "user-message";
     private static final String TEMPLATE_WEB_SEARCH_RESULTS = "web-search-results";
     private static final String TEMPLATE_PRE_COMPUTED_SCORES = "pre-computed-scores";
+    private static final TemplateEngine TEMPLATE_ENGINE;
+    private static final ObjectMapper MAPPER;
 
-    private final Log log;
-    private final TemplateEngine templateEngine;
-    private final ObjectMapper mapper;
-    private final VolumeScoreCalculator volumeCalculator;
-
-    public ThymeleafPromptBuilder(RunArgs args, Log log) {
-        this.log = log;
+    static {
         ClassLoaderTemplateResolver resolver = new ClassLoaderTemplateResolver();
         resolver.setPrefix("thymeleaf/templates/");
         resolver.setSuffix(".txt");
@@ -49,23 +45,29 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         resolver.setCharacterEncoding(StandardCharsets.UTF_8.name());
         resolver.setCacheable(true);
 
-        templateEngine = new TemplateEngine();
-        templateEngine.setTemplateResolver(resolver);
+        TEMPLATE_ENGINE = new TemplateEngine();
+        TEMPLATE_ENGINE.setTemplateResolver(resolver);
 
-        mapper = new ObjectMapper();
-        mapper.setDateFormat(new StdDateFormat().withColonInTimeZone(true));
-        mapper.setDefaultPropertyInclusion(Include.NON_NULL);
-        mapper.disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
-        mapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
-        mapper.enable(SerializationFeature.INDENT_OUTPUT);
-        mapper.registerModule(new JavaTimeModule());
+        MAPPER = new ObjectMapper();
+        MAPPER.setDateFormat(new StdDateFormat().withColonInTimeZone(true));
+        MAPPER.setDefaultPropertyInclusion(Include.NON_NULL);
+        MAPPER.disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
+        MAPPER.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+        MAPPER.enable(SerializationFeature.INDENT_OUTPUT);
+        MAPPER.registerModule(new JavaTimeModule());
+    }
 
+    private final Log log;
+    private final VolumeScoreCalculator volumeCalculator;
+
+    public ThymeleafPromptBuilder(RunArgs args, Log log) {
+        this.log = log;
         volumeCalculator = new VolumeScoreCalculator(args);
     }
     @Override
     public String buildSystemPrompt(PromptContext context) {
         Context ctx = createContext(context);
-        return templateEngine.process(TEMPLATE_SYSTEM_PROMPT, ctx);
+        return TEMPLATE_ENGINE.process(TEMPLATE_SYSTEM_PROMPT, ctx);
     }
     @SneakyThrows
     @Override
@@ -74,7 +76,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         ctx.setVariable("request", request);
 
         Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> savedSlices = stripSourceSlices(request);
-        String requestJson = mapper.writeValueAsString(request);
+        String requestJson = MAPPER.writeValueAsString(request);
         restoreSourceSlices(savedSlices);
 
         ctx.setVariable("requestJson", requestJson);
@@ -84,7 +86,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         ctx.setVariable("preComputedScores", preComputedScores);
         ctx.setVariable("preComputedScoresSection", buildPreComputedScoresSection(preComputedScores));
 
-        String message = templateEngine.process(TEMPLATE_USER_PROMPT, ctx);
+        String message = TEMPLATE_ENGINE.process(TEMPLATE_USER_PROMPT, ctx);
         return new UserMessageResult(message, preComputedScores);
     }
     private void logPromptMetrics(LlmScoringRequest request, PreComputedScores scores, String requestJson) {
@@ -120,12 +122,12 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         Context ctx = new Context(Locale.ENGLISH);
         ctx.setVariable("query", query);
         ctx.setVariable("results", Optional.ofNullable(results).orElse(Collections.emptyList()));
-        return templateEngine.process(TEMPLATE_WEB_SEARCH_RESULTS, ctx);
+        return TEMPLATE_ENGINE.process(TEMPLATE_WEB_SEARCH_RESULTS, ctx);
     }
-    private String buildPreComputedScoresSection(PreComputedScores scores) {
+    private static String buildPreComputedScoresSection(PreComputedScores scores) {
         Context ctx = new Context(Locale.ENGLISH);
         ctx.setVariable("scores", scores);
-        return templateEngine.process(TEMPLATE_PRE_COMPUTED_SCORES, ctx);
+        return TEMPLATE_ENGINE.process(TEMPLATE_PRE_COMPUTED_SCORES, ctx);
     }
     private static Context createContext(PromptContext promptContext) {
         Context ctx = new Context(Locale.ENGLISH);

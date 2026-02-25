@@ -86,6 +86,9 @@
         <commons-compress.version>1.28.0</commons-compress.version>
         <commons-codec.version>1.19.0</commons-codec.version>
         <commons-math3.version>3.6.1</commons-math3.version>
+        <openrewrite.version>8.73.1</openrewrite.version>
+        <openrewrite.recipe.version>2.27.0</openrewrite.recipe.version>
+        <antlr4.version>4.13.2</antlr4.version>
         <aether.version>2.0.13</aether.version>
         <maven.plugin-annotations.version>3.15.2</maven.plugin-annotations.version>
         <maven.version>3.9.11</maven.version>
@@ -123,6 +126,7 @@
         <version.openapi.plugin>7.19.0</version.openapi.plugin>
         <version.buildhelper.plugin>3.6.1</version.buildhelper.plugin>
         <version.os.plugin>1.7.1</version.os.plugin>
+        <version.plugin.plugin>3.13.1</version.plugin.plugin>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -683,6 +687,51 @@
                 <artifactId>org.eclipse.lsp4j.jsonrpc</artifactId>
                 <version>${lsp4j.version}</version>
             </dependency>
+            <dependency>
+                <groupId>org.openrewrite</groupId>
+                <artifactId>rewrite-core</artifactId>
+                <version>${openrewrite.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.openrewrite</groupId>
+                <artifactId>rewrite-java</artifactId>
+                <version>${openrewrite.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.openrewrite</groupId>
+                <artifactId>rewrite-kotlin</artifactId>
+                <version>${openrewrite.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.openrewrite</groupId>
+                <artifactId>rewrite-java-11</artifactId>
+                <version>${openrewrite.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.openrewrite</groupId>
+                <artifactId>rewrite-java-17</artifactId>
+                <version>${openrewrite.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.openrewrite</groupId>
+                <artifactId>rewrite-java-21</artifactId>
+                <version>${openrewrite.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.openrewrite</groupId>
+                <artifactId>rewrite-java-25</artifactId>
+                <version>${openrewrite.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.openrewrite.recipe</groupId>
+                <artifactId>rewrite-static-analysis</artifactId>
+                <version>${openrewrite.recipe.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.antlr</groupId>
+                <artifactId>antlr4-runtime</artifactId>
+                <version>${antlr4.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
     <build>
@@ -700,6 +749,18 @@
         </testResources>
         <pluginManagement>
             <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-plugin-plugin</artifactId>
+                    <version>${version.plugin.plugin}</version>
+                    <dependencies>
+                        <dependency>
+                            <groupId>org.ow2.asm</groupId>
+                            <artifactId>asm</artifactId>
+                            <version>${asm.version}</version>
+                        </dependency>
+                    </dependencies>
+                </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-gpg-plugin</artifactId>

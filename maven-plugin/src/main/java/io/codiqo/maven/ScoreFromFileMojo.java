@@ -2,9 +2,9 @@ package io.codiqo.maven;
 
 import java.io.BufferedOutputStream;
 import java.io.File;
-import java.nio.file.Files;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.time.Duration;
 import java.time.format.DateTimeFormatter;
 import java.util.Collections;
@@ -127,21 +127,20 @@ public class ScoreFromFileMojo extends AbstractMojo {
             StopWatch stopWatch = StopWatch.createStarted();
             ScoringResult result;
             try (LlmScoringClient client = new LlmScoringClient(args, new MavenMessageReporter(getLog()))) {
-                result = client.score(request, promptContext, new ScoringClient.StreamingHandler() {
-                    private int contentChars = 0;
-
-                    @Override
-                    public void onContent(String delta) {
-                        contentChars += delta.length();
-                        if (contentChars % 1000 < delta.length()) {
-                            getLog().info("LLM responding... (" + contentChars + " chars)");
-                        }
-                    }
-                    @Override
-                    public void onToolCall(String toolName) {
-                        getLog().info("tool call: " + toolName);
-                    }
-                });
+                ScoringClient.Params params = ScoringClient.Params.builder()
+                        .request(request)
+                        .context(promptContext)
+                        .handler(new ScoringClient.StreamingHandler() {
+                            @Override
+                            public void onContent(String delta) {
+                                getLog().info("LLM responding... (" + delta.length() + " chars)");
+                            }
+                            @Override
+                            public void onToolCall(String toolName) {
+                                getLog().info("tool call: " + toolName);
+                            }
+                        }).build();
+                result = client.score(params);
             }
             stopWatch.stop();
 

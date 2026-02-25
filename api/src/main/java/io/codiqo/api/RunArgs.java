@@ -54,9 +54,9 @@ public class RunArgs {
     @Nullable
     private boolean ignoreDiagnostics = false;
     @Nullable
-    private File javaHome;
+    private transient File javaHome;
     @Nullable
-    private File mavenHome;
+    private transient File mavenHome;
     @Nullable
     private Duration importTimeout = Duration.ofMinutes(15);
     @Nullable
@@ -81,15 +81,15 @@ public class RunArgs {
     @Nullable
     private transient List<File> agents = Lists.newArrayList();
     @Nullable
-    private Repository git;
+    private transient Repository git;
     @Nullable
-    private String defaultBranch;
+    private transient String defaultBranch;
     @Nullable
     private transient Set<String> remoteUrls = Sets.newHashSet();
     @Nullable
-    private String llmModel = System.getProperty("ollama.model", "gpt-oss:120b-cloud");
-    @Nullable
     private String llmApiKey = System.getProperty("ollama.apiKey");
+    @Nullable
+    private String llmModel = System.getProperty("ollama.model");
     @Nullable
     private String llmBaseUrl = System.getProperty("ollama.url", "https://ollama.com/v1");
     @Nullable
@@ -103,7 +103,7 @@ public class RunArgs {
     @Nullable
     private boolean llmEnableWebSearchTool = false;
     @Nullable
-    private File outputDirectory;
+    private transient File outputDirectory;
     @Nullable
     private String includeBranches;
     @Nullable
