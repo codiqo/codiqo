@@ -227,6 +227,12 @@ public class LlmScoringRequest {
          * Multiple calls from same caller indicate tighter coupling.
          */
         private int callSiteCount;
+
+        /**
+         * Source code body of the calling method/constructor.
+         * Provides context for how the affected code block is used.
+         */
+        private String callerBody;
     }
 
     @Data

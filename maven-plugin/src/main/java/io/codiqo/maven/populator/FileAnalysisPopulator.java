@@ -5,8 +5,10 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -14,6 +16,7 @@ import java.util.Optional;
 import java.util.function.Function;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.eclipse.lsp4j.CallHierarchyIncomingCall;
@@ -23,9 +26,12 @@ import org.eclipse.lsp4j.SymbolTag;
 import org.jacoco.core.analysis.ICounter;
 import org.jacoco.core.analysis.ILine;
 
+import com.google.common.collect.Maps;
+
 import edu.umd.cs.findbugs.BugInstance;
 import edu.umd.cs.findbugs.MethodAnnotation;
 import edu.umd.cs.findbugs.Priorities;
+import io.codiqo.api.coverage.CodeBlockCoverage;
 import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.client.model.CallerModel;
@@ -89,8 +95,13 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         for (FileAnalysis fileAnalysis : ctx.getAnalysis()) {
             FileChangeModel fileChangeModel = new FileChangeModel();
             fileChangeModel.setDiff(fileAnalysis.getDiffText());
-            fileChangeModel.setContentBefore(fileAnalysis.getContentBefore());
-            fileChangeModel.setContentAfter(fileAnalysis.getContentAfter());
+            if (ctx.getArgs().isHideSourceCode()) {
+                fileChangeModel.setContentBefore(null);
+                fileChangeModel.setContentAfter(null);
+            } else {
+                fileChangeModel.setContentBefore(fileAnalysis.getContentBefore());
+                fileChangeModel.setContentAfter(fileAnalysis.getContentAfter());
+            }
             fileChangeModel.setChangeType(FileChangeModel.ChangeTypeEnum.fromValue(fileAnalysis.getChangeType().name().toLowerCase()));
             fileChangeModel.setPreviousPath(fileAnalysis.getOldPath());
             fileChangeModel.setPath(fileAnalysis.getNewPath());
@@ -117,6 +128,10 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
                         fileChangeModel.getCodeUnits().add(codeUnitModel);
                     }
                 });
+            }
+
+            if (MapUtils.isNotEmpty(fileAnalysis.getLineCoverage())) {
+                fileChangeModel.setCoverage(buildCoverageModel(fileAnalysis.getLineCoverage()));
             }
 
             ctx.getSubmissionModel().getFiles().add(fileChangeModel);
@@ -166,7 +181,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         }
 
         if (affectedSymbol instanceof Lsp4jAffectedSymbolInfo) {
-            populateLsp4jSymbolInfo(ctx, (Lsp4jAffectedSymbolInfo) affectedSymbol, codeUnitModel, infoModel, workTree);
+            populateLsp4jSymbolInfo(ctx, (Lsp4jAffectedSymbolInfo) affectedSymbol, codeUnitModel, infoModel, workTree, fileAnalysis);
         }
 
         populateCoverage(javaBlock, codeUnitModel);
@@ -183,7 +198,8 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             Lsp4jAffectedSymbolInfo lsp4jSymbol,
             CodeUnitModel codeUnitModel,
             JavaInfoModel infoModel,
-            Path workTree) {
+            Path workTree,
+            FileAnalysis fileAnalysis) {
         codeUnitModel.setKind(SymbolKindModel.fromValue(lsp4jSymbol.getKind().name().toLowerCase()));
         List<SymbolTag> symbolTags = lsp4jSymbol.getTags();
         if (CollectionUtils.isNotEmpty(symbolTags)) {
@@ -192,6 +208,11 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
                     infoModel.setIsDeprecated(true);
                 }
             }
+        }
+
+        Map<String, String> fileContentCache = Maps.newHashMap();
+        if (!ctx.getArgs().isHideSourceCode() && Objects.nonNull(fileAnalysis.getContentAfter())) {
+            fileContentCache.put(fileAnalysis.getFile().getAbsolutePath(), fileAnalysis.getContentAfter());
         }
 
         for (CallHierarchyIncomingCall incomingCall : lsp4jSymbol.getIncomingCalls()) {
@@ -213,6 +234,16 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
                         });
                     }
                     callerModel.setPath(workTree.toRealPath().relativize(Paths.get(uri).toRealPath()).toString());
+
+                    if (!ctx.getArgs().isHideSourceCode() && Objects.nonNull(from.getRange())) {
+                        String callerFilePath = Paths.get(uri).toAbsolutePath().toString();
+                        String fileContent = fileContentCache.get(callerFilePath);
+                        if (Objects.isNull(fileContent)) {
+                            fileContent = Files.readString(Paths.get(uri));
+                            fileContentCache.put(callerFilePath, fileContent);
+                        }
+                        callerModel.setCallerBody(extractCallerLines(fileContent, from.getRange()));
+                    }
                 } catch (URISyntaxException | IOException err) {
                     ExceptionUtils.wrapAndThrow(err);
                 }
@@ -258,51 +289,56 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
     private static void populateCoverage(JavaCodeBlockInfo javaBlock, CodeUnitModel codeUnitModel) {
         javaBlock.coverage().subscribe(cov -> {
             if (cov.hasCoverageData()) {
-                CoverageModel coverageModel = new CoverageModel();
-                coverageModel.setTool(CoverageModel.ToolEnum.JACOCO);
-                coverageModel.setCoveredLines(cov.getCovered() + cov.getPartial());
-                coverageModel.setMissedLines(cov.getMissed());
-                coverageModel.setLinePercent(cov.lineCoveragePercent());
-
-                if (cov.totalBranches() > 0) {
-                    coverageModel.setCoveredBranches(cov.getCoveredBranches());
-                    coverageModel.setMissedBranches(cov.getMissedBranches());
-                    coverageModel.setBranchPercent(cov.branchCoveragePercent());
-                }
-
-                for (Map.Entry<Integer, ILine> lineEntry : javaBlock.getLineCoverage().entrySet()) {
-                    Integer lineNumber = lineEntry.getKey();
-                    ILine lineInfo = lineEntry.getValue();
-
-                    LineCoverageModel lineModel = new LineCoverageModel();
-                    lineModel.setLine(lineNumber);
-                    lineModel.setHits(lineInfo.getInstructionCounter().getCoveredCount());
-
-                    lineModel.setStatus(LineCoverageModel.StatusEnum.EMPTY);
-                    if (lineInfo.getStatus() == ICounter.EMPTY) {
-                        lineModel.setStatus(LineCoverageModel.StatusEnum.EMPTY);
-                    } else if (lineInfo.getStatus() == ICounter.NOT_COVERED) {
-                        lineModel.setStatus(LineCoverageModel.StatusEnum.MISSED);
-                    } else if (lineInfo.getStatus() == ICounter.PARTLY_COVERED) {
-                        lineModel.setStatus(LineCoverageModel.StatusEnum.PARTIAL);
-                    } else if (lineInfo.getStatus() == ICounter.FULLY_COVERED) {
-                        lineModel.setStatus(LineCoverageModel.StatusEnum.COVERED);
-                    }
-
-                    ICounter branchCtr = lineInfo.getBranchCounter();
-                    if (branchCtr.getTotalCount() > 0) {
-                        CoverageCounterModel branchModel = new CoverageCounterModel();
-                        branchModel.setCovered(branchCtr.getCoveredCount());
-                        branchModel.setMissed(branchCtr.getMissedCount());
-                        lineModel.setBranches(branchModel);
-                    }
-
-                    coverageModel.getLines().add(lineModel);
-                }
-
-                codeUnitModel.setCoverage(coverageModel);
+                codeUnitModel.setCoverage(buildCoverageModel(javaBlock.getLineCoverage()));
             }
         });
+    }
+    private static CoverageModel buildCoverageModel(Map<Integer, ILine> lineCoverageMap) {
+        CodeBlockCoverage cov = CodeBlockCoverage.from(lineCoverageMap);
+
+        CoverageModel coverageModel = new CoverageModel();
+        coverageModel.setTool(CoverageModel.ToolEnum.JACOCO);
+        coverageModel.setCoveredLines(cov.getCovered() + cov.getPartial());
+        coverageModel.setMissedLines(cov.getMissed());
+        coverageModel.setLinePercent(cov.lineCoveragePercent());
+
+        if (cov.totalBranches() > 0) {
+            coverageModel.setCoveredBranches(cov.getCoveredBranches());
+            coverageModel.setMissedBranches(cov.getMissedBranches());
+            coverageModel.setBranchPercent(cov.branchCoveragePercent());
+        }
+
+        for (Map.Entry<Integer, ILine> lineEntry : lineCoverageMap.entrySet()) {
+            Integer lineNumber = lineEntry.getKey();
+            ILine lineInfo = lineEntry.getValue();
+
+            LineCoverageModel lineModel = new LineCoverageModel();
+            lineModel.setLine(lineNumber);
+            lineModel.setHits(lineInfo.getInstructionCounter().getCoveredCount());
+
+            lineModel.setStatus(LineCoverageModel.StatusEnum.EMPTY);
+            if (lineInfo.getStatus() == ICounter.EMPTY) {
+                lineModel.setStatus(LineCoverageModel.StatusEnum.EMPTY);
+            } else if (lineInfo.getStatus() == ICounter.NOT_COVERED) {
+                lineModel.setStatus(LineCoverageModel.StatusEnum.MISSED);
+            } else if (lineInfo.getStatus() == ICounter.PARTLY_COVERED) {
+                lineModel.setStatus(LineCoverageModel.StatusEnum.PARTIAL);
+            } else if (lineInfo.getStatus() == ICounter.FULLY_COVERED) {
+                lineModel.setStatus(LineCoverageModel.StatusEnum.COVERED);
+            }
+
+            ICounter branchCtr = lineInfo.getBranchCounter();
+            if (branchCtr.getTotalCount() > 0) {
+                CoverageCounterModel branchModel = new CoverageCounterModel();
+                branchModel.setCovered(branchCtr.getCoveredCount());
+                branchModel.setMissed(branchCtr.getMissedCount());
+                lineModel.setBranches(branchModel);
+            }
+
+            coverageModel.getLines().add(lineModel);
+        }
+
+        return coverageModel;
     }
     private static void populateMethodCalls(JavaCodeBlockInfo javaBlock, JavaInfoModel infoModel) {
         for (JBinaryMethodSig methodCall : javaBlock.getMethodCalls()) {
@@ -484,5 +520,14 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         } else {
             return SpotbugsPropertiesModel.ConfidenceEnum.LOW;
         }
+    }
+    private static String extractCallerLines(String content, Range range) {
+        String[] lines = content.split("\n", -1);
+        int startLine = range.getStart().getLine();
+        int endLine = Math.min(range.getEnd().getLine(), lines.length - 1);
+        if (startLine >= lines.length) {
+            return null;
+        }
+        return String.join("\n", Arrays.copyOfRange(lines, startLine, endLine + 1));
     }
 }

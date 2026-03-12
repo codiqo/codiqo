@@ -214,7 +214,7 @@ public class JavaLanguageSpec implements LanguageSpec {
                         item.setKind(child.getKind());
                         item.setUri(destination.toPath().normalize().toUri().toString());
                         item.setRange(child.getRange());
-                        item.setSelectionRange(child.getRange());
+                        item.setSelectionRange(child.getSelectionRange());
 
                         /**
                          * try to fetch incoming calls for this symbol (caller functions/methods).
@@ -223,15 +223,23 @@ public class JavaLanguageSpec implements LanguageSpec {
                          */
                         try {
                             CompletableFuture<List<CallHierarchyIncomingCall>> future = importer.callHierarchyIncomingCalls(item);
-                            List<CallHierarchyIncomingCall> calls = future.get(args.getImportTimeout().getSeconds(), TimeUnit.SECONDS);
+                            List<CallHierarchyIncomingCall> calls = future.get(args.getLspQueryTimeout().getSeconds(), TimeUnit.SECONDS);
                             if (CollectionUtils.isNotEmpty(calls)) {
                                 info.setIncomingCalls(calls);
                             }
                         } catch (Exception err) {
-                            log.error(String.format("failed to fetch incoming calls for symbol %s in file %s: %s",
+                            log.error(String.format(
+                                    "failed to fetch incoming calls for symbol %s in file %s: %s | item[uri=%s, kind=%s, range=%d:%d-%d:%d, detail=%s]",
                                     child.getName(),
                                     destination.getAbsolutePath(),
-                                    err.getMessage()),
+                                    err.getMessage(),
+                                    item.getUri(),
+                                    item.getKind(),
+                                    item.getRange().getStart().getLine(),
+                                    item.getRange().getStart().getCharacter(),
+                                    item.getRange().getEnd().getLine(),
+                                    item.getRange().getEnd().getCharacter(),
+                                    item.getDetail()),
                                     err);
                         }
 
@@ -515,6 +523,7 @@ public class JavaLanguageSpec implements LanguageSpec {
                 ISourceFileCoverage source = coverages.get(fileAnalysis.getFile());
                 if (Objects.nonNull(source)) {
                     matched.incrementAndGet();
+
                     for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
                         symbol.block().ifPresent(block -> {
                             int startLine = symbol.getLocation().getStartLine();
@@ -523,11 +532,17 @@ public class JavaLanguageSpec implements LanguageSpec {
                             for (int lineNum = startLine; lineNum <= endLine; lineNum++) {
                                 ILine line = source.getLine(lineNum);
                                 ((JavaCodeBlockInfo) block).lineCoverage(lineNum, line);
-                                if (line.getStatus() == ICounter.FULLY_COVERED || line.getStatus() == ICounter.PARTLY_COVERED) {
+                                if (BooleanUtils.or(new boolean[] { line.getStatus() == ICounter.FULLY_COVERED, line.getStatus() == ICounter.PARTLY_COVERED })) {
                                     linesWithCoverage.incrementAndGet();
                                 }
                             }
                         });
+                    }
+
+                    if (source.getFirstLine() > 0) {
+                        for (int lineNum = source.getFirstLine(); lineNum <= source.getLastLine(); lineNum++) {
+                            fileAnalysis.lineCoverage(lineNum, source.getLine(lineNum));
+                        }
                     }
                 } else {
                     unmatched.incrementAndGet();
