@@ -70,7 +70,11 @@ public class LlmScoringPopulator implements SubmissionPopulator {
                     .handler(new ScoringClient.StreamingHandler() {
                         @Override
                         public void onContent(String delta) {
-                            log.info("LLM responding... (" + delta.length() + " chars)");
+                            if (Objects.nonNull(delta)) {
+                                if (delta.length() > 0) {
+                                    log.info("LLM responding... (" + delta.length() + " chars)");
+                                }
+                            }
                         }
                         @Override
                         public void onToolCall(String toolName) {

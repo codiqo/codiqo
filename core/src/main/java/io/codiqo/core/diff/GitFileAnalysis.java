@@ -1,6 +1,7 @@
 package io.codiqo.core.diff;
 
 import java.io.File;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -8,7 +9,9 @@ import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.builder.EqualsBuilder;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
 import org.eclipse.jgit.diff.DiffEntry;
+import org.jacoco.core.analysis.ILine;
 
+import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 
 import io.codiqo.api.ProjectSpec;
@@ -38,10 +41,16 @@ public class GitFileAnalysis implements FileAnalysis {
     private GitStructuredDiff structuredDiff;
     @ToString.Exclude
     private Set<AffectedSymbolInfo> potentiallyAffectedSymbols = Sets.newLinkedHashSet();
+    @ToString.Exclude
+    private Map<Integer, ILine> lineCoverage = Maps.newHashMap();
     private boolean testFile;
     @Getter(AccessLevel.NONE)
     private Optional<ProjectSpec> project = Optional.empty();
 
+    @Override
+    public void lineCoverage(int lineNumber, ILine line) {
+        lineCoverage.put(lineNumber, line);
+    }
     @Override
     public boolean isExtension(Language lang) {
         return FilenameUtils.isExtension(file.getName(), lang.getExtensions());

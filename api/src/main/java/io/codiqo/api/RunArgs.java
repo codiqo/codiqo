@@ -32,7 +32,7 @@ public class RunArgs {
     @Nullable
     private String commitId;
     @Nullable
-    private String jdtlsVersion = "1.56.0";
+    private String jdtlsVersion = "1.57.0";
     @Nullable
     private String pmdMinPriority = RulePriority.HIGH.name();
     @Nullable
@@ -59,6 +59,8 @@ public class RunArgs {
     private transient File mavenHome;
     @Nullable
     private Duration importTimeout = Duration.ofMinutes(15);
+    @Nullable
+    private Duration lspQueryTimeout = Duration.ofSeconds(30);
     @Nullable
     private Duration connectTimeout = Duration.ofSeconds(30);
     @Nullable
@@ -330,6 +332,8 @@ public class RunArgs {
     private int fanOutHighThreshold = 10;
     @Nullable
     private int npathComplexThreshold = 200;
+    @Nullable
+    private boolean hideSourceCode = false;
 
     public Optional<ProjectSpec> owner(File filePath) {
         return projects.stream().filter(proj -> proj.contains(filePath)).findAny();

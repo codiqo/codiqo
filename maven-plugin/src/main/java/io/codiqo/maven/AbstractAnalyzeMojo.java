@@ -134,6 +134,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.importTimeoutMinutes", defaultValue = "15")
     protected long importTimeoutMinutes;
 
+    @Parameter(property = "codiqo.lspQueryTimeoutSeconds", defaultValue = "30")
+    protected long lspQueryTimeoutSeconds;
+
     @Parameter(property = "codiqo.connectTimeoutSeconds", defaultValue = "30")
     protected long connectTimeoutSeconds;
 
@@ -203,6 +206,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.includeAuthorEmails")
     protected String includeAuthorEmails;
 
+    @Parameter(property = "codiqo.hideSourceCode", defaultValue = "false")
+    protected boolean hideSourceCode = false;
+
     @Override
     @SuppressWarnings("deprecation")
     public final Collection<File> apply(Artifact artifact) {
@@ -230,6 +236,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         Optional.ofNullable(javaHome).ifPresent(args::setJavaHome);
         Optional.ofNullable(mavenHome).ifPresent(args::setMavenHome);
         args.setImportTimeout(Duration.ofMinutes(importTimeoutMinutes));
+        args.setLspQueryTimeout(Duration.ofSeconds(lspQueryTimeoutSeconds));
         args.setConnectTimeout(Duration.ofSeconds(connectTimeoutSeconds));
         args.setReadTimeout(Duration.ofSeconds(readTimeoutSeconds));
         args.setMaxRequests(maxRequests);
@@ -252,6 +259,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         Optional.ofNullable(outputDirectory).ifPresent(args::setOutputDirectory);
         Optional.ofNullable(includeBranches).ifPresent(args::setIncludeBranches);
         Optional.ofNullable(includeAuthorEmails).ifPresent(args::setIncludeAuthorEmails);
+        args.setHideSourceCode(hideSourceCode);
         if (StringUtils.isNotEmpty(llmApiKey)) {
             if (llmApiKey.startsWith(ENV_PREFIX)) {
                 String envVar = llmApiKey.substring(ENV_PREFIX.length());
@@ -546,8 +554,10 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         toReturn.setIgnoreComplexity(args.isIgnoreComplexity());
         toReturn.setIgnoreCpd(args.isIgnoreCpd());
         toReturn.setIgnoreDiagnostics(args.isIgnoreDiagnostics());
+        toReturn.setHideSourceCode(args.isHideSourceCode());
 
         toReturn.setImportTimeout(Optional.ofNullable(args.getImportTimeout()).map(Duration::toString).orElse(null));
+        toReturn.setLspQueryTimeout(Optional.ofNullable(args.getLspQueryTimeout()).map(Duration::toString).orElse(null));
         toReturn.setConnectTimeout(Optional.ofNullable(args.getConnectTimeout()).map(Duration::toString).orElse(null));
         toReturn.setReadTimeout(Optional.ofNullable(args.getReadTimeout()).map(Duration::toString).orElse(null));
 

@@ -133,7 +133,11 @@ public class ScoreFromFileMojo extends AbstractMojo {
                         .handler(new ScoringClient.StreamingHandler() {
                             @Override
                             public void onContent(String delta) {
-                                getLog().info("LLM responding... (" + delta.length() + " chars)");
+                                if (Objects.nonNull(delta)) {
+                                    if (delta.length() > 0) {
+                                        getLog().info("LLM responding... (" + delta.length() + " chars)");
+                                    }
+                                }
                             }
                             @Override
                             public void onToolCall(String toolName) {

@@ -177,14 +177,8 @@ class JdtLspProcess implements Closeable {
             if (SystemUtils.isJavaVersionAtLeast(JavaVersion.JAVA_16)) {
                 cmd.add("--enable-native-access=ALL-UNNAMED");
             }
-            if (SystemUtils.isJavaVersionAtLeast(JavaVersion.JAVA_21)) {
-                cmd.add("-XX:+ZGenerational");
-            }
             if (SystemUtils.isJavaVersionAtLeast(JavaVersion.JAVA_23)) {
                 cmd.add("--sun-misc-unsafe-memory-access=allow");
-            }
-            if (SystemUtils.isJavaVersionAtLeast(JavaVersion.JAVA_24)) {
-                cmd.add("-XX:+UseCompactObjectHeaders");
             }
 
             log.info("starting JDTLS cmd: " + cmd);

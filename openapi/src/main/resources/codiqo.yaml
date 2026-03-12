@@ -92,7 +92,6 @@ paths:
           $ref: '#/components/responses/NotFound'
       security:
         - apiKey: []
-
   /api/v1/analyses/commit/{commitSha}:
     get:
       operationId: getAnalysisByCommitSha
@@ -115,6 +114,52 @@ paths:
           $ref: '#/components/responses/NotFound'
       security:
         - apiKey: []
+    delete:
+      operationId: deleteAnalysis
+      tags: [Analysis]
+      summary: Permanently delete an analysis and all associated data
+      parameters:
+        - name: commitSha
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Analysis deleted successfully
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - apiKey: []
+
+  /api/v1/analyses/commit/{commitSha}/exclude:
+    patch:
+      operationId: excludeAnalysis
+      tags: [Analysis]
+      summary: Exclude (soft-delete) an analysis
+      parameters:
+        - name: commitSha
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalysisExcludeModel'
+      responses:
+        '204':
+          description: Analysis excluded successfully
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - apiKey: []
 
 components:
   securitySchemes:
@@ -130,6 +175,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorModel'
+    Forbidden:
+      description: Access denied
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorModel'
     NotFound:
       description: Not found
       content:
@@ -141,6 +192,13 @@ components:
     # ==========================================================================
     # Main Request/Response
     # ==========================================================================
+
+    AnalysisExcludeModel:
+      type: object
+      properties:
+        reason:
+          type: string
+          description: Optional reason for excluding this analysis
 
     AnalysisSubmissionModel:
       type: object
@@ -1077,14 +1135,18 @@ components:
           type: string
         contentBefore:
           type: string
+          nullable: true
         contentAfter:
           type: string
+          nullable: true
         codeUnits:
           type: array
           items:
             $ref: '#/components/schemas/CodeUnitModel'
         metrics:
           $ref: '#/components/schemas/FileMetricsModel'
+        coverage:
+          $ref: '#/components/schemas/CoverageModel'
         qualityGrade:
           type: string
           enum: [A, B, C, D, E, F]
@@ -1159,6 +1221,7 @@ components:
           description: What happened to this code unit
         bodyBefore:
           type: string
+          nullable: true
           description: Source code before change (for MODIFY)
         unitDiff:
           type: string
@@ -1332,6 +1395,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/LocationModel'
+        callerBody:
+          type: string
 
     # ==========================================================================
     # Metrics
@@ -2367,7 +2432,12 @@ components:
           type: boolean
         ignoreDiagnostics:
           type: boolean
+        hideSourceCode:
+          type: boolean
         importTimeout:
+          type: string
+          description: ISO-8601 duration
+        lspQueryTimeout:
           type: string
           description: ISO-8601 duration
         connectTimeout:

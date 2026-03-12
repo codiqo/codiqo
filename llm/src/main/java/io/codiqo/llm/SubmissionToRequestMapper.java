@@ -358,6 +358,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .symbol(caller.getSymbol())
                 .isDeprecated(Boolean.TRUE.equals(caller.getIsDeprecated()))
                 .callSiteCount(CollectionUtils.size(caller.getCallSites()))
+                .callerBody(caller.getCallerBody())
                 .build();
     }
     private static ChangeSummary mapChangeSummary(List<FileChangeModel> files) {
