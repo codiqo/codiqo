@@ -2,9 +2,9 @@ package io.codiqo.core.java;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.math.BigDecimal;
 import java.net.JarURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -23,8 +23,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -32,15 +30,12 @@ import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.commons.lang3.time.StopWatch;
-import org.eclipse.lsp4j.CallHierarchyIncomingCall;
-import org.eclipse.lsp4j.CallHierarchyItem;
-import org.eclipse.lsp4j.DocumentSymbol;
-import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.SymbolKind;
 import org.jacoco.core.analysis.Analyzer;
 import org.jacoco.core.analysis.CoverageBuilder;
@@ -73,6 +68,7 @@ import edu.umd.cs.findbugs.PluginLoader;
 import edu.umd.cs.findbugs.SourceLineAnnotation;
 import edu.umd.cs.findbugs.config.UserPreferences;
 import edu.umd.cs.findbugs.plugins.DuplicatePluginIdException;
+import io.codiqo.api.IncomingCallsResolver;
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.LanguageSpec;
 import io.codiqo.api.MavenProjectSpec;
@@ -82,15 +78,12 @@ import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.diff.CommitAnalysis;
-import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.jdtls.JdtLspProjectImporter;
-import io.codiqo.jdtls.Lsp4jGitAffectedSymbolInfo;
-import io.codiqo.lang.spec.JBinaryMethodSig;
+import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.util.Fetch;
-import lombok.experimental.Delegate;
 import net.sourceforge.pmd.PMDConfiguration;
 import net.sourceforge.pmd.PmdAnalysis;
 import net.sourceforge.pmd.lang.JvmLanguagePropertyBundle;
@@ -110,7 +103,6 @@ import net.sourceforge.pmd.lang.java.JavaLanguageModule;
 import net.sourceforge.pmd.lang.java.ast.ASTAnonymousClassDeclaration;
 import net.sourceforge.pmd.lang.java.ast.ASTBlock;
 import net.sourceforge.pmd.lang.java.ast.ASTCompilationUnit;
-import net.sourceforge.pmd.lang.java.ast.ASTConstructorCall;
 import net.sourceforge.pmd.lang.java.ast.ASTConstructorDeclaration;
 import net.sourceforge.pmd.lang.java.ast.ASTExecutableDeclaration;
 import net.sourceforge.pmd.lang.java.ast.ASTMethodDeclaration;
@@ -125,6 +117,7 @@ import net.sourceforge.pmd.lang.java.types.JTypeMirror;
 import net.sourceforge.pmd.lang.java.types.OverloadSelectionResult;
 import net.sourceforge.pmd.lang.rule.RulePriority;
 import net.sourceforge.pmd.reporting.Report;
+import reactor.core.publisher.Mono;
 
 public class JavaLanguageSpec implements LanguageSpec {
     public static final EnumSet<SymbolKind> TYPES = EnumSet.of(SymbolKind.Class, SymbolKind.Interface, SymbolKind.Enum);
@@ -133,8 +126,6 @@ public class JavaLanguageSpec implements LanguageSpec {
     private final Log log;
     private final RunArgs args;
     private final JavaLanguageModule language = new JavaLanguageModule();
-    @Delegate
-    private final JdtLspProjectImporter importer;
     private final ImmutableList<String> pmdRules = ImmutableList.of(
             "category/java/bestpractices.xml",
             "category/java/codestyle.xml",
@@ -143,8 +134,8 @@ public class JavaLanguageSpec implements LanguageSpec {
             "category/java/performance.xml",
             "category/java/multithreading.xml",
             "category/java/security.xml");
-    private final Function<NodeStream<? extends JavaNode>, Collection<JBinaryMethodSig>> outboundASTconverter = stream -> {
-        ImmutableList.Builder<JBinaryMethodSig> builder = ImmutableList.builder();
+    private final Function<NodeStream<? extends JavaNode>, Collection<JInvocationBlock>> outboundASTconverter = stream -> {
+        ImmutableList.Builder<JInvocationBlock> builder = ImmutableList.builder();
         stream.toStream().forEach(node -> {
             if (node instanceof MethodUsage) {
                 MethodUsage usage = (MethodUsage) node;
@@ -152,18 +143,14 @@ public class JavaLanguageSpec implements LanguageSpec {
 
                 if (Objects.nonNull(overload) && BooleanUtils.negate(overload.isFailed())) {
                     JMethodSig signature = overload.getMethodType();
-                    boolean isConstructor = BooleanUtils.or(new boolean[] {
-                            signature.isConstructor(),
-                            node instanceof ASTConstructorCall
-                    });
-
-                    String methodName = isConstructor ? JavaBinaryFormat.CONSTRUCTOR_NAME : usage.getMethodName();
                     JTypeMirror declaringType = signature.getDeclaringType();
+
                     if (Objects.nonNull(declaringType)) {
                         JTypeDeclSymbol symbol = declaringType.getSymbol();
                         if (symbol instanceof JClassSymbol) {
-                            JClassSymbol classSymbol = (JClassSymbol) symbol;
-                            builder.add(new PmdJBinaryMethodSig(classSymbol, methodName, node, signature));
+                            if (BooleanUtils.negate(symbol.isUnresolved())) {
+                                builder.add(new PmdJInvocationBlock(usage));
+                            }
                         }
                     }
                 }
@@ -171,11 +158,18 @@ public class JavaLanguageSpec implements LanguageSpec {
         });
         return builder.build();
     };
+    private final IncomingCallsResolver incomingCallsResolver;
+    private JdtLspProjectImporter jdt;
 
     public JavaLanguageSpec(LogFactory logFactory, RunArgs args, Fetch fetch) throws IOException {
         this.log = logFactory.getLogger(getClass());
         this.args = Objects.requireNonNull(args);
-        this.importer = new JdtLspProjectImporter(logFactory, args, fetch);
+        this.jdt = new JdtLspProjectImporter(logFactory, args, fetch);
+        this.incomingCallsResolver = new JdtIncomingCallsResolver(log, args, jdt);
+    }
+    @Override
+    public Mono<?> load() {
+        return jdt.load();
     }
     @Override
     public Language lang() {
@@ -186,79 +180,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         return true;
     }
     @Override
-    public void identifyAffectedSymbols(FileAnalysis analysis, Object untyped, File destination, Collection<Integer> modifiedLines) {
-        DocumentSymbol symbol = (DocumentSymbol) untyped;
-        if (CollectionUtils.isNotEmpty(symbol.getChildren())) {
-            for (DocumentSymbol child : symbol.getChildren()) {
-                if (SYMBOLS.contains(child.getKind())) {
-                    Position start = child.getRange().getStart();
-                    Position end = child.getRange().getEnd();
-                    int startLine = start.getLine();
-                    int endLine = end.getLine();
-
-                    boolean isAffected = modifiedLines.stream().anyMatch(line -> line >= startLine && line <= endLine);
-                    if (isAffected) {
-                        Lsp4jGitAffectedSymbolInfo info = new Lsp4jGitAffectedSymbolInfo();
-                        info.setFile(destination);
-                        info.setSymbol(child);
-                        info.setLanguage(language);
-                        info.setLocation(SourceLocation.builder()
-                                .startLine(startLine + BigDecimal.ONE.intValue())
-                                .endLine(endLine + BigDecimal.ONE.intValue())
-                                .startColumn(start.getCharacter() + BigDecimal.ONE.intValue())
-                                .endColumn(end.getCharacter() + BigDecimal.ONE.intValue())
-                                .build());
-
-                        CallHierarchyItem item = new CallHierarchyItem();
-                        item.setName(child.getName());
-                        item.setKind(child.getKind());
-                        item.setUri(destination.toPath().normalize().toUri().toString());
-                        item.setRange(child.getRange());
-                        item.setSelectionRange(child.getSelectionRange());
-
-                        /**
-                         * try to fetch incoming calls for this symbol (caller functions/methods).
-                         * may fail in some rare cases due to bugs in JDT LS (https://github.com/eclipse-jdtls/eclipse.jdt.ls/issues/3657).
-                         * should not block the analysis if it fails, just log the error and continue.
-                         */
-                        try {
-                            CompletableFuture<List<CallHierarchyIncomingCall>> future = importer.callHierarchyIncomingCalls(item);
-                            List<CallHierarchyIncomingCall> calls = future.get(args.getLspQueryTimeout().getSeconds(), TimeUnit.SECONDS);
-                            if (CollectionUtils.isNotEmpty(calls)) {
-                                info.setIncomingCalls(calls);
-                            }
-                        } catch (Exception err) {
-                            log.error(String.format(
-                                    "failed to fetch incoming calls for symbol %s in file %s: %s | item[uri=%s, kind=%s, range=%d:%d-%d:%d, detail=%s]",
-                                    child.getName(),
-                                    destination.getAbsolutePath(),
-                                    err.getMessage(),
-                                    item.getUri(),
-                                    item.getKind(),
-                                    item.getRange().getStart().getLine(),
-                                    item.getRange().getStart().getCharacter(),
-                                    item.getRange().getEnd().getLine(),
-                                    item.getRange().getEnd().getCharacter(),
-                                    item.getDetail()),
-                                    err);
-                        }
-
-                        log.info("identified potentially affected " + info);
-                        analysis.getPotentiallyAffectedSymbols().add(info);
-                    }
-                }
-
-                //
-                // ~ recursively check nested types (inner classes, etc.)
-                //
-                if (TYPES.contains(child.getKind())) {
-                    identifyAffectedSymbols(analysis, child, destination, modifiedLines);
-                }
-            }
-        }
-    }
-    @Override
-    public List<CodeBlockInfo> parse(File destination, String source) throws IOException {
+    public List<CodeBlockInfo> parse(File destination) throws IOException {
         ImmutableList.Builder<CodeBlockInfo> builder = ImmutableList.builder();
 
         if (FilenameUtils.isExtension(destination.getName(), lang().getExtensions())) {
@@ -277,70 +199,74 @@ public class JavaLanguageSpec implements LanguageSpec {
                 }
             });
 
-            try (TextFile file = TextFile.forCharSeq(source, FileId.fromPath(destination.toPath().normalize()), language.getDefaultVersion())) {
-                try (TextDocument doc = TextDocument.create(file)) {
-                    LanguageRegistry languageRegistry = LanguageRegistry.singleton(language);
-                    ImmutableMap<Language, LanguagePropertyBundle> languageProperties = ImmutableMap.of(language, bundle);
-                    try (LanguageProcessorRegistry processingRegistry = LanguageProcessorRegistry.create(languageRegistry, languageProperties, log)) {
-                        Parser pmd = processingRegistry.getProcessor(language).services().getParser();
-                        SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
-                        ParserTask task = new ParserTask(doc, errorReporter, processingRegistry);
-                        ASTCompilationUnit tree = (ASTCompilationUnit) pmd.parse(task);
+            try (InputStream io = Files.newInputStream(destination.toPath())) {
+                String source = IOUtils.toString(io, StandardCharsets.UTF_8);
+                FileId fileId = FileId.fromPath(destination.toPath().normalize());
+                try (TextFile file = TextFile.forCharSeq(source, fileId, language.getDefaultVersion())) {
+                    try (TextDocument doc = TextDocument.create(file)) {
+                        LanguageRegistry languageRegistry = LanguageRegistry.singleton(language);
+                        ImmutableMap<Language, LanguagePropertyBundle> languageProperties = ImmutableMap.of(language, bundle);
+                        try (LanguageProcessorRegistry processingRegistry = LanguageProcessorRegistry.create(languageRegistry, languageProperties, log)) {
+                            Parser pmd = processingRegistry.getProcessor(language).services().getParser();
+                            SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
+                            ParserTask task = new ParserTask(doc, errorReporter, processingRegistry);
+                            ASTCompilationUnit tree = (ASTCompilationUnit) pmd.parse(task);
 
-                        Consumer<ASTExecutableDeclaration> consumer = executable -> {
-                            ASTBlock block = executable.getBody();
-                            ASTTypeDeclaration enclosing = executable.getEnclosingType();
-                            ASTTypeDeclaration type = executable
-                                    .ancestors(ASTTypeDeclaration.class)
-                                    .filter(t -> BooleanUtils.negate(t instanceof ASTAnonymousClassDeclaration))
-                                    .first();
+                            Consumer<ASTExecutableDeclaration> consumer = executable -> {
+                                ASTBlock block = executable.getBody();
+                                ASTTypeDeclaration enclosing = executable.getEnclosingType();
+                                ASTTypeDeclaration type = executable
+                                        .ancestors(ASTTypeDeclaration.class)
+                                        .filter(t -> BooleanUtils.negate(t instanceof ASTAnonymousClassDeclaration))
+                                        .first();
 
-                            if (Objects.nonNull(block) && !block.isEmpty()) {
-                                String body = executable.getText().toString();
-                                FileLocation reportLocation = tree.getTextDocument().toLocation(executable.getTextRegion());
+                                if (Objects.nonNull(block) && BooleanUtils.negate(block.isEmpty())) {
+                                    String body = executable.getText().toString();
+                                    FileLocation reportLocation = tree.getTextDocument().toLocation(executable.getTextRegion());
 
-                                SourceLocation location = SourceLocation.builder()
-                                        .startLine(reportLocation.getStartLine())
-                                        .endLine(reportLocation.getEndLine())
-                                        .startColumn(reportLocation.getStartColumn())
-                                        .endColumn(reportLocation.getEndColumn())
-                                        .build();
+                                    SourceLocation location = SourceLocation.builder()
+                                            .startLine(reportLocation.getStartLine())
+                                            .endLine(reportLocation.getEndLine())
+                                            .startColumn(reportLocation.getStartColumn())
+                                            .endColumn(reportLocation.getEndColumn())
+                                            .build();
 
-                                NodeStream<JavaNode> calls = executable.descendants(JavaNode.class).filter(node -> node instanceof MethodUsage).cached();
-                                Collection<JBinaryMethodSig> toAdd = outboundASTconverter.apply(calls);
+                                    NodeStream<JavaNode> calls = executable.descendants(JavaNode.class).filter(node -> node instanceof MethodUsage).cached();
+                                    Collection<JInvocationBlock> toAdd = outboundASTconverter.apply(calls);
 
-                                if (executable instanceof ASTMethodDeclaration) {
-                                    builder.add(JavaPmdMethodInfo.builder()
-                                            .file(destination)
-                                            .location(location)
-                                            .type(type)
-                                            .enclosingType(enclosing)
-                                            .node(executable)
-                                            .methodCalls(toAdd)
-                                            .body(body)
-                                            .build());
-                                } else if (executable instanceof ASTConstructorDeclaration) {
-                                    builder.add(JavaPmdConstructorInfo.builder()
-                                            .file(destination)
-                                            .location(location)
-                                            .type(type)
-                                            .enclosingType(enclosing)
-                                            .node(executable)
-                                            .methodCalls(toAdd)
-                                            .body(body)
-                                            .build());
-                                }
-
-                                owner.ifPresent(project -> {
-                                    if (project instanceof MavenProjectSpec) {
-                                        MavenProjectSpec mvn = (MavenProjectSpec) project;
-                                        toAdd.stream().forEach(signature -> signature.accept(mvn));
+                                    if (executable instanceof ASTMethodDeclaration) {
+                                        builder.add(JavaPmdMethodInfo.builder()
+                                                .file(destination)
+                                                .location(location)
+                                                .type(type)
+                                                .enclosingType(enclosing)
+                                                .node(executable)
+                                                .invocations(toAdd)
+                                                .body(body)
+                                                .build());
+                                    } else if (executable instanceof ASTConstructorDeclaration) {
+                                        builder.add(JavaPmdConstructorInfo.builder()
+                                                .file(destination)
+                                                .location(location)
+                                                .type(type)
+                                                .enclosingType(enclosing)
+                                                .node(executable)
+                                                .invocations(toAdd)
+                                                .body(body)
+                                                .build());
                                     }
-                                });
-                            }
-                        };
 
-                        tree.descendants(ASTExecutableDeclaration.class).forEach(consumer);
+                                    owner.ifPresent(project -> {
+                                        if (project instanceof MavenProjectSpec) {
+                                            MavenProjectSpec mvn = (MavenProjectSpec) project;
+                                            toAdd.stream().forEach(signature -> signature.accept(mvn));
+                                        }
+                                    });
+                                }
+                            };
+
+                            tree.descendants(ASTExecutableDeclaration.class).forEach(consumer);
+                        }
                     }
                 }
             }
@@ -371,8 +297,8 @@ public class JavaLanguageSpec implements LanguageSpec {
     }
     @Override
     public void close() throws IOException {
-        if (Objects.nonNull(importer)) {
-            importer.close();
+        if (Objects.nonNull(jdt)) {
+            jdt.close();
         }
     }
     private void captureJacocoCoverage(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
@@ -766,6 +692,10 @@ public class JavaLanguageSpec implements LanguageSpec {
 
         spotbugsWatch.stop();
         log.info("spotbugs analysis completed in %s", spotbugsWatch);
+    }
+    @Override
+    public void captureIncomingCalls(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
+        incomingCallsResolver.resolve(summary, analysis);
     }
 
     private static class UnhiddenDetectorFactoryCollection extends DetectorFactoryCollection {

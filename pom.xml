@@ -55,7 +55,7 @@
         <jakarta.annotation-api.version>3.0.0</jakarta.annotation-api.version>
         <jakarta.validation-api.version>3.1.1</jakarta.validation-api.version>
         <jakarta.ws.rs-api.version>3.1.0</jakarta.ws.rs-api.version>
-        <lombok.version>1.18.42</lombok.version>
+        <lombok.version>1.18.44</lombok.version>
         <gson.version>2.13.2</gson.version>
         <jackson.version>2.21.0</jackson.version>
         <snakeyaml.version>2.5</snakeyaml.version>
@@ -69,14 +69,15 @@
         <ztkill.version>1.11</ztkill.version>
         <ztexec.version>1.12</ztexec.version>
         <jarchivelib.version>1.2.0</jarchivelib.version>
-        <lsp4j.version>0.24.0</lsp4j.version>
+        <ecj.version>3.41.0</ecj.version>
+        <lsp4j.version>1.0.0</lsp4j.version>
         <pmd.version>7.22.0</pmd.version>
         <spotbugs.version>4.9.8</spotbugs.version>
         <findbugs.sec.version>1.14.0</findbugs.sec.version>
         <findbugs.contrib.version>7.7.4</findbugs.contrib.version>
         <jacoco.version>0.8.14</jacoco.version>
         <classgraph.version>4.8.184</classgraph.version>
-        <openapi.version>4.16.1</openapi.version>
+        <openapi.version>4.29.0</openapi.version>
         <thymeleaf.version>3.1.3.RELEASE</thymeleaf.version>
         <commons-lang3.version>3.20.0</commons-lang3.version>
         <commons-collections4.version>4.5.0</commons-collections4.version>
@@ -84,21 +85,21 @@
         <commons-io.version>2.21.0</commons-io.version>
         <commons-text.version>1.15.0</commons-text.version>
         <commons-compress.version>1.28.0</commons-compress.version>
-        <commons-codec.version>1.19.0</commons-codec.version>
+        <commons-codec.version>1.21.0</commons-codec.version>
         <commons-math3.version>3.6.1</commons-math3.version>
-        <openrewrite.version>8.73.1</openrewrite.version>
-        <openrewrite.recipe.version>2.27.0</openrewrite.recipe.version>
+        <openrewrite.version>8.75.6</openrewrite.version>
+        <openrewrite.recipe.version>2.30.0</openrewrite.recipe.version>
         <antlr4.version>4.13.2</antlr4.version>
-        <aether.version>2.0.13</aether.version>
+        <aether.version>2.0.16</aether.version>
         <maven.plugin-annotations.version>3.15.2</maven.plugin-annotations.version>
-        <maven.version>3.9.11</maven.version>
+        <maven.version>3.9.12</maven.version>
         <maven.invoker.version>3.3.0</maven.invoker.version>
         <scala.binary.version>2.13</scala.binary.version>
         <scala.version>${scala.binary.version}.18</scala.version>
         <!-- -->
         <!-- TESTING -->
         <!-- -->
-        <surefire.tree-report.version>1.4.0</surefire.tree-report.version>
+        <surefire.tree-report.version>1.5.1</surefire.tree-report.version>
         <junit.version>5.14.2</junit.version>
         <mockito.version>5.21.0</mockito.version>
         <testcontainers.version>2.0.3</testcontainers.version>
@@ -676,6 +677,11 @@
                 <groupId>org.apache.commons</groupId>
                 <artifactId>commons-compress</artifactId>
                 <version>${commons-compress.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.eclipse.jdt</groupId>
+                <artifactId>ecj</artifactId>
+                <version>${ecj.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.eclipse.lsp4j</groupId>

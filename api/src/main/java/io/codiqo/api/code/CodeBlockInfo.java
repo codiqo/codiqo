@@ -20,7 +20,6 @@ public interface CodeBlockInfo extends Consumer<AffectedSymbolInfo> {
     boolean isTrivial();
     void pmdViolation(RuleViolation violation);
     boolean hasMethodCalls();
-    int countMethodCalls();
     Optional<AffectedSymbolInfo> affectedSymbol();
     Mono<CodeBlockMetrics> metrics();
     Mono<CodeBlockCoverage> coverage();

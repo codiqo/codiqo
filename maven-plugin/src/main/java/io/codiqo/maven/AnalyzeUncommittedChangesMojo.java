@@ -7,8 +7,8 @@ import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
 
+import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.RunArgs;
-import io.github.classgraph.ScanResult;
 
 @Mojo(name = "analyze-uncommitted-changes",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
@@ -29,7 +29,7 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
     }
     @Override
     protected void doExecute(RunArgs args) throws Exception {
-        try (ScanResult scan = scanProjects(args, reactors)) {
+        try (ClassGraphSpec scan = scanProjects(args, reactors)) {
             super.doExecute(args);
         }
     }

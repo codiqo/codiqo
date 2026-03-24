@@ -2,7 +2,6 @@ package io.codiqo.maven.populator;
 
 import java.io.File;
 import java.io.IOException;
-import java.math.BigDecimal;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.Files;
@@ -31,6 +30,7 @@ import com.google.common.collect.Maps;
 import edu.umd.cs.findbugs.BugInstance;
 import edu.umd.cs.findbugs.MethodAnnotation;
 import edu.umd.cs.findbugs.Priorities;
+import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.coverage.CodeBlockCoverage;
 import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.diff.FileAnalysis;
@@ -39,28 +39,26 @@ import io.codiqo.client.model.CodeUnitModel;
 import io.codiqo.client.model.CoverageCounterModel;
 import io.codiqo.client.model.CoverageModel;
 import io.codiqo.client.model.DiagnosticModel;
+import io.codiqo.client.model.SignatureFormatModel;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.JavaAnnotationModel;
 import io.codiqo.client.model.JavaInfoModel;
 import io.codiqo.client.model.LineCoverageModel;
 import io.codiqo.client.model.LocationModel;
-import io.codiqo.client.model.MethodCallModel;
+import io.codiqo.client.model.InvocationModel;
 import io.codiqo.client.model.MetricsModel;
 import io.codiqo.client.model.PmdPropertiesModel;
 import io.codiqo.client.model.SpotbugsPropertiesModel;
 import io.codiqo.client.model.SymbolKindModel;
-import io.codiqo.jdtls.Lsp4jAffectedSymbolInfo;
-import io.codiqo.lang.spec.JBinaryMethodSig;
+import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.lang.spec.JavaConstructorBlockInfo;
 import io.codiqo.lang.spec.JavaMethodBlockInfo;
-import io.codiqo.lang.spec.JavaBinarySignatureFormatter.BinarySignatureData;
 import lombok.RequiredArgsConstructor;
 import net.sourceforge.pmd.lang.java.ast.ASTAnnotation;
 import net.sourceforge.pmd.lang.java.ast.ASTAnonymousClassDeclaration;
 import net.sourceforge.pmd.lang.java.ast.ASTConstructorDeclaration;
 import net.sourceforge.pmd.lang.java.ast.ASTMethodDeclaration;
-import net.sourceforge.pmd.lang.java.ast.ASTMethodReference;
 import net.sourceforge.pmd.lang.java.ast.ASTThrowsList;
 import net.sourceforge.pmd.lang.java.ast.ASTTypeParameters;
 import net.sourceforge.pmd.lang.java.ast.Annotatable;
@@ -162,6 +160,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         codeUnitModel.setLocation(locationModel);
         codeUnitModel.setModifiers(javaBlock.getModifiers());
         codeUnitModel.setSignature(javaBlock.getSignature());
+        codeUnitModel.setSignatureFormat(SignatureFormatModel.JVM_DESCRIPTOR);
         codeUnitModel.setIsTrivial(javaBlock.isTrivial());
         codeUnitModel.setJavaInfo(infoModel);
 
@@ -180,9 +179,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
                 break;
         }
 
-        if (affectedSymbol instanceof Lsp4jAffectedSymbolInfo) {
-            populateLsp4jSymbolInfo(ctx, (Lsp4jAffectedSymbolInfo) affectedSymbol, codeUnitModel, infoModel, workTree, fileAnalysis);
-        }
+        populateSymbolInfo(ctx, affectedSymbol, codeUnitModel, infoModel, workTree, fileAnalysis);
 
         populateCoverage(javaBlock, codeUnitModel);
         populateMethodCalls(javaBlock, infoModel);
@@ -193,9 +190,9 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
 
         return codeUnitModel;
     }
-    private static void populateLsp4jSymbolInfo(
+    private static void populateSymbolInfo(
             SubmissionContext ctx,
-            Lsp4jAffectedSymbolInfo lsp4jSymbol,
+            AffectedSymbolInfo lsp4jSymbol,
             CodeUnitModel codeUnitModel,
             JavaInfoModel infoModel,
             Path workTree,
@@ -264,10 +261,10 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
 
             if (Objects.nonNull(from.getRange())) {
                 LocationModel callerLocation = new LocationModel();
-                callerLocation.setStartLine(from.getRange().getStart().getLine() + BigDecimal.ONE.intValue());
-                callerLocation.setStartColumn(from.getRange().getStart().getCharacter() + BigDecimal.ONE.intValue());
-                callerLocation.setEndLine(from.getRange().getEnd().getLine() + BigDecimal.ONE.intValue());
-                callerLocation.setEndColumn(from.getRange().getEnd().getCharacter() + BigDecimal.ONE.intValue());
+                callerLocation.setStartLine(from.getRange().getStart().getLine() + SourceLocation.LSP_OFFSET);
+                callerLocation.setStartColumn(from.getRange().getStart().getCharacter() + SourceLocation.LSP_OFFSET);
+                callerLocation.setEndLine(from.getRange().getEnd().getLine() + SourceLocation.LSP_OFFSET);
+                callerLocation.setEndColumn(from.getRange().getEnd().getCharacter() + SourceLocation.LSP_OFFSET);
                 callerModel.setLocation(callerLocation);
             }
 
@@ -275,10 +272,10 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             if (CollectionUtils.isNotEmpty(fromRanges)) {
                 for (Range range : fromRanges) {
                     LocationModel callSiteLocation = new LocationModel();
-                    callSiteLocation.setStartLine(range.getStart().getLine() + BigDecimal.ONE.intValue());
-                    callSiteLocation.setStartColumn(range.getStart().getCharacter() + BigDecimal.ONE.intValue());
-                    callSiteLocation.setEndLine(range.getEnd().getLine() + BigDecimal.ONE.intValue());
-                    callSiteLocation.setEndColumn(range.getEnd().getCharacter() + BigDecimal.ONE.intValue());
+                    callSiteLocation.setStartLine(range.getStart().getLine() + SourceLocation.LSP_OFFSET);
+                    callSiteLocation.setStartColumn(range.getStart().getCharacter() + SourceLocation.LSP_OFFSET);
+                    callSiteLocation.setEndLine(range.getEnd().getLine() + SourceLocation.LSP_OFFSET);
+                    callSiteLocation.setEndColumn(range.getEnd().getCharacter() + SourceLocation.LSP_OFFSET);
                     callerModel.getCallSites().add(callSiteLocation);
                 }
             }
@@ -341,18 +338,16 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         return coverageModel;
     }
     private static void populateMethodCalls(JavaCodeBlockInfo javaBlock, JavaInfoModel infoModel) {
-        for (JBinaryMethodSig methodCall : javaBlock.getMethodCalls()) {
-            BinarySignatureData signatureData = methodCall.toBinarySignature();
-
-            MethodCallModel methodCallModel = new MethodCallModel();
-            methodCallModel.setOwner(signatureData.getOwnerClass());
-            methodCallModel.setName(signatureData.getMethodName());
-            methodCallModel.setDescriptor(signatureData.getDescriptor());
-            methodCallModel.setTargetSignature(signatureData.getDescriptor());
-            methodCallModel.setTargetClass(signatureData.getOwnerClass());
-            methodCallModel.setTargetMethod(signatureData.getMethodName());
+        for (JInvocationBlock methodCall : javaBlock.getInvocations()) {
+            InvocationModel methodCallModel = new InvocationModel();
+            methodCallModel.setOwner(methodCall.getOwnerClass());
+            methodCallModel.setName(methodCall.getName());
+            methodCallModel.setDescriptor(methodCall.getMethodDescriptor());
             methodCallModel.setIsStatic(methodCall.isStatic());
             methodCallModel.setIsConstructor(methodCall.isConstructor());
+            methodCallModel.setIsMethodReference(methodCall.isMethodReference());
+            methodCallModel.setIsExplicitConstructor(methodCall.isExplicitConstructor());
+            methodCallModel.setIsEnumConstant(methodCall.isEnumConstant());
             methodCallModel.setInvocationKind(resolveInvocationKind(methodCall));
 
             LocationModel callLocation = new LocationModel();
@@ -364,7 +359,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
 
             methodCall.artifact().ifPresent(artifact -> methodCallModel.setArtifact(artifact.getId()));
 
-            infoModel.getMethodCalls().add(methodCallModel);
+            infoModel.getInvocations().add(methodCallModel);
         }
     }
     private static void populateDiagnostics(JavaCodeBlockInfo javaBlock, CodeUnitModel codeUnitModel, String filePath) {
@@ -499,18 +494,20 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             infoModel.getAnnotations().add(annotationModel);
         }
     }
-    private static MethodCallModel.InvocationKindEnum resolveInvocationKind(JBinaryMethodSig methodCall) {
-        if (methodCall.isConstructor()) {
-            return MethodCallModel.InvocationKindEnum.INVOKESPECIAL;
-        } else if (methodCall.isStatic()) {
-            return MethodCallModel.InvocationKindEnum.INVOKESTATIC;
-        } else if (methodCall.getCall() instanceof ASTMethodReference) {
-            return MethodCallModel.InvocationKindEnum.REFERENCE;
-        } else if (methodCall.isInterfaceCall()) {
-            return MethodCallModel.InvocationKindEnum.INVOKEINTERFACE;
-        } else {
-            return MethodCallModel.InvocationKindEnum.INVOKEVIRTUAL;
+    private static InvocationModel.InvocationKindEnum resolveInvocationKind(JInvocationBlock call) {
+        if (call.isConstructor()) {
+            return InvocationModel.InvocationKindEnum.INVOKESPECIAL;
         }
+        if (call.isMethodReference()) {
+            return InvocationModel.InvocationKindEnum.REFERENCE;
+        }
+        if (call.isStatic()) {
+            return InvocationModel.InvocationKindEnum.INVOKESTATIC;
+        }
+        if (call.isInterfaceCall()) {
+            return InvocationModel.InvocationKindEnum.INVOKEINTERFACE;
+        }
+        return InvocationModel.InvocationKindEnum.INVOKEVIRTUAL;
     }
     private static SpotbugsPropertiesModel.ConfidenceEnum resolveSpotbugsConfidence(int priority) {
         if (priority == Priorities.HIGH_PRIORITY) {
@@ -528,6 +525,9 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         if (startLine >= lines.length) {
             return null;
         }
-        return String.join("\n", Arrays.copyOfRange(lines, startLine, endLine + 1));
+        String body = String.join("\n", Arrays.copyOfRange(lines, startLine, endLine + 1));
+        // JDT LS includes javadoc in CallHierarchyItem.range; strip it so only
+        // the method/constructor body is stored.
+        return body.replaceFirst("(?s)^\\s*/\\*\\*.*?\\*/\\s*", "");
     }
 }

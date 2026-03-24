@@ -1,8 +1,8 @@
 package io.codiqo.core;
 
 import java.io.File;
-import java.io.InputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
@@ -20,11 +20,10 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FilenameUtils;
-import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.commons.lang3.time.StopWatch;
@@ -55,12 +54,14 @@ import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
+import io.codiqo.core.diff.GitDiffHunk;
+import io.codiqo.core.diff.GitFileAnalysis;
 import io.codiqo.core.java.JavaLanguageSpec;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
+import io.codiqo.lang.spec.PmdAffectedSymbolInfo;
 import io.codiqo.util.Fetch;
 import net.sourceforge.pmd.cpd.CPDConfiguration;
 import net.sourceforge.pmd.cpd.CpdAnalysis;
-import net.sourceforge.pmd.cpd.Mark;
 import net.sourceforge.pmd.cpd.Match;
 import net.sourceforge.pmd.internal.util.IOUtil;
 import net.sourceforge.pmd.lang.LanguageProcessorRegistry.LanguageTerminationException;
@@ -85,13 +86,14 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         captureCopyPaste(summary, analysis);
         captureCoverage(summary, analysis);
         captureViolations(summary, analysis);
+        captureIncomingCalls(summary, analysis);
         captureComplexity(summary, analysis);
         for (FileAnalysis fileAnalysis : analysis) {
             for (AffectedSymbolInfo affectedSymbolInfo : fileAnalysis.getPotentiallyAffectedSymbols()) {
                 affectedSymbolInfo.block().ifPresent(block -> {
                     if (block instanceof JavaCodeBlockInfo) {
                         JavaCodeBlockInfo java = (JavaCodeBlockInfo) block;
-                        java.getMethodCalls().forEach(outbound -> {
+                        java.getInvocations().forEach(outbound -> {
 
                         });
                     }
@@ -172,23 +174,8 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                         try {
                             if (FilenameUtils.isExtension(file.getName(), processor.lang().getExtensions())) {
                                 try (InputStream input = Files.newInputStream(file.toPath())) {
-                                    String source = IOUtils.toString(input, StandardCharsets.UTF_8);
-                                    processor.parse(file, source).forEach(block -> {
+                                    processor.parse(file).forEach(block -> {
                                         blocks.put(file, block);
-                                        /**
-                                         * link code blocks to affected blocks for later analysis (i.e. violations, coverage, complexity, etc.)
-                                         */
-                                        for (FileAnalysis fileAnalysis : analysis) {
-                                            if (fileAnalysis.getFile().equals(file)) {
-                                                for (AffectedSymbolInfo symbolInfo : fileAnalysis.getPotentiallyAffectedSymbols()) {
-                                                    if (symbolInfo.getLocation().equals(block.getLocation())) {
-                                                        block.accept(symbolInfo);
-                                                        symbolInfo.accept(block);
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
 
                                         if (block.isTrivial()) {
                                             skippedTrivial.incrementAndGet();
@@ -226,6 +213,52 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                     .took(stopWatch)
                     .build();
         }
+    }
+    @Override
+    public void identifyAffectedSymbols(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
+        AtomicInteger identified = new AtomicInteger();
+
+        for (LanguageSpec processor : processors) {
+            for (FileAnalysis it : analysis) {
+                if (it.isExtension(processor.lang())) {
+                    if (it instanceof GitFileAnalysis) {
+                        GitFileAnalysis gitAnalysis = (GitFileAnalysis) it;
+
+                        /**
+                         * identify affected blocks by checking if any of the changed lines from the GIT difference fall within the symbol's location
+                         */
+                        Set<Integer> lines = Sets.newHashSet();
+                        if (Objects.nonNull(gitAnalysis.getStructuredDiff())) {
+                            for (GitDiffHunk hunk : gitAnalysis.getStructuredDiff().getHunks()) {
+                                for (int line = hunk.getNewStartLine(); line < hunk.getNewEndLine(); line++) {
+                                    lines.add(line + SourceLocation.GIT_OFFSET);
+                                }
+                            }
+                        }
+
+                        if (CollectionUtils.isNotEmpty(lines)) {
+                            Collection<CodeBlockInfo> fileBlocks = summary.getBlocks().get(gitAnalysis.getFile());
+                            for (CodeBlockInfo next : fileBlocks) {
+                                if (next instanceof JavaCodeBlockInfo) {
+                                    JavaCodeBlockInfo block = (JavaCodeBlockInfo) next;
+                                    int startLine = block.getLocation().getStartLine();
+                                    int endLine = block.getLocation().getEndLine();
+                                    boolean isAffected = lines.stream().anyMatch(line -> line >= startLine && line <= endLine);
+                                    if (isAffected) {
+                                        PmdAffectedSymbolInfo symbol = new PmdAffectedSymbolInfo(block, processor.lang());
+                                        gitAnalysis.getPotentiallyAffectedSymbols().add(symbol);
+                                        block.accept(symbol);
+                                        identified.incrementAndGet();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        log.info("identified %d potentially affected symbols", identified.get());
     }
     @Override
     public void captureCopyPaste(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
@@ -270,22 +303,18 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                                         .match(match)
                                         .tokenCount(match.getTokenCount())
                                         .lineCount(match.getLineCount())
-                                        .marks(match.getMarkSet().stream().map(new Function<Mark, PmdDuplicationMark>() {
-                                            @Override
-                                            public PmdDuplicationMark apply(Mark mark) {
-                                                return PmdDuplicationMark.builder()
-                                                        .mark(mark)
-                                                        .file(Paths.get(mark.getLocation().getFileId().getAbsolutePath()).toFile())
-                                                        .sourceCodeSlice(report.getSourceCodeSlice(mark).toString())
-                                                        .location(SourceLocation.builder()
-                                                                .startLine(mark.getLocation().getStartLine())
-                                                                .endLine(mark.getLocation().getEndLine())
-                                                                .startColumn(mark.getLocation().getStartColumn())
-                                                                .endColumn(mark.getLocation().getEndColumn())
-                                                                .build())
-                                                        .build();
-                                            }
-                                        }).collect(ImmutableList.toImmutableList())).build());
+                                        .marks(match.getMarkSet().stream().map(mark -> PmdDuplicationMark.builder()
+                                                .mark(mark)
+                                                .file(Paths.get(mark.getLocation().getFileId().getAbsolutePath()).toFile())
+                                                .sourceCodeSlice(report.getSourceCodeSlice(mark).toString())
+                                                .location(SourceLocation.builder()
+                                                        .startLine(mark.getLocation().getStartLine())
+                                                        .endLine(mark.getLocation().getEndLine())
+                                                        .startColumn(mark.getLocation().getStartColumn())
+                                                        .endColumn(mark.getLocation().getEndColumn())
+                                                        .build())
+                                                .build()).collect(ImmutableList.toImmutableList()))
+                                        .build());
                             }
 
                             PMDCopyPasteDetectionSummary toAccept = new PMDCopyPasteDetectionSummary(
@@ -318,6 +347,12 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                     }
                 }
             }
+        }
+    }
+    @Override
+    public void captureIncomingCalls(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
+        for (LanguageSpec processor : processors) {
+            processor.captureIncomingCalls(summary, analysis);
         }
     }
     @Override

@@ -43,7 +43,7 @@ public class GitDeltaAnalysisMicroDemo {
             try (LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, run, fetch)) {
                 registry.load().block();
 
-                DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, registry, run);
+                DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, run);
                 CommitAnalysis analysis = analyzer.analyze();
                 IndexingSummary index = registry.index(analysis);
                 registry.collectAndCapture(index, analysis);

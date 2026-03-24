@@ -21,8 +21,8 @@ import org.eclipse.jgit.lib.StoredConfig;
 
 import com.google.common.collect.Lists;
 
+import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.RunArgs;
-import io.github.classgraph.ScanResult;
 
 @Mojo(name = "analyze-commit",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
@@ -103,7 +103,8 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
 
             Collection<MavenProject> reactors = Lists.newLinkedList();
             buildAndCollectModules(result.getProject(), clone.getWorkTree(), buildingReq, reactors);
-            try (ScanResult scan = scanProjects(args, reactors)) {
+            try (ClassGraphSpec scan = scanProjects(args, reactors)) {
+                args.setClassGraph(scan);
                 super.doExecute(args);
             }
         } finally {

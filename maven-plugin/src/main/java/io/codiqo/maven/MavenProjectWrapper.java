@@ -2,11 +2,9 @@ package io.codiqo.maven;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.URL;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Date;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -17,13 +15,12 @@ import com.google.common.collect.HashBiMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
+import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.MavenProjectSpec;
-import io.github.classgraph.ClassInfo;
-import io.github.classgraph.ClassInfoList;
-import io.github.classgraph.ScanResult;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
+import lombok.experimental.Delegate;
 
 @Setter
 @Getter
@@ -51,7 +48,8 @@ public class MavenProjectWrapper implements MavenProjectSpec {
     private Collection<File> testCompileSourceRoots = Lists.newArrayList();
     private Collection<File> testClasspathElements = Lists.newArrayList();
     private BiMap<Artifact, File> artifacts = HashBiMap.create();
-    private ScanResult scan;
+    @Delegate
+    private ClassGraphSpec scan;
 
     @Override
     public Optional<File> coverage() {
@@ -86,58 +84,6 @@ public class MavenProjectWrapper implements MavenProjectSpec {
     @Override
     public Optional<String> parent() {
         return parent;
-    }
-    @Override
-    public List<URL> getClasspathURLs() {
-        return scan.getClasspathURLs();
-    }
-    @Override
-    public ClassInfo getClassInfo(String fqn) {
-        return scan.getClassInfo(fqn);
-    }
-    @Override
-    public ClassInfoList getAllClasses() {
-        return scan.getAllClasses();
-    }
-    @Override
-    public ClassInfoList interfaces(String fqn) {
-        return scan.getInterfaces(fqn);
-    }
-    @Override
-    public ClassInfoList classesImplementing(String fqn) {
-        return scan.getClassesImplementing(fqn);
-    }
-    @Override
-    public ClassInfoList superclasses(String fqn) {
-        return scan.getSuperclasses(fqn);
-    }
-    @Override
-    public ClassInfoList subclasses(String fqn) {
-        return scan.getSubclasses(fqn);
-    }
-    @Override
-    public ClassInfoList annotationsOnClass(String fqn) {
-        return scan.getAnnotationsOnClass(fqn);
-    }
-    @Override
-    public ClassInfoList classesWithAnnotation(String fqn) {
-        return scan.getClassesWithAnnotation(fqn);
-    }
-    @Override
-    public ClassInfoList classesWithAllAnnotations(String... fqns) {
-        return scan.getClassesWithAllAnnotations(fqns);
-    }
-    @Override
-    public ClassInfoList classesWithAnyAnnotation(String... fqns) {
-        return scan.getClassesWithAnyAnnotation(fqns);
-    }
-    @Override
-    public ClassInfoList classesWithFieldAnnotation(String fqn) {
-        return scan.getClassesWithFieldAnnotation(fqn);
-    }
-    @Override
-    public ClassInfoList classesWithMethodAnnotation(String fqn) {
-        return scan.getClassesWithMethodAnnotation(fqn);
     }
     @Override
     public String toString() {

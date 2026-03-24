@@ -8,23 +8,18 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.util.Collection;
 import java.util.Date;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.mutable.MutableInt;
-import org.apache.commons.lang3.time.StopWatch;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.diff.DiffEntry;
@@ -44,14 +39,11 @@ import org.eclipse.jgit.treewalk.FileTreeIterator;
 import org.eclipse.jgit.treewalk.TreeWalk;
 import org.eclipse.jgit.treewalk.filter.PathFilter;
 import org.eclipse.jgit.util.io.DisabledOutputStream;
-import org.eclipse.lsp4j.DocumentSymbol;
 import org.slf4j.event.Level;
 
 import com.google.common.collect.Lists;
 
 import io.codiqo.api.DeltaAnalyzer;
-import io.codiqo.api.LanguageProcessors;
-import io.codiqo.api.LanguageSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.diff.FileAnalysis;
@@ -63,18 +55,15 @@ import io.codiqo.core.diff.GitDiffHunk;
 import io.codiqo.core.diff.GitFileAnalysis;
 import io.codiqo.core.diff.GitFileRevisionInfo;
 import io.codiqo.core.diff.GitStructuredDiff;
-import io.codiqo.core.java.JavaLanguageSpec;
 
 public class JGitDeltaAnalyzer implements DeltaAnalyzer {
     private static final Pattern REVERT_PATTERN = Pattern.compile("This reverts commit ([a-f0-9]{40})\\.");
 
     private final Log log;
-    private final LanguageProcessors registry;
     private final RunArgs args;
 
-    public JGitDeltaAnalyzer(LogFactory logFactory, LanguageProcessors registry, RunArgs args) {
+    public JGitDeltaAnalyzer(LogFactory logFactory, RunArgs args) {
         this.log = logFactory.getLogger(getClass());
-        this.registry = Objects.requireNonNull(registry);
         this.args = Objects.requireNonNull(args);
     }
     @Override
@@ -365,14 +354,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         structuredDiff.setChangeType(diff.getChangeType());
         toReturn.setStructuredDiff(structuredDiff);
 
-        Collection<Integer> modifiedLines = Lists.newArrayList();
         for (Edit edit : fileHeader.toEditList()) {
-            int beginB = edit.getBeginB();
-            int endB = edit.getEndB();
-            for (int line = beginB; line < endB; line++) {
-                modifiedLines.add(line);
-            }
-
             GitDiffHunk hunk = new GitDiffHunk();
             hunk.setOldStartLine(edit.getBeginA());
             hunk.setOldEndLine(edit.getEndA());
@@ -380,11 +362,6 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
             hunk.setNewEndLine(edit.getEndB());
             hunk.setType(edit.getType());
             structuredDiff.getHunks().add(hunk);
-        }
-
-        if (diff.getChangeType() != DiffEntry.ChangeType.DELETE) {
-            Path resolve = args.getGit().getWorkTree().toPath().resolve(diff.getNewPath());
-            analyzeSymbols(toReturn, resolve.toFile(), modifiedLines);
         }
 
         return toReturn;
@@ -430,14 +407,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
                         structuredDiff.setChangeType(diff.getChangeType());
                         toReturn.setStructuredDiff(structuredDiff);
 
-                        Collection<Integer> modifiedLines = Lists.newArrayList();
                         for (Edit edit : fileHeader.toEditList()) {
-                            int beginB = edit.getBeginB();
-                            int endB = edit.getEndB();
-                            for (int line = beginB; line < endB; line++) {
-                                modifiedLines.add(line);
-                            }
-
                             GitDiffHunk hunk = new GitDiffHunk();
                             hunk.setOldStartLine(edit.getBeginA());
                             hunk.setOldEndLine(edit.getEndA());
@@ -446,8 +416,6 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
                             hunk.setType(edit.getType());
                             structuredDiff.getHunks().add(hunk);
                         }
-
-                        analyzeSymbols(toReturn, destination, modifiedLines);
                     }
                 }
             }
@@ -495,14 +463,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         structuredDiff.setChangeType(diff.getChangeType());
         toReturn.setStructuredDiff(structuredDiff);
 
-        Collection<Integer> modifiedLines = Lists.newArrayList();
         for (Edit edit : fileHeader.toEditList()) {
-            int beginB = edit.getBeginB();
-            int endB = edit.getEndB();
-            for (int line = beginB; line < endB; line++) {
-                modifiedLines.add(line);
-            }
-
             GitDiffHunk hunk = new GitDiffHunk();
             hunk.setOldStartLine(edit.getBeginA());
             hunk.setOldEndLine(edit.getEndA());
@@ -512,32 +473,6 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
             structuredDiff.getHunks().add(hunk);
         }
 
-        if (diff.getChangeType() != DiffEntry.ChangeType.DELETE) {
-            Path resolve = args.getGit().getWorkTree().toPath().resolve(diff.getNewPath());
-            analyzeSymbols(toReturn, resolve.toFile(), modifiedLines);
-        }
-
         return toReturn;
-    }
-    @Override
-    public void analyzeSymbols(FileAnalysis analysis, File destination, Collection<Integer> modifiedLines) throws Exception {
-        for (LanguageSpec spec : registry) {
-            if (spec instanceof JavaLanguageSpec) {
-                JavaLanguageSpec importer = (JavaLanguageSpec) spec;
-                CompletableFuture<List<DocumentSymbol>> future = importer.documentSymbol(destination.toURI().toString());
-                Collection<DocumentSymbol> symbols = future.get(args.getImportTimeout().getSeconds(), TimeUnit.SECONDS);
-                for (DocumentSymbol symbol : symbols.stream().filter(s -> JavaLanguageSpec.TYPES.contains(s.getKind())).collect(Collectors.toList())) {
-                    StopWatch stopWatch = StopWatch.createStarted();
-                    spec.identifyAffectedSymbols(analysis, symbol, destination, modifiedLines);
-                    stopWatch.stop();
-                    log.log(Level.DEBUG, "analyzed file: %s(%s), modified lines: %d, affected symbols: %d, took: %s",
-                            analysis.getChangeType(),
-                            destination.getAbsolutePath(),
-                            modifiedLines.size(),
-                            analysis.getPotentiallyAffectedSymbols().size(),
-                            stopWatch);
-                }
-            }
-        }
     }
 }

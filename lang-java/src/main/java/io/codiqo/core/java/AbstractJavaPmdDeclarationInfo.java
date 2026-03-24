@@ -19,7 +19,7 @@ import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.coverage.CodeBlockCoverage;
 import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.metrics.CodeBlockMetrics;
-import io.codiqo.lang.spec.JBinaryMethodSig;
+import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import lombok.Builder;
 import lombok.Getter;
@@ -47,7 +47,7 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
     private String body;
     private SourceLocation location;
     @Builder.Default
-    private Collection<JBinaryMethodSig> methodCalls = Lists.newArrayList();
+    private Collection<JInvocationBlock> invocations = Lists.newArrayList();
     @Builder.Default
     private List<RuleViolation> pmdViolations = Lists.newArrayList();
     @Builder.Default
@@ -140,11 +140,7 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
     }
     @Override
     public boolean hasMethodCalls() {
-        return CollectionUtils.isNotEmpty(methodCalls);
-    }
-    @Override
-    public int countMethodCalls() {
-        return hasMethodCalls() ? methodCalls.size() : 0;
+        return CollectionUtils.isNotEmpty(invocations);
     }
     @Override
     public Optional<AffectedSymbolInfo> affectedSymbol() {
@@ -168,7 +164,7 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
     }
     @Override
     public String toString() {
-        JClassSymbol symbol = Optional.ofNullable(getType()).orElse(enclosingType).getSymbol();
+        JClassSymbol symbol = Optional.ofNullable(type).orElse(enclosingType).getSymbol();
         return String.format("%s( %s )", symbol.getBinaryName(), PrettyPrintingUtil.displaySignature(node));
     }
 }

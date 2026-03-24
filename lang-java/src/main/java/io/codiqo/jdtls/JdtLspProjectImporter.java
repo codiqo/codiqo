@@ -48,7 +48,7 @@ import reactor.core.publisher.Sinks;
 import reactor.core.publisher.Sinks.EmitResult;
 import reactor.core.scheduler.Schedulers;
 
-public class JdtLspProjectImporter implements LanguageServerProjectImporter, Lsp4jQuery, Closeable {
+public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectImporter, Closeable {
     public static final int EXIT_OK = 0;
     public static final int EXIT_SIGTERM = 143;
 

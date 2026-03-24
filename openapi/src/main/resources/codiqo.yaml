@@ -1186,6 +1186,8 @@ components:
       properties:
         signature:
           type: string
+        signatureFormat:
+          $ref: '#/components/schemas/SignatureFormatModel'
         name:
           type: string
         kind:
@@ -1228,6 +1230,12 @@ components:
           description: Diff of just this code unit
         duplication:
           $ref: '#/components/schemas/CodeUnitDuplicationModel'
+
+    SignatureFormatModel:
+      type: string
+      enum:
+        - jvm_descriptor
+        - jdt_ls
 
     SymbolKindModel:
       type: string
@@ -1321,10 +1329,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/JavaAnnotationModel'
-        methodCalls:
+        invocations:
           type: array
           items:
-            $ref: '#/components/schemas/MethodCallModel'
+            $ref: '#/components/schemas/InvocationModel'
 
     JavaAnnotationModel:
       type: object
@@ -1337,7 +1345,7 @@ components:
           type: object
           additionalProperties: true
 
-    MethodCallModel:
+    InvocationModel:
       type: object
       required: [owner, name, descriptor]
       properties:
@@ -1347,12 +1355,6 @@ components:
           type: string
         descriptor:
           type: string
-        targetSignature:
-          type: string
-        targetClass:
-          type: string
-        targetMethod:
-          type: string
         invocationKind:
           type: string
           enum: [invokevirtual, invokeinterface, invokespecial, invokestatic, invokedynamic, reference]
@@ -1360,6 +1362,14 @@ components:
           type: boolean
         isConstructor:
           type: boolean
+        isMethodReference:
+          type: boolean
+        isExplicitConstructor:
+          type: boolean
+          description: true for this() or super() constructor delegation calls
+        isEnumConstant:
+          type: boolean
+          description: true for enum constant constructor invocations
         location:
           $ref: '#/components/schemas/LocationModel'
         artifact:
@@ -2433,6 +2443,8 @@ components:
         ignoreDiagnostics:
           type: boolean
         hideSourceCode:
+          type: boolean
+        jdtUseSharedIndex:
           type: boolean
         importTimeout:
           type: string
