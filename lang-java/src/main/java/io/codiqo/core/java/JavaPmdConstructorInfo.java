@@ -1,26 +1,25 @@
 package io.codiqo.core.java;
 
 import java.math.BigInteger;
-
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
 
-import io.codiqo.lang.spec.JavaBinarySignatureFormatter;
 import io.codiqo.lang.spec.JavaConstructorBlockInfo;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.experimental.SuperBuilder;
 import net.sourceforge.pmd.lang.java.ast.ASTConstructorDeclaration;
+import net.sourceforge.pmd.lang.java.types.JMethodSig;
 
 @Setter
 @Getter
 @SuperBuilder
 class JavaPmdConstructorInfo extends AbstractJavaPmdDeclarationInfo implements JavaConstructorBlockInfo {
-    private final Supplier<Boolean> trivialSupplier = Suppliers.memoize(() -> countMethodCalls() <= BigInteger.ONE.intValue());
+    private final Supplier<Boolean> trivialSupplier = Suppliers.memoize(() -> getInvocations().size() <= BigInteger.ONE.intValue());
     private final Supplier<String> signatureSupplier = Suppliers.memoize(() -> {
-        String ownerClass = JavaBinaryFormat.getInternalName(getConstructor().getSymbol().getEnclosingClass().getBinaryName());
-        String descriptor = JavaBinaryFormat.toMethodDescriptor(getConstructor().getGenericSignature());
-        return ownerClass + "." + JavaBinaryFormat.CONSTRUCTOR_NAME + descriptor;
+        org.objectweb.asm.Type ownerType = JavaBinaryFormat.toOwnerType(getConstructor().getSymbol().getEnclosingClass());
+        org.objectweb.asm.commons.Method method = JavaBinaryFormat.toMethod(getConstructor().getGenericSignature());
+        return ownerType.getInternalName() + "." + method;
     });
 
     @Override
@@ -36,11 +35,7 @@ class JavaPmdConstructorInfo extends AbstractJavaPmdDeclarationInfo implements J
         return (ASTConstructorDeclaration) getNode();
     }
     @Override
-    public BinarySignatureData toBinarySignature() {
-        return JavaBinarySignatureFormatter.BinarySignatureData.builder()
-                .ownerClass(JavaBinaryFormat.getInternalName(getConstructor().getSymbol().getEnclosingClass().getBinaryName()))
-                .methodName(JavaBinaryFormat.CONSTRUCTOR_NAME)
-                .descriptor(JavaBinaryFormat.toMethodDescriptor(getConstructor().getGenericSignature()))
-                .build();
+    public JMethodSig getGenericSignature() {
+        return getConstructor().getGenericSignature();
     }
 }

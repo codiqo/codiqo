@@ -1,7 +1,5 @@
 package io.codiqo.api;
 
-import java.io.File;
-import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -30,6 +28,4 @@ public interface DeltaAnalyzer {
     Optional<String> fileContentFromWorkingTree(String filePath) throws Exception;
     Optional<String> fileContentAtRevision(String filePath, String revisionId) throws Exception;
     List<FileRevisionInfo> getFileHistory(String filePath, int maxRevisions) throws Exception;
-
-    void analyzeSymbols(FileAnalysis analysis, File file, Collection<Integer> modifiedLines) throws Exception;
 }

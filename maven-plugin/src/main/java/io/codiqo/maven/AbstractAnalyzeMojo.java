@@ -14,6 +14,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -21,6 +22,7 @@ import java.util.stream.Collectors;
 import javax.inject.Inject;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -53,6 +55,7 @@ import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.collection.CollectRequest;
+import org.eclipse.aether.repository.LocalRepositoryManager;
 import org.eclipse.aether.repository.RemoteRepository;
 import org.eclipse.aether.resolution.ArtifactResult;
 import org.eclipse.aether.resolution.DependencyRequest;
@@ -66,17 +69,22 @@ import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.HttpTransport;
 import org.eclipse.jgit.transport.TagOpt;
 
+import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Sets;
 import com.google.common.io.Resources;
 
+import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.DeltaAnalyzer;
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.LanguageProcessors;
+import io.codiqo.api.MavenProjectSpec;
+import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.client.model.ScoringConfigModel;
+import io.codiqo.core.ClassGraphWrapper;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.maven.logging.MavenLogFactory;
@@ -209,6 +217,19 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.hideSourceCode", defaultValue = "false")
     protected boolean hideSourceCode = false;
 
+    @Parameter(property = "codiqo.jdtUseSharedIndex", defaultValue = "true")
+    protected boolean jdtUseSharedIndex = true;
+
+    @Parameter(property = "codiqo.jdtIncludeDecompiledSources", defaultValue = "false")
+    protected boolean jdtIncludeDecompiledSources = false;
+
+    @Parameter(property = "codiqo.jdtDebugPort")
+    protected Integer jdtDebugPort;
+
+    @Parameter(property = "codiqo.jdtSourceExclusions",
+            defaultValue = "org.scala-lang, org.apache.kafka, org.apache.pekko, org.apache.spark, org.json4s")
+    protected String jdtSourceExclusions;
+
     @Override
     @SuppressWarnings("deprecation")
     public final Collection<File> apply(Artifact artifact) {
@@ -260,6 +281,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         Optional.ofNullable(includeBranches).ifPresent(args::setIncludeBranches);
         Optional.ofNullable(includeAuthorEmails).ifPresent(args::setIncludeAuthorEmails);
         args.setHideSourceCode(hideSourceCode);
+        args.setJdtUseSharedIndex(jdtUseSharedIndex);
+        args.setJdtIncludeDecompiledSources(jdtIncludeDecompiledSources);
+        args.setJdtDebugPort(jdtDebugPort);
         if (StringUtils.isNotEmpty(llmApiKey)) {
             if (llmApiKey.startsWith(ENV_PREFIX)) {
                 String envVar = llmApiKey.substring(ENV_PREFIX.length());
@@ -296,7 +320,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             });
         }
     }
-    protected ScanResult scanProjects(RunArgs args, Collection<MavenProject> projects) {
+    protected ClassGraphSpec scanProjects(RunArgs args, Collection<MavenProject> projects) {
         Set<URI> jars = Sets.newLinkedHashSet();
         projects.stream()
                 .filter(reactor -> BooleanUtils.negate(NON_CODE_PACKAGINGS.contains(reactor.getPackaging())))
@@ -374,18 +398,71 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     });
                     args.getProjects().add(toReturn);
                 });
+
+        StopWatch stopWatch = StopWatch.createStarted();
         ClassGraph classGraph = new ClassGraph().enableAllInfo();
         jars.forEach(classGraph::overrideClasspath);
-        StopWatch stopWatch = StopWatch.createStarted();
+        classGraph.enableSystemJarsAndModules();
         ScanResult scan = classGraph.scan();
-        stopWatch.stop();
+
+        ClassGraphSpec graphSpec = new ClassGraphWrapper(new MavenLogFactory(getLog()).getLogger(ClassGraphWrapper.class), scan);
         args.getProjects().forEach(spec -> {
             if (spec instanceof MavenProjectWrapper) {
-                ((MavenProjectWrapper) spec).setScan(scan);
+                ((MavenProjectWrapper) spec).setScan(graphSpec);
             }
         });
-        getLog().info(String.format("configured maven projects in %s, classgraph classes: %d", stopWatch, scan.getAllClasses().size()));
-        return scan;
+
+        stopWatch.stop();
+        getLog().info(String.format("configured maven projects in %s, classgraph classes: %d", stopWatch, graphSpec.getAllClasses().size()));
+        return graphSpec;
+    }
+    @SuppressWarnings("deprecation")
+    private void purgeNonJavaSourceJars(RunArgs args) throws IOException {
+        List<String> exclusions = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(jdtSourceExclusions);
+        if (CollectionUtils.isNotEmpty(exclusions)) {
+            LocalRepositoryManager localRepoManager = mavenSession.getRepositorySession().getLocalRepositoryManager();
+            AtomicInteger purged = new AtomicInteger();
+
+            for (ProjectSpec prj : args.getProjects()) {
+                if (prj instanceof MavenProjectSpec) {
+                    MavenProjectSpec mvn = (MavenProjectSpec) prj;
+                    mvn.getArtifacts().keySet().forEach(artifact -> {
+                        boolean matches = exclusions.stream().anyMatch(prefix -> artifact.getGroupId().startsWith(prefix));
+                        if (matches) {
+                            try {
+                                DefaultArtifact sources = new DefaultArtifact(
+                                        artifact.getGroupId(),
+                                        artifact.getArtifactId(),
+                                        "sources",
+                                        "jar",
+                                        artifact.getVersion());
+                                File sourceJar = new File(
+                                        localRepoManager.getRepository().getBasedir(),
+                                        localRepoManager.getPathForLocalArtifact(sources));
+                                if (sourceJar.exists()) {
+                                    getLog().info("purging source JAR: " + sourceJar.getAbsolutePath());
+                                    if (sourceJar.delete()) {
+                                        purged.incrementAndGet();
+                                    }
+                                }
+                            } catch (Exception err) {
+                                ExceptionUtils.wrapAndThrow(err);
+                            }
+                        }
+                    });
+                }
+            }
+
+            if (purged.get() > 0) {
+                getLog().info("purged " + purged.get() + " non-Java source JARs from local repository");
+
+                File sharedIndex = RunArgs.JDT_SHARED_INDEX.toFile();
+                if (sharedIndex.exists()) {
+                    FileUtils.deleteDirectory(sharedIndex);
+                    getLog().info("invalidated JDT shared index cache: " + sharedIndex.getAbsolutePath());
+                }
+            }
+        }
     }
     protected File autoDetectJacocoDestFile(MavenProject reactor) {
         Predicate<Plugin> filter = plugin -> BooleanUtils.and(new boolean[] {
@@ -555,6 +632,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         toReturn.setIgnoreCpd(args.isIgnoreCpd());
         toReturn.setIgnoreDiagnostics(args.isIgnoreDiagnostics());
         toReturn.setHideSourceCode(args.isHideSourceCode());
+        toReturn.setJdtUseSharedIndex(args.isJdtUseSharedIndex());
 
         toReturn.setImportTimeout(Optional.ofNullable(args.getImportTimeout()).map(Duration::toString).orElse(null));
         toReturn.setLspQueryTimeout(Optional.ofNullable(args.getLspQueryTimeout()).map(Duration::toString).orElse(null));
@@ -713,13 +791,15 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         return toReturn;
     }
     protected SubmissionContext doAnalyze(RunArgs args) throws Exception {
+        purgeNonJavaSourceJars(args);
+
         LogFactory logFactory = new MavenLogFactory(getLog());
         Path workTree = args.getGit().getWorkTree().toPath().normalize();
         try (Fetch fetch = new Fetch(args)) {
             try (LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, args, fetch)) {
                 registry.load().block();
                 MutableBoolean toApply = new MutableBoolean();
-                DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, registry, args);
+                DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, args);
                 CommitAnalysis analysis = analyzer.analyze();
                 analysis.forEach(diff -> {
                     if (FilenameUtils.isExtension(diff.getFile().getName(), registry.extensions())) {
@@ -735,6 +815,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 }
                 if (toApply.isTrue()) {
                     IndexingSummary index = registry.index(analysis);
+                    registry.identifyAffectedSymbols(index, analysis);
                     registry.collectAndCapture(index, analysis);
                     SubmissionContext ctx = SubmissionContext.create(
                             args,

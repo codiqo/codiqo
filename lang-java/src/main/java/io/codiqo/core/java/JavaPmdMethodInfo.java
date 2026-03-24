@@ -11,12 +11,12 @@ import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.Sets;
 
-import io.codiqo.lang.spec.JavaBinarySignatureFormatter;
 import io.codiqo.lang.spec.JavaMethodBlockInfo;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.experimental.SuperBuilder;
 import net.sourceforge.pmd.lang.java.ast.ASTMethodDeclaration;
+import net.sourceforge.pmd.lang.java.types.JMethodSig;
 
 @Setter
 @Getter
@@ -34,7 +34,7 @@ class JavaPmdMethodInfo extends AbstractJavaPmdDeclarationInfo implements JavaMe
 
     private final Supplier<Boolean> trivialSupplier = Suppliers.memoize(() -> {
         String name = getMethod().getName();
-        int count = countMethodCalls();
+        int count = getInvocations().size();
         if (count == BigInteger.ZERO.intValue()) {
             return true;
         }
@@ -46,10 +46,9 @@ class JavaPmdMethodInfo extends AbstractJavaPmdDeclarationInfo implements JavaMe
                 });
     });
     private final Supplier<String> signatureSupplier = Suppliers.memoize(() -> {
-        String ownerClass = JavaBinaryFormat.getInternalName(getMethod().getSymbol().getEnclosingClass().getBinaryName());
-        String methodName = getMethod().getName();
-        String descriptor = JavaBinaryFormat.toMethodDescriptor(getMethod().getGenericSignature());
-        return ownerClass + "." + methodName + descriptor;
+        org.objectweb.asm.Type ownerType = JavaBinaryFormat.toOwnerType(getMethod().getSymbol().getEnclosingClass());
+        org.objectweb.asm.commons.Method method = JavaBinaryFormat.toMethod(getMethod().getGenericSignature());
+        return ownerType.getInternalName() + "." + method;
     });
 
     @Override
@@ -61,15 +60,11 @@ class JavaPmdMethodInfo extends AbstractJavaPmdDeclarationInfo implements JavaMe
         return (ASTMethodDeclaration) getNode();
     }
     @Override
-    public String getSignature() {
-        return signatureSupplier.get();
+    public JMethodSig getGenericSignature() {
+        return getMethod().getGenericSignature();
     }
     @Override
-    public BinarySignatureData toBinarySignature() {
-        return JavaBinarySignatureFormatter.BinarySignatureData.builder()
-                .ownerClass(JavaBinaryFormat.getInternalName(getMethod().getSymbol().getEnclosingClass().getBinaryName()))
-                .methodName(getMethod().getName())
-                .descriptor(JavaBinaryFormat.toMethodDescriptor(getMethod().getGenericSignature()))
-                .build();
+    public String getSignature() {
+        return signatureSupplier.get();
     }
 }

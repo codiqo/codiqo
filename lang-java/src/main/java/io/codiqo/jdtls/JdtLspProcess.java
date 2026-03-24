@@ -5,15 +5,12 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 import org.apache.commons.io.IOUtils;
@@ -28,7 +25,6 @@ import org.zeroturnaround.process.JavaProcess;
 import org.zeroturnaround.process.Processes;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 
 import io.codiqo.api.RunArgs;
@@ -36,27 +32,10 @@ import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.util.Fetch;
 import lombok.experimental.Delegate;
-import okhttp3.HttpUrl;
 import reactor.core.publisher.Sinks;
 import reactor.core.publisher.Sinks.EmitResult;
 
 class JdtLspProcess implements Closeable {
-    public static final Map<String, String> JDTLS_CONFIG = ImmutableMap.of(
-            "osx-x86_64", "config_mac",
-            "osx-aarch_64", "config_mac_arm",
-            "linux-x86_64", "config_linux",
-            "linux-aarch_64", "config_linux_arm",
-            "windows-x86_64", "config_win");
-    public static final Supplier<HttpUrl.Builder> BASE_URL = () -> new HttpUrl.Builder().scheme("https").host("download.eclipse.org").addPathSegment("jdtls").addPathSegment("milestones");
-    public static final Path CACHE = FileSystems.getDefault().getPath(System.getProperty("user.home"), ".cache", "jdtls");
-    static {
-        try {
-            Files.createDirectories(CACHE);
-        } catch (IOException err) {
-            throw new ExceptionInInitializerError(err);
-        }
-    }
-
     @Delegate
     private final Sinks.Many<Integer> processor = Sinks.many().multicast().directBestEffort();
     private final Log log;
@@ -69,16 +48,16 @@ class JdtLspProcess implements Closeable {
         OSDetector detector = new OSDetector(logFactory);
         detector.detect(lookup, ImmutableList.of());
 
-        try (InputStream io = BASE_URL
+        try (InputStream io = RunArgs.JDTLS_BASE_URL
                 .get()
                 .addPathSegment(args.getJdtlsVersion())
                 .addPathSegment("latest.txt")
                 .build()
                 .url()
                 .openStream()) {
-            String os = JDTLS_CONFIG.get(lookup.getProperty("os.detected.classifier"));
+            String os = RunArgs.JDTLS_CONFIG.get(lookup.getProperty("os.detected.classifier"));
             String latest = StringUtils.trim(IOUtils.toString(io, StandardCharsets.UTF_8));
-            Path path = fetch.download(logFactory, BASE_URL.get().addPathSegment(args.getJdtlsVersion()).addPathSegment(latest).build().url());
+            Path path = fetch.download(logFactory, RunArgs.JDTLS_BASE_URL.get().addPathSegment(args.getJdtlsVersion()).addPathSegment(latest).build().url());
             Archiver archiver = ArchiverFactory.createArchiver(FileType.get(path.toFile()));
             Path tempDir = Files.createTempDirectory("jdtls");
             tempDir.toFile().deleteOnExit();
@@ -109,6 +88,9 @@ class JdtLspProcess implements Closeable {
             List<String> cmd = Lists.newArrayList();
             cmd.add(java);
             cmd.addAll(ImmutableList.of("-server", "-Xlog:disable"));
+            if (Objects.nonNull(args.getJdtDebugPort())) {
+                cmd.add("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=*:" + args.getJdtDebugPort());
+            }
             cmd.addAll(ImmutableList.of("-XX:+UnlockExperimentalVMOptions", "-XX:+UnlockDiagnosticVMOptions", "-XX:+UseStringDeduplication"));
             cmd.addAll(
                     ImmutableList.of(
@@ -165,7 +147,10 @@ class JdtLspProcess implements Closeable {
                 cmd.add("-javaagent:" + file.getAbsolutePath());
             }
 
-            cmd.add("-Djdt.core.sharedIndexLocation=" + CACHE.toFile().getAbsolutePath());
+            if (args.isJdtUseSharedIndex()) {
+                cmd.add("-Djdt.core.sharedIndexLocation=" + RunArgs.JDT_SHARED_INDEX.toFile().getAbsolutePath());
+            }
+
             cmd.addAll(ImmutableList.of("-jar", launcherJar.toString()));
             cmd.addAll(ImmutableList.of("-configuration", config.toString()));
             cmd.addAll(ImmutableList.of("-data", data.toString()));

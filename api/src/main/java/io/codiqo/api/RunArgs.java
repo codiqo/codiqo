@@ -1,13 +1,19 @@
 package io.codiqo.api;
 
 import java.io.File;
+import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
@@ -20,15 +26,33 @@ import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 
 import com.google.common.base.CaseFormat;
 import com.google.common.base.Splitter;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
 import edu.umd.cs.findbugs.Priorities;
 import lombok.Data;
 import net.sourceforge.pmd.lang.rule.RulePriority;
+import okhttp3.HttpUrl;
 
 @Data
 public class RunArgs {
+    public static final Map<String, String> JDTLS_CONFIG = ImmutableMap.of(
+            "osx-x86_64", "config_mac",
+            "osx-aarch_64", "config_mac_arm",
+            "linux-x86_64", "config_linux",
+            "linux-aarch_64", "config_linux_arm",
+            "windows-x86_64", "config_win");
+    public static final Supplier<HttpUrl.Builder> JDTLS_BASE_URL = () -> new HttpUrl.Builder().scheme("https").host("download.eclipse.org").addPathSegment("jdtls").addPathSegment("milestones");
+    public static final Path JDT_SHARED_INDEX = FileSystems.getDefault().getPath(System.getProperty("user.home"), ".cache", "jdtls");
+    static {
+        try {
+            Files.createDirectories(JDT_SHARED_INDEX);
+        } catch (IOException err) {
+            throw new ExceptionInInitializerError(err);
+        }
+    }
+
     @Nullable
     private String commitId;
     @Nullable
@@ -57,6 +81,10 @@ public class RunArgs {
     private transient File javaHome;
     @Nullable
     private transient File mavenHome;
+    @Nullable
+    private transient File gradleHome;
+    @Nullable
+    private transient ClassGraphSpec classGraph;
     @Nullable
     private Duration importTimeout = Duration.ofMinutes(15);
     @Nullable
@@ -334,6 +362,12 @@ public class RunArgs {
     private int npathComplexThreshold = 200;
     @Nullable
     private boolean hideSourceCode = false;
+    @Nullable
+    private boolean jdtUseSharedIndex = true;
+    @Nullable
+    private boolean jdtIncludeDecompiledSources = false;
+    @Nullable
+    private transient Integer jdtDebugPort;
 
     public Optional<ProjectSpec> owner(File filePath) {
         return projects.stream().filter(proj -> proj.contains(filePath)).findAny();

@@ -163,7 +163,6 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
             }
         }
     }
-    @SuppressWarnings("deprecation")
     public InitializeResult initialize() throws InterruptedException, ExecutionException, TimeoutException {
         Path projectRoot = args.getGit().getWorkTree().toPath().normalize();
 
@@ -323,7 +322,8 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
         Map<String, Object> ls = Maps.newHashMap();
         ls.put("lombokSupport", ImmutableMap.of("enabled", true));
         ls.put("protobufSupport", ImmutableMap.of("enabled", true));
-        ls.put("androidSupport", ImmutableMap.of("enabled", false));
+        ls.put("androidSupport", ImmutableMap.of("enabled", true));
+        ls.put("aspectjSupportEnabled", ImmutableMap.of("enabled", true));
         ls.put("javac", ImmutableMap.of("enabled", false));
         jdt.put("ls", ls);
 
@@ -368,8 +368,8 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
         importOpts.put("generatesMetadataFilesAtProjectRoot", false);
         java.put("import", importOpts);
 
-        java.put("maven", ImmutableMap.of("downloadSources", true, "updateSnapshots", false));
-        java.put("eclipse", ImmutableMap.of("downloadSources", true));
+        java.put("maven", ImmutableMap.of("downloadSources", false, "updateSnapshots", false));
+        java.put("eclipse", ImmutableMap.of("downloadSources", false));
         java.put("signatureHelp", ImmutableMap.of("enabled", true, "description", ImmutableMap.of("enabled", true)));
 
         java.put("referencesCodeLens", ImmutableMap.of("enabled", true));
@@ -404,7 +404,8 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
         java.put("typeHierarchy", ImmutableMap.of("lazyLoad", false));
         java.put("templates", ImmutableMap.of("fileHeader", ImmutableList.of(), "typeComment", ImmutableList.of()));
         java.put("symbols", ImmutableMap.of("includeSourceMethodDeclarations", false));
-        java.put("references", ImmutableMap.of("includeAccessors", true, "includeDecompiledSources", true));
+        java.put("search", ImmutableMap.of("scope", "main"));
+        java.put("references", ImmutableMap.of("includeAccessors", true, "includeDecompiledSources", args.isJdtIncludeDecompiledSources()));
 
         java.put("quickfix", ImmutableMap.of("showAt", "line"));
         java.put("codeAction", ImmutableMap.of("sortMembers", ImmutableMap.of("avoidVolatileChanges", true)));
@@ -443,7 +444,7 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
                         "org.springframework.lang.NonNullApi"),
                 "mode", "automatic")));
 
-        java.put("sharedIndexes", ImmutableMap.of("enabled", "auto", "location", ""));
+        java.put("sharedIndexes", ImmutableMap.of("enabled", args.isJdtUseSharedIndex() ? "auto" : "off"));
 
         Map<String, Object> completions = Maps.newHashMap();
         completions.put("enabled", true);
