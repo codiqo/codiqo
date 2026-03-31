@@ -178,6 +178,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.ignoreComplexity", defaultValue = "false")
     protected boolean ignoreComplexity = false;
 
+    @Parameter(property = "codiqo.failOnJdtlsError", defaultValue = "false")
+    protected boolean failOnJdtlsError = false;
+
     @Parameter(property = "codiqo.pmdMinPriority", defaultValue = "medium_high")
     protected String pmdMinPriority;
 
@@ -227,7 +230,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     protected Integer jdtDebugPort;
 
     @Parameter(property = "codiqo.jdtSourceExclusions",
-            defaultValue = "org.scala-lang, org.apache.kafka, org.apache.pekko, org.apache.spark, org.json4s")
+            defaultValue = "org.scala-lang, org.apache.kafka, org.apache.pekko, org.apache.spark, org.apache.flink, com.typesafe.akka, com.typesafe, io.gatling, com.lightbend.lagom, com.twitter, org.json4s, org.scalactic, org.scalatest")
     protected String jdtSourceExclusions;
 
     @Override
@@ -269,6 +272,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setIgnoreCpd(ignoreCpd);
         args.setIgnoreDiagnostics(ignoreDiagnostics);
         args.setIgnoreComplexity(ignoreComplexity);
+        args.setFailOnJdtlsError(failOnJdtlsError);
         args.setPmdMinPriority(pmdMinPriority);
         args.setSpotbugsPriorityThreshold(spotbugsPriorityThreshold);
         Optional.ofNullable(spotbugsOmitVisitors).ifPresent(args::setSpotbugsOmitVisitors);
@@ -405,7 +409,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         classGraph.enableSystemJarsAndModules();
         ScanResult scan = classGraph.scan();
 
-        ClassGraphSpec graphSpec = new ClassGraphWrapper(new MavenLogFactory(getLog()).getLogger(ClassGraphWrapper.class), scan);
+        ClassGraphSpec graphSpec = new ClassGraphWrapper(scan);
         args.getProjects().forEach(spec -> {
             if (spec instanceof MavenProjectWrapper) {
                 ((MavenProjectWrapper) spec).setScan(graphSpec);
@@ -631,6 +635,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         toReturn.setIgnoreComplexity(args.isIgnoreComplexity());
         toReturn.setIgnoreCpd(args.isIgnoreCpd());
         toReturn.setIgnoreDiagnostics(args.isIgnoreDiagnostics());
+        toReturn.setFailOnJdtlsError(args.isFailOnJdtlsError());
         toReturn.setHideSourceCode(args.isHideSourceCode());
         toReturn.setJdtUseSharedIndex(args.isJdtUseSharedIndex());
 

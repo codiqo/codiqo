@@ -99,6 +99,8 @@ import com.google.common.collect.Maps;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.common.AsFlux;
+import io.codiqo.api.jdtls.ServiceStatus;
+import io.codiqo.api.jdtls.ServiceStatusAdapter;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import reactor.core.publisher.Flux;
@@ -122,6 +124,7 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
                 .setInput(socket.getInputStream())
                 .setOutput(socket.getOutputStream())
                 .setExecutorService(executor)
+                .configureGson(gb -> gb.registerTypeAdapter(ServiceStatus.class, new ServiceStatusAdapter()))
                 .create();
         this.startListening = launcher.startListening();
     }
@@ -135,24 +138,23 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
     }
     @JsonNotification("language/status")
     public void languageStatus(StatusReport params) {
-        log.info("%s - %s", params.getType().name(), params.getMessage());
+        log.info("%s - %s", params.getType().getJsonValue(), params.getMessage());
 
         switch (params.getType()) {
-            case ServiceReady: {
+            case SERVICE_READY: {
                 EmitResult emitNext = processor.tryEmitNext(params);
                 if (emitNext.isSuccess()) {
 
                 }
                 break;
             }
-            case Error:
-            case Message:
-            case ProjectStatus:
-            case Started:
-            case Starting:
+            case ERROR:
+            case MESSAGE:
+            case PROJECT_STATUS:
+            case STARTED:
+            case STARTING:
             default:
                 break;
-
         }
     }
     @JsonNotification("language/actionableNotification")

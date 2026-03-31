@@ -17,7 +17,6 @@ import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.core.java.JavaBinaryFormat;
 import lombok.Getter;
 import net.sourceforge.pmd.lang.Language;
-import net.sourceforge.pmd.lang.java.ast.ASTExecutableDeclaration;
 
 public class PmdAffectedSymbolInfo implements AffectedSymbolInfo {
     private final JavaCodeBlockInfo block;
@@ -31,27 +30,16 @@ public class PmdAffectedSymbolInfo implements AffectedSymbolInfo {
         this.block = Objects.requireNonNull(block);
         this.language = Objects.requireNonNull(language);
 
-        ASTExecutableDeclaration declaration = null;
-        if (block instanceof JavaMethodBlockInfo) {
-            declaration = ((JavaMethodBlockInfo) block).getMethod();
-        } else if (block instanceof JavaConstructorBlockInfo) {
-            declaration = ((JavaConstructorBlockInfo) block).getConstructor();
-        }
-
-        if (Objects.nonNull(declaration)) {
-            if (declaration.isAnnotationPresent(java.lang.Deprecated.class.getName())) {
-                tags.add(SymbolTag.Deprecated);
-            }
+        if (block.getDeclaration().isAnnotationPresent(java.lang.Deprecated.class.getName())) {
+            tags.add(SymbolTag.Deprecated);
         }
     }
     @Override
     public SymbolKind getKind() {
-        if (block instanceof JavaMethodBlockInfo) {
-            return SymbolKind.Method;
-        } else if (block instanceof JavaConstructorBlockInfo) {
+        if (block.getGenericSignature().isConstructor()) {
             return SymbolKind.Class;
         }
-        throw new IllegalStateException("unsupported block type: " + block.getClass());
+        return SymbolKind.Method;
     }
     @Override
     public String getName() {
