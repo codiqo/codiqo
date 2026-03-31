@@ -139,6 +139,14 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
         lineCoverage.put(lineNumber, line);
     }
     @Override
+    public ASTExecutableDeclaration getDeclaration() {
+        return node;
+    }
+    @Override
+    public int getArity() {
+        return node.getArity();
+    }
+    @Override
     public boolean hasMethodCalls() {
         return CollectionUtils.isNotEmpty(invocations);
     }

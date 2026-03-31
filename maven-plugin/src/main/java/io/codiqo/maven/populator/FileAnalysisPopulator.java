@@ -52,15 +52,10 @@ import io.codiqo.client.model.SpotbugsPropertiesModel;
 import io.codiqo.client.model.SymbolKindModel;
 import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
-import io.codiqo.lang.spec.JavaConstructorBlockInfo;
-import io.codiqo.lang.spec.JavaMethodBlockInfo;
 import lombok.RequiredArgsConstructor;
 import net.sourceforge.pmd.lang.java.ast.ASTAnnotation;
 import net.sourceforge.pmd.lang.java.ast.ASTAnonymousClassDeclaration;
-import net.sourceforge.pmd.lang.java.ast.ASTConstructorDeclaration;
-import net.sourceforge.pmd.lang.java.ast.ASTMethodDeclaration;
-import net.sourceforge.pmd.lang.java.ast.ASTThrowsList;
-import net.sourceforge.pmd.lang.java.ast.ASTTypeParameters;
+import net.sourceforge.pmd.lang.java.ast.ASTExecutableDeclaration;
 import net.sourceforge.pmd.lang.java.ast.Annotatable;
 import net.sourceforge.pmd.lang.rule.RulePriority;
 import net.sourceforge.pmd.reporting.RuleViolation;
@@ -349,6 +344,8 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             methodCallModel.setIsExplicitConstructor(methodCall.isExplicitConstructor());
             methodCallModel.setIsEnumConstant(methodCall.isEnumConstant());
             methodCallModel.setInvocationKind(resolveInvocationKind(methodCall));
+            methodCall.targetDescriptor().ifPresent(methodCallModel::setTargetDescriptor);
+            methodCall.targetOwner().ifPresent(methodCallModel::setTargetOwner);
 
             LocationModel callLocation = new LocationModel();
             callLocation.setStartLine(methodCall.getBeginLine());
@@ -427,26 +424,19 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         }
     }
     private static void populateTypeInfo(JavaCodeBlockInfo javaBlock, CodeUnitModel codeUnitModel, JavaInfoModel infoModel) {
-        if (javaBlock instanceof JavaConstructorBlockInfo) {
-            ASTConstructorDeclaration constructor = ((JavaConstructorBlockInfo) javaBlock).getConstructor();
-            ASTThrowsList throwsList = constructor.getThrowsList();
-            ASTTypeParameters typeParameters = constructor.getTypeParameters();
+        ASTExecutableDeclaration declaration = javaBlock.getDeclaration();
 
+        if (javaBlock.getGenericSignature().isConstructor()) {
             codeUnitModel.setKind(SymbolKindModel.CONSTRUCTOR);
-            Optional.ofNullable(typeParameters).ifPresent(t -> t.forEach(tp -> infoModel.getTypeParameters().add(tp.getName())));
-            Optional.ofNullable(throwsList).ifPresent(l -> l.forEach(tt -> infoModel.getThrowsTypes().add(tt.getSimpleName())));
-            populateAnnotations(constructor, infoModel);
-
-        } else if (javaBlock instanceof JavaMethodBlockInfo) {
-            ASTMethodDeclaration method = ((JavaMethodBlockInfo) javaBlock).getMethod();
-            ASTTypeParameters typeParameters = method.getTypeParameters();
-            ASTThrowsList throwsList = method.getThrowsList();
-
+        } else {
             codeUnitModel.setKind(SymbolKindModel.METHOD);
-            Optional.ofNullable(typeParameters).ifPresent(t -> t.forEach(tp -> infoModel.getTypeParameters().add(tp.getName())));
-            Optional.ofNullable(throwsList).ifPresent(l -> l.forEach(tt -> infoModel.getThrowsTypes().add(tt.getSimpleName())));
-            populateAnnotations(method, infoModel);
         }
+
+        Optional.ofNullable(declaration.getTypeParameters())
+                .ifPresent(t -> t.forEach(tp -> infoModel.getTypeParameters().add(tp.getName())));
+        Optional.ofNullable(declaration.getThrowsList())
+                .ifPresent(l -> l.forEach(tt -> infoModel.getThrowsTypes().add(tt.getSimpleName())));
+        populateAnnotations(declaration, infoModel);
     }
     private static void populateMetrics(SubmissionContext ctx, FileAnalysis fileAnalysis, JavaCodeBlockInfo javaBlock, CodeUnitModel codeUnitModel) {
         javaBlock.metrics().subscribe(metrics -> {
@@ -458,11 +448,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             metricsModel.setFanOut(metrics.fanOut());
             metricsModel.setNpath(metrics.npath());
 
-            if (javaBlock instanceof JavaMethodBlockInfo) {
-                metricsModel.setParameterCount(((JavaMethodBlockInfo) javaBlock).getMethod().getArity());
-            } else if (javaBlock instanceof JavaConstructorBlockInfo) {
-                metricsModel.setParameterCount(((JavaConstructorBlockInfo) javaBlock).getConstructor().getArity());
-            }
+            metricsModel.setParameterCount(javaBlock.getArity());
 
             codeUnitModel.setMetrics(metricsModel);
 

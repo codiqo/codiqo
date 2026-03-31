@@ -1374,6 +1374,12 @@ components:
           $ref: '#/components/schemas/LocationModel'
         artifact:
           type: string
+        targetDescriptor:
+          type: string
+          description: erased JVM bytecode descriptor from ClassGraph scan
+        targetOwner:
+          type: string
+          description: declaring class internal name from ClassGraph bytecode scan
 
     # ==========================================================================
     # Callers
@@ -2441,6 +2447,8 @@ components:
         ignoreCpd:
           type: boolean
         ignoreDiagnostics:
+          type: boolean
+        failOnJdtlsError:
           type: boolean
         hideSourceCode:
           type: boolean

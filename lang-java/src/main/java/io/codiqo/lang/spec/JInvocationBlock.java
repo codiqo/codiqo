@@ -38,4 +38,7 @@ public interface JInvocationBlock extends Consumer<MavenProjectSpec> {
 
     Optional<ClassInfo> classInfo();
     Optional<Artifact> artifact();
+
+    Optional<String> targetDescriptor();
+    Optional<String> targetOwner();
 }

@@ -113,6 +113,7 @@ import net.sourceforge.pmd.lang.java.internal.JavaLanguageProperties;
 import net.sourceforge.pmd.lang.java.symbols.JClassSymbol;
 import net.sourceforge.pmd.lang.java.symbols.JTypeDeclSymbol;
 import net.sourceforge.pmd.lang.java.types.JMethodSig;
+import net.sourceforge.pmd.lang.java.types.JClassType;
 import net.sourceforge.pmd.lang.java.types.JTypeMirror;
 import net.sourceforge.pmd.lang.java.types.OverloadSelectionResult;
 import net.sourceforge.pmd.lang.rule.RulePriority;
@@ -145,7 +146,7 @@ public class JavaLanguageSpec implements LanguageSpec {
                     JMethodSig signature = overload.getMethodType();
                     JTypeMirror declaringType = signature.getDeclaringType();
 
-                    if (Objects.nonNull(declaringType)) {
+                    if (declaringType instanceof JClassType) {
                         JTypeDeclSymbol symbol = declaringType.getSymbol();
                         if (symbol instanceof JClassSymbol) {
                             if (BooleanUtils.negate(symbol.isUnresolved())) {

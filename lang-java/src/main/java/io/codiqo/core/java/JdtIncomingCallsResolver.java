@@ -1,9 +1,13 @@
 package io.codiqo.core.java;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.eclipse.lsp4j.CallHierarchyIncomingCall;
 import org.eclipse.lsp4j.CallHierarchyItem;
@@ -28,12 +32,12 @@ class JdtIncomingCallsResolver implements IncomingCallsResolver {
     private final JdtLspProjectImporter jdt;
 
     @Override
-    public void resolve(IndexingSummary summary, CommitAnalysis analysis) {
+    public void resolve(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
         StopWatch watch = StopWatch.createStarted();
 
         AtomicInteger populated = new AtomicInteger();
         AtomicInteger total = new AtomicInteger();
-        String workTreeUri = args.getGit().getWorkTree().toPath().normalize().toUri().toString();
+        String workTreeUri = args.getGit().getWorkTree().toPath().toRealPath().toUri().toString();
 
         analysis.forEach(fileAnalysis -> {
             if (fileAnalysis.isTestFile()) {
@@ -99,6 +103,17 @@ class JdtIncomingCallsResolver implements IncomingCallsResolver {
                                         item.getRange().getEnd().getCharacter(),
                                         item.getDetail()),
                                         err);
+
+                                if (args.isFailOnJdtlsError()) {
+                                    Throwable cause = ExceptionUtils.getRootCause(err);
+                                    if (Objects.isNull(cause)) {
+                                        cause = err;
+                                    }
+                                    if (cause instanceof IOException) {
+                                        throw new UncheckedIOException((IOException) cause);
+                                    }
+                                    throw new UncheckedIOException(new IOException(cause.getMessage(), cause));
+                                }
                             }
                         }
                     });

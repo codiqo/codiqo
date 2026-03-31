@@ -4,6 +4,7 @@ import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -192,7 +193,7 @@ class JdtLspProcess implements Closeable {
             log.info("gracefully shutting down JDT LSP server now ...");
             if (Objects.nonNull(process)) {
                 process.destroyGracefully();
-                boolean waitFor = process.waitFor(30, TimeUnit.SECONDS);
+                boolean waitFor = process.waitFor(BigDecimal.ONE.intValue(), TimeUnit.MINUTES);
                 if (waitFor) {
 
                 } else {

@@ -6,16 +6,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
 
 import io.codiqo.api.ClassGraphSpec;
-import io.codiqo.api.logging.Log;
 import io.github.classgraph.ClassInfo;
 import io.github.classgraph.ClassInfoList;
 import io.github.classgraph.MethodInfo;
@@ -24,9 +21,7 @@ import lombok.RequiredArgsConstructor;
 
 @RequiredArgsConstructor
 public class ClassGraphWrapper implements ClassGraphSpec {
-    private final Log log;
     private final ScanResult scan;
-    private final Set<String> warnedMissing = Sets.newConcurrentHashSet();
 
     private final LoadingCache<ClassInfo, Map<MethodKey, MethodEntry>> methods = CacheBuilder.newBuilder().build(new CacheLoader<>() {
         @Override
@@ -70,8 +65,6 @@ public class ClassGraphWrapper implements ClassGraphSpec {
         ClassInfo toReturn = scan.getClassInfo(fqn);
         if (Objects.nonNull(toReturn)) {
             methods.getUnchecked(toReturn);
-        } else if (warnedMissing.add(fqn)) {
-            log.warn("class not found in ClassGraph scan: %s", fqn);
         }
         return toReturn;
     }

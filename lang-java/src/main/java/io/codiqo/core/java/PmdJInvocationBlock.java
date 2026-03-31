@@ -1,13 +1,16 @@
 package io.codiqo.core.java;
 
 import java.io.File;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import org.apache.commons.lang3.BooleanUtils;
 
 import org.apache.maven.artifact.Artifact;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.commons.Method;
 
+import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.MavenProjectSpec;
 import io.codiqo.lang.spec.JInvocationBlock;
 import io.github.classgraph.ClassInfo;
@@ -31,16 +34,18 @@ class PmdJInvocationBlock implements JInvocationBlock {
     private final JClassSymbol declaringType;
     private final Type ownerType;
     private final String displayName;
-    private Method method;
+    private final Method method;
     private Optional<ClassInfo> classInfo;
     private Optional<Artifact> artifact = Optional.empty();
+    private Optional<String> targetDescriptor = Optional.empty();
+    private Optional<String> targetOwner = Optional.empty();
 
     protected PmdJInvocationBlock(MethodUsage usage) {
         this.usage = Objects.requireNonNull(usage);
         this.signature = usage.getOverloadSelectionInfo().getMethodType();
         this.declaringType = (JClassSymbol) signature.getDeclaringType().getSymbol();
         this.ownerType = JavaBinaryFormat.toOwnerType(declaringType);
-        this.method = JavaBinaryFormat.toMethod(signature);
+        this.method = JavaBinaryFormat.toMethod(signature.getSymbol().getGenericSignature());
         this.displayName = JavaBinaryFormat.toDisplayName(signature, false);
     }
     @Override
@@ -54,6 +59,21 @@ class PmdJInvocationBlock implements JInvocationBlock {
                     artifact = Optional.ofNullable(spec.getArtifacts().inverse().get(file));
                 }
             }
+
+            Map<ClassGraphSpec.MethodKey, ClassGraphSpec.MethodEntry> cache = isConstructor() ? spec.getConstructors(info) : spec.getMethods(info);
+            ClassGraphSpec.MethodEntry entry = cache.get(new ClassGraphSpec.MethodKey(method.getName(), method.getDescriptor()));
+
+            // inner class constructors: bytecode has synthetic enclosing-instance first param that PMD doesn't see
+            if (Objects.isNull(entry) && isConstructor()) {
+                JClassSymbol enclosing = declaringType.getEnclosingClass();
+                if (Objects.nonNull(enclosing) && BooleanUtils.isFalse(declaringType.isStatic())) {
+                    String outerDesc = Type.getObjectType(JavaBinaryFormat.getInternalName(enclosing.getBinaryName())).getDescriptor();
+                    entry = cache.get(new ClassGraphSpec.MethodKey(method.getName(), "(" + outerDesc + method.getDescriptor().substring(1)));
+                }
+            }
+
+            targetDescriptor = Optional.ofNullable(entry).map(ClassGraphSpec.MethodEntry::getDescriptor);
+            targetOwner = Optional.of(JavaBinaryFormat.getInternalName(info.getName()));
         });
     }
     @Override
@@ -63,6 +83,14 @@ class PmdJInvocationBlock implements JInvocationBlock {
     @Override
     public Optional<Artifact> artifact() {
         return artifact;
+    }
+    @Override
+    public Optional<String> targetDescriptor() {
+        return targetDescriptor;
+    }
+    @Override
+    public Optional<String> targetOwner() {
+        return targetOwner;
     }
     @Override
     public int getBeginLine() {
