@@ -325,127 +325,85 @@
                                 <span class="tooltip-trigger" data-tooltip="volume-main">?</span>
                                 <div id="tooltip-volume-main" class="tooltip-popover">
                                     <strong>Volume Score Formula:</strong><br>
-                                    <code>score = count<sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> × factor × multiplier</code><br><br>
+                                    <code>sum(blockEffort)<sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.98</sup> × filesScopeMultiplier</code><br><br>
+                                    <strong>Per code block:</strong> cappedDriverScore × operationMult × testWeight. The driver score is a weighted average of three dimensions projected onto lines-equivalent units via <code>k_S = lines.p50 / ncss.p50</code> and <code>k_I = lines.p50 / invocs.p50</code>: <code>(L + S·k_S + I·k_I) / 3</code> for NEW, <code>(linesChanged + invocsChanged·k_I) / 2</code> for MODIFY (NCSS dropped). Scalers are computed separately per kind (method/constructor) and scope (prod/test).<br><br>
                                     <strong>Project Size Multipliers:</strong><br>
                                     • sizeFactor = <span th:text="${#numbers.formatDecimal(sizeFactor, 1, 2)}">0.00</span><br>
                                     • modifyMult = <span th:text="${#numbers.formatDecimal(volModifyMult, 1, 2)}">1.00</span> (for modifications)<br>
-                                    • addMult = <span th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.00</span> (for additions)<br><br>
-                                    Power-law scaling preserves magnitude differences while providing diminishing returns.
+                                    • addMult = <span th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.00</span> (for additions)
                                 </div>
                             </h4>
                             <table class="w-full text-xs">
                                 <thead class="text-gray-400">
                                     <tr>
                                         <th class="text-left py-1 font-normal">Metric</th>
-                                        <th class="text-right py-1 font-normal">Count</th>
+                                        <th class="text-right py-1 font-normal">Value</th>
                                         <th class="text-right py-1 font-normal">Score</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <tr class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
-                                            Lines Changed <span th:if="${effectiveLines != null and effectiveLines != linesChanged}" class="text-amber-600 text-xs">(density capped)</span>
-                                            <span class="tooltip-trigger" data-tooltip="lines">?</span>
-                                            <div id="tooltip-lines" class="tooltip-popover">
-                                                <strong>Score formula:</strong> <code><span th:text="${effectiveLines != null ? effectiveLines : linesChanged}">0</span><sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> &times; <span th:text="${#numbers.formatDecimal(linesLogFactor, 1, 1)}">2.5</span></code><br><br>
-                                                Power-law scaling preserves magnitude differences between small and large commits.
+                                            Effective Statements <span th:if="${totalEffectiveStatements != null and totalEffectiveStatements != linesChanged}" class="text-amber-600 text-xs">(density capped)</span>
+                                            <span class="tooltip-trigger" data-tooltip="stmts">?</span>
+                                            <div id="tooltip-stmts" class="tooltip-popover">
+                                                Sum of capped driver magnitudes across all code blocks.<br>
+                                                Each block is capped at P<span th:text="${statsQuantilePercent}">90</span> &times; <span th:text="${#numbers.formatDecimal(statementsDensityCapMultiplier, 1, 1)}">2.5</span> using the quantile for its own kind (method/constructor) and scope (prod/test).
                                             </div>
                                         </td>
-                                        <td class="py-1 text-right font-mono"><span th:if="${effectiveLines != null and effectiveLines != linesChanged}" th:text="${linesChanged}" class="text-gray-400 line-through mr-1">0</span> <span th:text="${effectiveLines != null ? effectiveLines : linesChanged}">0</span></td>
-                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(linesScore, 1, 2)}">0.00</td>
+                                        <td class="py-1 text-right font-mono"><span th:if="${totalEffectiveStatements != null and totalEffectiveStatements != linesChanged}" th:text="${linesChanged}" class="text-gray-400 line-through mr-1">0</span> <span th:text="${totalEffectiveStatements != null ? totalEffectiveStatements : linesChanged}">0</span></td>
+                                        <td class="py-1 text-right text-gray-400 text-xs">input</td>
                                     </tr>
-                                    <tr th:if="${effectiveLines != null and effectiveLines != linesChanged}" class="border-b">
+                                    <tr th:if="${totalEffectiveStatements != null and totalEffectiveStatements != linesChanged}" class="border-b">
                                         <td colspan="3" class="py-1">
                                             <div class="bg-amber-50 border border-amber-200 rounded px-3 py-1.5 text-xs text-amber-800">
                                                 <strong>Density cap:</strong>
-                                                per-method cap (P<span th:text="${ncssQuantilePercent}">75</span>=<code th:text="${linesPerMethodQuantile}">20</code> lines &times;
-                                                <code th:text="${#numbers.formatDecimal(linesDensityCapMultiplier, 1, 1)}">1.5</code>) summed across
-                                                <code th:text="${codeBlocksModified + codeBlocksAdded}">10</code> methods =
-                                                <code th:text="${effectiveLines}">90</code> max effective lines
-                                                <span class="text-amber-600 ml-1">(<span th:text="${linesChanged}">349</span> raw &rarr; <span th:text="${effectiveLines}">90</span>)</span>
-                                                <div class="text-[10px] text-amber-600 mt-1">P<span th:text="${ncssQuantilePercent}">75</span> = <span th:text="${ncssQuantilePercent}">75</span>th percentile of lines per method across all project methods. Each method capped individually at P<span th:text="${ncssQuantilePercent}">75</span> &times; <span th:text="${#numbers.formatDecimal(linesDensityCapMultiplier, 1, 1)}">1.5</span>.</div>
+                                                per-block cap = P<span th:text="${statsQuantilePercent}">90</span> driver-score &times;
+                                                <code th:text="${#numbers.formatDecimal(statementsDensityCapMultiplier, 1, 1)}">2.5</code>,
+                                                selected by kind (method/constructor) and scope (prod/test):
+                                                method/prod=<code th:text="${methodCapQuantileProd}">20</code>,
+                                                method/test=<code th:text="${methodCapQuantileTest}">30</code>,
+                                                ctor/prod=<code th:text="${constructorCapQuantileProd}">8</code>,
+                                                ctor/test=<code th:text="${constructorCapQuantileTest}">5</code>;
+                                                summed across <code th:text="${codeBlocksModified + codeBlocksAdded}">10</code> blocks =
+                                                <code th:text="${totalEffectiveStatements}">90</code> max effective statements
+                                                <span class="text-amber-600 ml-1">(<span th:text="${linesChanged}">349</span> raw &rarr; <span th:text="${totalEffectiveStatements}">90</span>)</span>
+                                                <div class="text-[10px] text-amber-600 mt-1">P<span th:text="${statsQuantilePercent}">90</span> = <span th:text="${statsQuantilePercent}">90</span>th percentile of the driver-score distribution over samples of that kind and scope. Each block capped individually using its own (kind, scope) quantile.</div>
                                             </div>
                                         </td>
                                     </tr>
-                                    <tr th:if="${codeBlocksModified > 0}" class="border-b has-tooltip">
+                                    <tr class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
-                                            Code Blocks Modified
-                                            <span class="tooltip-trigger" data-tooltip="codeblocks-mod">?</span>
-                                            <div id="tooltip-codeblocks-mod" class="tooltip-popover">
-                                                <strong>Formula:</strong> <code><span th:text="${codeBlocksModified}">0</span><sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> × 6.0 × <span th:text="${#numbers.formatDecimal(volModifyMult, 1, 2)}">1.00</span></code><br><br>
-                                                <strong>modifyMult = <span th:text="${#numbers.formatDecimal(volModifyMult, 1, 2)}">1.00</span></strong> (bonus for modifying complex code)<br>
-                                                Higher multiplier rewards touching complex code in large projects.
+                                            Block Effort Sum
+                                            <span class="tooltip-trigger" data-tooltip="blockeffort">?</span>
+                                            <div id="tooltip-blockeffort" class="tooltip-popover">
+                                                <strong>Per block:</strong> <code>cappedStatements × operationMult × testWeight</code><br>
+                                                MODIFY blocks: statements scaled by change ratio (changed code lines / total code lines).<br><br>
+                                                modifyMult = <span th:text="${#numbers.formatDecimal(volModifyMult, 1, 2)}">1.00</span>, addMult = <span th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.00</span><br>
+                                                Test code weighted at <span th:text="${testCodeScoreMultiplier != null ? #numbers.formatDecimal(testCodeScoreMultiplier * 100, 1, 0) + '%' : '40%'}">40%</span>.
                                             </div>
                                         </td>
-                                        <td class="py-1 text-right font-mono" th:text="${codeBlocksModified}">0</td>
-                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(codeBlocksModifiedScore, 1, 2)}">0.00</td>
+                                        <td class="py-1 text-right font-mono" th:text="${blockEffortSum != null ? #numbers.formatDecimal(blockEffortSum, 1, 2) : '—'}">0.00</td>
+                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(totalVolumeScore, 1, 2)}">0.00</td>
                                     </tr>
-                                    <tr th:if="${codeBlocksAdded > 0}" class="border-b has-tooltip">
-                                        <td class="py-1 text-gray-500">
-                                            Code Blocks Added
-                                            <span class="tooltip-trigger" data-tooltip="codeblocks-add">?</span>
-                                            <div id="tooltip-codeblocks-add" class="tooltip-popover">
-                                                <strong>Formula:</strong> <code><span th:text="${codeBlocksAdded}">0</span><sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> × 8.0 × <span th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.00</span></code><br><br>
-                                                <strong>addMult = <span th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.00</span></strong> (adjusted for project size)<br>
-                                                New code blocks have higher base factor (8.0) for new functionality.
+                                    <tr th:if="${testLinesChanged != null and testLinesChanged > 0}" class="border-b">
+                                        <td colspan="3" class="py-1">
+                                            <div class="bg-teal-50 border border-teal-200 rounded px-3 py-1.5 text-xs text-teal-800">
+                                                <strong>Test code weighting:</strong>
+                                                <span th:text="${testLinesChanged}">0</span> test lines,
+                                                <span th:text="${testCodeBlocksModified + testCodeBlocksAdded}">0</span> test methods,
+                                                <span th:text="${testFilesChanged}">0</span> test files
+                                                weighted at <code th:text="${#numbers.formatDecimal(testCodeScoreMultiplier * 100, 1, 0) + '%'}">40%</code> of production code.
                                             </div>
                                         </td>
-                                        <td class="py-1 text-right font-mono" th:text="${codeBlocksAdded}">0</td>
-                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(codeBlocksAddedScore, 1, 2)}">0.00</td>
-                                    </tr>
-                                    <tr th:if="${classesModified > 0}" class="border-b has-tooltip">
-                                        <td class="py-1 text-gray-500">
-                                            Classes Modified
-                                            <span class="tooltip-trigger" data-tooltip="classes-mod">?</span>
-                                            <div id="tooltip-classes-mod" class="tooltip-popover">
-                                                <strong>Formula:</strong> <code><span th:text="${classesModified}">0</span><sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> × 5.0 × <span th:text="${#numbers.formatDecimal(volModifyMult, 1, 2)}">1.00</span></code><br><br>
-                                                <strong>modifyMult = <span th:text="${#numbers.formatDecimal(volModifyMult, 1, 2)}">1.00</span></strong><br>
-                                                Class-level changes indicate structural modifications to existing code.
-                                            </div>
-                                        </td>
-                                        <td class="py-1 text-right font-mono" th:text="${classesModified}">0</td>
-                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(classesModifiedScore, 1, 2)}">0.00</td>
-                                    </tr>
-                                    <tr th:if="${classesAdded > 0}" class="border-b has-tooltip">
-                                        <td class="py-1 text-gray-500">
-                                            Classes Added
-                                            <span class="tooltip-trigger" data-tooltip="classes-add">?</span>
-                                            <div id="tooltip-classes-add" class="tooltip-popover">
-                                                <strong>Formula:</strong> <code><span th:text="${classesAdded}">0</span><sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> × 8.0 × <span th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.00</span></code><br><br>
-                                                <strong>addMult = <span th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.00</span></strong><br>
-                                                New classes have highest factor (8.0) for structural additions.
-                                            </div>
-                                        </td>
-                                        <td class="py-1 text-right font-mono" th:text="${classesAdded}">0</td>
-                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(classesAddedScore, 1, 2)}">0.00</td>
-                                    </tr>
-                                    <tr class="border-b border-t-2 border-gray-300">
-                                        <td colspan="2" class="py-1 text-gray-600 font-medium">Content Score</td>
-                                        <td class="py-1 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(contentScore, 1, 2)}">0.00</td>
                                     </tr>
                                     <tr th:if="${filesChanged > 1}" class="border-b has-tooltip">
-                                        <td class="py-1 text-gray-500">
-                                            File Density
-                                            <span class="tooltip-trigger" data-tooltip="density">?</span>
-                                            <div id="tooltip-density" class="tooltip-popover">
-                                                <strong>Content Density Dampening:</strong><br>
-                                                <code>min(1.0, avgLinesPerFile / <span th:text="${#numbers.formatDecimal(fileDensityThreshold, 1, 2)}">15.00</span>)</code><br><br>
-                                                Dampens the file scope multiplier when many files have trivial changes.
-                                                avgLinesPerFile = linesChanged / filesChanged.<br>
-                                                If avg &ge; <span th:text="${#numbers.formatDecimal(fileDensityThreshold, 1, 2)}">15.00</span> lines/file, full multiplier applies.
-                                            </div>
-                                        </td>
-                                        <td class="py-1 text-right font-mono" th:text="${#numbers.formatDecimal(fileDensity, 1, 2)}">1.00</td>
-                                        <td class="py-1 text-right text-gray-400 text-xs">dampening</td>
-                                    </tr>
-                                    <tr th:if="${filesChanged > 0}" class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
                                             Files Scope ×
                                             <span class="tooltip-trigger" data-tooltip="files">?</span>
                                             <div id="tooltip-files" class="tooltip-popover">
-                                                <strong>Formula:</strong> <code>1 + (<span th:text="${filesChanged}">0</span><sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> &times; <span th:text="${#numbers.formatDecimal(filesScopeFactor, 1, 2)}">0.50</span>) &times; <span th:text="${#numbers.formatDecimal(fileDensity, 1, 2)}">1.00</span></code><br><br>
-                                                Files act as a <strong>scope multiplier</strong> on the content score, dampened by content density.
-                                                Low density (few lines per file) reduces the scope bonus.
+                                                <strong>Formula:</strong> <code>1 + min(log<sub>2</sub>(<span th:text="${filesChanged}">0</span>) × <span th:text="${#numbers.formatDecimal(filesScopeLogCoefficient, 1, 2)}">0.02</span>, <span th:text="${#numbers.formatDecimal(filesScopeMaxBonus, 1, 2)}">0.10</span>)</code><br><br>
+                                                Mild scope multiplier for multi-file changes, capped at ×<span th:text="${#numbers.formatDecimal(1 + filesScopeMaxBonus, 1, 2)}">1.10</span>.
                                             </div>
                                         </td>
                                         <td class="py-1 text-right font-mono" th:text="${filesChanged}">0</td>
@@ -475,63 +433,17 @@
                             </h4>
                             <table class="w-full text-xs">
                                 <tbody>
-                                    <tr class="border-b has-tooltip">
+                                    <tr class="has-tooltip">
                                         <td class="py-1 text-gray-500">
-                                            Avg Modify Complexity
-                                            <span class="tooltip-trigger" data-tooltip="avg-modify">?</span>
-                                            <div id="tooltip-avg-modify" class="tooltip-popover">
-                                                Average cyclomatic complexity of modified code blocks.<br><br>
-                                                Higher = harder code to work with, deserves more credit.
+                                            Combined Complexity Multiplier
+                                            <span class="tooltip-trigger" data-tooltip="combined-complexity">?</span>
+                                            <div id="tooltip-combined-complexity" class="tooltip-popover">
+                                                Single complexity multiplier in [0.7, 1.3] chosen by the LLM based on cyclomatic, cognitive, NPath, and fanOut of affected methods. Captures branching complexity not represented in the volume-based driver score.
                                             </div>
                                         </td>
-                                        <td class="py-1 text-right font-mono" th:text="${#numbers.formatDecimal(avgModifyComplexity, 1, 2)}">0.00</td>
-                                    </tr>
-                                    <tr class="border-b has-tooltip">
-                                        <td class="py-1 text-gray-500">
-                                            Modify Multiplier
-                                            <span class="tooltip-trigger" data-tooltip="modify-mult">?</span>
-                                            <div id="tooltip-modify-mult" class="tooltip-popover">
-                                                <strong>BONUS for modifying complex code:</strong><br>
-                                                • Trivial (1-4): ×1.0<br>
-                                                • Moderate (5-10): ×1.1<br>
-                                                • Complex (11-20): ×1.2<br>
-                                                • Highly Complex (>20): ×1.3
-                                            </div>
-                                        </td>
-                                        <td class="py-1 text-right font-bold text-purple-600" th:text="${#numbers.formatDecimal(modifyMultiplier, 1, 2)}">1.00</td>
-                                    </tr>
-                                    <tr class="border-b has-tooltip">
-                                        <td class="py-1 text-gray-500">
-                                            Avg Create Complexity
-                                            <span class="tooltip-trigger" data-tooltip="avg-create">?</span>
-                                            <div id="tooltip-avg-create" class="tooltip-popover">
-                                                Average cyclomatic complexity of newly created code blocks.<br><br>
-                                                Lower is better - simple code is good design.
-                                            </div>
-                                        </td>
-                                        <td class="py-1 text-right font-mono" th:text="${#numbers.formatDecimal(avgCreateComplexity, 1, 2)}">0.00</td>
-                                    </tr>
-                                    <tr class="border-b has-tooltip">
-                                        <td class="py-1 text-gray-500">
-                                            Create Multiplier
-                                            <span class="tooltip-trigger" data-tooltip="create-mult">?</span>
-                                            <div id="tooltip-create-mult" class="tooltip-popover">
-                                                <strong>PENALTY for creating complex code:</strong><br>
-                                                • Trivial (1-4): ×1.1 (bonus!)<br>
-                                                • Moderate (5-10): ×1.0<br>
-                                                • Complex (11-20): ×0.9<br>
-                                                • Highly Complex (>20): ×0.7
-                                            </div>
-                                        </td>
-                                        <td class="py-1 text-right font-bold text-purple-600" th:text="${#numbers.formatDecimal(createMultiplier, 1, 2)}">1.00</td>
-                                    </tr>
-                                </tbody>
-                                <tfoot>
-                                    <tr class="bg-purple-50">
-                                        <td class="py-1 font-semibold text-gray-700">Combined</td>
                                         <td class="py-1 text-right font-bold text-purple-700" th:text="${#numbers.formatDecimal(combinedComplexityMultiplier, 1, 2)}">1.00</td>
                                     </tr>
-                                </tfoot>
+                                </tbody>
                             </table>
                         </div>
 
@@ -695,66 +607,44 @@
                                 <table class="w-full text-xs border-collapse">
                                     <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Variable</th><th class="text-left py-0.5 font-normal">Formula</th><th class="text-right py-0.5 font-normal">Value</th></tr></thead>
                                     <tbody class="font-mono">
-                                        <tr class="border-b"><td class="py-0.5 text-gray-600">projectTotalLines</td><td class="py-0.5 text-gray-500">total lines of code in project</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatInteger(projectTotalLines, 1, 'COMMA')}">30000</td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">projectTotalStatements</td><td class="py-0.5 text-gray-500">total non-comment code statements in project</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatInteger(projectTotalStatements, 1, 'COMMA')}">30000</td></tr>
                                         <tr class="border-b"><td class="py-0.5 text-gray-600">projectTotalMethods</td><td class="py-0.5 text-gray-500">total methods in project</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatInteger(projectTotalMethods, 1, 'COMMA')}">1500</td></tr>
-                                        <tr class="border-b"><td class="py-0.5 text-gray-600">linesPerMethodP<span th:text="${ncssQuantilePercent}">75</span></td><td class="py-0.5 text-gray-500"><span th:text="${ncssQuantilePercent}">75</span>th percentile of lines per method</td><td class="py-0.5 text-right font-bold" th:text="${linesPerMethodQuantile}">20</td></tr>
-                                        <tr class="border-b"><td class="py-0.5 text-gray-600">sizeFactor</td><td class="py-0.5 text-gray-500">cbrt(projectTotalLines) / 100</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(sizeFactor, 1, 2)}">0.31</td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">method/prod cap P<span th:text="${statsQuantilePercent}">90</span></td><td class="py-0.5 text-gray-500"><span th:text="${statsQuantilePercent}">90</span>th percentile of driver-score over prod method samples</td><td class="py-0.5 text-right font-bold" th:text="${methodCapQuantileProd}">20</td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">method/test cap P<span th:text="${statsQuantilePercent}">90</span></td><td class="py-0.5 text-gray-500"><span th:text="${statsQuantilePercent}">90</span>th percentile of driver-score over test method samples</td><td class="py-0.5 text-right font-bold" th:text="${methodCapQuantileTest}">30</td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">constructor/prod cap P<span th:text="${statsQuantilePercent}">90</span></td><td class="py-0.5 text-gray-500"><span th:text="${statsQuantilePercent}">90</span>th percentile of driver-score over prod constructor samples</td><td class="py-0.5 text-right font-bold" th:text="${constructorCapQuantileProd}">8</td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">constructor/test cap P<span th:text="${statsQuantilePercent}">90</span></td><td class="py-0.5 text-gray-500"><span th:text="${statsQuantilePercent}">90</span>th percentile of driver-score over test constructor samples</td><td class="py-0.5 text-right font-bold" th:text="${constructorCapQuantileTest}">5</td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">sizeFactor</td><td class="py-0.5 text-gray-500">cbrt(projectTotalStatements) / 100</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(sizeFactor, 1, 2)}">0.31</td></tr>
                                         <tr class="border-b"><td class="py-0.5 text-gray-600">modifyMult</td><td class="py-0.5 text-gray-500">1.0 + min(sizeFactor &times; 0.3, 0.2)</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(volModifyMult, 1, 2)}">1.09</td></tr>
-                                        <tr><td class="py-0.5 text-gray-600">addMult</td><td class="py-0.5 text-gray-500">1.0 + 0.1 / (1 + sizeFactor)</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.08</td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">addMult</td><td class="py-0.5 text-gray-500">1.0 + 0.1 / (1 + sizeFactor)</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.08</td></tr>
+                                        <tr><td class="py-0.5 text-gray-600">testCodeMultiplier</td><td class="py-0.5 text-gray-500">weight for test code contributions</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(testCodeScoreMultiplier, 1, 2)}">0.40</td></tr>
                                     </tbody>
                                 </table>
                             </div>
 
-                            <!-- Step 2: Content Score Components -->
+                            <!-- Step 2: Code Block Efforts -->
                             <div class="bg-white rounded-lg p-3 border border-slate-200">
-                                <h5 class="text-xs font-bold text-slate-700 mb-1">Step 2: Content Score Components</h5>
-                                <p class="text-xs text-gray-400 mb-2">Formula: count<sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> &times; factor &times; multiplier</p>
+                                <h5 class="text-xs font-bold text-slate-700 mb-1">Step 2: Code Block Efforts</h5>
+                                <p class="text-xs text-gray-400 mb-2">Per block: cappedDriverScore &times; operationMult &times; testWeight. Driver score = weighted average of L, S·k_S, I·k_I (lines-equivalent projection); NCSS dropped for MODIFY.</p>
                                 <table class="w-full text-xs border-collapse">
-                                    <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Metric</th><th class="text-right py-0.5 font-normal">Count</th><th class="text-right py-0.5 font-normal">Factor</th><th class="text-right py-0.5 font-normal">Mult</th><th class="text-right py-0.5 font-normal">Score</th></tr></thead>
+                                    <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Metric</th><th class="text-right py-0.5 font-normal">Value</th></tr></thead>
                                     <tbody class="font-mono">
                                         <tr class="border-b">
-                                            <td class="py-0.5 text-gray-600">Lines Changed <span th:if="${effectiveLines != null and effectiveLines != linesChanged}" class="text-amber-600">(capped)</span></td>
-                                            <td class="py-0.5 text-right"><span th:if="${effectiveLines != null and effectiveLines != linesChanged}" th:text="${linesChanged}" class="text-gray-400 line-through mr-1">0</span> <span th:text="${effectiveLines != null ? effectiveLines : linesChanged}">0</span></td>
-                                            <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(linesLogFactor, 1, 1)}">5.0</td>
-                                            <td class="py-0.5 text-right text-gray-400">1.0</td>
-                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(linesScore, 1, 2)}">0.00</td>
+                                            <td class="py-0.5 text-gray-600">Effective Statements <span th:if="${totalEffectiveStatements != null and totalEffectiveStatements != linesChanged}" class="text-amber-600">(capped)</span></td>
+                                            <td class="py-0.5 text-right"><span th:if="${totalEffectiveStatements != null and totalEffectiveStatements != linesChanged}" th:text="${linesChanged}" class="text-gray-400 line-through mr-1">0</span> <span th:text="${totalEffectiveStatements != null ? totalEffectiveStatements : linesChanged}">0</span></td>
                                         </tr>
-                                        <tr th:if="${effectiveLines != null and effectiveLines != linesChanged}" class="border-b">
-                                            <td colspan="5" class="py-0.5">
-                                                <span class="text-amber-700 text-[10px]">cap = &Sigma; min(method_lines, <span th:text="${linesPerMethodQuantile}">20</span> P<span th:text="${ncssQuantilePercent}">75</span> lines &times; <span th:text="${#numbers.formatDecimal(linesDensityCapMultiplier, 1, 1)}">1.5</span>) across <span th:text="${codeBlocksModified + codeBlocksAdded}">10</span> methods = <span th:text="${effectiveLines}">90</span></span>
+                                        <tr th:if="${totalEffectiveStatements != null and totalEffectiveStatements != linesChanged}" class="border-b">
+                                            <td colspan="2" class="py-0.5">
+                                                <span class="text-amber-700 text-[10px]">cap = &Sigma; min(driverScore, P<span th:text="${statsQuantilePercent}">90</span> &times; <span th:text="${#numbers.formatDecimal(statementsDensityCapMultiplier, 1, 1)}">2.5</span>) across <span th:text="${codeBlocksModified + codeBlocksAdded}">10</span> blocks = <span th:text="${totalEffectiveStatements}">90</span> (per-block cap picked from method/ctor × prod/test)</span>
                                             </td>
                                         </tr>
-                                        <tr th:if="${codeBlocksModified > 0}" class="border-b">
-                                            <td class="py-0.5 text-gray-600">Code Blocks Modified</td>
-                                            <td class="py-0.5 text-right" th:text="${codeBlocksModified}">0</td>
-                                            <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(codeBlocksModLogFactor, 1, 1)}">6.0</td>
-                                            <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(volModifyMult, 1, 2)}">1.09</td>
-                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(codeBlocksModifiedScore, 1, 2)}">0.00</td>
-                                        </tr>
-                                        <tr th:if="${codeBlocksAdded > 0}" class="border-b">
-                                            <td class="py-0.5 text-gray-600">Code Blocks Added</td>
-                                            <td class="py-0.5 text-right" th:text="${codeBlocksAdded}">0</td>
-                                            <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(codeBlocksAddLogFactor, 1, 1)}">8.0</td>
-                                            <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.08</td>
-                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(codeBlocksAddedScore, 1, 2)}">0.00</td>
-                                        </tr>
-                                        <tr th:if="${classesModified > 0}" class="border-b">
-                                            <td class="py-0.5 text-gray-600">Classes Modified</td>
-                                            <td class="py-0.5 text-right" th:text="${classesModified}">0</td>
-                                            <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(classesModLogFactor, 1, 1)}">5.0</td>
-                                            <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(volModifyMult, 1, 2)}">1.09</td>
-                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(classesModifiedScore, 1, 2)}">0.00</td>
-                                        </tr>
-                                        <tr th:if="${classesAdded > 0}" class="border-b">
-                                            <td class="py-0.5 text-gray-600">Classes Added</td>
-                                            <td class="py-0.5 text-right" th:text="${classesAdded}">0</td>
-                                            <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(classesAddLogFactor, 1, 1)}">8.0</td>
-                                            <td class="py-0.5 text-right" th:text="${#numbers.formatDecimal(volAddMult, 1, 2)}">1.08</td>
-                                            <td class="py-0.5 text-right font-bold text-blue-600" th:text="${#numbers.formatDecimal(classesAddedScore, 1, 2)}">0.00</td>
-                                        </tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">Block Effort Sum</td><td class="py-0.5 text-right font-bold text-blue-600" th:text="${blockEffortSum != null ? #numbers.formatDecimal(blockEffortSum, 1, 2) : '—'}">0.00</td></tr>
                                     </tbody>
-                                    <tfoot><tr class="bg-blue-50"><td colspan="4" class="py-0.5 font-semibold text-gray-700">Content Score</td><td class="py-0.5 text-right font-bold text-blue-700" th:text="${#numbers.formatDecimal(contentScore, 1, 2)}">0.00</td></tr></tfoot>
+                                    <tfoot><tr class="bg-blue-50"><td class="py-0.5 font-semibold text-gray-700">Volume Score (sum<sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.98</sup>)</td><td class="py-0.5 text-right font-bold text-blue-700" th:text="${#numbers.formatDecimal(totalVolumeScore / (filesScopeMultiplier != null and filesScopeMultiplier > 0 ? filesScopeMultiplier : 1), 1, 2)}">0.00</td></tr></tfoot>
                                 </table>
+                                <div th:if="${testLinesChanged != null and testLinesChanged > 0}" class="mt-2 bg-teal-50 border border-teal-200 rounded px-3 py-1.5 text-[10px] text-teal-800">
+                                    <strong>Test code weighting applied:</strong> test blocks weighted at <span th:text="${#numbers.formatDecimal(testCodeScoreMultiplier, 1, 2)}">0.40</span>.
+                                    Test sources: <span th:text="${testLinesChanged}">0</span> lines, <span th:text="${testCodeBlocksModified}">0</span> methods modified, <span th:text="${testCodeBlocksAdded}">0</span> methods added, <span th:text="${testFilesChanged}">0</span> files.
+                                </div>
                             </div>
 
                             <!-- Step 3: Files Scope -->
@@ -763,8 +653,7 @@
                                 <table class="w-full text-xs border-collapse">
                                     <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Variable</th><th class="text-left py-0.5 font-normal">Formula</th><th class="text-right py-0.5 font-normal">Value</th></tr></thead>
                                     <tbody class="font-mono">
-                                        <tr class="border-b"><td class="py-0.5 text-gray-600">fileDensity</td><td class="py-0.5 text-gray-500">min(1.0, avgLinesPerFile / <span th:text="${#numbers.formatDecimal(fileDensityThreshold, 1, 2)}">15.0</span>)</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(fileDensity, 1, 2)}">1.00</td></tr>
-                                        <tr><td class="py-0.5 text-gray-600">filesScopeMultiplier</td><td class="py-0.5 text-gray-500">1 + (<span th:text="${filesChanged}">0</span><sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.75</sup> &times; <span th:text="${#numbers.formatDecimal(filesScopeFactor, 1, 2)}">0.50</span>) &times; <span th:text="${#numbers.formatDecimal(fileDensity, 1, 2)}">1.00</span></td><td class="py-0.5 text-right font-bold text-purple-600">&times; <span th:text="${#numbers.formatDecimal(filesScopeMultiplier, 1, 2)}">1.00</span></td></tr>
+                                        <tr><td class="py-0.5 text-gray-600">filesScopeMultiplier</td><td class="py-0.5 text-gray-500">1 + min(log<sub>2</sub>(<span th:text="${filesChanged}">0</span>) &times; <span th:text="${#numbers.formatDecimal(filesScopeLogCoefficient, 1, 2)}">0.02</span>, <span th:text="${#numbers.formatDecimal(filesScopeMaxBonus, 1, 2)}">0.10</span>)</td><td class="py-0.5 text-right font-bold text-purple-600">&times; <span th:text="${#numbers.formatDecimal(filesScopeMultiplier, 1, 2)}">1.00</span></td></tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -774,7 +663,7 @@
                                 <h5 class="text-xs font-bold text-slate-700 mb-2">Step 4: Volume Score</h5>
                                 <table class="w-full text-xs border-collapse">
                                     <tbody class="font-mono">
-                                        <tr class="bg-blue-50"><td class="py-0.5 font-semibold text-gray-700">Volume Score</td><td class="py-0.5 text-gray-500"><span th:text="${#numbers.formatDecimal(contentScore, 1, 2)}">0.00</span> &times; <span th:text="${#numbers.formatDecimal(filesScopeMultiplier, 1, 2)}">1.00</span></td><td class="py-0.5 text-right font-bold text-blue-700" th:text="${#numbers.formatDecimal(totalVolumeScore, 1, 2)}">0.00</td></tr>
+                                        <tr class="bg-blue-50"><td class="py-0.5 font-semibold text-gray-700">Total Volume Score</td><td class="py-0.5 text-gray-500">volume &times; <span th:text="${#numbers.formatDecimal(filesScopeMultiplier, 1, 2)}">1.00</span></td><td class="py-0.5 text-right font-bold text-blue-700" th:text="${#numbers.formatDecimal(totalVolumeScore, 1, 2)}">0.00</td></tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -783,14 +672,11 @@
                             <div th:if="${complexityMultiplier != null}" class="bg-white rounded-lg p-3 border border-slate-200">
                                 <h5 class="text-xs font-bold text-slate-700 mb-2">Step 5: Complexity Multiplier</h5>
                                 <table class="w-full text-xs border-collapse">
-                                    <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Operation</th><th class="text-left py-0.5 font-normal">Avg Cyclomatic</th><th class="text-right py-0.5 font-normal">Multiplier</th></tr></thead>
                                     <tbody class="font-mono">
-                                        <tr class="border-b"><td class="py-0.5 text-gray-600">Modify (bonus for hard code)</td><td class="py-0.5" th:text="${#numbers.formatDecimal(avgModifyComplexity, 1, 2)}">0.00</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(modifyMultiplier, 1, 2)}">1.00</td></tr>
-                                        <tr class="border-b"><td class="py-0.5 text-gray-600">Create (penalty for complex new code)</td><td class="py-0.5" th:text="${#numbers.formatDecimal(avgCreateComplexity, 1, 2)}">0.00</td><td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(createMultiplier, 1, 2)}">1.00</td></tr>
+                                        <tr class="bg-purple-50"><td class="py-0.5 font-semibold text-gray-700">Combined (LLM-chosen, range 0.7-1.3)</td><td class="py-0.5 text-right font-bold text-purple-700">&times; <span th:text="${#numbers.formatDecimal(combinedComplexityMultiplier, 1, 2)}">1.00</span></td></tr>
                                     </tbody>
-                                    <tfoot><tr class="bg-purple-50"><td colspan="2" class="py-0.5 font-semibold text-gray-700">Combined</td><td class="py-0.5 text-right font-bold text-purple-700">&times; <span th:text="${#numbers.formatDecimal(combinedComplexityMultiplier, 1, 2)}">1.00</span></td></tr></tfoot>
                                 </table>
-                                <p class="text-xs text-gray-400 mt-1">Modify: trivial 1.0&times; &rarr; moderate 1.1&times; &rarr; complex 1.2&times; &rarr; highly complex 1.3&times;. Create: trivial 1.1&times; &rarr; moderate 1.0&times; &rarr; complex 0.9&times; &rarr; highly complex 0.7&times;.</p>
+                                <p class="text-xs text-gray-400 mt-1">Single multiplier chosen by the LLM from cyclomatic/cognitive/NPath/fanOut of affected methods. Captures branching complexity the volume-based driver score doesn't.</p>
                             </div>
 
                             <!-- Step 6: Base Effort -->
@@ -802,6 +688,40 @@
                                     </tbody>
                                 </table>
                             </div>
+
+                            <!-- Per-File Effort Breakdown -->
+                            <details th:if="${fileEfforts != null and !fileEfforts.isEmpty()}" class="bg-white rounded-lg border border-slate-200">
+                                <summary class="text-xs font-bold text-slate-700 p-3 cursor-pointer hover:bg-slate-50">Per-File Effort Breakdown <span class="font-normal text-gray-400" th:text="'(' + ${#lists.size(fileEfforts)} + ' files)'"></span></summary>
+                                <div class="px-3 pb-3">
+                                    <th:block th:each="fe : ${fileEfforts}">
+                                        <details class="mb-1">
+                                            <summary class="flex justify-between items-center text-xs py-1 px-2 rounded cursor-pointer hover:bg-slate-50" th:classappend="${fe.isTest()} ? 'bg-teal-50' : 'bg-slate-50'">
+                                                <span class="font-mono truncate mr-2" th:text="${fe.file}">File.java</span>
+                                                <span class="flex-shrink-0 font-bold font-mono" th:text="${#numbers.formatDecimal(fe.totalEffort, 1, 2)}">0.00</span>
+                                            </summary>
+                                            <table class="w-full text-xs border-collapse ml-2 mt-1">
+                                                <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Method</th><th class="text-center py-0.5 font-normal">Op</th><th class="text-right py-0.5 font-normal">L</th><th class="text-right py-0.5 font-normal">S</th><th class="text-right py-0.5 font-normal">I</th><th class="text-right py-0.5 font-normal">pL</th><th class="text-right py-0.5 font-normal">pS</th><th class="text-right py-0.5 font-normal">pI</th><th class="text-right py-0.5 font-normal">Driver</th><th class="text-right py-0.5 font-normal">Ratio</th><th class="text-right py-0.5 font-normal">Cap</th><th class="text-right py-0.5 font-normal">Effort</th></tr></thead>
+                                                <tbody class="font-mono">
+                                                    <tr th:each="cb : ${fe.codeBlockEfforts}" class="border-b">
+                                                        <td class="py-0.5 text-gray-600 truncate max-w-[200px]" th:text="${cb.name}">method</td>
+                                                        <td class="py-0.5 text-center"><span class="px-1 rounded text-[10px] font-bold" th:classappend="${cb.operation == 'NEW'} ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'" th:text="${cb.operation}">MOD</span></td>
+                                                        <td class="py-0.5 text-right text-gray-500" th:text="${cb.nonCommentCodeLines}">0</td>
+                                                        <td class="py-0.5 text-right text-gray-500" th:text="${cb.nonCommentCodeStatements}">0</td>
+                                                        <td class="py-0.5 text-right text-gray-500" th:text="${cb.directInvocationCount}">0</td>
+                                                        <td class="py-0.5 text-right text-gray-400" th:text="${#numbers.formatDecimal(cb.scaledLines, 1, 2)}">0.00</td>
+                                                        <td class="py-0.5 text-right text-gray-400" th:text="${cb.operation == 'MODIFY' ? '—' : #numbers.formatDecimal(cb.scaledNcss, 1, 2)}">0.00</td>
+                                                        <td class="py-0.5 text-right text-gray-400" th:text="${#numbers.formatDecimal(cb.scaledInvocations, 1, 2)}">0.00</td>
+                                                        <td class="py-0.5 text-right text-gray-500" th:text="${#numbers.formatDecimal(cb.driverScore, 1, 2)}">0.00</td>
+                                                        <td class="py-0.5 text-right" th:classappend="${cb.changeRatio < 1.0} ? 'text-amber-600' : 'text-gray-400'" th:text="${#numbers.formatDecimal(cb.changeRatio * 100, 1, 0) + '%'}">100%</td>
+                                                        <td class="py-0.5 text-right" th:classappend="${cb.cappedStatements < cb.driverScore} ? 'text-orange-600' : 'text-gray-500'" th:text="${cb.cappedStatements}">0</td>
+                                                        <td class="py-0.5 text-right font-bold" th:text="${#numbers.formatDecimal(cb.effort, 1, 2)}">0.00</td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </details>
+                                    </th:block>
+                                </div>
+                            </details>
 
                             <!-- Step 7: Quality Multiplier -->
                             <div th:if="${qualityMultiplier != null}" class="bg-white rounded-lg p-3 border border-slate-200">
@@ -939,7 +859,7 @@
                                 </table>
                                 <div class="mt-2 text-xs text-gray-400 space-y-0.5">
                                     <p><strong class="text-gray-500">Why change size dominates:</strong> The content score formula (count<sup>0.75</sup> &times; factor) and files scope multiplier grow steeply with more lines/files/code blocks. Project size only nudges modifyMult from 1.05&times; to 1.20&times; &mdash; a 15% range.</p>
-                                    <p><strong class="text-gray-500">Diminishing returns:</strong> The 0.75 exponent ensures doubling lines adds only 1.68&times; score, not 2&times;. This prevents mega-commits from producing disproportionate scores.</p>
+                                    <p><strong class="text-gray-500">Diminishing returns:</strong> The 0.98 exponent applies gentle compression &mdash; small/medium commits retain ~95% of their raw effort, while very large commits (500+) are reduced ~25%. This prevents mega-commits from producing disproportionate scores.</p>
                                     <p><strong class="text-gray-500">Assumptions:</strong> Default complexity (1.05&times;), clean quality (1.15&times;), no architecture bonus. Real scores include quality &amp; complexity adjustments.</p>
                                 </div>
                             </div>

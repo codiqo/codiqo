@@ -56,7 +56,7 @@ public class RunArgs {
     @Nullable
     private String commitId;
     @Nullable
-    private String jdtlsVersion = "1.57.0";
+    private String jdtlsVersion = "1.58.0";
     @Nullable
     private String pmdMinPriority = RulePriority.HIGH.name();
     @Nullable
@@ -87,6 +87,10 @@ public class RunArgs {
     private transient File gradleHome;
     @Nullable
     private transient ClassGraphSpec classGraph;
+    @Nullable
+    private Duration buildTimeout = Duration.ofMinutes(30);
+    @Nullable
+    private Duration testTimeout = Duration.ofMinutes(10);
     @Nullable
     private Duration importTimeout = Duration.ofMinutes(15);
     @Nullable
@@ -121,7 +125,7 @@ public class RunArgs {
     @Nullable
     private String llmApiKey = System.getProperty("ollama.apiKey");
     @Nullable
-    private String llmModel = System.getProperty("ollama.model");
+    private String llmModel = System.getProperty("ollama.model", "nemotron-3-super:cloud");
     @Nullable
     private String llmBaseUrl = System.getProperty("ollama.url", "https://ollama.com/v1");
     @Nullable
@@ -149,17 +153,11 @@ public class RunArgs {
     @Nullable
     private double addMultiplierScale = 0.1;
     @Nullable
-    private double relativeAdjustmentFactor = 0.1;
-    @Nullable
-    private double relativeAdjustmentMin = 0.8;
-    @Nullable
-    private double relativeAdjustmentMax = 1.3;
-    @Nullable
     private double qualityMultiplierMin = 0.5;
     @Nullable
     private double qualityMultiplierMax = 1.2;
     @Nullable
-    private double staticAnalysisPenaltyCap = 0.30;
+    private double staticAnalysisPenaltyCap = 0.2;
     @Nullable
     private double staticAnalysisIntroducedPenalty = -0.05;
     @Nullable
@@ -167,21 +165,19 @@ public class RunArgs {
     @Nullable
     private double staticAnalysisCleanBonus = 0.05;
     @Nullable
-    private double architecturePenaltyCap = 0.20;
+    private double architecturePenaltyCap = 0.15;
     @Nullable
-    private double qualityGatePenaltyCap = 0.15;
+    private double qualityGatePenaltyCap = 0.1;
     @Nullable
-    private double defaultComplexityMultiplier = 1.05;
+    private double volumeExponent = 0.98;
     @Nullable
-    private double volumeExponent = 0.75;
+    private double filesScopeLogCoefficient = 0.02;
     @Nullable
-    private double filesScopeFactor = 0.40;
+    private double filesScopeMaxBonus = 0.10;
     @Nullable
-    private double fileDensityThreshold = 10.0;
+    private double statementsDensityCapMultiplier = 2.5;
     @Nullable
-    private double linesDensityCapMultiplier = 1.5;
-    @Nullable
-    private double ncssQuantile = 0.75;
+    private double statsQuantile = 0.95;
     @Nullable
     private double coverageLowThreshold = 50.0;
     @Nullable
@@ -190,38 +186,6 @@ public class RunArgs {
     private double coverageHighThreshold = 30.0;
     @Nullable
     private int highComplexityThreshold = 10;
-    @Nullable
-    private double linesLogFactor = 2.5;
-    @Nullable
-    private double codeBlocksModifiedLogFactor = 8.0;
-    @Nullable
-    private double codeBlocksAddedLogFactor = 6.0;
-    @Nullable
-    private double classesModifiedLogFactor = 7.0;
-    @Nullable
-    private double classesAddedLogFactor = 5.0;
-    @Nullable
-    private int complexityTrivialMax = 5;
-    @Nullable
-    private int complexityModerateMax = 10;
-    @Nullable
-    private int complexityComplexMax = 20;
-    @Nullable
-    private double modifyTrivialMultiplier = 1.0;
-    @Nullable
-    private double modifyModerateMultiplier = 1.1;
-    @Nullable
-    private double modifyComplexMultiplier = 1.2;
-    @Nullable
-    private double modifyHighlyComplexMultiplier = 1.3;
-    @Nullable
-    private double createTrivialMultiplier = 1.1;
-    @Nullable
-    private double createModerateMultiplier = 1.0;
-    @Nullable
-    private double createComplexMultiplier = 0.9;
-    @Nullable
-    private double createHighlyComplexMultiplier = 0.7;
     @Nullable
     private double cpdCleanBonus = 0.05;
     @Nullable
@@ -239,7 +203,9 @@ public class RunArgs {
     @Nullable
     private double cpdHighThreshold = 10.0;
     @Nullable
-    private double testCodePenaltyWeight = 0.2;
+    private double testCodeScoreMultiplier = 0.4;
+    @Nullable
+    private double testCodePenaltyWeight = 0.3;
     @Nullable
     private int scoreThresholdHuge = 150;
     @Nullable
@@ -389,7 +355,7 @@ public class RunArgs {
         return emails.contains(authorEmail);
     }
     public void validate() {
-        this.ncssQuantile = Math.max(0.75, this.ncssQuantile);
+        this.statsQuantile = Math.max(0.85, this.statsQuantile);
         this.llmMaxRetries = (short) Math.max(1, this.llmMaxRetries);
     }
     public static Options options() {

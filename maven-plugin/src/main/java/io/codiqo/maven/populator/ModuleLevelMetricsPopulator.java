@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
 
+import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.jacoco.core.analysis.ICounter;
 import org.jacoco.core.analysis.ILine;
@@ -13,9 +14,13 @@ import org.jacoco.core.analysis.ILine;
 import edu.umd.cs.findbugs.BugInstance;
 import edu.umd.cs.findbugs.Priorities;
 import io.codiqo.api.code.CodeBlockInfo;
+import io.codiqo.api.metrics.CodeBlockMetrics;
+import io.codiqo.api.metrics.DriverScaler;
 import io.codiqo.client.model.DiagnosticModel;
 import io.codiqo.client.model.LocationModel;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
+import io.codiqo.lang.spec.JavaConstructorBlockInfo;
+import net.sourceforge.pmd.lang.java.ast.internal.PrettyPrintingUtil;
 import net.sourceforge.pmd.lang.rule.RulePriority;
 import net.sourceforge.pmd.reporting.RuleViolation;
 
@@ -53,10 +58,32 @@ public class ModuleLevelMetricsPopulator implements SubmissionPopulator {
                         tracker.addModuleCoverageLines(coveredLines, missedLines);
                         tracker.addModuleCoverageBranches(coveredBranches, missedBranches);
 
-                        javaBlock.metrics().subscribe(metrics -> {
-                            tracker.addModuleLines(metrics.lineCount());
-                            tracker.addModuleComplexity(metrics.cyclo());
-                        });
+                        boolean isTest = Boolean.TRUE.equals(spec.isTestResource(sourceFile));
+                        boolean isConstructor = javaBlock instanceof JavaConstructorBlockInfo;
+                        boolean isTrivial = javaBlock.isTrivial();
+                        CodeBlockMetrics metrics = javaBlock.metrics();
+
+                        tracker.addModuleStatements(metrics.ncss());
+
+                        if (isTrivial) {
+                            if (isConstructor) {
+                                tracker.incrementTrivialConstructor(isTest);
+                            } else {
+                                tracker.incrementTrivialMethod(isTest);
+                            }
+                        } else {
+                            DriverScaler.Sample sample = new DriverScaler.Sample(metrics.nonCommentCodeLines(), metrics.ncss(), metrics.directInvocationCount());
+
+                            String fileDisplay = FilenameUtils.getBaseName(javaBlock.getFile().getName());
+                            String blockDisplay = PrettyPrintingUtil.displaySignature(javaBlock.getDeclaration());
+
+                            if (isConstructor) {
+                                tracker.addModuleConstructorSample(fileDisplay, blockDisplay, sample, isTest);
+                            } else {
+                                tracker.addModuleMethodSample(fileDisplay, blockDisplay, sample, isTest);
+                            }
+                        }
+                        tracker.addModuleComplexity(metrics.cyclo());
 
                         tracker.addModulePmdViolations(javaBlock.getPmdViolations().size());
                         tracker.addModuleSpotbugsIssues(javaBlock.getSpotbugs().size());

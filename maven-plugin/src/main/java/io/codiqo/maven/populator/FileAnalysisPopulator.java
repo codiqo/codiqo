@@ -25,6 +25,7 @@ import org.eclipse.lsp4j.SymbolTag;
 import org.jacoco.core.analysis.ICounter;
 import org.jacoco.core.analysis.ILine;
 
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
 import edu.umd.cs.findbugs.BugInstance;
@@ -32,6 +33,7 @@ import edu.umd.cs.findbugs.MethodAnnotation;
 import edu.umd.cs.findbugs.Priorities;
 import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.coverage.CodeBlockCoverage;
+import io.codiqo.api.metrics.CodeBlockMetrics;
 import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.client.model.CallerModel;
@@ -279,11 +281,9 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         }
     }
     private static void populateCoverage(JavaCodeBlockInfo javaBlock, CodeUnitModel codeUnitModel) {
-        javaBlock.coverage().subscribe(cov -> {
-            if (cov.hasCoverageData()) {
-                codeUnitModel.setCoverage(buildCoverageModel(javaBlock.getLineCoverage()));
-            }
-        });
+        if (javaBlock.coverage().hasCoverageData()) {
+            codeUnitModel.setCoverage(buildCoverageModel(javaBlock.getLineCoverage()));
+        }
     }
     private static CoverageModel buildCoverageModel(Map<Integer, ILine> lineCoverageMap) {
         CodeBlockCoverage cov = CodeBlockCoverage.from(lineCoverageMap);
@@ -439,38 +439,41 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         populateAnnotations(declaration, infoModel);
     }
     private static void populateMetrics(SubmissionContext ctx, FileAnalysis fileAnalysis, JavaCodeBlockInfo javaBlock, CodeUnitModel codeUnitModel) {
-        javaBlock.metrics().subscribe(metrics -> {
-            MetricsModel metricsModel = new MetricsModel();
-            metricsModel.setCyclomaticComplexity(metrics.cyclo());
-            metricsModel.setCognitiveComplexity(metrics.cognitive());
-            metricsModel.setLinesOfCode(metrics.lineCount());
-            metricsModel.setLogicalLinesOfCode(metrics.ncss());
-            metricsModel.setFanOut(metrics.fanOut());
-            metricsModel.setNpath(metrics.npath());
+        CodeBlockMetrics metrics = javaBlock.metrics();
 
-            metricsModel.setParameterCount(javaBlock.getArity());
+        MetricsModel metricsModel = new MetricsModel();
+        metricsModel.setCyclomaticComplexity(metrics.cyclo());
+        metricsModel.setCognitiveComplexity(metrics.cognitive());
+        metricsModel.setCodeLines(metrics.lineCount());
+        metricsModel.setNonCommentCodeStatements(metrics.ncss());
+        metricsModel.setDirectInvocationCount(metrics.directInvocationCount());
+        metricsModel.setDirectInvocationLines(Lists.newArrayList(metrics.directInvocationLines()));
+        metricsModel.setFanOut(metrics.fanOut());
+        metricsModel.setNpath(metrics.npath());
 
-            codeUnitModel.setMetrics(metricsModel);
+        metricsModel.setParameterCount(javaBlock.getArity());
+        metricsModel.setNonCommentCodeLines(metrics.nonCommentCodeLines());
+        metricsModel.setCommentLines(metrics.commentLines());
 
-            fileAnalysis.project().ifPresent(spec -> {
-                ModuleQualityTracker tracker = ctx.getQualityTrackers().getUnchecked(spec.getId());
-                tracker.incrementCodeUnits();
-                tracker.addLines(metrics.ncss());
-                tracker.addComplexity(metrics.cyclo());
-                tracker.addPmdViolations(javaBlock.getPmdViolations().size());
-                tracker.addSpotbugsIssues(javaBlock.getSpotbugs().size());
-            });
+        codeUnitModel.setMetrics(metricsModel);
+
+        fileAnalysis.project().ifPresent(spec -> {
+            ModuleQualityTracker tracker = ctx.getQualityTrackers().getUnchecked(spec.getId());
+            tracker.incrementCodeUnits();
+            tracker.addStatements(metrics.ncss());
+            tracker.addComplexity(metrics.cyclo());
+            tracker.addPmdViolations(javaBlock.getPmdViolations().size());
+            tracker.addSpotbugsIssues(javaBlock.getSpotbugs().size());
         });
     }
     private static void populateAffectedCoverage(SubmissionContext ctx, FileAnalysis fileAnalysis, JavaCodeBlockInfo javaBlock) {
-        javaBlock.coverage().subscribe(cov -> {
-            if (cov.hasCoverageData()) {
-                fileAnalysis.project().ifPresent(spec -> {
-                    ModuleQualityTracker tracker = ctx.getQualityTrackers().getUnchecked(spec.getId());
-                    tracker.addCoverage(cov.lineCoveragePercent());
-                });
-            }
-        });
+        CodeBlockCoverage cov = javaBlock.coverage();
+        if (cov.hasCoverageData()) {
+            fileAnalysis.project().ifPresent(spec -> {
+                ModuleQualityTracker tracker = ctx.getQualityTrackers().getUnchecked(spec.getId());
+                tracker.addCoverage(cov.lineCoveragePercent());
+            });
+        }
     }
     private static void populateAnnotations(Annotatable declaration, JavaInfoModel infoModel) {
         for (ASTAnnotation annotation : declaration.getDeclaredAnnotations()) {

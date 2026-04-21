@@ -50,6 +50,7 @@ import org.apache.maven.shared.invoker.InvocationRequest;
 import org.apache.maven.shared.invoker.InvocationResult;
 import org.apache.maven.shared.invoker.Invoker;
 import org.apache.maven.shared.invoker.PrintStreamHandler;
+import org.apache.maven.shared.utils.cli.CommandLineTimeOutException;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.artifact.Artifact;
@@ -90,10 +91,12 @@ import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.maven.logging.MavenLogFactory;
 import io.codiqo.maven.populator.CommitModelPopulator;
 import io.codiqo.maven.populator.DuplicationReportPopulator;
+import io.codiqo.maven.populator.EffectiveChangePopulator;
 import io.codiqo.maven.populator.FileAnalysisPopulator;
 import io.codiqo.maven.populator.IndexModelPopulator;
 import io.codiqo.maven.populator.LlmScoringPopulator;
 import io.codiqo.maven.populator.MetricsAggregator;
+import io.codiqo.maven.populator.SubmissionSummaryPrinter;
 import io.codiqo.maven.populator.ModuleLevelMetricsPopulator;
 import io.codiqo.maven.populator.OutputSerializer;
 import io.codiqo.maven.populator.ProjectModelPopulator;
@@ -139,6 +142,12 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.preferYaml", defaultValue = "true")
     protected boolean preferYaml = true;
 
+    @Parameter(property = "codiqo.buildTimeoutMinutes", defaultValue = "30")
+    protected long buildTimeoutMinutes;
+
+    @Parameter(property = "codiqo.testTimeoutMinutes", defaultValue = "10")
+    protected long testTimeoutMinutes;
+
     @Parameter(property = "codiqo.importTimeoutMinutes", defaultValue = "15")
     protected long importTimeoutMinutes;
 
@@ -160,7 +169,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.cpdMinimumTileSize", defaultValue = "64")
     protected int cpdMinimumTileSize;
 
-    @Parameter(property = "codiqo.jdtlsVersion", defaultValue = "1.55.0")
+    @Parameter(property = "codiqo.jdtlsVersion", defaultValue = "1.58.0")
     protected String jdtlsVersion;
 
     @Parameter(property = "codiqo.dumpAnalysis", defaultValue = "true")
@@ -190,7 +199,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.spotbugsOmitVisitors")
     protected String spotbugsOmitVisitors;
 
-    @Parameter(property = "codiqo.llm.model", defaultValue = "gpt-oss:120b-cloud")
+    @Parameter(property = "codiqo.llm.model", defaultValue = "nemotron-3-super:cloud")
     protected String llmModel;
 
     @Parameter(property = "codiqo.llm.apiKey")
@@ -259,6 +268,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         RunArgs args = new RunArgs();
         Optional.ofNullable(javaHome).ifPresent(args::setJavaHome);
         Optional.ofNullable(mavenHome).ifPresent(args::setMavenHome);
+        args.setBuildTimeout(Duration.ofMinutes(buildTimeoutMinutes));
+        args.setTestTimeout(Duration.ofMinutes(testTimeoutMinutes));
         args.setImportTimeout(Duration.ofMinutes(importTimeoutMinutes));
         args.setLspQueryTimeout(Duration.ofSeconds(lspQueryTimeoutSeconds));
         args.setConnectTimeout(Duration.ofSeconds(connectTimeoutSeconds));
@@ -460,7 +471,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             if (purged.get() > 0) {
                 getLog().info("purged " + purged.get() + " non-Java source JARs from local repository");
 
-                File sharedIndex = RunArgs.JDT_SHARED_INDEX.toFile();
+                File sharedIndex = RunArgs.JDT_SHARED_INDEX.resolve(args.getJdtlsVersion()).toFile();
                 if (sharedIndex.exists()) {
                     FileUtils.deleteDirectory(sharedIndex);
                     getLog().info("invalidated JDT shared index cache: " + sharedIndex.getAbsolutePath());
@@ -526,6 +537,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     "-Dmaven.javadoc.skip=true",
                     "-Dmdep.analyze.skip=true"));
         } else {
+            long surefireTimeout = args.getTestTimeout().getSeconds();
+            long surefireExitTimeout = args.getBuildTimeout().minusMinutes(2).getSeconds();
             request.addArgs(ImmutableList.of(
                     "clean",
                     "verify",
@@ -534,7 +547,11 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     "-Djacoco.skip=false",
                     "-Dmaven.test.failure.ignore=true",
                     "-Dmaven.javadoc.skip=true",
-                    "-Dmdep.analyze.skip=true"));
+                    "-Dmdep.analyze.skip=true",
+                    "-Dsurefire.timeout=" + surefireTimeout,
+                    "-Dsurefire.forkedProcessExitTimeoutInSeconds=" + surefireExitTimeout));
+
+            request.setTimeoutInSeconds((int) args.getBuildTimeout().getSeconds());
         }
         request.setBatchMode(true);
         request.setThreads(String.valueOf(mavenSession.getRequest().getDegreeOfConcurrency()));
@@ -576,7 +593,11 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         Invoker invoker = new DefaultInvoker();
         InvocationResult result = invoker.execute(request);
         if (result.getExitCode() != 0) {
-            throw new MojoExecutionException("maven build failed in fork", result.getExecutionException());
+            if (result.getExecutionException() instanceof CommandLineTimeOutException) {
+                getLog().warn("maven build timed out after " + args.getBuildTimeout() + " — test coverage may be incomplete");
+            } else {
+                throw new MojoExecutionException("maven build failed in fork", result.getExecutionException());
+            }
         }
         return projectBuilder.build(rootPom, buildingRequest);
     }
@@ -585,6 +606,10 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             File baseDir,
             ProjectBuildingRequest buildingRequest,
             Collection<MavenProject> collected) throws Exception {
+        if (CollectionUtils.isEmpty(parent.getModules())) {
+            collected.add(parent);
+            return;
+        }
         for (String moduleName : parent.getModules()) {
             File modulePom = new File(new File(baseDir, moduleName), "pom.xml");
             if (modulePom.exists()) {
@@ -639,6 +664,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         toReturn.setHideSourceCode(args.isHideSourceCode());
         toReturn.setJdtUseSharedIndex(args.isJdtUseSharedIndex());
 
+        toReturn.setBuildTimeout(Optional.ofNullable(args.getBuildTimeout()).map(Duration::toString).orElse(null));
+        toReturn.setTestTimeout(Optional.ofNullable(args.getTestTimeout()).map(Duration::toString).orElse(null));
         toReturn.setImportTimeout(Optional.ofNullable(args.getImportTimeout()).map(Duration::toString).orElse(null));
         toReturn.setLspQueryTimeout(Optional.ofNullable(args.getLspQueryTimeout()).map(Duration::toString).orElse(null));
         toReturn.setConnectTimeout(Optional.ofNullable(args.getConnectTimeout()).map(Duration::toString).orElse(null));
@@ -664,9 +691,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         toReturn.setModifyMultiplierScale(args.getModifyMultiplierScale());
         toReturn.setModifyMultiplierCap(args.getModifyMultiplierCap());
         toReturn.setAddMultiplierScale(args.getAddMultiplierScale());
-        toReturn.setRelativeAdjustmentFactor(args.getRelativeAdjustmentFactor());
-        toReturn.setRelativeAdjustmentMin(args.getRelativeAdjustmentMin());
-        toReturn.setRelativeAdjustmentMax(args.getRelativeAdjustmentMax());
         toReturn.setQualityMultiplierMin(args.getQualityMultiplierMin());
         toReturn.setQualityMultiplierMax(args.getQualityMultiplierMax());
 
@@ -677,36 +701,16 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         toReturn.setArchitecturePenaltyCap(args.getArchitecturePenaltyCap());
         toReturn.setQualityGatePenaltyCap(args.getQualityGatePenaltyCap());
 
-        toReturn.setDefaultComplexityMultiplier(args.getDefaultComplexityMultiplier());
         toReturn.setVolumeExponent(args.getVolumeExponent());
-        toReturn.setFilesScopeFactor(args.getFilesScopeFactor());
-        toReturn.setFileDensityThreshold(args.getFileDensityThreshold());
-        toReturn.setLinesDensityCapMultiplier(args.getLinesDensityCapMultiplier());
-        toReturn.setNcssQuantile(args.getNcssQuantile());
+        toReturn.setFilesScopeLogCoefficient(args.getFilesScopeLogCoefficient());
+        toReturn.setFilesScopeMaxBonus(args.getFilesScopeMaxBonus());
+        toReturn.setStatementsDensityCapMultiplier(args.getStatementsDensityCapMultiplier());
+        toReturn.setStatsQuantile(args.getStatsQuantile());
 
         toReturn.setCoverageLowThreshold(args.getCoverageLowThreshold());
         toReturn.setCoverageCriticalThreshold(args.getCoverageCriticalThreshold());
         toReturn.setCoverageHighThreshold(args.getCoverageHighThreshold());
         toReturn.setHighComplexityThreshold(args.getHighComplexityThreshold());
-
-        toReturn.setLinesLogFactor(args.getLinesLogFactor());
-        toReturn.setCodeBlocksModifiedLogFactor(args.getCodeBlocksModifiedLogFactor());
-        toReturn.setCodeBlocksAddedLogFactor(args.getCodeBlocksAddedLogFactor());
-        toReturn.setClassesModifiedLogFactor(args.getClassesModifiedLogFactor());
-        toReturn.setClassesAddedLogFactor(args.getClassesAddedLogFactor());
-
-        toReturn.setComplexityTrivialMax(args.getComplexityTrivialMax());
-        toReturn.setComplexityModerateMax(args.getComplexityModerateMax());
-        toReturn.setComplexityComplexMax(args.getComplexityComplexMax());
-
-        toReturn.setModifyTrivialMultiplier(args.getModifyTrivialMultiplier());
-        toReturn.setModifyModerateMultiplier(args.getModifyModerateMultiplier());
-        toReturn.setModifyComplexMultiplier(args.getModifyComplexMultiplier());
-        toReturn.setModifyHighlyComplexMultiplier(args.getModifyHighlyComplexMultiplier());
-        toReturn.setCreateTrivialMultiplier(args.getCreateTrivialMultiplier());
-        toReturn.setCreateModerateMultiplier(args.getCreateModerateMultiplier());
-        toReturn.setCreateComplexMultiplier(args.getCreateComplexMultiplier());
-        toReturn.setCreateHighlyComplexMultiplier(args.getCreateHighlyComplexMultiplier());
 
         toReturn.setCpdCleanBonus(args.getCpdCleanBonus());
         toReturn.setCpdModeratePenalty(args.getCpdModeratePenalty());
@@ -716,6 +720,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         toReturn.setCpdAcceptableThreshold(args.getCpdAcceptableThreshold());
         toReturn.setCpdModerateThreshold(args.getCpdModerateThreshold());
         toReturn.setCpdHighThreshold(args.getCpdHighThreshold());
+        toReturn.setTestCodeScoreMultiplier(args.getTestCodeScoreMultiplier());
         toReturn.setTestCodePenaltyWeight(args.getTestCodePenaltyWeight());
 
         toReturn.setScoreThresholdHuge(args.getScoreThresholdHuge());
@@ -834,10 +839,12 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     new CommitModelPopulator().accept(ctx);
                     new ModuleLevelMetricsPopulator().accept(ctx);
                     new FileAnalysisPopulator().accept(ctx);
+                    new EffectiveChangePopulator().accept(ctx);
                     new IndexModelPopulator().accept(ctx);
                     DuplicationReportPopulator duplicationPopulator = new DuplicationReportPopulator();
                     duplicationPopulator.accept(ctx);
                     new MetricsAggregator(duplicationPopulator.getTotalDuplicatedLines()).accept(ctx);
+                    new SubmissionSummaryPrinter(getLog()).accept(ctx);
                     new OutputSerializer(preferYaml, getLog()).accept(ctx);
                     return ctx;
                 }

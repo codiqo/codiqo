@@ -346,10 +346,10 @@ components:
         Global project-level metrics aggregated across all modules.
         Provides context for LLM scoring relative to project size.
       properties:
-        totalLines:
+        totalStatements:
           type: integer
           minimum: 0
-          description: Total lines of code across all modules in the project
+          description: Total source statements (NCSS) across all modules in the project
         totalFiles:
           type: integer
           minimum: 0
@@ -373,10 +373,100 @@ components:
           minimum: 0
           maximum: 100
           description: Average test coverage percentage across all code
-        linesPerMethodQuantile:
+        methodCapQuantileProd:
           type: integer
           minimum: 0
-          description: Configurable quantile (default P75) of NCSS per method across all project methods
+          description: |
+            P95 of driver-score distribution over prod method population.
+            Effective density cap = this value × statementsDensityCapMultiplier (default 2.5).
+            Any single block scoring above the effective cap is clamped to prevent outliers from dominating the volume score.
+        methodCapQuantileTest:
+          type: integer
+          minimum: 0
+          description: |
+            P95 of driver-score distribution over test method population.
+            Effective density cap = this value × statementsDensityCapMultiplier (default 2.5).
+        constructorCapQuantileProd:
+          type: integer
+          minimum: 0
+          description: |
+            P95 of driver-score distribution over prod constructor population.
+            Effective density cap = this value × statementsDensityCapMultiplier (default 2.5).
+        constructorCapQuantileTest:
+          type: integer
+          minimum: 0
+          description: |
+            P95 of driver-score distribution over test constructor population.
+            Effective density cap = this value × statementsDensityCapMultiplier (default 2.5).
+        driverScalers:
+          $ref: '#/components/schemas/DriverScalersModel'
+
+    DriverScalersModel:
+      type: object
+      description: |
+        Project-wide MinMax scalers used by the driver-score composite. Four scalers are kept separately —
+        method/prod, method/test, ctor/prod, ctor/test — so distributions do not cross-contaminate.
+        Trivial blocks (getters, setters, Object overrides) are excluded from the populations.
+        Persisted on the submission payload so offline LLM replay can reproduce identical driver scores.
+      properties:
+        methodScalerProd:
+          $ref: '#/components/schemas/DriverScalerModel'
+        methodScalerTest:
+          $ref: '#/components/schemas/DriverScalerModel'
+        constructorScalerProd:
+          $ref: '#/components/schemas/DriverScalerModel'
+        constructorScalerTest:
+          $ref: '#/components/schemas/DriverScalerModel'
+        trivialMethodsProdExcluded:
+          type: integer
+          minimum: 0
+        trivialMethodsTestExcluded:
+          type: integer
+          minimum: 0
+        trivialConstructorsProdExcluded:
+          type: integer
+          minimum: 0
+        trivialConstructorsTestExcluded:
+          type: integer
+          minimum: 0
+
+    DriverScalerModel:
+      type: object
+      description: One MinMax scaler scoped to a (kind, prod/test) bucket.
+      properties:
+        population:
+          type: integer
+          minimum: 0
+          description: Number of samples that built this scaler (trivials already excluded)
+        lines:
+          $ref: '#/components/schemas/DimensionStatsModel'
+        ncss:
+          $ref: '#/components/schemas/DimensionStatsModel'
+        invocations:
+          $ref: '#/components/schemas/DimensionStatsModel'
+
+    DimensionStatsModel:
+      type: object
+      description: Distribution stats for one scaler dimension — min/max used by the MinMax normalization, percentiles for debug output.
+      properties:
+        min:
+          type: integer
+          minimum: 0
+        p50:
+          type: integer
+          minimum: 0
+        p75:
+          type: integer
+          minimum: 0
+        p90:
+          type: integer
+          minimum: 0
+        p95:
+          type: integer
+          minimum: 0
+        max:
+          type: integer
+          minimum: 0
 
     ProjectQualityModel:
       type: object
@@ -552,10 +642,10 @@ components:
         NOTE: Fields without "InModule" suffix are commit-affected metrics (changed code only).
         Fields with "InModule" suffix are full module metrics (all code).
       properties:
-        totalLines:
+        totalStatements:
           type: integer
           minimum: 0
-          description: Total lines of code in this module's changed files (commit-affected only)
+          description: Total source statements (NCSS) in changed methods (commit-affected only)
         totalMethods:
           type: integer
           minimum: 0
@@ -605,10 +695,10 @@ components:
           type: integer
           minimum: 0
           description: Total methods in the entire module (not just changed)
-        totalLinesInModule:
+        totalStatementsInModule:
           type: integer
           minimum: 0
-          description: Total lines of code in the entire module (not just changed)
+          description: Total source statements (NCSS) in the entire module (not just changed)
         fullCoverage:
           $ref: '#/components/schemas/ModuleFullCoverageModel'
         criticalViolations:
@@ -981,9 +1071,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ModuleModel'
-        totalLines:
+        totalStatements:
           type: integer
-          description: Total lines of code in the entire project
+          description: Total source statements (NCSS) in the entire project
         totalFiles:
           type: integer
           description: Total number of source files
@@ -1154,7 +1244,7 @@ components:
     FileMetricsModel:
       type: object
       properties:
-        linesOfCode:
+        codeLines:
           type: integer
           minimum: 0
         sourceLines:
@@ -1230,6 +1320,14 @@ components:
           description: Diff of just this code unit
         duplication:
           $ref: '#/components/schemas/CodeUnitDuplicationModel'
+        effectiveLinesChanged:
+          type: integer
+          minimum: 0
+          description: Code-only lines changed in this code unit from the diff (git has no 'modify' — a modified line is a delete + add, so added lines capture both new and modified code; excludes comments, blanks, imports)
+        effectiveInvocationsChanged:
+          type: integer
+          minimum: 0
+          description: For MODIFY code units — direct invocations that fall on effectively-changed lines (precise intersection of metrics.directInvocationLines with the unit's changed-line subset). 0 for NEW/DELETE
 
     SignatureFormatModel:
       type: string
@@ -1427,12 +1525,22 @@ components:
         cognitiveComplexity:
           type: integer
           minimum: 0
-        linesOfCode:
+        codeLines:
           type: integer
           minimum: 0
-        logicalLinesOfCode:
+        nonCommentCodeStatements:
           type: integer
           minimum: 0
+          description: NCSS — logical statement count. Secondary signal; no longer the primary volume driver (see driverScore)
+        directInvocationCount:
+          type: integer
+          minimum: 0
+          description: Direct method invocations (calls, constructor calls, method refs) inside this block, excluding nested type declarations
+        directInvocationLines:
+          type: array
+          items:
+            type: integer
+          description: Source line numbers of each direct invocation inside this block. Persisted to allow precise computation of invocations-within-changed-lines for MODIFY scoring
         parameterCount:
           type: integer
           minimum: 0
@@ -1445,6 +1553,14 @@ components:
           format: int64
           minimum: 0
           description: Number of acyclic execution paths through the method
+        nonCommentCodeLines:
+          type: integer
+          minimum: 0
+          description: Physical code lines excluding comments, javadoc, and blank lines
+        commentLines:
+          type: integer
+          minimum: 0
+          description: Comment and javadoc lines (including block comments and line comments)
 
     # ==========================================================================
     # Coverage
@@ -1757,6 +1873,14 @@ components:
           type: integer
         suggestedFix:
           type: string
+        suggestedBlockCode:
+          type: string
+          nullable: true
+          description: Complete fixed code block (full method/constructor). Provided for blocking bugs when fix is within a single code block.
+        suggestedFileFix:
+          type: string
+          nullable: true
+          description: Brief text explanation of how to fix the issue.
         confidence:
           type: string
           enum: [high, medium, low]
@@ -1799,70 +1923,145 @@ components:
           format: double
           minimum: 0
           maximum: 100
+        fileEfforts:
+          type: array
+          description: Per-file effort breakdown sorted by effort descending
+          items:
+            $ref: '#/components/schemas/FileEffortModel'
 
-              
+    FileEffortModel:
+      type: object
+      description: Aggregated effort score for a file (sum of code block efforts)
+      properties:
+        file:
+          type: string
+          description: File path
+        totalEffort:
+          type: number
+          format: double
+          description: Sum of code block efforts in this file
+        isTest:
+          type: boolean
+          description: Whether this is a test file
+        codeBlockEfforts:
+          type: array
+          items:
+            $ref: '#/components/schemas/CodeBlockEffortModel'
+
+    CodeBlockEffortModel:
+      type: object
+      description: Effort score for a single code block (method/constructor)
+      properties:
+        name:
+          type: string
+          description: Method or constructor name
+        signature:
+          type: string
+          description: Full method signature
+        operation:
+          type: string
+          enum: [NEW, MODIFY]
+          description: Whether this code block was newly added or modified
+        nonCommentCodeStatements:
+          type: integer
+          minimum: 0
+          description: "NCSS — logical statement count for the whole code block (secondary signal for NEW blocks; dropped for MODIFY)"
+        nonCommentCodeLines:
+          type: integer
+          minimum: 0
+          description: "Physical code lines in this block (excludes comments, javadoc, blank lines)"
+        commentLines:
+          type: integer
+          minimum: 0
+          description: "Comment and javadoc lines in this block"
+        directInvocationCount:
+          type: integer
+          minimum: 0
+          description: "Direct method invocations in the block at the time of the commit"
+        effectiveInvocationsChanged:
+          type: integer
+          minimum: 0
+          description: "For MODIFY blocks — precise count of direct invocations that fall on effectively-changed lines within the block. 0 for NEW blocks"
+        effectiveLinesChanged:
+          type: integer
+          minimum: 0
+          description: "Code-only lines changed from diff within this block (excludes comments, blanks)"
+        changeRatio:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: "effectiveLinesChanged / nonCommentCodeLines (1.0 for NEW blocks)"
+        driverScore:
+          type: number
+          format: double
+          minimum: 0
+          description: "Composite driver score: (W_L·lines + W_S·ncss·k_S + W_I·invocs·k_I) / total for NEW, (W_L·linesChanged + W_I·invocsChanged·k_I) / (W_L+W_I) for MODIFY. k_X = lines.p50 / X.p50 projects each dim onto lines-equivalent units."
+        scaledLines:
+          type: number
+          format: double
+          minimum: 0
+          description: "Lines-equivalent contribution of the lines dimension to the driver (equals rowLines)"
+        scaledNcss:
+          type: number
+          format: double
+          minimum: 0
+          description: "Lines-equivalent contribution of the NCSS dimension (ncss × k_S); 0 for MODIFY blocks"
+        scaledInvocations:
+          type: number
+          format: double
+          minimum: 0
+          description: "Lines-equivalent contribution of the direct-invocations dimension (invocs × k_I)"
+        cappedStatements:
+          type: integer
+          minimum: 0
+          description: "Driver magnitude after density cap (kept as 'statements'-named field for backward compatibility; reflects capped driverScore)"
+        effort:
+          type: number
+          format: double
+          description: "Effort score: cappedDriverScore × operationMult × testWeight"
+        isTest:
+          type: boolean
+          description: Whether this code block is in a test file
+
     VolumeScoreModel:
       type: object
       description: |
-        Volume-based effort score calculation using power-law scaling.
-        Formula: score = count^exponent × score_factor × multiplier
+        Volume-based effort score calculation using bottom-up code block effort summation.
+        Formula: volumeScore = sum(blockEffort)^exponent × filesScopeMultiplier
       properties:
         linesChanged:
           type: integer
           minimum: 0
           description: Total effective lines of code changed (imports excluded)
-        linesScore:
-          type: number
-          format: double
-          description: Score from lines changed (power-law scaling)
         filesChanged:
           type: integer
           minimum: 0
           description: Number of files changed in the commit
-        contentScore:
-          type: number
-          format: double
-          description: Sum of content dimension scores (lines, code blocks, classes) before files multiplier
         filesScopeMultiplier:
           type: number
           format: double
-          description: Scope multiplier from files changed, dampened by content density
-        fileDensity:
-          type: number
-          format: double
-          description: Content density dampening factor (0.0-1.0). Reduces file scope multiplier when per-file changes are trivial.
+          description: Mild scope multiplier from files changed. Formula 1 + min(log2(files) × coefficient, maxBonus)
         codeBlocksModified:
           type: integer
           minimum: 0
           description: Number of existing code blocks modified
-        codeBlocksModifiedScore:
-          type: number
-          format: double
-          description: Score for modifying code blocks (with complexity bonus)
         codeBlocksAdded:
           type: integer
           minimum: 0
           description: Number of new code blocks added
-        codeBlocksAddedScore:
-          type: number
-          format: double
-          description: Score for adding code blocks (with clean code bonus)
         classesModified:
           type: integer
           minimum: 0
           description: Number of existing classes modified
-        classesModifiedScore:
-          type: number
-          format: double
-          description: Score for modifying classes
         classesAdded:
           type: integer
           minimum: 0
           description: Number of new classes added
-        classesAddedScore:
+        blockEffortSum:
           type: number
           format: double
-          description: Score for adding classes
+          description: Raw sum of per-block efforts before exponent is applied
         sizeFactor:
           type: number
           format: double
@@ -1885,33 +2084,45 @@ components:
           type: number
           format: double
           description: Final volume score (sum of all component scores)
+        testCodeScoreMultiplier:
+          type: number
+          format: double
+          description: Multiplier applied to test code contributions (e.g. 0.40 means test code counts at 40% of production code)
+        testLinesChanged:
+          type: integer
+          minimum: 0
+          description: Number of lines changed in test files
+        testCodeBlocksModified:
+          type: integer
+          minimum: 0
+          description: Number of test code blocks modified
+        testCodeBlocksAdded:
+          type: integer
+          minimum: 0
+          description: Number of test code blocks added
+        testClassesModified:
+          type: integer
+          minimum: 0
+          description: Number of test classes modified
+        testClassesAdded:
+          type: integer
+          minimum: 0
+          description: Number of test classes added
+        testFilesChanged:
+          type: integer
+          minimum: 0
+          description: Number of test files changed
 
     ComplexityMultiplierModel:
       type: object
       description: |
-        Complexity multiplier based on cyclomatic complexity.
-        MODIFY = bonus (reward tackling hard code), CREATE = penalty for high complexity.
+        Single composite complexity multiplier chosen by the LLM based on cyclomatic/cognitive
+        complexity of affected methods. Clamped to a sensible range on the server side.
       properties:
-        avgModifyComplexity:
-          type: number
-          format: double
-          description: Average cyclomatic complexity of modified methods
-        modifyMultiplier:
-          type: number
-          format: double
-          description: Multiplier for modifying existing complex code (bonus)
-        avgCreateComplexity:
-          type: number
-          format: double
-          description: Average cyclomatic complexity of new methods
-        createMultiplier:
-          type: number
-          format: double
-          description: Multiplier for creating new code (penalty if complex)
         combinedMultiplier:
           type: number
           format: double
-          description: Combined multiplier (average of modify and create if both apply)
+          description: Final complexity multiplier applied to volume score
 
     QualityMultiplierModel:
       type: object
@@ -2454,6 +2665,12 @@ components:
           type: boolean
         jdtUseSharedIndex:
           type: boolean
+        buildTimeout:
+          type: string
+          description: ISO-8601 duration — hard kill-switch on the forked Maven build process
+        testTimeout:
+          type: string
+          description: ISO-8601 duration — per-test timeout passed to Surefire
         importTimeout:
           type: string
           description: ISO-8601 duration
@@ -2507,15 +2724,6 @@ components:
         addMultiplierScale:
           type: number
           format: double
-        relativeAdjustmentFactor:
-          type: number
-          format: double
-        relativeAdjustmentMin:
-          type: number
-          format: double
-        relativeAdjustmentMax:
-          type: number
-          format: double
         qualityMultiplierMin:
           type: number
           format: double
@@ -2540,22 +2748,24 @@ components:
         qualityGatePenaltyCap:
           type: number
           format: double
-        defaultComplexityMultiplier:
-          type: number
-          format: double
         volumeExponent:
           type: number
           format: double
-        filesScopeFactor:
+          description: |
+            Exponent applied to the sum of per-block efforts for diminishing returns.
+            Formula: volumeScore = sum(blockEffort)^exponent × filesScopeMultiplier.
+            Values close to 1.0 preserve small/medium commit scores; lower values compress large commits more aggressively.
+            Default: 0.98
+        filesScopeLogCoefficient:
           type: number
           format: double
-        fileDensityThreshold:
+        filesScopeMaxBonus:
           type: number
           format: double
-        linesDensityCapMultiplier:
+        statementsDensityCapMultiplier:
           type: number
           format: double
-        ncssQuantile:
+        statsQuantile:
           type: number
           format: double
         coverageLowThreshold:
@@ -2569,51 +2779,6 @@ components:
           format: double
         highComplexityThreshold:
           type: integer
-        linesLogFactor:
-          type: number
-          format: double
-        codeBlocksModifiedLogFactor:
-          type: number
-          format: double
-        codeBlocksAddedLogFactor:
-          type: number
-          format: double
-        classesModifiedLogFactor:
-          type: number
-          format: double
-        classesAddedLogFactor:
-          type: number
-          format: double
-        complexityTrivialMax:
-          type: integer
-        complexityModerateMax:
-          type: integer
-        complexityComplexMax:
-          type: integer
-        modifyTrivialMultiplier:
-          type: number
-          format: double
-        modifyModerateMultiplier:
-          type: number
-          format: double
-        modifyComplexMultiplier:
-          type: number
-          format: double
-        modifyHighlyComplexMultiplier:
-          type: number
-          format: double
-        createTrivialMultiplier:
-          type: number
-          format: double
-        createModerateMultiplier:
-          type: number
-          format: double
-        createComplexMultiplier:
-          type: number
-          format: double
-        createHighlyComplexMultiplier:
-          type: number
-          format: double
         cpdCleanBonus:
           type: number
           format: double
@@ -2636,6 +2801,9 @@ components:
           type: number
           format: double
         cpdHighThreshold:
+          type: number
+          format: double
+        testCodeScoreMultiplier:
           type: number
           format: double
         testCodePenaltyWeight:

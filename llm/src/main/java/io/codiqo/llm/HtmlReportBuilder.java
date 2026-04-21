@@ -111,22 +111,14 @@ public class HtmlReportBuilder implements ReportBuilder {
         ctx.setVariable("scoreCalculation", response.getScoreCalculation());
         ctx.setVariable("seniorReviewScore", response.getRequiresSeniorReview());
         ctx.setVariable("volumeExponent", args.getVolumeExponent());
-        ctx.setVariable("filesScopeFactor", args.getFilesScopeFactor());
-        ctx.setVariable("fileDensityThreshold", args.getFileDensityThreshold());
-        ctx.setVariable("linesDensityCapMultiplier", args.getLinesDensityCapMultiplier());
-        ctx.setVariable("ncssQuantilePercent", (int) (args.getNcssQuantile() * 100));
-        ctx.setVariable("linesLogFactor", args.getLinesLogFactor());
-        ctx.setVariable("codeBlocksModLogFactor", args.getCodeBlocksModifiedLogFactor());
-        ctx.setVariable("codeBlocksAddLogFactor", args.getCodeBlocksAddedLogFactor());
-        ctx.setVariable("classesModLogFactor", args.getClassesModifiedLogFactor());
-        ctx.setVariable("classesAddLogFactor", args.getClassesAddedLogFactor());
+        ctx.setVariable("filesScopeLogCoefficient", args.getFilesScopeLogCoefficient());
+        ctx.setVariable("filesScopeMaxBonus", args.getFilesScopeMaxBonus());
+        ctx.setVariable("statementsDensityCapMultiplier", args.getStatementsDensityCapMultiplier());
+        ctx.setVariable("statsQuantilePercent", (int) (args.getStatsQuantile() * 100));
         ctx.setVariable("architectureBonusFactor", args.getArchitectureBonusFactor());
         ctx.setVariable("qualityMultiplierMin", args.getQualityMultiplierMin());
         ctx.setVariable("qualityMultiplierMax", args.getQualityMultiplierMax());
         ctx.setVariable("qualityGatePenaltyCap", args.getQualityGatePenaltyCap());
-        ctx.setVariable("complexityTrivialMax", args.getComplexityTrivialMax());
-        ctx.setVariable("complexityModerateMax", args.getComplexityModerateMax());
-        ctx.setVariable("complexityComplexMax", args.getComplexityComplexMax());
         ctx.setVariable("llmSummary", response.getSummary());
         ctx.setVariable("llmThinking", response.getThinking());
 
@@ -304,43 +296,40 @@ public class HtmlReportBuilder implements ReportBuilder {
         VolumeScore volume = breakdown.getVolumeScore();
         ctx.setVariable("volumeScore", volume);
         if (Objects.nonNull(preComputed)) {
-            ctx.setVariable("projectTotalLines", preComputed.getProjectTotalLines());
+            ctx.setVariable("projectTotalStatements", preComputed.getProjectTotalStatements());
             ctx.setVariable("projectTotalMethods", preComputed.getProjectTotalMethods());
-            ctx.setVariable("linesPerMethodQuantile", preComputed.getLinesPerMethodQuantile());
+            ctx.setVariable("methodCapQuantileProd", preComputed.getMethodCapQuantileProd());
+            ctx.setVariable("methodCapQuantileTest", preComputed.getMethodCapQuantileTest());
+            ctx.setVariable("constructorCapQuantileProd", preComputed.getConstructorCapQuantileProd());
+            ctx.setVariable("constructorCapQuantileTest", preComputed.getConstructorCapQuantileTest());
             ctx.setVariable("linesChanged", preComputed.getLinesChanged());
-            ctx.setVariable("effectiveLines", preComputed.getEffectiveLines());
-            ctx.setVariable("linesScore", preComputed.getLinesScore());
+            ctx.setVariable("totalEffectiveStatements", preComputed.getTotalEffectiveStatements());
             ctx.setVariable("filesChanged", preComputed.getFilesChanged());
-            ctx.setVariable("contentScore", preComputed.getContentScore());
             ctx.setVariable("filesScopeMultiplier", preComputed.getFilesScopeMultiplier());
-            ctx.setVariable("fileDensity", preComputed.getFileDensity());
+            ctx.setVariable("blockEffortSum", preComputed.getBlockEffortSum());
             ctx.setVariable("codeBlocksModified", preComputed.getCodeBlocksModified());
-            ctx.setVariable("codeBlocksModifiedScore", preComputed.getCodeBlocksModifiedScore());
             ctx.setVariable("codeBlocksAdded", preComputed.getCodeBlocksAdded());
-            ctx.setVariable("codeBlocksAddedScore", preComputed.getCodeBlocksAddedScore());
             ctx.setVariable("classesModified", preComputed.getClassesModified());
-            ctx.setVariable("classesModifiedScore", preComputed.getClassesModifiedScore());
             ctx.setVariable("classesAdded", preComputed.getClassesAdded());
-            ctx.setVariable("classesAddedScore", preComputed.getClassesAddedScore());
             ctx.setVariable("totalVolumeScore", preComputed.getVolumeScore());
             ctx.setVariable("sizeFactor", preComputed.getSizeFactor());
             ctx.setVariable("volModifyMult", preComputed.getModifyMult());
             ctx.setVariable("volAddMult", preComputed.getAddMult());
+            ctx.setVariable("testCodeScoreMultiplier", preComputed.getTestCodeScoreMultiplier());
+            ctx.setVariable("testLinesChanged", preComputed.getTestLinesChanged());
+            ctx.setVariable("testCodeBlocksModified", preComputed.getTestCodeBlocksModified());
+            ctx.setVariable("testCodeBlocksAdded", preComputed.getTestCodeBlocksAdded());
+            ctx.setVariable("testClassesModified", preComputed.getTestClassesModified());
+            ctx.setVariable("testClassesAdded", preComputed.getTestClassesAdded());
+            ctx.setVariable("testFilesChanged", preComputed.getTestFilesChanged());
         } else if (Objects.nonNull(volume)) {
             ctx.setVariable("linesChanged", volume.getLinesChanged());
-            ctx.setVariable("linesScore", volume.getLinesScore());
             ctx.setVariable("filesChanged", volume.getFilesChanged());
-            ctx.setVariable("contentScore", volume.getContentScore());
             ctx.setVariable("filesScopeMultiplier", volume.getFilesScopeMultiplier());
-            ctx.setVariable("fileDensity", volume.getFileDensity());
             ctx.setVariable("codeBlocksModified", volume.getCodeBlocksModified());
-            ctx.setVariable("codeBlocksModifiedScore", volume.getCodeBlocksModifiedScore());
             ctx.setVariable("codeBlocksAdded", volume.getCodeBlocksAdded());
-            ctx.setVariable("codeBlocksAddedScore", volume.getCodeBlocksAddedScore());
             ctx.setVariable("classesModified", volume.getClassesModified());
-            ctx.setVariable("classesModifiedScore", volume.getClassesModifiedScore());
             ctx.setVariable("classesAdded", volume.getClassesAdded());
-            ctx.setVariable("classesAddedScore", volume.getClassesAddedScore());
             ctx.setVariable("totalVolumeScore", volume.getTotalVolumeScore());
             ctx.setVariable("sizeFactor", volume.getSizeFactor());
             ctx.setVariable("volModifyMult", volume.getModifyMultiplier());
@@ -349,13 +338,13 @@ public class HtmlReportBuilder implements ReportBuilder {
         ComplexityMultiplier complexity = breakdown.getComplexityMultiplier();
         ctx.setVariable("complexityMultiplier", complexity);
         if (Objects.nonNull(complexity)) {
-            ctx.setVariable("avgModifyComplexity", complexity.getAvgModifyComplexity());
-            ctx.setVariable("modifyMultiplier", complexity.getModifyMultiplier());
-            ctx.setVariable("avgCreateComplexity", complexity.getAvgCreateComplexity());
-            ctx.setVariable("createMultiplier", complexity.getCreateMultiplier());
             ctx.setVariable("combinedComplexityMultiplier", complexity.getCombinedMultiplier());
         }
         ctx.setVariable("baseEffortScore", breakdown.getBaseEffortScore());
+
+        if (Objects.nonNull(preComputed)) {
+            ctx.setVariable("fileEfforts", preComputed.getFileEfforts());
+        }
     }
     private static void populateQualityMultiplier(Context ctx, LlmScoringResponse response) {
         QualityMultiplier qm = response.getQualityMultiplier();

@@ -1,10 +1,6 @@
 package io.codiqo.llm;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.StringReader;
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
@@ -12,17 +8,17 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.commons.math3.stat.descriptive.rank.Percentile;
-import org.eclipse.jgit.patch.FileHeader;
 import org.eclipse.jgit.patch.FormatError;
-import org.eclipse.jgit.patch.HunkHeader;
 import org.eclipse.jgit.patch.Patch;
 
 import com.google.common.collect.Lists;
@@ -30,6 +26,11 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.diff.EffectiveLineParser;
+import io.codiqo.api.diff.EffectiveLineParser.LineKind;
+import io.codiqo.api.diff.JavaLineFilters;
+import io.codiqo.api.metrics.CodeLineCounter;
+import io.codiqo.api.metrics.DriverScaler;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CallerModel;
 import io.codiqo.client.model.CloneLocationModel;
@@ -38,6 +39,9 @@ import io.codiqo.client.model.CodeUnitModel;
 import io.codiqo.client.model.CodeUnitModel.OperationEnum;
 import io.codiqo.client.model.CoverageModel;
 import io.codiqo.client.model.DiagnosticModel;
+import io.codiqo.client.model.DimensionStatsModel;
+import io.codiqo.client.model.DriverScalerModel;
+import io.codiqo.client.model.DriverScalersModel;
 import io.codiqo.client.model.DuplicationReportModel;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.FullProjectCoverageModel;
@@ -47,17 +51,20 @@ import io.codiqo.client.model.SymbolKindModel;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringRequest.CallerInfo;
 import io.codiqo.llm.schema.LlmScoringRequest.ChangeSummary;
+import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
 import io.codiqo.llm.schema.LlmScoringRequest.ComplexityMetrics;
 import io.codiqo.llm.schema.LlmScoringRequest.CoverageInfo;
 import io.codiqo.llm.schema.LlmScoringRequest.DiagnosticInfo;
 import io.codiqo.llm.schema.LlmScoringRequest.FileChange;
-import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import lombok.experimental.Accessors;
 
 @RequiredArgsConstructor
 public class SubmissionToRequestMapper implements Function<AnalysisSubmissionModel, LlmScoringRequest> {
     private static final String DEV_NULL = "/dev/null";
+    private static final String IMPORT_LINE_PATTERN = "import ";
     private static final EnumSet<SymbolKindModel> METHOD_OR_CONSTRUCTOR = EnumSet.of(SymbolKindModel.METHOD, SymbolKindModel.CONSTRUCTOR);
 
     private final RunArgs args;
@@ -66,6 +73,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     public LlmScoringRequest apply(AnalysisSubmissionModel submission) {
         List<FileChangeModel> files = submission.getFiles();
         FileContext fileContext = buildFileContext(files);
+        DriverScalers scalers = extractScalers(submission);
         return LlmScoringRequest.builder()
                 .commitHash(submission.getCommit().getSha())
                 .commitMessage(submission.getCommit().getMessage())
@@ -81,8 +89,57 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .coverage(mapCoverage(submission))
                 .complexity(mapComplexityMetrics(files))
                 .duplication(mapDuplication(submission.getDuplication(), fileContext))
+                .methodScalerProd(scalers.methodProd())
+                .methodScalerTest(scalers.methodTest())
+                .constructorScalerProd(scalers.ctorProd())
+                .constructorScalerTest(scalers.ctorTest())
                 .build();
     }
+    private static DriverScalers extractScalers(AnalysisSubmissionModel submission) {
+        DriverScalers toReturn = new DriverScalers();
+        if (Objects.isNull(submission.getProjectMetrics()) || Objects.isNull(submission.getProjectMetrics().getDriverScalers())) {
+            return toReturn;
+        }
+        DriverScalersModel model = submission.getProjectMetrics().getDriverScalers();
+        toReturn.methodProd = toScaler(model.getMethodScalerProd());
+        toReturn.methodTest = toScaler(model.getMethodScalerTest());
+        toReturn.ctorProd = toScaler(model.getConstructorScalerProd());
+        toReturn.ctorTest = toScaler(model.getConstructorScalerTest());
+        return toReturn;
+    }
+    private static DriverScaler toScaler(DriverScalerModel model) {
+        if (Objects.isNull(model) || Objects.isNull(model.getPopulation()) || model.getPopulation() == 0) {
+            return DriverScaler.EMPTY;
+        }
+        return DriverScaler.fromPersisted(
+                model.getPopulation(),
+                statsOf(model.getLines()),
+                statsOf(model.getNcss()),
+                statsOf(model.getInvocations()));
+    }
+    private static DriverScaler.DimensionStats statsOf(DimensionStatsModel model) {
+        if (Objects.isNull(model)) {
+            return DriverScaler.DimensionStats.ZERO;
+        }
+        return DriverScaler.DimensionStats.builder()
+                .min(Optional.ofNullable(model.getMin()).orElse(0))
+                .p50(Optional.ofNullable(model.getP50()).orElse(0))
+                .p75(Optional.ofNullable(model.getP75()).orElse(0))
+                .p90(Optional.ofNullable(model.getP90()).orElse(0))
+                .p95(Optional.ofNullable(model.getP95()).orElse(0))
+                .max(Optional.ofNullable(model.getMax()).orElse(0))
+                .build();
+    }
+
+    @lombok.Getter
+    @Accessors(fluent = true)
+    private static final class DriverScalers {
+        private DriverScaler methodProd = DriverScaler.EMPTY;
+        private DriverScaler methodTest = DriverScaler.EMPTY;
+        private DriverScaler ctorProd = DriverScaler.EMPTY;
+        private DriverScaler ctorTest = DriverScaler.EMPTY;
+    }
+
     private LlmScoringRequest.DuplicationInfo mapDuplication(DuplicationReportModel duplication, FileContext fileContext) {
         LlmScoringRequest.DuplicationInfo.DuplicationInfoBuilder builder = LlmScoringRequest.DuplicationInfo.builder()
                 .duplicatedPercentage(Optional.ofNullable(duplication.getDuplicatedPercentage()).orElse(0.0))
@@ -149,10 +206,10 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
             endLine = Optional.ofNullable(loc.getLocation().getEndLine()).orElse(0);
         }
         String filePath = loc.getPath();
-        boolean isTestCode = fileContext.getTestFiles().contains(filePath);
+        boolean isTestCode = fileContext.testFiles().contains(filePath);
         int linesOverlapping = 0;
         int totalCloneLines = Math.max(1, endLine - startLine + 1);
-        Set<Integer> addedLines = fileContext.getAddedLinesByFile().get(filePath);
+        Set<Integer> addedLines = fileContext.addedLinesByFile().get(filePath);
         if (Objects.nonNull(addedLines) && startLine > 0 && endLine >= startLine) {
             for (int line = startLine; line <= endLine; line++) {
                 if (addedLines.contains(line)) {
@@ -280,7 +337,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
             }
         }
 
-        double quantileLevel = args.getNcssQuantile() * 100.0;
+        double quantileLevel = args.getStatsQuantile() * 100.0;
         double complexityQuantile = 0;
         if (CollectionUtils.isNotEmpty(perMethodCyclomatic)) {
             double[] values = perMethodCyclomatic.stream().mapToDouble(Integer::doubleValue).toArray();
@@ -301,21 +358,25 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         return files.stream().map(SubmissionToRequestMapper::mapFileChange).collect(Collectors.toList());
     }
     private static FileChange mapFileChange(FileChangeModel file) {
-        DiffStats stats = DiffStats.fromPatch(file.getDiff());
+        DiffStats stats = DiffStats.fromPatch(file.getDiff(), isJavaFile(file));
         return FileChange.builder()
                 .path(resolveEffectivePath(file))
                 .changeType(mapFileChangeType(file.getChangeType()))
                 .diff(file.getDiff())
                 .isTest(Boolean.TRUE.equals(file.getIsTest()))
                 .language(mapLanguage(file))
-                .linesAdded(stats.getAdded())
-                .linesDeleted(stats.getDeleted())
+                .linesAdded(stats.effectiveAdded())
+                .linesDeleted(stats.effectiveDeleted())
                 .build();
     }
     private static List<CodeBlockChange> mapCodeBlockChanges(List<FileChangeModel> files, FileContext fileContext) {
         List<CodeBlockChange> toReturn = Lists.newArrayList();
         for (FileChangeModel file : files) {
             if (CollectionUtils.isEmpty(file.getCodeUnits())) {
+                continue;
+            }
+            DiffStats stats = DiffStats.fromPatch(file.getDiff(), isJavaFile(file));
+            if (!stats.effectiveChanges()) {
                 continue;
             }
             for (CodeUnitModel codeUnit : file.getCodeUnits()) {
@@ -330,6 +391,11 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         return toReturn;
     }
     private static CodeBlockChange mapCodeBlockChange(FileChangeModel file, CodeUnitModel codeUnit, FileContext fileContext) {
+        int startLine = codeUnit.getLocation().getStartLine();
+        int endLine = codeUnit.getLocation().getEndLine();
+        String filePath = file.getPath();
+        boolean isJava = isJavaFile(file);
+
         CodeBlockChange.CodeBlockChangeBuilder builder = CodeBlockChange.builder()
                 .name(codeUnit.getName())
                 .signature(codeUnit.getSignature())
@@ -337,12 +403,46 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .className(extractClassName(codeUnit))
                 .operation(mapOperation(codeUnit.getOperation()))
                 .isConstructor(codeUnit.getKind() == SymbolKindModel.CONSTRUCTOR)
-                .startLine(codeUnit.getLocation().getStartLine())
-                .endLine(codeUnit.getLocation().getEndLine());
+                .isTest(Boolean.TRUE.equals(file.getIsTest()))
+                .startLine(startLine)
+                .endLine(endLine);
+
         mapMetrics(codeUnit.getMetrics(), builder);
         mapCallers(codeUnit.getCallers(), builder);
-        mapDiagnostics(codeUnit.getDiagnostics(), file.getPath(), fileContext, builder);
+        mapDiagnostics(codeUnit.getDiagnostics(), filePath, fileContext, builder);
+        mapChangeMetrics(codeUnit, filePath, startLine, endLine, isJava, fileContext, builder);
+
         return builder.build();
+    }
+    private static void mapChangeMetrics(CodeUnitModel codeUnit, String filePath, int startLine, int endLine,
+            boolean isJava, FileContext fileContext, CodeBlockChange.CodeBlockChangeBuilder builder) {
+        MetricsModel metrics = codeUnit.getMetrics();
+
+        builder.nonCommentCodeLines(Optional.ofNullable(metrics.getNonCommentCodeLines())
+                .orElse(Optional.ofNullable(metrics.getCodeLines()).orElse(0)));
+        builder.commentLines(Optional.ofNullable(metrics.getCommentLines()).orElse(0));
+
+        if (codeUnit.getOperation() != OperationEnum.MODIFY) {
+            return;
+        }
+
+        int effectiveLinesChanged = Optional.ofNullable(codeUnit.getEffectiveLinesChanged()).orElse(0);
+        if (effectiveLinesChanged <= 0) {
+            Set<Integer> effectiveAdded = fileContext.effectiveAddedLinesByFile().get(filePath);
+            if (Objects.nonNull(effectiveAdded) && startLine > 0 && endLine >= startLine) {
+                effectiveLinesChanged = countEffectiveAddedInRange(effectiveAdded, startLine, endLine);
+            }
+        }
+
+        int effectiveLinesDeleted = 0;
+        Map<Integer, Integer> deletionAnchors = fileContext.effectiveDeletionAnchorsByFile().get(filePath);
+        if (Objects.nonNull(deletionAnchors) && startLine > 0 && endLine >= startLine) {
+            effectiveLinesDeleted = countEffectiveDeletionsInRange(deletionAnchors, startLine, endLine);
+        }
+
+        builder.linesAdded(effectiveLinesChanged);
+        builder.totalLinesChanged(effectiveLinesChanged + effectiveLinesDeleted);
+        builder.effectiveInvocationsChanged(Optional.ofNullable(codeUnit.getEffectiveInvocationsChanged()).orElse(0));
     }
     private static void mapCallers(List<CallerModel> callers, CodeBlockChange.CodeBlockChangeBuilder builder) {
         builder.callers(callers.stream().map(SubmissionToRequestMapper::mapCaller).collect(Collectors.toList()));
@@ -364,21 +464,40 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     private static ChangeSummary mapChangeSummary(List<FileChangeModel> files) {
         int linesAdded = 0;
         int linesDeleted = 0;
+        int testLinesAdded = 0;
+        int testLinesDeleted = 0;
         int codeBlocksAdded = 0;
         int codeBlocksModified = 0;
         int codeBlocksDeleted = 0;
+        int testCodeBlocksAdded = 0;
+        int testCodeBlocksModified = 0;
         int classesAdded = 0;
         int classesModified = 0;
-        int filesWithCodeBlockChanges = 0;
+        int testClassesAdded = 0;
+        int testClassesModified = 0;
+        int filesWithChanges = 0;
+        int testFilesWithChanges = 0;
         Set<String> packagesAffected = Sets.newHashSet();
         for (FileChangeModel file : files) {
-            DiffStats stats = DiffStats.fromPatch(file.getDiff());
-            linesAdded += stats.getEffectiveAdded();
-            linesDeleted += stats.getEffectiveDeleted();
-            if (CollectionUtils.isEmpty(file.getCodeUnits())) {
+            boolean isTest = Boolean.TRUE.equals(file.getIsTest());
+            DiffStats stats = DiffStats.fromPatch(file.getDiff(), isJavaFile(file));
+            if (!stats.effectiveChanges()) {
                 continue;
             }
+
+            // Files without code units (config, resources) always count their lines
+            if (CollectionUtils.isEmpty(file.getCodeUnits())) {
+                linesAdded += stats.effectiveAdded();
+                linesDeleted += stats.effectiveDeleted();
+                if (isTest) {
+                    testLinesAdded += stats.effectiveAdded();
+                    testLinesDeleted += stats.effectiveDeleted();
+                }
+                continue;
+            }
+
             boolean fileHasCodeBlockChange = false;
+            boolean fileHasClassChange = false;
             for (CodeUnitModel codeUnit : file.getCodeUnits()) {
                 SymbolKindModel kind = codeUnit.getKind();
                 OperationEnum operation = codeUnit.getOperation();
@@ -389,26 +508,48 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                     fileHasCodeBlockChange = true;
                     if (operation == OperationEnum.NEW) {
                         codeBlocksAdded++;
+                        if (isTest) {
+                            testCodeBlocksAdded++;
+                        }
                     } else if (operation == OperationEnum.MODIFY) {
                         codeBlocksModified++;
+                        if (isTest) {
+                            testCodeBlocksModified++;
+                        }
                     } else if (operation == OperationEnum.DELETE) {
                         codeBlocksDeleted++;
                     }
                 } else if (kind == SymbolKindModel.propertyClass) {
                     if (operation == OperationEnum.NEW) {
+                        fileHasClassChange = true;
                         classesAdded++;
+                        if (isTest) {
+                            testClassesAdded++;
+                        }
                     } else if (operation == OperationEnum.MODIFY) {
+                        fileHasClassChange = true;
                         classesModified++;
+                        if (isTest) {
+                            testClassesModified++;
+                        }
                     }
                 }
                 extractPackageName(codeUnit).ifPresent(packagesAffected::add);
             }
-            if (fileHasCodeBlockChange) {
-                filesWithCodeBlockChanges++;
+
+            if (BooleanUtils.or(new boolean[] { fileHasCodeBlockChange, fileHasClassChange })) {
+                linesAdded += stats.effectiveAdded();
+                linesDeleted += stats.effectiveDeleted();
+                filesWithChanges++;
+                if (isTest) {
+                    testLinesAdded += stats.effectiveAdded();
+                    testLinesDeleted += stats.effectiveDeleted();
+                    testFilesWithChanges++;
+                }
             }
         }
         return ChangeSummary.builder()
-                .totalFilesChanged(filesWithCodeBlockChanges)
+                .totalFilesChanged(filesWithChanges)
                 .totalLinesChanged(linesAdded + linesDeleted)
                 .linesAdded(linesAdded)
                 .linesDeleted(linesDeleted)
@@ -417,44 +558,70 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .codeBlocksDeleted(codeBlocksDeleted)
                 .classesAdded(classesAdded)
                 .classesModified(classesModified)
+                .testLinesChanged(testLinesAdded + testLinesDeleted)
+                .testCodeBlocksAdded(testCodeBlocksAdded)
+                .testCodeBlocksModified(testCodeBlocksModified)
+                .testClassesAdded(testClassesAdded)
+                .testClassesModified(testClassesModified)
+                .testFilesChanged(testFilesWithChanges)
                 .packagesAffected(Lists.newArrayList(packagesAffected))
                 .build();
     }
     private static FileContext buildFileContext(List<FileChangeModel> files) {
         Set<String> testFiles = Sets.newHashSet();
-        Map<String, Set<Integer>> toReturn = Maps.newHashMap();
+        Map<String, Set<Integer>> addedByFile = Maps.newHashMap();
+        Map<String, Set<Integer>> effectiveAddedByFile = Maps.newHashMap();
+        Map<String, Map<Integer, Integer>> effectiveDeletionAnchorsByFile = Maps.newHashMap();
         for (FileChangeModel file : files) {
             String path = file.getPath();
             if (Boolean.TRUE.equals(file.getIsTest())) {
                 testFiles.add(path);
             }
             if (Objects.nonNull(file.getDiff())) {
-                Set<Integer> addedLines = parseAddedLinesFromDiff(file.getDiff());
+                boolean isJava = isJavaFile(file);
+                Predicate<String> addedIneffective = isJava ? JavaLineFilters.COMMENT : JavaLineFilters.NONE;
+                Predicate<String> deletedIneffective = isJava ? JavaLineFilters.COMMENT_OR_IMPORT : JavaLineFilters.NONE;
+
+                Set<Integer> addedLines = EffectiveLineParser.parseAddedLines(file.getDiff());
                 if (CollectionUtils.isNotEmpty(addedLines)) {
-                    toReturn.put(path, addedLines);
+                    addedByFile.put(path, addedLines);
+                }
+
+                Set<Integer> effectiveAdded = EffectiveLineParser.parseEffectiveAddedLines(file.getDiff(), addedIneffective);
+                if (CollectionUtils.isNotEmpty(effectiveAdded)) {
+                    effectiveAddedByFile.put(path, effectiveAdded);
+                }
+
+                Map<Integer, Integer> deletionAnchors = EffectiveLineParser.parseEffectiveDeletionAnchors(file.getDiff(), deletedIneffective);
+                if (MapUtils.isNotEmpty(deletionAnchors)) {
+                    effectiveDeletionAnchorsByFile.put(path, deletionAnchors);
                 }
             }
         }
-        return new FileContext(testFiles, toReturn);
+        return new FileContext(testFiles, addedByFile, effectiveAddedByFile, effectiveDeletionAnchorsByFile);
     }
-    private static Set<Integer> parseAddedLinesFromDiff(String diff) {
-        Set<Integer> toReturn = Sets.newHashSet();
-        Patch patch = new Patch();
-        byte[] diffBytes = diff.getBytes(StandardCharsets.UTF_8);
-        patch.parse(diffBytes, 0, diffBytes.length);
-        for (FileHeader fileHeader : patch.getFiles()) {
-            for (HunkHeader hunk : fileHeader.getHunks()) {
-                for (org.eclipse.jgit.diff.Edit edit : hunk.toEditList()) {
-                    for (int i = edit.getBeginB(); i < edit.getEndB(); i++) {
-                        toReturn.add(i + 1);
-                    }
-                }
+    private static int countEffectiveAddedInRange(Set<Integer> effectiveAdded, int startLine, int endLine) {
+        int count = 0;
+        for (int line = startLine; line <= endLine; line++) {
+            if (effectiveAdded.contains(line)) {
+                count++;
             }
         }
-        return toReturn;
+        return count;
     }
-    private static void mapDiagnostics(List<DiagnosticModel> diagnostics, String filePath, FileContext fileContext, CodeBlockChange.CodeBlockChangeBuilder builder) {
-        Set<Integer> addedLines = fileContext.getAddedLinesByFile().get(filePath);
+    private static int countEffectiveDeletionsInRange(Map<Integer, Integer> anchors, int startLine, int endLine) {
+        int count = 0;
+        for (Map.Entry<Integer, Integer> entry : anchors.entrySet()) {
+            int anchor = entry.getKey();
+            if (anchor >= startLine && anchor <= endLine + 1) {
+                count += entry.getValue();
+            }
+        }
+        return count;
+    }
+    private static void mapDiagnostics(List<DiagnosticModel> diagnostics, String filePath, FileContext fileContext,
+            CodeBlockChange.CodeBlockChangeBuilder builder) {
+        Set<Integer> addedLines = fileContext.addedLinesByFile().get(filePath);
         builder.diagnostics(diagnostics.stream()
                 .map(diag -> mapDiagnostic(diag, addedLines))
                 .collect(Collectors.toList()));
@@ -506,7 +673,9 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         }
     }
     private static void mapMetrics(MetricsModel metrics, CodeBlockChange.CodeBlockChangeBuilder builder) {
-        builder.linesOfCode(Optional.ofNullable(metrics.getLinesOfCode()).orElse(BigDecimal.ZERO.intValue()));
+        builder.nonCommentCodeStatements(Optional.ofNullable(metrics.getNonCommentCodeStatements())
+                .orElse(Optional.ofNullable(metrics.getCodeLines()).orElse(0)));
+        builder.directInvocationCount(Optional.ofNullable(metrics.getDirectInvocationCount()).orElse(0));
         builder.cyclomaticComplexity(Optional.ofNullable(metrics.getCyclomaticComplexity()).orElse(BigDecimal.ZERO.intValue()));
         builder.cognitiveComplexity(Optional.ofNullable(metrics.getCognitiveComplexity()).orElse(BigDecimal.ZERO.intValue()));
         builder.parameterCount(Optional.ofNullable(metrics.getParameterCount()).orElse(BigDecimal.ZERO.intValue()));
@@ -519,7 +688,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     }
     private static String resolveEffectivePath(FileChangeModel file) {
         String path = file.getPath();
-        if (BooleanUtils.or(new boolean[]{DEV_NULL.equals(path), StringUtils.isEmpty(path)})) {
+        if (BooleanUtils.or(new boolean[] { DEV_NULL.equals(path), StringUtils.isEmpty(path) })) {
             String previousPath = file.getPreviousPath();
             if (StringUtils.isNotEmpty(previousPath)) {
                 return previousPath;
@@ -529,6 +698,9 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     }
     private static boolean isMethodOrConstructor(SymbolKindModel kind) {
         return METHOD_OR_CONSTRUCTOR.contains(kind);
+    }
+    private static boolean isJavaFile(FileChangeModel file) {
+        return file.getLanguage() == FileChangeModel.LanguageEnum.JAVA;
     }
     private static Optional<String> extractPackageName(CodeUnitModel codeUnit) {
         return Optional.ofNullable(codeUnit.getJavaInfo()).map(JavaInfoModel::getPackageName);
@@ -584,78 +756,83 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     }
 
     @Getter
+    @Accessors(fluent = true)
+    @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
     private static final class DiffStats {
-        private static final String IMPORT_LINE_PATTERN = "import ";
-
         private final int added;
         private final int deleted;
         private final int importAdded;
         private final int importDeleted;
+        private final int commentAdded;
+        private final int commentDeleted;
+        private final int blankAdded;
+        private final int blankDeleted;
 
-        private DiffStats(int added, int deleted, int importAdded, int importDeleted) {
-            this.added = added;
-            this.deleted = deleted;
-            this.importAdded = importAdded;
-            this.importDeleted = importDeleted;
+        private int effectiveAdded() {
+            return added - importAdded - commentAdded - blankAdded;
         }
-        private int getEffectiveAdded() {
-            return added - importAdded;
+        private int effectiveDeleted() {
+            return deleted - importDeleted - commentDeleted - blankDeleted;
         }
-        private int getEffectiveDeleted() {
-            return deleted - importDeleted;
+        private boolean effectiveChanges() {
+            return BooleanUtils.or(new boolean[] { effectiveAdded() > 0, effectiveDeleted() > 0 });
         }
-        private static DiffStats fromPatch(String diff) {
-            Patch patch = new Patch();
-            byte[] diffBytes = diff.getBytes(StandardCharsets.UTF_8);
-            patch.parse(diffBytes, 0, diffBytes.length);
+        private static DiffStats fromPatch(String diff, boolean isJava) {
+            Patch patch = EffectiveLineParser.parsePatch(diff);
             List<FormatError> errors = patch.getErrors().stream()
                     .filter(err -> err.getSeverity() == FormatError.Severity.ERROR)
                     .collect(Collectors.toList());
             if (CollectionUtils.isNotEmpty(errors)) {
                 throw new IllegalArgumentException("failed to parse diff: " + errors);
             }
-            int added = 0;
-            int deleted = 0;
-            for (FileHeader fileHeader : patch.getFiles()) {
-                for (HunkHeader hunk : fileHeader.getHunks()) {
-                    for (org.eclipse.jgit.diff.Edit edit : hunk.toEditList()) {
-                        added += edit.getEndB() - edit.getBeginB();
-                        deleted += edit.getEndA() - edit.getBeginA();
-                    }
+
+            MutableInt added = new MutableInt();
+            MutableInt deleted = new MutableInt();
+            MutableInt blankAdded = new MutableInt();
+            MutableInt commentAdded = new MutableInt();
+            MutableInt importAdded = new MutableInt();
+            MutableInt blankDeleted = new MutableInt();
+            MutableInt commentDeleted = new MutableInt();
+            MutableInt importDeleted = new MutableInt();
+
+            EffectiveLineParser.walk(patch, (kind, newLine, content) -> {
+                if (kind == LineKind.ADDED) {
+                    added.increment();
+                    categorize(content.trim(), isJava, blankAdded, commentAdded, importAdded);
+                } else if (kind == LineKind.DELETED) {
+                    deleted.increment();
+                    categorize(content.trim(), isJava, blankDeleted, commentDeleted, importDeleted);
                 }
+            });
+
+            return new DiffStats(
+                    added.intValue(),
+                    deleted.intValue(),
+                    importAdded.intValue(),
+                    importDeleted.intValue(),
+                    commentAdded.intValue(),
+                    commentDeleted.intValue(),
+                    blankAdded.intValue(),
+                    blankDeleted.intValue());
+        }
+        private static void categorize(String trimmed, boolean isJava, MutableInt blank, MutableInt comment, MutableInt imports) {
+            if (trimmed.isEmpty()) {
+                blank.increment();
+            } else if (BooleanUtils.and(new boolean[] { isJava, CodeLineCounter.isCommentLine(trimmed) })) {
+                comment.increment();
+            } else if (trimmed.startsWith(IMPORT_LINE_PATTERN)) {
+                imports.increment();
             }
-            int importAdded = 0;
-            int importDeleted = 0;
-            try (BufferedReader reader = new BufferedReader(new StringReader(diff))) {
-                String line;
-                while (Objects.nonNull(line = reader.readLine())) {
-                    if (line.startsWith("+") && !line.startsWith("+++")) {
-                        String content = line.substring(1).trim();
-                        if (content.startsWith(IMPORT_LINE_PATTERN)) {
-                            importAdded++;
-                        }
-                    } else if (line.startsWith("-") && !line.startsWith("---")) {
-                        String content = line.substring(1).trim();
-                        if (content.startsWith(IMPORT_LINE_PATTERN)) {
-                            importDeleted++;
-                        }
-                    }
-                }
-            } catch (IOException err) {
-                ExceptionUtils.wrapAndThrow(err);
-            }
-            return new DiffStats(added, deleted, importAdded, importDeleted);
         }
     }
 
     @Getter
+    @Accessors(fluent = true)
+    @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
     private static final class FileContext {
         private final Set<String> testFiles;
         private final Map<String, Set<Integer>> addedLinesByFile;
-
-        private FileContext(Set<String> testFiles, Map<String, Set<Integer>> addedLinesByFile) {
-            this.testFiles = Objects.requireNonNull(testFiles);
-            this.addedLinesByFile = Objects.requireNonNull(addedLinesByFile);
-        }
+        private final Map<String, Set<Integer>> effectiveAddedLinesByFile;
+        private final Map<String, Map<Integer, Integer>> effectiveDeletionAnchorsByFile;
     }
 }

@@ -26,6 +26,8 @@ import net.sourceforge.pmd.lang.java.types.JMethodSig;
 
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
 class PmdJInvocationBlock implements JInvocationBlock {
+    private static final String METHOD_DESCRIPTOR_PREFIX = "(";
+
     @Getter
     @EqualsAndHashCode.Include
     private final MethodUsage usage;
@@ -68,7 +70,8 @@ class PmdJInvocationBlock implements JInvocationBlock {
                 JClassSymbol enclosing = declaringType.getEnclosingClass();
                 if (Objects.nonNull(enclosing) && BooleanUtils.isFalse(declaringType.isStatic())) {
                     String outerDesc = Type.getObjectType(JavaBinaryFormat.getInternalName(enclosing.getBinaryName())).getDescriptor();
-                    entry = cache.get(new ClassGraphSpec.MethodKey(method.getName(), "(" + outerDesc + method.getDescriptor().substring(1)));
+                    entry = cache.get(new ClassGraphSpec.MethodKey(method.getName(),
+                            METHOD_DESCRIPTOR_PREFIX + outerDesc + method.getDescriptor().substring(METHOD_DESCRIPTOR_PREFIX.length())));
                 }
             }
 

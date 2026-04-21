@@ -91,6 +91,7 @@ import net.sourceforge.pmd.lang.Language;
 import net.sourceforge.pmd.lang.LanguageProcessorRegistry;
 import net.sourceforge.pmd.lang.LanguagePropertyBundle;
 import net.sourceforge.pmd.lang.LanguageRegistry;
+import net.sourceforge.pmd.lang.ast.Node;
 import net.sourceforge.pmd.lang.ast.NodeStream;
 import net.sourceforge.pmd.lang.ast.Parser;
 import net.sourceforge.pmd.lang.ast.Parser.ParserTask;
@@ -266,7 +267,7 @@ public class JavaLanguageSpec implements LanguageSpec {
                                 }
                             };
 
-                            tree.descendants(ASTExecutableDeclaration.class).forEach(consumer);
+                            collectExecutables(tree, consumer);
                         }
                     }
                 }
@@ -697,6 +698,15 @@ public class JavaLanguageSpec implements LanguageSpec {
     @Override
     public void captureIncomingCalls(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
         incomingCallsResolver.resolve(summary, analysis);
+    }
+
+    private static void collectExecutables(Node node, Consumer<ASTExecutableDeclaration> consumer) {
+        if (node instanceof ASTExecutableDeclaration) {
+            consumer.accept((ASTExecutableDeclaration) node);
+        }
+        for (int i = 0; i < node.getNumChildren(); i++) {
+            collectExecutables(node.getChild(i), consumer);
+        }
     }
 
     private static class UnhiddenDetectorFactoryCollection extends DetectorFactoryCollection {

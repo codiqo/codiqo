@@ -81,7 +81,9 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
 
         ctx.setVariable("requestJson", requestJson);
 
-        PreComputedScores preComputedScores = volumeCalculator.calculate(request, context.getProjectTotalLines(), context.getProjectTotalMethods(), context.getLinesPerMethodQuantile());
+        PreComputedScores preComputedScores = volumeCalculator.calculate(request, context.getProjectTotalStatements(), context.getProjectTotalMethods(),
+                context.getMethodCapQuantileProd(), context.getMethodCapQuantileTest(),
+                context.getConstructorCapQuantileProd(), context.getConstructorCapQuantileTest());
         logPromptMetrics(request, preComputedScores, requestJson);
         ctx.setVariable("preComputedScores", preComputedScores);
         ctx.setVariable("preComputedScoresSection", buildPreComputedScoresSection(preComputedScores));
@@ -91,11 +93,11 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     }
     private void logPromptMetrics(LlmScoringRequest request, PreComputedScores scores, String requestJson) {
         LlmScoringRequest.ChangeSummary cs = request.getChangeSummary();
-        log.info("prompt: files=%d, methods=%d, lines=%d (effective=%d) | json=%d chars",
+        log.info("prompt: files=%d, methods=%d, lines=%d (effectiveStmts=%d) | json=%d chars",
                 cs.getTotalFilesChanged(),
                 cs.getCodeBlocksModified() + cs.getCodeBlocksAdded(),
                 cs.getTotalLinesChanged(),
-                scores.getEffectiveLines(),
+                scores.getTotalEffectiveStatements(),
                 requestJson.length());
     }
     private static Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> stripSourceSlices(LlmScoringRequest request) {
@@ -133,30 +135,13 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         Context ctx = new Context(Locale.ENGLISH);
         RunArgs args = promptContext.getArgs();
 
-        long projectLines = promptContext.getProjectTotalLines();
+        long projectStatements = promptContext.getProjectTotalStatements();
         ctx.setVariable("STATIC_ANALYSIS_PENALTY_CAP", args.getStaticAnalysisPenaltyCap());
         ctx.setVariable("ARCHITECTURE_PENALTY_CAP", args.getArchitecturePenaltyCap());
         ctx.setVariable("QUALITY_GATE_PENALTY_CAP", args.getQualityGatePenaltyCap());
-        ctx.setVariable("lines_log_factor", args.getLinesLogFactor());
-        ctx.setVariable("code_blocks_mod_log_factor", args.getCodeBlocksModifiedLogFactor());
-        ctx.setVariable("code_blocks_add_log_factor", args.getCodeBlocksAddedLogFactor());
-        ctx.setVariable("classes_mod_log_factor", args.getClassesModifiedLogFactor());
-        ctx.setVariable("classes_add_log_factor", args.getClassesAddedLogFactor());
-        ctx.setVariable("file_scope_factor", args.getFilesScopeFactor());
         ctx.setVariable("volume_exponent", args.getVolumeExponent());
-        ctx.setVariable("trivial_max", args.getComplexityTrivialMax());
-        ctx.setVariable("moderate_max", args.getComplexityModerateMax());
-        ctx.setVariable("complex_max", args.getComplexityComplexMax());
         ctx.setVariable("fanout_high_threshold", args.getFanOutHighThreshold());
         ctx.setVariable("npath_complex_threshold", args.getNpathComplexThreshold());
-        ctx.setVariable("modify_trivial_mult", args.getModifyTrivialMultiplier());
-        ctx.setVariable("modify_moderate_mult", args.getModifyModerateMultiplier());
-        ctx.setVariable("modify_complex_mult", args.getModifyComplexMultiplier());
-        ctx.setVariable("modify_highly_complex_mult", args.getModifyHighlyComplexMultiplier());
-        ctx.setVariable("create_trivial_mult", args.getCreateTrivialMultiplier());
-        ctx.setVariable("create_moderate_mult", args.getCreateModerateMultiplier());
-        ctx.setVariable("create_complex_mult", args.getCreateComplexMultiplier());
-        ctx.setVariable("create_highly_complex_mult", args.getCreateHighlyComplexMultiplier());
         ctx.setVariable("cpd_clean_bonus", String.format("+%.2f", args.getCpdCleanBonus()));
         ctx.setVariable("cpd_moderate_penalty", String.format("+%.2f", args.getCpdModeratePenalty()));
         ctx.setVariable("cpd_high_penalty", String.format("+%.2f", args.getCpdHighPenalty()));
@@ -187,7 +172,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         ctx.setVariable("observability_threshold", args.getObservabilityThreshold());
         ctx.setVariable("resilience_threshold", args.getResilienceThreshold());
         ctx.setVariable("performance_threshold", args.getPerformanceThreshold());
-        ctx.setVariable("project_total_lines", projectLines);
+        ctx.setVariable("project_total_statements", projectStatements);
         ctx.setVariable("project_total_files", promptContext.getProjectTotalFiles());
         ctx.setVariable("project_total_methods", promptContext.getProjectTotalMethods());
         ctx.setVariable("code_units_affected", promptContext.getCodeUnitsAffected());
@@ -212,7 +197,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         ctx.setVariable("cov_acceptable_min", args.getCoverageImpactAcceptableMin());
         ctx.setVariable("cov_low_min", args.getCoverageImpactLowMin());
         ctx.setVariable("cov_poor_min", args.getCoverageImpactPoorMin());
-        ctx.setVariable("ncss_quantile_percent", (int) (args.getNcssQuantile() * 100));
+        ctx.setVariable("stats_quantile_percent", (int) (args.getStatsQuantile() * 100));
         return ctx;
     }
 }
