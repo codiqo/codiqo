@@ -17,7 +17,7 @@ Your task is to analyze a code commit and produce a JSON scoring result.
 | Component | Description |
 |-----------|-------------|
 | **Base Effort** | Volume Score × Complexity Multiplier |
-| **Volume Score** | Content score (lines, code blocks, classes) × files scope multiplier |
+| **Volume Score** | Sum of per-block efforts (cappedDriverScore × operationMult × testWeight)^[(${volume_exponent})] × files scope multiplier |
 | **Complexity Multiplier** | Bonus for modifying complex code, penalty for creating complex code |
 | **Quality Multiplier** | Adjusts for CPD, static analysis, coverage, architecture, quality gates |
 | **Final Score** | Unbounded positive number (typical range: 10-200) |
@@ -87,73 +87,45 @@ package/ClassName.methodName(parameterDescriptors)returnDescriptor
 **IMPORTANT: Volume scores are PRE-COMPUTED server-side. Use the exact values provided in the user message.**
 
 The user message includes a "PRE-COMPUTED VOLUME SCORES" section with:
-- All volume component scores (linesScore, codeBlocksModifiedScore, etc.)
-- Total Volume Score
-- Base effort calculation
-- Project normalization factors
+- Total Volume Score and Base Effort
+- Files scope multiplier
+- Project normalization factors (sizeFactor, modifyMult, addMult)
 
 **DO NOT recalculate these values.** Copy them directly to your `effortBreakdown.volumeScore` response.
 
 ## Volume Scores (Pre-Computed — Copy As-Is)
 
-All volume scores are pre-computed using power-law scaling with diminishing returns.
+Volume is computed bottom-up from per-code-block efforts: `sum(cappedDriverScore × operationMult × testWeight)^[(${volume_exponent})] × filesScopeMultiplier`.
+Per-block `driverScore` is a project-wide weighted average of three dimensions, each projected onto lines-equivalent units:
+- `L` = physical non-comment code lines
+- `S` = NCSS (logical statements)
+- `I` = direct method invocations inside the block
+
+Projection factors are derived from the baseline population medians: `k_S = lines.p50 / ncss.p50`, `k_I = lines.p50 / invocations.p50`. The factors convert each dim into lines-equivalent units, so the three contributions are commensurable and independent of per-dim outliers.
+
+For **NEW** blocks: `driver = (L + S·k_S + I·k_I) / 3`.
+For **MODIFY** blocks: `driver = (linesChanged + invocationsChanged·k_I) / 2` — NCSS is intentionally dropped (lines-changed already captures volume). Both `linesChanged` and `invocationsChanged` come from the precise diff (lines intersected with the code unit's body).
+
+Scalers are computed separately per kind (method vs constructor) and per scope (prod vs test) from the full baseline project, so the driver auto-calibrates to the codebase's own norms.
 **Copy the pre-computed values directly into your response. Do not recalculate.**
 
 ---
 
-# STEP 2: APPLY COMPLEXITY MULTIPLIER
+# STEP 2: CHOOSE A COMPLEXITY MULTIPLIER
 
-## 2.1 Complexity Thresholds
+The driver score already captures **volume complexity** (lines, NCSS, invocations) but NOT **branching complexity** (cyclomatic, cognitive, NPath). Your job is to inject that missing signal as a single number in `effortBreakdown.complexityMultiplier.combinedMultiplier`, in the range **[0.7, 1.3]**, where `1.0` is neutral.
 
-| Level | Cyclomatic Complexity Range |
-|-------|----------------------------|
-| Trivial | 1-[(${trivial_max})] |
-| Moderate | [(${trivial_max + 1})]-[(${moderate_max})] |
-| Complex | [(${moderate_max + 1})]-[(${complex_max})] |
-| Highly Complex | >[(${complex_max})] |
+**How to choose:**
+- Look at the cyclomatic and cognitive complexity of the affected methods (available in the per-block change data).
+- Methods with high branching (nested if/else, switches, loops) or high NPath (> [(${npath_complex_threshold})]) or high fanOut (> [(${fanout_high_threshold})]) carry more cognitive load than their line count suggests.
+- MODIFYING complex existing code → **raise** the multiplier toward 1.3 (harder work, deserves more credit).
+- CREATING complex new code → **lower** the multiplier toward 0.7 (complexity is a design smell in greenfield code; don't reward it).
+- Mix of both → average your instinct across the affected methods.
+- When complexity is unremarkable, return `1.0`. Do not return values outside [0.7, 1.3].
 
-## 2.1b Additional Complexity Signals
-
-Each method also includes `fanOut` and `npath` metrics. Use them to refine the complexity level:
-
-- **fanOut** — number of distinct external classes used by the method.
-  High fan-out (>[(${fanout_high_threshold})]) signals integration/orchestration complexity even when cyclomatic complexity is low.
-  Consider upgrading the complexity level by one step when fanOut > [(${fanout_high_threshold})] and cyclo is Trivial or Moderate.
-- **npath** — number of acyclic execution paths through the method.
-  NPath grows exponentially with sequential branching (10 sequential if/else = NPath 1024 vs Cyclo 20).
-  Methods with NPath > [(${npath_complex_threshold})] should be considered at least Complex regardless of cyclo value.
-
-These are supplementary signals — cyclomatic complexity remains the primary classifier.
-
-## 2.2 MODIFYING Existing Code (BONUS)
-
-When modifying existing complex code, apply a **bonus** (reward for handling difficulty):
-
-| Container Complexity | Multiplier | Rationale |
-|---------------------|------------|-----------|
-| Trivial (1-[(${trivial_max})]) | ×[(${modify_trivial_mult})] | Simple code, baseline |
-| Moderate ([(${trivial_max + 1})]-[(${moderate_max})]) | ×[(${modify_moderate_mult})] | Some skill needed |
-| Complex ([(${moderate_max + 1})]-[(${complex_max})]) | ×[(${modify_complex_mult})] | Significant skill |
-| Highly Complex (>[(${complex_max})]) | ×[(${modify_highly_complex_mult})] | Expert-level work |
-
-## 2.3 CREATING New Code (PENALTY for complexity)
-
-When creating new complex code, apply a **penalty** (discourage unnecessary complexity):
-
-| New Code Complexity | Multiplier | Rationale |
-|--------------------|------------|-----------|
-| Trivial (1-[(${trivial_max})]) | ×[(${create_trivial_mult})] | Good design - BONUS |
-| Moderate ([(${trivial_max + 1})]-[(${moderate_max})]) | ×[(${create_moderate_mult})] | Acceptable |
-| Complex ([(${moderate_max + 1})]-[(${complex_max})]) | ×[(${create_complex_mult})] | Poor design - PENALTY |
-| Highly Complex (>[(${complex_max})]) | ×[(${create_highly_complex_mult})] | Bad design - PENALTY |
-
-## 2.4 Combined Complexity Multiplier
+**Computed downstream (not by you):**
 ```
-If only modifying: Complexity Multiplier = Modify Multiplier
-If only creating: Complexity Multiplier = Create Multiplier
-If both: Complexity Multiplier = average(Modify Multiplier, Create Multiplier)
-
-Base Effort = Volume Score × Complexity Multiplier
+Base Effort = Volume Score × combinedMultiplier
 ```
 
 ---
@@ -777,19 +749,58 @@ Bugs affect **MERGABILITY**, not productivity score.
 **CRITICAL:** The `bugs` section is ONLY for issues YOU identify through YOUR OWN code analysis that are NOT already detected by PMD or SpotBugs.
 **ABSOLUTE RULE: If a PMD rule or SpotBugs detector already found the issue, it goes in `staticAnalysisReview` — NEVER in `bugs`, regardless of severity.** This includes cases where you independently identify the same problem (e.g., ConstructorCallsOverridableMethod, NullPointerDereference). If the tool caught it, `staticAnalysisReview` owns it.
 
+## Functional Analysis (Beyond Static Tools)
+
+**In addition to reviewing PMD/SpotBugs findings, you MUST perform your own functional/semantic code analysis.** Static tools detect pattern-based violations but cannot reason about code intent, data flow across methods, or business logic correctness. You can. This is where your analysis adds the most value.
+
+Actively look for these categories of issues that static tools miss:
+
+### Logic & Correctness
+- **Wrong conditions**: Inverted boolean logic, off-by-one errors, incorrect comparisons (e.g., `<` vs `<=`)
+- **Incomplete state transitions**: Missing cases in state machines, enum switches without proper coverage
+- **Incorrect data transformations**: Wrong mapping, truncation, rounding, or type coercion
+- **Contract violations**: Method behavior contradicts its name, Javadoc, or caller expectations
+- **Silent data loss**: Values overwritten without being read, results computed but never used
+
+### Concurrency & Thread Safety
+- **Race conditions**: Shared mutable state accessed without synchronization
+- **Atomicity violations**: Check-then-act patterns without proper locking
+- **Deadlock potential**: Lock ordering inconsistencies, nested synchronization
+- **Unsafe publication**: Objects shared between threads before fully constructed
+
+### Data Flow & Integration
+- **Broken call chains**: Caller passes wrong arguments, wrong order, or stale data
+- **Missing propagation**: Error codes, flags, or state changes not forwarded to where they matter
+- **Inconsistent assumptions**: Caller assumes non-null but callee can return null; caller assumes sorted but callee doesn't guarantee it
+- **Resource lifecycle**: Opened but not closed, closed but still referenced, double-close
+
+### Business Logic
+- **Semantic errors**: Code compiles and runs but produces wrong results for the intended business case
+- **Edge case mishandling**: Empty collections, zero values, boundary conditions, negative numbers in financial calculations
+- **Ordering dependencies**: Operations that must happen in sequence but aren't enforced
+
+### Confidence & Severity Mapping
+
+Report only findings with at least **medium** confidence:
+- **High confidence** → `blocking` list (= error severity): You can trace the issue through the code and are certain it will cause incorrect behavior
+- **Medium confidence** → `major` list (= warn severity): Strong suspicion based on code patterns, but some context may be missing (e.g., you can't see all callers)
+- **Low confidence** → Do NOT report. Mention in `thinking` field only
+
 ## Bug Classification
 
-**BLOCKING (Must Fix Before Merge)**
+**BLOCKING (Must Fix Before Merge)** — high confidence issues:
 - Security vulnerabilities YOU found in code logic
 - Concurrency bugs (race conditions, deadlocks) YOU identified
 - Data corruption risks from code flow analysis
 - Critical null pointer issues in hot paths
+- Logic errors with traceable incorrect behavior
 
-**MAJOR (Should Fix)**
+**MAJOR (Should Fix)** — medium confidence issues:
 - Logic errors YOU found (wrong conditions, off-by-one, etc.)
 - Missing error handling for critical operations
 - Significant test gaps on critical code
 - Performance anti-patterns (N+1 queries, unbounded loops)
+- Suspicious patterns where context is partially missing
 
 **MINOR (Suggestions)**
 - Refactoring opportunities
@@ -956,7 +967,7 @@ For all other findings (warning/info severity, pre-existing):
 # PROJECT CONTEXT
 
 **Project Metrics (for relative scoring):**
-- Total lines: [(${project_total_lines})]
+- Total non-comment code statements: [(${project_total_statements})]
 - Total files: [(${project_total_files})]
 - Total symbols: [(${project_total_methods})]
 
@@ -984,7 +995,6 @@ Your entire response is parsed as JSON directly.
 - Empty arrays `[]` are always preferred over arrays with low-value content
 
 **JSON Schema (reference only — replace `<placeholders>` with real values):**
-```
 {
   "score": 0,
   "scoreCalculation": "",
@@ -992,28 +1002,18 @@ Your entire response is parsed as JSON directly.
   "effortBreakdown": {
     "volumeScore": {
       "linesChanged": <number>,
-      "linesScore": <number>,
       "filesChanged": <number>,
-      "contentScore": <number>,
       "filesScopeMultiplier": <number>,
       "codeBlocksModified": <number>,
-      "codeBlocksModifiedScore": <number>,
       "codeBlocksAdded": <number>,
-      "codeBlocksAddedScore": <number>,
       "classesModified": <number>,
-      "classesModifiedScore": <number>,
       "classesAdded": <number>,
-      "classesAddedScore": <number>,
       "sizeFactor": <number>,
       "modifyMultiplier": <number>,
       "addMultiplier": <number>,
       "totalVolumeScore": <number>
     },
     "complexityMultiplier": {
-      "avgModifyComplexity": <number>,
-      "modifyMultiplier": <number>,
-      "avgCreateComplexity": <number>,
-      "createMultiplier": <number>,
       "combinedMultiplier": <number>
     },
     "baseEffortScore": <number>
@@ -1127,7 +1127,6 @@ Your entire response is parsed as JSON directly.
     "functional": ["<tag>"]
   }
 }
-```
 
 ---
 
@@ -1145,13 +1144,11 @@ Your entire response is parsed as JSON directly.
 8. **Omit optional fields entirely** rather than setting them to `null`. If `suggestedBlockCode` is not applicable, omit the field — do NOT write `"suggestedBlockCode": null`
 
 **COMMON MISTAKES (NEVER do these):**
-```
 WRONG: "pmdPreExisting": [null]
 WRONG: "pmdPreExisting": [{..., "suggestedBlockCode": null}]
 WRONG: "bugs": {"blocking": [null, {...}]}
 RIGHT: "pmdPreExisting": [{"rule": "...", "file": "...", ...}]
 RIGHT: "pmdPreExisting": []
-```
 
 ## STRING ESCAPING RULES (MANDATORY - READ CAREFULLY)
 
@@ -1178,19 +1175,15 @@ Markdown characters like hyphens, asterisks, and hashes are written directly in 
 **Embedding Java code in JSON strings is extremely error-prone.** One invalid escape sequence corrupts the ENTIRE JSON response. Follow these rules exactly:
 
 **1. Every `\` in Java code must become `\\` in JSON:**
-```
 Java source:    String pattern = "\\s+";
 JSON string:    "String pattern = \"\\\\s+\";"
 
 Java source:    Path p = Paths.get("C:\\Users");
 JSON string:    "Path p = Paths.get(\"C:\\\\Users\");"
-```
 
 **2. Every `"` in Java code must become `\"` in JSON:**
-```
 Java source:    log.info("hello");
 JSON string:    "log.info(\"hello\");"
-```
 
 **3. Newlines in code must become `\n` in JSON — NEVER use literal line breaks inside a JSON string value.**
 
@@ -1265,28 +1258,18 @@ Score formula: `Final Score = (Base Effort × Quality Multiplier) + Architecture
   "effortBreakdown": {
     "volumeScore": {
       "linesChanged": 15,
-      "linesScore": 38.10,
       "filesChanged": 2,
-      "contentScore": 56.04,
-      "filesScopeMultiplier": 1.84,
+      "filesScopeMultiplier": 1.02,
       "codeBlocksModified": 2,
-      "codeBlocksModifiedScore": 11.99,
       "codeBlocksAdded": 0,
-      "codeBlocksAddedScore": 0,
       "classesModified": 1,
-      "classesModifiedScore": 5.95,
       "classesAdded": 0,
-      "classesAddedScore": 0,
       "sizeFactor": 0.63,
-      "modifyMultiplier": 1.189,
-      "addMultiplier": 1.061,
-      "totalVolumeScore": 103.11
+      "modifyMultiplier": 1.19,
+      "addMultiplier": 1.06,
+      "totalVolumeScore": 14.52
     },
     "complexityMultiplier": {
-      "avgModifyComplexity": 8,
-      "modifyMultiplier": 1.1,
-      "avgCreateComplexity": 0,
-      "createMultiplier": 1.0,
       "combinedMultiplier": 1.1
     },
     "baseEffortScore": 113.42

@@ -27,6 +27,8 @@ import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.commons.lang3.time.StopWatch;
+import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
@@ -137,6 +139,16 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                 indexed.add(projectRoot.toPath().normalize().resolve(dirCache.getEntry(i).getPathString()));
             }
 
+            if (args.isIncludeUntracked()) {
+                try (Git git = Git.wrap(repo)) {
+                    for (String untracked : git.status().call().getUntracked()) {
+                        indexed.add(projectRoot.toPath().normalize().resolve(untracked));
+                    }
+                } catch (GitAPIException err) {
+                    ExceptionUtils.wrapAndThrow(err);
+                }
+            }
+
             StopWatch stopWatch = StopWatch.createStarted();
             Files.walkFileTree(projectRoot.toPath(), new SimpleFileVisitor<>() {
                 @Override
@@ -223,6 +235,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                 if (it.isExtension(processor.lang())) {
                     if (it instanceof GitFileAnalysis) {
                         GitFileAnalysis gitAnalysis = (GitFileAnalysis) it;
+                        gitAnalysis.setLanguage(processor.lang());
 
                         /**
                          * identify affected blocks by checking if any of the changed lines from the GIT difference fall within the symbol's location
@@ -362,13 +375,13 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                 processor.captureCoverage(summary, analysis);
                 for (FileAnalysis fileAnalysis : analysis) {
                     for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
-                        symbol.block().ifPresent(block -> block.coverage().subscribe(info -> {
+                        symbol.block().ifPresent(block -> {
                             if (fileAnalysis.isTestFile()) {
                                 log.info("ignoring coverage of test method %s from %s", block, fileAnalysis.getFile());
                             } else {
-                                log.info("capturing coverage of %s : %s", block, info);
+                                log.info("capturing coverage of %s : %s", block, block.coverage());
                             }
-                        }));
+                        });
                     }
                 }
             }
@@ -379,7 +392,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         if (Boolean.FALSE.equals(args.isIgnoreComplexity())) {
             for (FileAnalysis fileAnalysis : analysis) {
                 for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
-                    symbol.block().ifPresent(block -> block.metrics().subscribe(info -> log.info("capturing complexity of %s : %s", block, info)));
+                    symbol.block().ifPresent(block -> log.info("capturing complexity of %s : %s", block, block.metrics()));
                 }
             }
         }

@@ -5,12 +5,14 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.jacoco.core.analysis.ILine;
 
 import com.google.common.base.Objects;
+import com.google.common.base.Suppliers;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
@@ -34,12 +36,14 @@ import net.sourceforge.pmd.lang.java.symbols.JClassSymbol;
 import net.sourceforge.pmd.lang.metrics.MetricOptions;
 import net.sourceforge.pmd.lang.metrics.MetricsUtil;
 import net.sourceforge.pmd.reporting.RuleViolation;
-import reactor.core.publisher.Mono;
 
 @Setter
 @Getter
 @SuperBuilder
 abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
+    private static final int TRIVIAL_NCSS_MAX = 2;
+    private static final int TRIVIAL_CYCLO_MAX = 1;
+
     private ASTTypeDeclaration type;
     private ASTTypeDeclaration enclosingType;
     private ASTExecutableDeclaration node;
@@ -57,14 +61,19 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
     @Builder.Default
     private Optional<AffectedSymbolInfo> affectedSymbol = Optional.empty();
 
-    private final Mono<CodeBlockCoverage> coverage = Mono.<CodeBlockCoverage> fromSupplier(() -> CodeBlockCoverage.from(lineCoverage)).cache();
-    private final Mono<CodeBlockMetrics> metrics = Mono.<CodeBlockMetrics> fromSupplier(() -> {
+    private final Supplier<CodeBlockCoverage> coverage = Suppliers.memoize(() -> CodeBlockCoverage.from(lineCoverage));
+    private final Supplier<CodeBlockMetrics> metrics = Suppliers.memoize(() -> {
         int lineCount = MetricsUtil.computeMetric(JavaMetrics.LINES_OF_CODE, node, MetricOptions.emptyOptions());
+        JavaLineCountAnalyzer.LineCounts lineCounts = JavaLineCountAnalyzer.analyze(node);
+        int nonCommentCodeLines = lineCounts.getCodeLines();
+        int commentLines = lineCounts.getCommentLines();
         int cyclo = MetricsUtil.computeMetric(JavaMetrics.CYCLO, node, MetricOptions.emptyOptions());
         int cognitive = MetricsUtil.computeMetric(JavaMetrics.COGNITIVE_COMPLEXITY, node, MetricOptions.emptyOptions());
-        int ncss = Optional.ofNullable(MetricsUtil.computeMetric(JavaMetrics.NCSS, node, MetricOptions.emptyOptions())).orElse(0);
+        int ncss = MetricsUtil.computeMetric(JavaMetrics.NCSS, node, MetricOptions.emptyOptions());
         long npath = MetricsUtil.computeMetric(JavaMetrics.NPATH_COMP, node, MetricOptions.emptyOptions());
         int fanOut = MetricsUtil.computeMetric(JavaMetrics.FAN_OUT, node, MetricOptions.emptyOptions());
+        List<Integer> directInvocationLines = InvocationCounter.collectDirect(node);
+        int directInvocationCount = directInvocationLines.size();
 
         return new CodeBlockMetrics() {
             @Override
@@ -74,6 +83,14 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
             @Override
             public int lineCount() {
                 return lineCount;
+            }
+            @Override
+            public int nonCommentCodeLines() {
+                return nonCommentCodeLines;
+            }
+            @Override
+            public int commentLines() {
+                return commentLines;
             }
             @Override
             public int cyclo() {
@@ -96,11 +113,19 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
                 return fanOut;
             }
             @Override
+            public int directInvocationCount() {
+                return directInvocationCount;
+            }
+            @Override
+            public List<Integer> directInvocationLines() {
+                return directInvocationLines;
+            }
+            @Override
             public String toString() {
-                return String.format("lines: %d, cyclo: %d, cognitive: %d, ncss: %d", lineCount(), cyclo(), cognitive(), ncss());
+                return String.format("lines: %d, cyclo: %d, cognitive: %d, ncss: %d, invocations: %d", lineCount(), cyclo(), cognitive(), ncss(), directInvocationCount());
             }
         };
-    }).cache();
+    });
 
     @Override
     public void accept(AffectedSymbolInfo info) {
@@ -151,16 +176,21 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
         return CollectionUtils.isNotEmpty(invocations);
     }
     @Override
+    public boolean isTrivial() {
+        CodeBlockMetrics blockMetrics = metrics.get();
+        return blockMetrics.ncss() <= TRIVIAL_NCSS_MAX && blockMetrics.directInvocationCount() == 0 && blockMetrics.cyclo() <= TRIVIAL_CYCLO_MAX;
+    }
+    @Override
     public Optional<AffectedSymbolInfo> affectedSymbol() {
         return affectedSymbol;
     }
     @Override
-    public Mono<CodeBlockMetrics> metrics() {
-        return metrics;
+    public CodeBlockMetrics metrics() {
+        return metrics.get();
     }
     @Override
-    public Mono<CodeBlockCoverage> coverage() {
-        return coverage;
+    public CodeBlockCoverage coverage() {
+        return coverage.get();
     }
     @Override
     public int hashCode() {

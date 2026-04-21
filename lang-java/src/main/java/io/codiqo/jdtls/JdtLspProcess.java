@@ -15,7 +15,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import org.apache.commons.io.IOUtils;
-import org.apache.commons.lang3.JavaVersion;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.SystemUtils;
 import org.apache.commons.lang3.time.StopWatch;
@@ -67,7 +66,7 @@ class JdtLspProcess implements Closeable {
 
             Path launcherJar;
             Path config = tempDir.resolve(os);
-            Path data = Files.createTempDirectory("data");
+            Path data = Files.createTempDirectory("data-" + args.getJdtlsVersion());
             data.toFile().deleteOnExit();
 
             //
@@ -149,7 +148,7 @@ class JdtLspProcess implements Closeable {
             }
 
             if (args.isJdtUseSharedIndex()) {
-                cmd.add("-Djdt.core.sharedIndexLocation=" + RunArgs.JDT_SHARED_INDEX.toFile().getAbsolutePath());
+                cmd.add("-Djdt.core.sharedIndexLocation=" + RunArgs.JDT_SHARED_INDEX.resolve(args.getJdtlsVersion()).toFile().getAbsolutePath());
             }
 
             cmd.addAll(ImmutableList.of("-jar", launcherJar.toString()));
@@ -157,13 +156,14 @@ class JdtLspProcess implements Closeable {
             cmd.addAll(ImmutableList.of("-data", data.toString()));
 
             //
-            // ~ advance JVM options for specific Java versions
+            // ~ advance JVM options matched to the spawned JDK, not the current JVM
             //
-            cmd.add(SystemUtils.isJavaVersionAtLeast(JavaVersion.JAVA_15) ? "-XX:+UseZGC" : "-XX:+UseParallelGC");
-            if (SystemUtils.isJavaVersionAtLeast(JavaVersion.JAVA_16)) {
+            Runtime.Version spawnedJavaVersion = detectSpawnedJavaVersion(args.getJavaHome());
+            cmd.add(spawnedJavaVersion.feature() >= 15 ? "-XX:+UseZGC" : "-XX:+UseParallelGC");
+            if (spawnedJavaVersion.feature() >= 16) {
                 cmd.add("--enable-native-access=ALL-UNNAMED");
             }
-            if (SystemUtils.isJavaVersionAtLeast(JavaVersion.JAVA_23)) {
+            if (spawnedJavaVersion.feature() >= 23) {
                 cmd.add("--sun-misc-unsafe-memory-access=allow");
             }
 
@@ -207,6 +207,22 @@ class JdtLspProcess implements Closeable {
         } finally {
 
         }
+    }
+    private static Runtime.Version detectSpawnedJavaVersion(File javaHome) throws IOException {
+        if (Objects.nonNull(javaHome)) {
+            File releaseFile = new File(javaHome, "release");
+            if (releaseFile.isFile()) {
+                Properties props = new Properties();
+                try (InputStream in = Files.newInputStream(releaseFile.toPath())) {
+                    props.load(in);
+                }
+                String version = StringUtils.strip(props.getProperty("JAVA_VERSION"), "\"");
+                if (StringUtils.isNotBlank(version)) {
+                    return Runtime.Version.parse(version);
+                }
+            }
+        }
+        return Runtime.version();
     }
 
     private static class OSDetector extends kr.motd.maven.os.Detector {

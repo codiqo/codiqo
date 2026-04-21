@@ -143,6 +143,8 @@ public class LlmResponseMapper {
         toReturn.setFile(bug.getFile());
         toReturn.setLine(bug.getLine());
         toReturn.setSuggestedFix(bug.getSuggestedFix());
+        toReturn.setSuggestedBlockCode(bug.getSuggestedBlockCode());
+        toReturn.setSuggestedFileFix(bug.getSuggestedFileFix());
         toReturn.setConfidence(Optional.ofNullable(bug.getConfidence())
                 .map(LlmResponseMapper::mapConfidence).orElse(BugModel.ConfidenceEnum.MEDIUM));
         toReturn.setSource(Optional.ofNullable(bug.getSource())
@@ -238,19 +240,13 @@ public class LlmResponseMapper {
     private static VolumeScoreModel mapVolumeScore(LlmScoringResponse.VolumeScore volumeScore) {
         VolumeScoreModel toReturn = new VolumeScoreModel();
         toReturn.setLinesChanged(volumeScore.getLinesChanged());
-        toReturn.setLinesScore(volumeScore.getLinesScore());
         toReturn.setFilesChanged(volumeScore.getFilesChanged());
-        toReturn.setContentScore(volumeScore.getContentScore());
         toReturn.setFilesScopeMultiplier(volumeScore.getFilesScopeMultiplier());
-        toReturn.setFileDensity(volumeScore.getFileDensity());
         toReturn.setCodeBlocksModified(volumeScore.getCodeBlocksModified());
-        toReturn.setCodeBlocksModifiedScore(volumeScore.getCodeBlocksModifiedScore());
         toReturn.setCodeBlocksAdded(volumeScore.getCodeBlocksAdded());
-        toReturn.setCodeBlocksAddedScore(volumeScore.getCodeBlocksAddedScore());
         toReturn.setClassesModified(volumeScore.getClassesModified());
-        toReturn.setClassesModifiedScore(volumeScore.getClassesModifiedScore());
         toReturn.setClassesAdded(volumeScore.getClassesAdded());
-        toReturn.setClassesAddedScore(volumeScore.getClassesAddedScore());
+        toReturn.setBlockEffortSum(volumeScore.getBlockEffortSum());
         toReturn.setSizeFactor(volumeScore.getSizeFactor());
         toReturn.setModifyMultiplier(volumeScore.getModifyMultiplier());
         toReturn.setAddMultiplier(volumeScore.getAddMultiplier());
@@ -259,10 +255,6 @@ public class LlmResponseMapper {
     }
     private static ComplexityMultiplierModel mapComplexityMultiplier(LlmScoringResponse.ComplexityMultiplier complexityMultiplier) {
         ComplexityMultiplierModel toReturn = new ComplexityMultiplierModel();
-        toReturn.setAvgModifyComplexity(complexityMultiplier.getAvgModifyComplexity());
-        toReturn.setModifyMultiplier(complexityMultiplier.getModifyMultiplier());
-        toReturn.setAvgCreateComplexity(complexityMultiplier.getAvgCreateComplexity());
-        toReturn.setCreateMultiplier(complexityMultiplier.getCreateMultiplier());
         toReturn.setCombinedMultiplier(complexityMultiplier.getCombinedMultiplier());
         return toReturn;
     }

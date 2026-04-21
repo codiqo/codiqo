@@ -1,13 +1,18 @@
 package io.codiqo.llm;
 
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 import org.apache.commons.math3.util.Precision;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.llm.VolumeScoreCalculator.CodeBlockEffort;
+import io.codiqo.llm.VolumeScoreCalculator.FileEffort;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import io.codiqo.llm.schema.LlmScoringResponse.ArchitectureEffortBonus;
+import io.codiqo.llm.schema.LlmScoringResponse.CodeBlockEffortView;
+import io.codiqo.llm.schema.LlmScoringResponse.FileEffortView;
 import io.codiqo.llm.schema.LlmScoringResponse.QualityMultiplier;
 import lombok.RequiredArgsConstructor;
 
@@ -19,16 +24,18 @@ public class FinalScoreCalculator {
 
     public void apply(LlmScoringResponse response, PreComputedScores preComputed) {
         double baseEffort = preComputed.getBaseEffort();
-        double complexityMultiplier = preComputed.getDefaultComplexityMultiplier();
         if (Objects.nonNull(response.getEffortBreakdown()) && Objects.nonNull(response.getEffortBreakdown().getComplexityMultiplier())) {
             double llmComplexity = response.getEffortBreakdown().getComplexityMultiplier().getCombinedMultiplier();
             if (llmComplexity > 0) {
-                complexityMultiplier = llmComplexity;
-                baseEffort = preComputed.getVolumeScore() * complexityMultiplier;
+                baseEffort = preComputed.getVolumeScore() * llmComplexity;
             }
         }
         if (Objects.nonNull(response.getEffortBreakdown())) {
             response.getEffortBreakdown().setBaseEffortScore(Precision.round(baseEffort, ROUNDING_PRECISION));
+            response.getEffortBreakdown().setFileEfforts(
+                    preComputed.getFileEfforts().stream()
+                            .map(FinalScoreCalculator::toFileEffortView)
+                            .collect(Collectors.toList()));
         }
 
         double rawQualityMultiplier = 1.0;
@@ -89,5 +96,36 @@ public class FinalScoreCalculator {
                 finalScore);
         response.setScore(finalScore);
         response.setScoreCalculation(scoreCalculation);
+    }
+    private static FileEffortView toFileEffortView(FileEffort fe) {
+        return FileEffortView.builder()
+                .file(fe.getFile())
+                .totalEffort(fe.getTotalEffort())
+                .isTest(fe.isTest())
+                .codeBlockEfforts(fe.getCodeBlockEfforts().stream()
+                        .map(FinalScoreCalculator::toCodeBlockEffortView)
+                        .collect(Collectors.toList()))
+                .build();
+    }
+    private static CodeBlockEffortView toCodeBlockEffortView(CodeBlockEffort cbe) {
+        return CodeBlockEffortView.builder()
+                .name(cbe.getName())
+                .signature(cbe.getSignature())
+                .operation(cbe.getOperation().name())
+                .nonCommentCodeStatements(cbe.getNonCommentCodeStatements())
+                .directInvocationCount(cbe.getDirectInvocationCount())
+                .effectiveInvocationsChanged(cbe.getEffectiveInvocationsChanged())
+                .nonCommentCodeLines(cbe.getNonCommentCodeLines())
+                .commentLines(cbe.getCommentLines())
+                .effectiveLinesChanged(cbe.getEffectiveLinesChanged())
+                .changeRatio(cbe.getChangeRatio())
+                .scaledLines(cbe.getScaledLines())
+                .scaledNcss(cbe.getScaledNcss())
+                .scaledInvocations(cbe.getScaledInvocations())
+                .driverScore(cbe.getDriverScore())
+                .cappedStatements(cbe.getCappedStatements())
+                .effort(cbe.getEffort())
+                .isTest(cbe.isTest())
+                .build();
     }
 }

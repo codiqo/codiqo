@@ -9,7 +9,6 @@ import io.codiqo.api.coverage.CodeBlockCoverage;
 import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.metrics.CodeBlockMetrics;
 import net.sourceforge.pmd.reporting.RuleViolation;
-import reactor.core.publisher.Mono;
 
 public interface CodeBlockInfo extends Consumer<AffectedSymbolInfo> {
     String getSignature();
@@ -21,6 +20,6 @@ public interface CodeBlockInfo extends Consumer<AffectedSymbolInfo> {
     void pmdViolation(RuleViolation violation);
     boolean hasMethodCalls();
     Optional<AffectedSymbolInfo> affectedSymbol();
-    Mono<CodeBlockMetrics> metrics();
-    Mono<CodeBlockCoverage> coverage();
+    CodeBlockMetrics metrics();
+    CodeBlockCoverage coverage();
 }

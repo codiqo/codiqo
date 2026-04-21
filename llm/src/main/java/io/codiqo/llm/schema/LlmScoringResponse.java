@@ -143,6 +143,8 @@ public class LlmScoringResponse {
         private VolumeScore volumeScore;
         private ComplexityMultiplier complexityMultiplier;
         private double baseEffortScore;
+        @Builder.Default
+        private List<FileEffortView> fileEfforts = Lists.newArrayList();
     }
 
     @Data
@@ -151,19 +153,13 @@ public class LlmScoringResponse {
     @AllArgsConstructor
     public static class VolumeScore {
         private int linesChanged;
-        private double linesScore;
         private int filesChanged;
-        private double contentScore;
         private double filesScopeMultiplier;
-        private double fileDensity;
         private int codeBlocksModified;
-        private double codeBlocksModifiedScore;
         private int codeBlocksAdded;
-        private double codeBlocksAddedScore;
         private int classesModified;
-        private double classesModifiedScore;
         private int classesAdded;
-        private double classesAddedScore;
+        private double blockEffortSum;
         private double sizeFactor;
         private double modifyMultiplier;
         private double addMultiplier;
@@ -175,10 +171,6 @@ public class LlmScoringResponse {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class ComplexityMultiplier {
-        private double avgModifyComplexity;
-        private double modifyMultiplier;
-        private double avgCreateComplexity;
-        private double createMultiplier;
         private double combinedMultiplier;
     }
 
@@ -399,5 +391,41 @@ public class LlmScoringResponse {
         private List<String> technical = Lists.newArrayList();
         @Builder.Default
         private List<String> functional = Lists.newArrayList();
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class FileEffortView {
+        private String file;
+        private double totalEffort;
+        private boolean isTest;
+        @Builder.Default
+        private List<CodeBlockEffortView> codeBlockEfforts = Lists.newArrayList();
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class CodeBlockEffortView {
+        private String name;
+        private String signature;
+        private String operation;
+        private int nonCommentCodeStatements;
+        private int directInvocationCount;
+        private int effectiveInvocationsChanged;
+        private int nonCommentCodeLines;
+        private int commentLines;
+        private int effectiveLinesChanged;
+        private double changeRatio;
+        private double scaledLines;
+        private double scaledNcss;
+        private double scaledInvocations;
+        private double driverScore;
+        private int cappedStatements;
+        private double effort;
+        private boolean isTest;
     }
 }

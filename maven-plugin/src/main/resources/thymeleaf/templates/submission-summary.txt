@@ -1,0 +1,34 @@
+[(${title})]
+[(${separator})]
+project:         [(${projectId})]
+[# th:if="${commitSha != null}"]commit:          [(${commitSha})]
+author:          [(${commitAuthor})]
+[/]
+files:
+  total:    [(${files.total()})]   (prod: [(${files.prod()})], test: [(${files.test()})])
+  by_type:  add: [(${files.added()})], modify: [(${files.modified()})], delete: [(${files.deleted()})], rename: [(${files.renamed()})]
+
+changed_blocks:
+  total:    [(${blocks.total()})]
+  by_op:    new: [(${blocks.added()})], modify: [(${blocks.modified()})]   (trivial_skipped: [(${blocks.trivialSkipped()})])
+  by_scope: prod: [(${blocks.prod()})], test: [(${blocks.test()})]
+
+baseline_populations:
+[# th:each="row : ${rows}"][(${row.baselineLine()})]
+[/]
+density_cap (limits single block contribution to volume score):
+  formula:  effective_cap = P[(${quantilePercent})](driver_scores) × [(${densityMultiplierFmt})]
+  P[(${quantilePercent})] = [(${quantilePercent})]th percentile of driver-score distribution across all blocks in project
+  [(${densityMultiplierFmt})] = density cap multiplier (prevents outlier blocks from dominating the score)
+[# th:each="row : ${rows}"][(${row.capLine()})]
+[/]
+scalers:
+[# th:each="row : ${rows}"][# th:each="line : ${row.scalerLines()}"][(${line})]
+[/][/]
+driver_formula:
+  weights:          W_L=[(${weightLines})]  W_S=[(${weightNcss})]  W_I=[(${weightInvocs})]   (total=[(${totalWeight})])
+  formula_new:      (W_L·lines + W_S·ncss·k_S + W_I·invocs·k_I) / total
+  formula_modify:   (W_L·linesChanged + W_I·invocsChanged·k_I) / (W_L + W_I)
+  factors (k_S = lines.p50 / ncss.p50, k_I = lines.p50 / invocs.p50):
+[# th:each="row : ${rows}"][(${row.factorLine()})]
+[/]

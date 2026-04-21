@@ -18,6 +18,7 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.google.common.collect.Lists;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
+import com.openai.models.ResponseFormatJsonObject;
 import com.openai.models.chat.completions.ChatCompletionAssistantMessageParam;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionMessageFunctionToolCall;
@@ -41,6 +42,7 @@ public class LlmScoringClient implements ScoringClient {
     private static final int MAX_TOOL_CALLS = Byte.MAX_VALUE;
     private static final String FINISH_REASON_STOP = "stop";
     private static final String FINISH_REASON_LENGTH = "length";
+    private static final String MARKDOWN_FENCE = "```";
 
     private final Log log;
     private final OpenAIClient client;
@@ -111,11 +113,12 @@ public class LlmScoringClient implements ScoringClient {
             paramsBuilder.temperature(temperature);
         }
         if (Objects.nonNull(topP)) {
-            paramsBuilder.temperature(topP);
+            paramsBuilder.topP(topP);
         }
         if (Objects.nonNull(maxTokens)) {
             paramsBuilder.maxCompletionTokens(maxTokens.longValue());
         }
+        paramsBuilder.responseFormat(ResponseFormatJsonObject.builder().build());
         if (enableWebSearch) {
             paramsBuilder.addTool(WebSearchTool.class);
         }
@@ -232,7 +235,7 @@ public class LlmScoringClient implements ScoringClient {
     }
     private LlmScoringResponse deserializeResponse(String rawContent) throws Exception {
         try {
-            return objectMapper.readValue(rawContent, LlmScoringResponse.class);
+            return objectMapper.readValue(stripMarkdownFences(rawContent), LlmScoringResponse.class);
         } catch (IOException err) {
             File dumpFile = File.createTempFile("codiqo-llm-response-", ".json");
             FileUtils.write(dumpFile, rawContent, StandardCharsets.UTF_8);
@@ -247,6 +250,17 @@ public class LlmScoringClient implements ScoringClient {
             return searchTool.apply(webSearchClient);
         }
         throw new IllegalArgumentException("unknown tool: " + name);
+    }
+    private static String stripMarkdownFences(String raw) {
+        String trimmed = raw.strip();
+        int jsonStart = trimmed.indexOf('{');
+        int jsonEnd = trimmed.lastIndexOf('}');
+        if (trimmed.startsWith(MARKDOWN_FENCE) && trimmed.endsWith(MARKDOWN_FENCE)) {
+            if (jsonStart > 0 && jsonEnd > jsonStart) {
+                trimmed = trimmed.substring(jsonStart, jsonEnd + 1);
+            }
+        }
+        return trimmed;
     }
     private StreamingResult streamWithRetry(ChatCompletionCreateParams params, OpenAIClientWrapper.StreamingHandler handler) throws Exception {
         Exception lastException = null;

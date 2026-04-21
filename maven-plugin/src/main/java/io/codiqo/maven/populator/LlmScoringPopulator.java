@@ -190,17 +190,23 @@ public class LlmScoringPopulator implements SubmissionPopulator {
         ProjectMetricsModel projectMetrics = submission.getProjectMetrics();
         ProjectQualityModel projectQuality = submission.getProjectQuality();
 
-        long totalLines = 0;
+        long totalStatements = 0;
         int totalFiles = 0;
         int totalMethods = 0;
         int codeUnitsAffected = 0;
-        int linesPerMethodQuantile = 0;
+        int methodCapQuantileProd = 0;
+        int methodCapQuantileTest = 0;
+        int constructorCapQuantileProd = 0;
+        int constructorCapQuantileTest = 0;
 
         if (Objects.nonNull(projectMetrics)) {
-            totalLines = Optional.ofNullable(projectMetrics.getTotalLines()).orElse(0);
+            totalStatements = Optional.ofNullable(projectMetrics.getTotalStatements()).orElse(0);
             totalFiles = Optional.ofNullable(projectMetrics.getTotalFiles()).orElse(0);
             totalMethods = Optional.ofNullable(projectMetrics.getTotalMethods()).orElse(0);
-            linesPerMethodQuantile = Optional.ofNullable(projectMetrics.getLinesPerMethodQuantile()).orElse(0);
+            methodCapQuantileProd = Optional.ofNullable(projectMetrics.getMethodCapQuantileProd()).orElse(0);
+            methodCapQuantileTest = Optional.ofNullable(projectMetrics.getMethodCapQuantileTest()).orElse(0);
+            constructorCapQuantileProd = Optional.ofNullable(projectMetrics.getConstructorCapQuantileProd()).orElse(0);
+            constructorCapQuantileTest = Optional.ofNullable(projectMetrics.getConstructorCapQuantileTest()).orElse(0);
         }
 
         if (Objects.nonNull(projectQuality) && Objects.nonNull(projectQuality.getCodeUnitsAffected())) {
@@ -208,11 +214,14 @@ public class LlmScoringPopulator implements SubmissionPopulator {
         }
 
         return PromptContext.withFullContext(args)
-                .projectTotalLines(totalLines)
+                .projectTotalStatements(totalStatements)
                 .projectTotalFiles(totalFiles)
                 .projectTotalMethods(totalMethods)
                 .codeUnitsAffected(codeUnitsAffected)
-                .linesPerMethodQuantile(linesPerMethodQuantile)
+                .methodCapQuantileProd(methodCapQuantileProd)
+                .methodCapQuantileTest(methodCapQuantileTest)
+                .constructorCapQuantileProd(constructorCapQuantileProd)
+                .constructorCapQuantileTest(constructorCapQuantileTest)
                 .build();
     }
     public static Map<String, List<DiagnosticModel>> extractCriticalViolations(AnalysisSubmissionModel submission) {

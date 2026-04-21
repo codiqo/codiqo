@@ -10,6 +10,7 @@ import org.apache.commons.collections4.CollectionUtils;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
+import io.codiqo.api.metrics.DriverScaler;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -36,6 +37,16 @@ public class LlmScoringRequest {
     private CoverageInfo coverage;
     private ComplexityMetrics complexity;
     private DuplicationInfo duplication;
+
+    @Builder.Default
+    private DriverScaler methodScalerProd = DriverScaler.EMPTY;
+    @Builder.Default
+    private DriverScaler methodScalerTest = DriverScaler.EMPTY;
+    @Builder.Default
+    private DriverScaler constructorScalerProd = DriverScaler.EMPTY;
+    @Builder.Default
+    private DriverScaler constructorScalerTest = DriverScaler.EMPTY;
+
     @Builder.Default
     private List<WebSearchContext> webSearchContext = Collections.emptyList();
 
@@ -76,6 +87,13 @@ public class LlmScoringRequest {
         private int classesAdded;
         private int classesModified;
         private int classesDeleted;
+
+        private int testLinesChanged;
+        private int testCodeBlocksAdded;
+        private int testCodeBlocksModified;
+        private int testClassesAdded;
+        private int testClassesModified;
+        private int testFilesChanged;
 
         private List<String> packagesAffected;
         private ChangeType changeType;
@@ -137,11 +155,17 @@ public class LlmScoringRequest {
         private int linesAdded;
         private int linesDeleted;
         private int totalLinesChanged;
+        // total physical code lines (excluding comments/blanks) in this code block
+        private int nonCommentCodeLines;
+        // comment and javadoc lines in this code block
+        private int commentLines;
 
         /**
          * Complexity metrics (CRITICAL for scoring)
          */
-        private int linesOfCode;
+        private int nonCommentCodeStatements;
+        private int directInvocationCount;
+        private int effectiveInvocationsChanged;
         private int cyclomaticComplexity;
         private int cognitiveComplexity;
         private int nestingDepth;
@@ -157,6 +181,7 @@ public class LlmScoringRequest {
 
         private String visibility;
         private boolean isConstructor;
+        private boolean isTest;
         private List<String> annotations;
 
         @Builder.Default

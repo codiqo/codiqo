@@ -1,22 +1,28 @@
 package io.codiqo.llm;
 
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.math3.util.Precision;
 
+import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.metrics.DriverScaler;
+import io.codiqo.api.metrics.DriverScore;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringRequest.ChangeSummary;
+import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
 import io.codiqo.llm.schema.LlmScoringRequest.DiagnosticInfo;
 import io.codiqo.llm.schema.LlmScoringRequest.DuplicationInfo;
 import io.codiqo.llm.schema.LlmScoringRequest.DuplicationInfo.CloneDetail;
-import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
 import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.Value;
@@ -25,58 +31,78 @@ import lombok.Value;
 public class VolumeScoreCalculator {
     private static final int ROUNDING_PRECISION = 2;
     private static final int CPD_ROUNDING_PRECISION = 1;
-    private static final double FULL_DENSITY = 1.0;
 
     private final RunArgs args;
 
-    public PreComputedScores calculate(LlmScoringRequest request, long projectTotalLines, int projectTotalMethods, int linesPerMethodQuantile) {
+    public PreComputedScores calculate(
+            LlmScoringRequest request,
+            long projectTotalStatements,
+            int projectTotalMethods,
+            int methodCapQuantileProd,
+            int methodCapQuantileTest,
+            int constructorCapQuantileProd,
+            int constructorCapQuantileTest) {
         ChangeSummary changeSummary = request.getChangeSummary();
-        double exponent = args.getVolumeExponent();
-        double sizeFactor = Math.cbrt(projectTotalLines) / args.getSizeFactorDivisor();
+        double testMult = args.getTestCodeScoreMultiplier();
+        double sizeFactor = Math.cbrt(projectTotalStatements) / args.getSizeFactorDivisor();
         double modifyMult = 1.0 + Math.min(sizeFactor * args.getModifyMultiplierScale(), args.getModifyMultiplierCap());
         double addMult = 1.0 + args.getAddMultiplierScale() / (1.0 + sizeFactor);
-        int linesChanged = changeSummary.getTotalLinesChanged();
-        int effectiveLines = applyLinesDensityCap(linesChanged, request.getCodeBlockChanges(), linesPerMethodQuantile);
+
+        List<CodeBlockEffort> codeBlockEfforts = calculateCodeBlockEfforts(
+                request.getCodeBlockChanges(),
+                request.getMethodScalerProd(), request.getMethodScalerTest(),
+                request.getConstructorScalerProd(), request.getConstructorScalerTest(),
+                methodCapQuantileProd, methodCapQuantileTest,
+                constructorCapQuantileProd, constructorCapQuantileTest,
+                args.getStatementsDensityCapMultiplier(), addMult, modifyMult, testMult);
+        List<FileEffort> fileEfforts = groupByFile(codeBlockEfforts);
+
+        double blockEffortSum = codeBlockEfforts.stream().mapToDouble(CodeBlockEffort::getEffort).sum();
+        double volumeScore = Math.pow(blockEffortSum, args.getVolumeExponent());
+
         int filesChanged = changeSummary.getTotalFilesChanged();
-        double linesScore = powerScore(effectiveLines, args.getLinesLogFactor(), 1.0, exponent);
-        double codeBlocksModifiedScore = powerScore(changeSummary.getCodeBlocksModified(), args.getCodeBlocksModifiedLogFactor(), modifyMult, exponent);
-        double codeBlocksAddedScore = powerScore(changeSummary.getCodeBlocksAdded(), args.getCodeBlocksAddedLogFactor(), addMult, exponent);
-        double classesModifiedScore = powerScore(changeSummary.getClassesModified(), args.getClassesModifiedLogFactor(), modifyMult, exponent);
-        double classesAddedScore = powerScore(changeSummary.getClassesAdded(), args.getClassesAddedLogFactor(), addMult, exponent);
-        double contentScore = linesScore + codeBlocksModifiedScore + codeBlocksAddedScore + classesModifiedScore + classesAddedScore;
-        double rawScopeBonus = powerScore(filesChanged, args.getFilesScopeFactor(), 1.0, exponent);
-        double fileDensity = calculateFileDensity(linesChanged, filesChanged, args.getFileDensityThreshold());
-        double filesScopeMultiplier = FULL_DENSITY + rawScopeBonus * fileDensity;
-        double totalVolumeScore = contentScore * filesScopeMultiplier;
-        double baseEffort = totalVolumeScore * args.getDefaultComplexityMultiplier();
+        double filesScopeMultiplier = 1.0;
+        if (filesChanged > 1) {
+            double logBonus = Math.log(filesChanged) / Math.log(2) * args.getFilesScopeLogCoefficient();
+            filesScopeMultiplier = 1.0 + Math.min(logBonus, args.getFilesScopeMaxBonus());
+        }
+
+        double totalVolumeScore = volumeScore * filesScopeMultiplier;
+        double baseEffort = totalVolumeScore;
+
+        int totalEffectiveStatements = codeBlockEfforts.stream().mapToInt(CodeBlockEffort::getCappedStatements).sum();
 
         CpdPreComputed cpd = calculateCpdPenalty(request);
         StaticAnalysisPreComputed sa = calculateStaticAnalysisPenalty(request);
 
         return PreComputedScores.builder()
-                .projectTotalLines(projectTotalLines)
+                .projectTotalStatements(projectTotalStatements)
                 .projectTotalMethods(projectTotalMethods)
-                .linesPerMethodQuantile(linesPerMethodQuantile)
+                .methodCapQuantileProd(methodCapQuantileProd)
+                .methodCapQuantileTest(methodCapQuantileTest)
+                .constructorCapQuantileProd(constructorCapQuantileProd)
+                .constructorCapQuantileTest(constructorCapQuantileTest)
                 .sizeFactor(Precision.round(sizeFactor, ROUNDING_PRECISION))
                 .modifyMult(Precision.round(modifyMult, ROUNDING_PRECISION))
                 .addMult(Precision.round(addMult, ROUNDING_PRECISION))
-                .linesChanged(linesChanged)
-                .effectiveLines(effectiveLines)
-                .linesScore(Precision.round(linesScore, ROUNDING_PRECISION))
+                .linesChanged(changeSummary.getTotalLinesChanged())
+                .totalEffectiveStatements(totalEffectiveStatements)
                 .filesChanged(filesChanged)
-                .contentScore(Precision.round(contentScore, ROUNDING_PRECISION))
                 .filesScopeMultiplier(Precision.round(filesScopeMultiplier, ROUNDING_PRECISION))
-                .fileDensity(Precision.round(fileDensity, ROUNDING_PRECISION))
+                .blockEffortSum(Precision.round(blockEffortSum, ROUNDING_PRECISION))
                 .codeBlocksModified(changeSummary.getCodeBlocksModified())
-                .codeBlocksModifiedScore(Precision.round(codeBlocksModifiedScore, ROUNDING_PRECISION))
                 .codeBlocksAdded(changeSummary.getCodeBlocksAdded())
-                .codeBlocksAddedScore(Precision.round(codeBlocksAddedScore, ROUNDING_PRECISION))
                 .classesModified(changeSummary.getClassesModified())
-                .classesModifiedScore(Precision.round(classesModifiedScore, ROUNDING_PRECISION))
                 .classesAdded(changeSummary.getClassesAdded())
-                .classesAddedScore(Precision.round(classesAddedScore, ROUNDING_PRECISION))
+                .testCodeScoreMultiplier(testMult)
+                .testLinesChanged(changeSummary.getTestLinesChanged())
+                .testCodeBlocksModified(changeSummary.getTestCodeBlocksModified())
+                .testCodeBlocksAdded(changeSummary.getTestCodeBlocksAdded())
+                .testClassesModified(changeSummary.getTestClassesModified())
+                .testClassesAdded(changeSummary.getTestClassesAdded())
+                .testFilesChanged(changeSummary.getTestFilesChanged())
                 .volumeScore(Precision.round(totalVolumeScore, ROUNDING_PRECISION))
-                .defaultComplexityMultiplier(args.getDefaultComplexityMultiplier())
+                .volumeExponent(args.getVolumeExponent())
                 .baseEffort(Precision.round(baseEffort, ROUNDING_PRECISION))
                 .cpdEffectivePenalty(cpd.getEffectivePenalty())
                 .cpdCategory(cpd.getCategory())
@@ -89,6 +115,8 @@ public class VolumeScoreCalculator {
                 .staticAnalysisPreExistingCount(sa.getPreExistingCount())
                 .staticAnalysisCategory(sa.getCategory())
                 .staticAnalysisRecommendedImpact(sa.getRecommendedImpact())
+                .codeBlockEfforts(codeBlockEfforts)
+                .fileEfforts(fileEfforts)
                 .build();
     }
     public CpdPreComputed calculateCpdPenalty(LlmScoringRequest request) {
@@ -138,7 +166,8 @@ public class VolumeScoreCalculator {
             for (CodeBlockChange codeBlock : request.getCodeBlockChanges()) {
                 if (Objects.nonNull(codeBlock.getDiagnostics())) {
                     for (DiagnosticInfo diag : codeBlock.getDiagnostics()) {
-                        if (BooleanUtils.and(new boolean[]{diag.getSeverity() == LlmScoringRequest.DiagnosticSeverity.ERROR, Objects.nonNull(diag.getRuleId())})) {
+                        if (BooleanUtils
+                                .and(new boolean[] { diag.getSeverity() == LlmScoringRequest.DiagnosticSeverity.ERROR, Objects.nonNull(diag.getRuleId()) })) {
                             if (diag.isIntroducedInCommit()) {
                                 introducedErrorRules.add(diag.getRuleId());
                             } else {
@@ -166,64 +195,158 @@ public class VolumeScoreCalculator {
         }
         return new StaticAnalysisPreComputed(totalCount, introducedCount, preExistingCount, category, Precision.round(impact, ROUNDING_PRECISION));
     }
-    private int applyLinesDensityCap(int linesChanged, List<CodeBlockChange> codeBlocks, int linesPerMethodQuantile) {
-        if (CollectionUtils.isEmpty(codeBlocks) || linesPerMethodQuantile <= 0) {
-            return linesChanged;
+    static List<CodeBlockEffort> calculateCodeBlockEfforts(
+            List<CodeBlockChange> codeBlocks,
+            DriverScaler methodScalerProd,
+            DriverScaler methodScalerTest,
+            DriverScaler constructorScalerProd,
+            DriverScaler constructorScalerTest,
+            int methodCapQuantileProd,
+            int methodCapQuantileTest,
+            int constructorCapQuantileProd,
+            int constructorCapQuantileTest,
+            double densityCapMultiplier,
+            double addMult,
+            double modifyMult,
+            double testMult) {
+        if (CollectionUtils.isEmpty(codeBlocks)) {
+            return Lists.newArrayList();
         }
+        int maxMethodProd = (int) (methodCapQuantileProd * densityCapMultiplier);
+        int maxMethodTest = (int) (methodCapQuantileTest * densityCapMultiplier);
+        int maxCtorProd = (int) (constructorCapQuantileProd * densityCapMultiplier);
+        int maxCtorTest = (int) (constructorCapQuantileTest * densityCapMultiplier);
+        boolean hasCap = BooleanUtils.or(new boolean[] { maxMethodProd > 0, maxMethodTest > 0, maxCtorProd > 0, maxCtorTest > 0 });
 
-        int maxPerBlock = (int) (linesPerMethodQuantile * args.getLinesDensityCapMultiplier());
-        int maxEffectiveLines = 0;
+        List<CodeBlockEffort> toReturn = Lists.newArrayList();
         for (CodeBlockChange block : codeBlocks) {
             if (block.isDelete()) {
                 continue;
             }
-            maxEffectiveLines += Math.min(block.getLinesOfCode(), maxPerBlock);
+
+            DriverScaler scaler = selectScaler(block, methodScalerProd, methodScalerTest, constructorScalerProd, constructorScalerTest);
+
+            double changeRatio = 1.0;
+            int invocationsChanged = 0;
+            double driverScore;
+            double projectedLines;
+            double projectedNcss;
+            double projectedInvocations;
+            if (block.isModify()) {
+                int linesChanged = Math.min(block.getTotalLinesChanged(), block.getNonCommentCodeLines());
+                changeRatio = computeChangeRatio(block);
+                invocationsChanged = block.getEffectiveInvocationsChanged();
+                driverScore = DriverScore.forModify(scaler, linesChanged, invocationsChanged);
+                projectedLines = linesChanged;
+                projectedNcss = 0.0;
+                projectedInvocations = invocationsChanged * scaler.invocationsFactor();
+            } else {
+                driverScore = DriverScore.forNew(scaler, block.getNonCommentCodeLines(),
+                        block.getNonCommentCodeStatements(), block.getDirectInvocationCount());
+                projectedLines = block.getNonCommentCodeLines();
+                projectedNcss = block.getNonCommentCodeStatements() * scaler.ncssFactor();
+                projectedInvocations = block.getDirectInvocationCount() * scaler.invocationsFactor();
+            }
+
+            int cap = selectCap(block, maxMethodProd, maxMethodTest, maxCtorProd, maxCtorTest);
+            boolean applyCap = hasCap && cap > 0;
+            int cappedStatements = (int) Math.round(applyCap ? Math.min(driverScore, cap) : driverScore);
+            double operationMult = block.isNew() ? addMult : modifyMult;
+            double testWeight = block.isTest() ? testMult : 1.0;
+            double effort = Precision.round(cappedStatements * operationMult * testWeight, ROUNDING_PRECISION);
+
+            toReturn.add(new CodeBlockEffort(block.getFile(), block.getName(), block.getSignature(),
+                    block.getOperation(), block.getNonCommentCodeStatements(), block.getDirectInvocationCount(),
+                    invocationsChanged, block.getNonCommentCodeLines(), block.getCommentLines(), block.getTotalLinesChanged(),
+                    Precision.round(changeRatio, ROUNDING_PRECISION),
+                    Precision.round(projectedLines, ROUNDING_PRECISION),
+                    Precision.round(projectedNcss, ROUNDING_PRECISION),
+                    Precision.round(projectedInvocations, ROUNDING_PRECISION),
+                    driverScore, cappedStatements, effort, block.isTest()));
         }
-        if (maxEffectiveLines <= 0) {
-            return linesChanged;
-        }
-        return Math.min(linesChanged, maxEffectiveLines);
+        return toReturn;
     }
-    private static double calculateFileDensity(int linesChanged, int filesChanged, double threshold) {
-        if (filesChanged <= 0) {
-            return FULL_DENSITY;
+    private static DriverScaler selectScaler(
+            CodeBlockChange block,
+            DriverScaler methodScalerProd,
+            DriverScaler methodScalerTest,
+            DriverScaler constructorScalerProd,
+            DriverScaler constructorScalerTest) {
+        if (block.isConstructor()) {
+            return block.isTest() ? constructorScalerTest : constructorScalerProd;
         }
-        double avgLinesPerFile = (double) linesChanged / filesChanged;
-        return Math.min(FULL_DENSITY, avgLinesPerFile / threshold);
+        return block.isTest() ? methodScalerTest : methodScalerProd;
     }
-    private static double powerScore(int count, double scoreFactor, double multiplier, double exponent) {
-        if (count > 0) {
-            return Math.pow(count, exponent) * scoreFactor * multiplier;
+    private static int selectCap(
+            CodeBlockChange block,
+            int maxMethodProd,
+            int maxMethodTest,
+            int maxCtorProd,
+            int maxCtorTest) {
+        int primary;
+        int fallback;
+        if (block.isConstructor()) {
+            primary = block.isTest() ? maxCtorTest : maxCtorProd;
+            fallback = block.isTest() ? maxCtorProd : maxCtorTest;
+        } else {
+            primary = block.isTest() ? maxMethodTest : maxMethodProd;
+            fallback = block.isTest() ? maxMethodProd : maxMethodTest;
         }
-        return 0.0;
+        return primary > 0 ? primary : fallback;
+    }
+    private static double computeChangeRatio(CodeBlockChange block) {
+        if (block.getNonCommentCodeLines() <= 0) {
+            return 0.0;
+        }
+        double ratio = (double) block.getTotalLinesChanged() / block.getNonCommentCodeLines();
+        return Math.min(ratio, 1.0);
+    }
+    static List<FileEffort> groupByFile(List<CodeBlockEffort> blockEfforts) {
+        if (CollectionUtils.isEmpty(blockEfforts)) {
+            return Lists.newArrayList();
+        }
+        Map<String, List<CodeBlockEffort>> byFile = blockEfforts.stream()
+                .collect(Collectors.groupingBy(CodeBlockEffort::getFile, Collectors.toList()));
+
+        return byFile.entrySet().stream().map(entry -> {
+            List<CodeBlockEffort> blocks = entry.getValue();
+            double totalEffort = Precision.round(
+                    blocks.stream().mapToDouble(CodeBlockEffort::getEffort).sum(), ROUNDING_PRECISION);
+            boolean isTest = blocks.get(0).isTest();
+            return new FileEffort(entry.getKey(), totalEffort, isTest, blocks);
+        }).sorted(Comparator.comparingDouble(FileEffort::getTotalEffort).reversed()).collect(Collectors.toList());
     }
 
     @Value
     @Builder
     public static class PreComputedScores {
-        long projectTotalLines;
+        long projectTotalStatements;
         int projectTotalMethods;
-        int linesPerMethodQuantile;
+        int methodCapQuantileProd;
+        int methodCapQuantileTest;
+        int constructorCapQuantileProd;
+        int constructorCapQuantileTest;
         double sizeFactor;
         double modifyMult;
         double addMult;
         int linesChanged;
-        int effectiveLines;
-        double linesScore;
+        int totalEffectiveStatements;
         int filesChanged;
-        double contentScore;
         double filesScopeMultiplier;
-        double fileDensity;
+        double blockEffortSum;
         int codeBlocksModified;
-        double codeBlocksModifiedScore;
         int codeBlocksAdded;
-        double codeBlocksAddedScore;
         int classesModified;
-        double classesModifiedScore;
         int classesAdded;
-        double classesAddedScore;
+        double testCodeScoreMultiplier;
+        int testLinesChanged;
+        int testCodeBlocksModified;
+        int testCodeBlocksAdded;
+        int testClassesModified;
+        int testClassesAdded;
+        int testFilesChanged;
         double volumeScore;
-        double defaultComplexityMultiplier;
+        double volumeExponent;
         double baseEffort;
         double cpdEffectivePenalty;
         CpdCategory cpdCategory;
@@ -236,6 +359,10 @@ public class VolumeScoreCalculator {
         int staticAnalysisPreExistingCount;
         StaticAnalysisCategory staticAnalysisCategory;
         double staticAnalysisRecommendedImpact;
+        @Builder.Default
+        List<CodeBlockEffort> codeBlockEfforts = Lists.newArrayList();
+        @Builder.Default
+        List<FileEffort> fileEfforts = Lists.newArrayList();
     }
 
     @Value
@@ -268,5 +395,35 @@ public class VolumeScoreCalculator {
         int preExistingCount;
         StaticAnalysisCategory category;
         double recommendedImpact;
+    }
+
+    @Value
+    public static class CodeBlockEffort {
+        String file;
+        String name;
+        String signature;
+        LlmScoringRequest.Operation operation;
+        int nonCommentCodeStatements;
+        int directInvocationCount;
+        int effectiveInvocationsChanged;
+        int nonCommentCodeLines;
+        int commentLines;
+        int effectiveLinesChanged;
+        double changeRatio;
+        double scaledLines;
+        double scaledNcss;
+        double scaledInvocations;
+        double driverScore;
+        int cappedStatements;
+        double effort;
+        boolean isTest;
+    }
+
+    @Value
+    public static class FileEffort {
+        String file;
+        double totalEffort;
+        boolean isTest;
+        List<CodeBlockEffort> codeBlockEfforts;
     }
 }

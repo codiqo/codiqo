@@ -25,7 +25,7 @@ public interface PromptBuilder {
         List<String> functionalTags = Collections.emptyList();
 
         @Builder.Default
-        long projectTotalLines = 0;
+        long projectTotalStatements = 0;
         @Builder.Default
         int projectTotalFiles = 0;
         @Builder.Default
@@ -33,7 +33,13 @@ public interface PromptBuilder {
         @Builder.Default
         int codeUnitsAffected = 0;
         @Builder.Default
-        int linesPerMethodQuantile = 0;
+        int methodCapQuantileProd = 0;
+        @Builder.Default
+        int methodCapQuantileTest = 0;
+        @Builder.Default
+        int constructorCapQuantileProd = 0;
+        @Builder.Default
+        int constructorCapQuantileTest = 0;
 
         public static PromptContextBuilder withFullContext(RunArgs args) {
             return PromptContext.builder().args(args);

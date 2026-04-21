@@ -10,22 +10,29 @@ Project Normalization:
   modifyMult: [(${#numbers.formatDecimal(scores.modifyMult, 1, 2)})]
   addMult: [(${#numbers.formatDecimal(scores.addMult, 1, 2)})]
 
-Content Score Components (formula: count^exponent × factor × multiplier):
-  linesChanged: [(${scores.linesChanged})] (effective: [(${scores.effectiveLines})]) -> linesScore: [(${#numbers.formatDecimal(scores.linesScore, 1, 2)})]
-  codeBlocksModified: [(${scores.codeBlocksModified})] -> score: [(${#numbers.formatDecimal(scores.codeBlocksModifiedScore, 1, 2)})]
-  codeBlocksAdded: [(${scores.codeBlocksAdded})] -> score: [(${#numbers.formatDecimal(scores.codeBlocksAddedScore, 1, 2)})]
-  classesModified: [(${scores.classesModified})] -> score: [(${#numbers.formatDecimal(scores.classesModifiedScore, 1, 2)})]
-  classesAdded: [(${scores.classesAdded})] -> score: [(${#numbers.formatDecimal(scores.classesAddedScore, 1, 2)})]
-  contentScore: [(${#numbers.formatDecimal(scores.contentScore, 1, 2)})]
+Code Block Efforts (per-block: cappedDriverScore × operationMult × testWeight):
+  driverScore = weighted average of three dimensions projected onto lines-equivalent units:
+    - L = non-comment code lines
+    - S = NCSS (logical statements)
+    - I = direct method invocations
+  Projection factors are derived from baseline medians: k_S = lines.p50/ncss.p50, k_I = lines.p50/invocs.p50.
+  For NEW blocks: driver = (L + S·k_S + I·k_I) / 3.
+  For MODIFY blocks: driver = (linesChanged + invocationsChanged·k_I) / 2 (NCSS dropped — already reflected in linesChanged; both come from the precise diff).
+  Scalers are computed per-kind (method vs constructor) and per-scope (prod vs test) from the full project, so values auto-calibrate to your codebase norms.
+  Density caps (P{statsQuantile} of driver-score distribution × densityCapMultiplier, per kind × scope):
+    method/prod:       [(${scores.methodCapQuantileProd})]
+    method/test:       [(${scores.methodCapQuantileTest})]
+    constructor/prod:  [(${scores.constructorCapQuantileProd})]
+    constructor/test:  [(${scores.constructorCapQuantileTest})]
+  totalEffectiveStatements: [(${scores.totalEffectiveStatements})] (sum of capped driver magnitudes across all blocks)
+  blockEffortSum: [(${#numbers.formatDecimal(scores.blockEffortSum, 1, 2)})] (sum of per-block efforts)
 
-Files Scope Multiplier (formula: 1 + rawScopeBonus × fileDensity):
+Volume Score (blockEffortSum^[(${#numbers.formatDecimal(scores.volumeExponent, 1, 2)})] exponent, then × filesScopeMultiplier):
   filesChanged: [(${scores.filesChanged})]
-  fileDensity: [(${#numbers.formatDecimal(scores.fileDensity, 1, 2)})] (avgLines/file ÷ threshold, capped at 1.0)
   filesScopeMultiplier: [(${#numbers.formatDecimal(scores.filesScopeMultiplier, 1, 2)})]
 
-TOTAL Volume Score (Content Score × Files Scope Multiplier): [(${#numbers.formatDecimal(scores.volumeScore, 1, 2)})]
-Default Complexity Multiplier: [(${#numbers.formatDecimal(scores.defaultComplexityMultiplier, 1, 2)})]
-Base Effort (Volume Score × Complexity Multiplier): [(${#numbers.formatDecimal(scores.baseEffort, 1, 2)})]
+TOTAL Volume Score: [(${#numbers.formatDecimal(scores.volumeScore, 1, 2)})]
+Base Effort (= Volume Score; LLM will multiply by its chosen complexityMultiplier): [(${#numbers.formatDecimal(scores.baseEffort, 1, 2)})]
 
 ## CPD PRE-COMPUTED (MANDATORY - USE THESE EXACT VALUES):
   totalClones: [(${scores.cpdTotalClones})]

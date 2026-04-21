@@ -16,6 +16,7 @@ import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.LogFactory;
+import io.codiqo.api.metrics.DriverScaler;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.DependencyRegistryModel;
 import io.codiqo.client.model.ModuleFullCoverageModel;
@@ -52,7 +53,40 @@ public class SubmissionContext {
     private final Map<String, ModuleFullCoverageModel> moduleFullCoverages = Maps.newHashMap();
 
     @Setter
-    private int linesPerMethodQuantile;
+    private int methodCapQuantileProd;
+    @Setter
+    private int methodCapQuantileTest;
+    @Setter
+    private int constructorCapQuantileProd;
+    @Setter
+    private int constructorCapQuantileTest;
+
+    @Setter
+    @Builder.Default
+    private DriverScaler methodScalerProd = DriverScaler.EMPTY;
+    @Setter
+    @Builder.Default
+    private DriverScaler methodScalerTest = DriverScaler.EMPTY;
+    @Setter
+    @Builder.Default
+    private DriverScaler constructorScalerProd = DriverScaler.EMPTY;
+    @Setter
+    @Builder.Default
+    private DriverScaler constructorScalerTest = DriverScaler.EMPTY;
+
+    @Setter
+    @Builder.Default
+    private SampleMaxTracker methodMaxProd = new SampleMaxTracker();
+    @Setter
+    @Builder.Default
+    private SampleMaxTracker methodMaxTest = new SampleMaxTracker();
+    @Setter
+    @Builder.Default
+    private SampleMaxTracker constructorMaxProd = new SampleMaxTracker();
+    @Setter
+    @Builder.Default
+    private SampleMaxTracker constructorMaxTest = new SampleMaxTracker();
+
     @Setter
     private LlmScoringResponse llmScoringResponse;
     @Setter
