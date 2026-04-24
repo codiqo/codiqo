@@ -14,7 +14,6 @@ import java.util.Optional;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.BooleanUtils;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -47,11 +46,10 @@ import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.maven.populator.LlmScoringPopulator;
+import io.codiqo.util.Env;
 
 @Mojo(name = "score-from-file", requiresProject = false)
 public class ScoreFromFileMojo extends AbstractMojo {
-    private static final String ENV_PREFIX = "env:";
-
     @Parameter(property = "codiqo.inputFile", required = true)
     private File inputFile;
 
@@ -192,14 +190,7 @@ public class ScoreFromFileMojo extends AbstractMojo {
         Optional.ofNullable(outputDirectory).ifPresent(toReturn::setOutputDirectory);
         Optional.ofNullable(includeBranches).ifPresent(toReturn::setIncludeBranches);
         Optional.ofNullable(includeAuthorEmails).ifPresent(toReturn::setIncludeAuthorEmails);
-        if (StringUtils.isNotEmpty(llmApiKey)) {
-            if (llmApiKey.startsWith(ENV_PREFIX)) {
-                String envVar = llmApiKey.substring(ENV_PREFIX.length());
-                toReturn.setLlmApiKey(System.getenv(envVar));
-            } else {
-                toReturn.setLlmApiKey(llmApiKey);
-            }
-        }
+        Env.resolveInto(llmApiKey, toReturn::setLlmApiKey);
         toReturn.validate();
         return toReturn;
     }

@@ -6,7 +6,8 @@
     <artifactId>codiqo-parent</artifactId>
     <version>1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
-    <name>${project.groupId} ::: ${project.artifactId}</name>
+    <name>Codiqo Parent</name>
+    <description>Parent POM for Codiqo — code-quality analysis tooling and Maven plugin.</description>
     <url>https://github.com/codiqo/codiqo</url>
     <licenses>
         <license>
@@ -16,8 +17,9 @@
     </licenses>
     <scm>
         <connection>${scm.connection}</connection>
-        <developerConnection>${scm.connection}</developerConnection>
-        <url>${scm.url}/tree/master</url>
+        <developerConnection>${scm.developerConnection}</developerConnection>
+        <url>${scm.url}/tree/main</url>
+        <tag>HEAD</tag>
     </scm>
     <developers>
         <developer>
@@ -32,14 +34,13 @@
         </developer>
     </developers>
     <properties>
-        <docker.platforms>linux/arm64,linux/amd64</docker.platforms>
         <!-- -->
         <!-- SCM -->
         <!-- -->
         <scm.provider>git</scm.provider>
-        <scm.url>git@github.com:codiqo/codiqo</scm.url>
-        <scm.developerConnection>scm:${scm.provider}:${scm.url}.${scm.provider}</scm.developerConnection>
+        <scm.url>https://github.com/codiqo/codiqo</scm.url>
         <scm.connection>scm:${scm.provider}:${scm.url}.${scm.provider}</scm.connection>
+        <scm.developerConnection>scm:${scm.provider}:ssh://git@github.com/codiqo/codiqo.${scm.provider}</scm.developerConnection>
         <!-- -->
         <!-- JDK requirements -->
         <!-- -->
@@ -89,7 +90,8 @@
         <commons-compress.version>1.28.0</commons-compress.version>
         <commons-codec.version>1.21.0</commons-codec.version>
         <commons-math3.version>3.6.1</commons-math3.version>
-        <ascii-table.version>1.8.0</ascii-table.version>
+        <failsafe.version>3.3.2</failsafe.version>
+        <ascii-table.version>1.9.0</ascii-table.version>
         <antlr4.version>4.13.2</antlr4.version>
         <aether.version>2.0.16</aether.version>
         <maven.plugin-annotations.version>3.15.2</maven.plugin-annotations.version>
@@ -124,12 +126,18 @@
         <version.gpg.plugin>3.2.8</version.gpg.plugin>
         <version.license.plugin>2.7.0</version.license.plugin>
         <version.pmd.plugin>3.28.0</version.pmd.plugin>
-        <version.docker.plugin>0.48.1</version.docker.plugin>
         <version.openapi.plugin>7.21.0</version.openapi.plugin>
         <version.buildhelper.plugin>3.6.1</version.buildhelper.plugin>
         <version.os.plugin>1.7.1</version.os.plugin>
         <version.plugin.plugin>3.13.1</version.plugin.plugin>
+        <version.central-publishing.plugin>0.9.0</version.central-publishing.plugin>
     </properties>
+    <distributionManagement>
+        <snapshotRepository>
+            <id>central</id>
+            <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+        </snapshotRepository>
+    </distributionManagement>
     <dependencyManagement>
         <dependencies>
             <dependency>
@@ -635,6 +643,11 @@
                 <version>${commons-math3.version}</version>
             </dependency>
             <dependency>
+                <groupId>dev.failsafe</groupId>
+                <artifactId>failsafe</artifactId>
+                <version>${failsafe.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>org.zeroturnaround</groupId>
                 <artifactId>zt-zip</artifactId>
                 <version>${ztzip.version}</version>
@@ -814,6 +827,17 @@
                     </executions>
                 </plugin>
                 <plugin>
+                    <groupId>org.sonatype.central</groupId>
+                    <artifactId>central-publishing-maven-plugin</artifactId>
+                    <version>${version.central-publishing.plugin}</version>
+                    <extensions>true</extensions>
+                    <configuration>
+                        <publishingServerId>central</publishingServerId>
+                        <autoPublish>true</autoPublish>
+                        <waitUntil>published</waitUntil>
+                    </configuration>
+                </plugin>
+                <plugin>
                     <groupId>org.codehaus.mojo</groupId>
                     <artifactId>build-helper-maven-plugin</artifactId>
                     <version>${version.buildhelper.plugin}</version>
@@ -913,7 +937,6 @@
                     <artifactId>maven-javadoc-plugin</artifactId>
                     <version>${version.javadoc.plugin}</version>
                     <configuration>
-                        <source>8</source>
                         <failOnWarnings>false</failOnWarnings>
                         <failOnError>false</failOnError>
                     </configuration>
@@ -1110,14 +1133,6 @@
                         </execution>
                     </executions>
                 </plugin>
-                <plugin>
-                    <groupId>io.fabric8</groupId>
-                    <artifactId>docker-maven-plugin</artifactId>
-                    <version>${version.docker.plugin}</version>
-                    <configuration>
-                        <verbose>true</verbose>
-                    </configuration>
-                </plugin>
             </plugins>
         </pluginManagement>
         <plugins>
@@ -1210,4 +1225,21 @@
         <module>openapi</module>
         <module>llm</module>
     </modules>
+    <profiles>
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

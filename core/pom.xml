@@ -8,7 +8,8 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>codiqo-core</artifactId>
-    <name>${project.groupId} ::: ${project.artifactId}</name>
+    <name>Codiqo Core</name>
+    <description>Codiqo core analysis engine: language-agnostic processors, scoring pipelines and shared infrastructure.</description>
     <dependencies>
         <dependency>
             <groupId>org.slf4j</groupId>

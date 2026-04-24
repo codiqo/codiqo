@@ -66,7 +66,6 @@ import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.StoredConfig;
-import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.HttpTransport;
 import org.eclipse.jgit.transport.TagOpt;
 
@@ -101,12 +100,13 @@ import io.codiqo.maven.populator.ModuleLevelMetricsPopulator;
 import io.codiqo.maven.populator.OutputSerializer;
 import io.codiqo.maven.populator.ProjectModelPopulator;
 import io.codiqo.maven.populator.SubmissionContext;
+import io.codiqo.util.Env;
 import io.codiqo.util.Fetch;
+import io.codiqo.util.JGit;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
 
 abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Artifact, Collection<File>> {
-    private static final String ENV_PREFIX = "env:";
     private static final Set<String> NON_CODE_PACKAGINGS = Set.of("pom", "bom");
     private static final String JAR_EXTENSION = "jar";
     private static final String LOMBOK_GROUP_ID = "org.projectlombok";
@@ -299,14 +299,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setJdtUseSharedIndex(jdtUseSharedIndex);
         args.setJdtIncludeDecompiledSources(jdtIncludeDecompiledSources);
         args.setJdtDebugPort(jdtDebugPort);
-        if (StringUtils.isNotEmpty(llmApiKey)) {
-            if (llmApiKey.startsWith(ENV_PREFIX)) {
-                String envVar = llmApiKey.substring(ENV_PREFIX.length());
-                args.setLlmApiKey(System.getenv(envVar));
-            } else {
-                args.setLlmApiKey(llmApiKey);
-            }
-        }
+        Env.resolveInto(llmApiKey, args::setLlmApiKey);
         args.validate();
         try (InputStream stream = Resources.getResource("codiqo.versions").openStream()) {
             Properties versions = new Properties();
@@ -319,7 +312,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         } catch (IOException err) {
             throw new MojoExecutionException(err);
         }
-        try (Repository orig = new FileRepositoryBuilder().setGitDir(new File(project.getBasedir(), ".git")).readEnvironment().findGitDir().build()) {
+        try (Repository orig = JGit.openRepository(project.getBasedir())) {
             args.setGit(orig);
             doPrepare(args);
             doExecute(args);
@@ -353,6 +346,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 }).forEach(prj -> {
                     MavenProjectWrapper toReturn = new MavenProjectWrapper();
                     toReturn.setId(prj.getId());
+                    toReturn.setCode(prj.getGroupId() + ":" + prj.getArtifactId());
                     toReturn.setGroupId(prj.getGroupId());
                     toReturn.setArtifactId(prj.getArtifactId());
                     toReturn.setName(prj.getName());

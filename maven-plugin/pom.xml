@@ -9,7 +9,8 @@
     </parent>
     <artifactId>codiqo-maven-plugin</artifactId>
     <packaging>maven-plugin</packaging>
-    <name>${project.groupId} ::: ${project.artifactId}</name>
+    <name>Codiqo Maven Plugin</name>
+    <description>Maven plugin that runs Codiqo code-quality analysis against a build, submits results to the API and scores commits.</description>
     <dependencies>
         <dependency>
             <groupId>org.slf4j</groupId>
@@ -60,6 +61,10 @@
             <artifactId>jackson-dataformat-yaml</artifactId>
         </dependency>
         <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+        </dependency>
+        <dependency>
             <groupId>com.fasterxml.jackson.datatype</groupId>
             <artifactId>jackson-datatype-jsr310</artifactId>
         </dependency>
@@ -70,6 +75,10 @@
         <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-math3</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.failsafe</groupId>
+            <artifactId>failsafe</artifactId>
         </dependency>
         <dependency>
             <groupId>com.github.freva</groupId>

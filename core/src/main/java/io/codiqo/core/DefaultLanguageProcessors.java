@@ -31,7 +31,6 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
@@ -45,6 +44,7 @@ import io.codiqo.api.IndexingSummary.IndexingSummaryBuilder;
 import io.codiqo.api.LanguageProcessors;
 import io.codiqo.api.LanguageSpec;
 import io.codiqo.api.RunArgs;
+import io.codiqo.util.JGit;
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.cpd.DuplicationMatch;
@@ -126,7 +126,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         AtomicInteger totalSymbols = new AtomicInteger();
 
         File projectRoot = args.getGit().getWorkTree();
-        try (Repository repo = new FileRepositoryBuilder().setGitDir(new File(projectRoot, ".git")).readEnvironment().findGitDir().build()) {
+        try (Repository repo = JGit.openRepository(projectRoot)) {
             toReturn.projectRoot(projectRoot);
 
             /**

@@ -110,7 +110,7 @@ public class SubmissionContext {
         submissionModel.setDependencies(dependencyRegistryModel);
 
         ProjectModel projectModel = new ProjectModel();
-        projectModel.setId(project.getId());
+        projectModel.setCode(project.getGroupId() + ":" + project.getArtifactId());
         projectModel.setName(project.getName());
 
         return SubmissionContext.builder()

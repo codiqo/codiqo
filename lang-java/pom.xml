@@ -8,7 +8,8 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>codiqo-lang-java</artifactId>
-    <name>${project.groupId} ::: ${project.artifactId}</name>
+    <name>Codiqo Java Language Support</name>
+    <description>Java-specific analysis, bytecode inspection and source parsing support for Codiqo.</description>
     <dependencies>
         <dependency>
             <groupId>org.slf4j</groupId>
