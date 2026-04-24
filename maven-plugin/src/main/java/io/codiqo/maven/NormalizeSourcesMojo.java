@@ -34,7 +34,6 @@ import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
-import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.openrewrite.ExecutionContext;
 import org.openrewrite.InMemoryExecutionContext;
 import org.openrewrite.Recipe;
@@ -86,6 +85,8 @@ import org.openrewrite.staticanalysis.UnnecessaryReturnAsLastStatement;
 import org.openrewrite.staticanalysis.UseDiamondOperator;
 import org.openrewrite.staticanalysis.UseJavaStyleArrayDeclarations;
 import org.openrewrite.staticanalysis.UsePortableNewlines;
+
+import io.codiqo.util.JGit;
 
 import com.google.common.base.Joiner;
 import com.google.common.base.Splitter;
@@ -181,11 +182,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
             getLog().info(String.format("active recipes: %d", recipeList.size()));
             recipeList.forEach(r -> getLog().info("  — " + r.getClass().getSimpleName()));
 
-            try (Repository repo = new FileRepositoryBuilder()
-                    .setGitDir(new File(project.getBasedir(), ".git"))
-                    .readEnvironment()
-                    .findGitDir()
-                    .build()) {
+            try (Repository repo = JGit.openRepository(project.getBasedir())) {
                 try (Git git = Git.wrap(repo)) {
                     Status status = git.status().call();
                     if (hasTrackedModifications(status)) {

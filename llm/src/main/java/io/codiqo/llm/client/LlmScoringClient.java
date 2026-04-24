@@ -62,7 +62,7 @@ public class LlmScoringClient implements ScoringClient {
     public LlmScoringClient(RunArgs args, Log log) {
         this.log = Objects.requireNonNull(log);
 
-        log.info("configuring OpenAI client: timeout=" + args.getReadTimeout());
+        log.info("configuring LLM client with timeout " + args.getReadTimeout());
         OpenAIOkHttpClient.Builder builder = OpenAIOkHttpClient.builder();
         builder.timeout(args.getReadTimeout());
 
@@ -102,7 +102,7 @@ public class LlmScoringClient implements ScoringClient {
         String userMessage = userMessageResult.getMessage();
         PreComputedScores preComputedScores = userMessageResult.getPreComputedScores();
         int promptLength = systemPrompt.length() + userMessage.length();
-        log.info("prompt size: system=" + systemPrompt.length() + " user=" + userMessage.length() + " total=" + promptLength + " chars");
+        log.info(String.format("prompt system: %d user: %d total: %d chars", systemPrompt.length(), userMessage.length(), promptLength));
 
         ChatCompletionCreateParams.Builder paramsBuilder = ChatCompletionCreateParams.builder();
         paramsBuilder.model(model);

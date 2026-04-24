@@ -82,7 +82,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .branch(submission.getCommit().getBranches().get(0))
                 .revertCommit(Boolean.TRUE.equals(submission.getCommit().getIsRevert()))
                 .revertedCommitId(submission.getCommit().getRevertedCommitId())
-                .repository(submission.getProject().getId())
+                .repository(submission.getProject().getCode())
                 .changeSummary(mapChangeSummary(files))
                 .fileChanges(mapFileChanges(files))
                 .codeBlockChanges(mapCodeBlockChanges(files, fileContext))

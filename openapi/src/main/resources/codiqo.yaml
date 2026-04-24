@@ -44,6 +44,8 @@ servers:
 tags:
   - name: Analysis
     description: Commit analysis and risk scoring
+  - name: CommitIndex
+    description: Project-scoped commit metadata indexing for CI fan-out
 
 paths:
   /api/v1/analyses:
@@ -156,6 +158,102 @@ paths:
           description: Analysis excluded successfully
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - apiKey: []
+
+  /api/v1/projects/{projectId}/commits:
+    post:
+      operationId: indexCommits
+      tags: [CommitIndex]
+      summary: Upsert a batch of commit metadata records (idempotent on sha)
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommitIndexBatchModel'
+      responses:
+        '200':
+          description: Batch accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommitIndexBatchResultModel'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - apiKey: []
+
+  /api/v1/projects/{projectId}/commits/missing-analyses:
+    get:
+      operationId: listMissingAnalyses
+      tags: [CommitIndex]
+      summary: List indexed commits that have no completed analysis yet
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: branch
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10000
+            default: 1000
+      responses:
+        '200':
+          description: SHAs that need analysis
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MissingAnalysesModel'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - apiKey: []
+
+  /api/v1/projects/{projectId}/commits/{commitSha}:
+    get:
+      operationId: getCommitStatus
+      tags: [CommitIndex]
+      summary: Indexed commit metadata + current analysis state
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commitSha
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-f0-9]{40}$'
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommitStatusModel'
         '404':
           $ref: '#/components/responses/NotFound'
       security:
@@ -1053,10 +1151,11 @@ components:
 
     ProjectModel:
       type: object
-      required: [id]
+      required: [code]
       properties:
-        id:
+        code:
           type: string
+          description: Stable external identifier (e.g. Maven groupId:artifactId). Unique per organization.
         name:
           type: string
         repositoryUrls:
@@ -1186,6 +1285,63 @@ components:
         revertedCommitId:
           type: string
           pattern: '^[a-f0-9]{40}$'
+
+    CommitIndexBatchModel:
+      type: object
+      required: [commits]
+      properties:
+        project:
+          $ref: '#/components/schemas/ProjectModel'
+        commits:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/CommitModel'
+
+    CommitIndexBatchResultModel:
+      type: object
+      required: [accepted]
+      properties:
+        accepted:
+          type: integer
+          description: Number of commits upserted in this batch
+        unknownParents:
+          type: array
+          description: |
+            Parent SHAs referenced by commits in the batch but not yet indexed.
+            Out-of-order batches are allowed; keep sending until empty.
+          items:
+            type: string
+            pattern: '^[a-f0-9]{40}$'
+
+    MissingAnalysesModel:
+      type: object
+      required: [projectId, commitShas]
+      properties:
+        projectId:
+          type: string
+        commitShas:
+          type: array
+          items:
+            type: string
+            pattern: '^[a-f0-9]{40}$'
+
+    CommitStatusModel:
+      type: object
+      required: [commit, analysisState]
+      properties:
+        commit:
+          $ref: '#/components/schemas/CommitModel'
+        analysisState:
+          type: string
+          enum: [missing, pending, processing, completed, failed, excluded]
+        latestAnalysisId:
+          type: string
+          format: uuid
+        completedAt:
+          type: string
+          format: date-time
 
     ClientInfoModel:
       type: object

@@ -140,7 +140,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         Context tctx = new Context(Locale.ENGLISH);
         tctx.setVariable("title", TITLE);
         tctx.setVariable("separator", StringUtils.repeat('-', TITLE.length()));
-        tctx.setVariable("projectId", submission.getProject().getId());
+        tctx.setVariable("projectId", submission.getProject().getCode());
         tctx.setVariable("commitSha", Objects.nonNull(commit) ? StringUtils.substring(commit.getSha(), 0, COMMIT_SHA_LENGTH) : null);
         tctx.setVariable("commitAuthor", Objects.nonNull(commit) ? commit.getAuthor() : null);
         tctx.setVariable("files", countFiles(submission));

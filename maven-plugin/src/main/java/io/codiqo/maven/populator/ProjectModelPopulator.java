@@ -1,6 +1,7 @@
 package io.codiqo.maven.populator;
 
 import io.codiqo.maven.MavenProjectWrapper;
+import io.codiqo.util.RepositoryUrls;
 
 import java.io.File;
 import java.net.URI;
@@ -9,9 +10,7 @@ import java.nio.file.Path;
 import java.util.Objects;
 
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.Strings;
 import org.apache.maven.plugin.logging.Log;
-import org.eclipse.jgit.transport.URIish;
 
 import io.codiqo.api.MavenProjectSpec;
 import io.codiqo.client.model.DependencyModel;
@@ -37,15 +36,8 @@ public class ProjectModelPopulator implements SubmissionPopulator {
     private void populateRepositoryUrls(SubmissionContext ctx) {
         ctx.getArgs().getRemoteUrls().forEach(url -> {
             try {
-                URIish urIish = new URIish(url);
-                if (StringUtils.isNotEmpty(urIish.getScheme())) {
-                    URI repositoryUri = URI.create(urIish.toString());
-                    ctx.getProjectModel().getRepositoryUrls().add(repositoryUri);
-                } else {
-                    String path = Strings.CS.removeStart(urIish.getPath(), "/");
-                    URI repositoryUri = URI.create(String.format("https://%s/%s", urIish.getHost(), path));
-                    ctx.getProjectModel().getRepositoryUrls().add(repositoryUri);
-                }
+                URI repositoryUri = RepositoryUrls.toUri(url);
+                ctx.getProjectModel().getRepositoryUrls().add(repositoryUri);
             } catch (URISyntaxException err) {
                 log.error("failed to parse repository URL: " + url, err);
             }
@@ -81,7 +73,7 @@ public class ProjectModelPopulator implements SubmissionPopulator {
                             }
                             ctx.getDependencyRegistryModel().getArtifacts().put(artifact.getId(), dependencyModel);
                         }
-                    } catch (URISyntaxException err) {
+                    } catch (Exception err) {
                         log.error("failed to parse dependency URL in project: " + mavenSpec.getName(), err);
                     }
                 });

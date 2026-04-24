@@ -8,7 +8,8 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>codiqo-api</artifactId>
-    <name>${project.groupId} ::: ${project.artifactId}</name>
+    <name>Codiqo API</name>
+    <description>Codiqo public API: core models, scoring types and entry points shared across modules.</description>
     <dependencies>
         <dependency>
             <groupId>io.projectreactor</groupId>

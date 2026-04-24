@@ -463,7 +463,7 @@ class SubmissionToRequestMapperTest {
         commit.setBranches(Lists.newArrayList("main"));
 
         ProjectModel project = new ProjectModel();
-        project.setId("proj-1");
+        project.setCode("proj-1");
 
         AnalysisSubmissionModel submission = new AnalysisSubmissionModel();
         submission.setProject(project);

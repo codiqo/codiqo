@@ -22,13 +22,13 @@ import org.apache.commons.cli.Options;
 import org.apache.commons.lang3.StringUtils;
 import org.eclipse.jgit.annotations.Nullable;
 import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
-
 import com.google.common.base.CaseFormat;
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
+
+import io.codiqo.util.JGit;
 
 import edu.umd.cs.findbugs.Priorities;
 import lombok.Data;
@@ -37,6 +37,7 @@ import okhttp3.HttpUrl;
 
 @Data
 public class RunArgs {
+    public static final String DEFAULT_API_URL = "https://api.codiqo.io";
     public static final Map<String, String> JDTLS_CONFIG = ImmutableMap.of(
             "osx-x86_64", "config_mac",
             "osx-aarch_64", "config_mac_arm",
@@ -406,7 +407,7 @@ public class RunArgs {
                 } else if (field.getType().equals(File.class)) {
                     field.set(toReturn, new File(value));
                 } else if (field.getType().equals(Repository.class)) {
-                    field.set(toReturn, new FileRepositoryBuilder().setGitDir(new File(value, ".git")).readEnvironment().findGitDir().build());
+                    field.set(toReturn, JGit.openRepository(new File(value)));
                 }
             }
         }

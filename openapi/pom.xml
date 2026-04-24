@@ -8,7 +8,8 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>codiqo-openapi</artifactId>
-    <name>${project.groupId} ::: ${project.artifactId}</name>
+    <name>Codiqo OpenAPI</name>
+    <description>Generated OpenAPI client and model classes for the Codiqo backend API.</description>
     <dependencies>
         <dependency>
             <groupId>jakarta.annotation</groupId>
@@ -112,7 +113,7 @@
                                 <caseInsensitiveResponseHeaders>true</caseInsensitiveResponseHeaders>
                                 <failOnUnknownProperties>false</failOnUnknownProperties>
                                 <serializationLibrary>jackson</serializationLibrary>
-                                <useGzipFeature>true</useGzipFeature>
+                                <useGzipFeature>false</useGzipFeature>
                                 <openApiNullable>false</openApiNullable>
                                 <legacyDiscriminatorBehavior>false</legacyDiscriminatorBehavior>
                                 <discriminatorCaseSensitive>true</discriminatorCaseSensitive>

@@ -578,6 +578,34 @@ Set<String> unique = new HashSet<>();
 Map<String, Integer> counts = new HashMap<>();
 ```
 
+### Lombok @UtilityClass for Static-Only Classes
+
+**Any class whose members are all static must be annotated with Lombok `@UtilityClass`.** The annotation marks the class final, hides the implicit default constructor, and makes every method/field static automatically — so you don't have to repeat `static` on each member or hand-write a private constructor.
+
+```java
+// Good - @UtilityClass handles final + private constructor + static promotion
+import lombok.experimental.UtilityClass;
+
+@UtilityClass
+public class GitRefs {
+    private static final Pattern HEAD_PATTERN = Pattern.compile(...);
+
+    public String stripPrefix(String refName) { ... }
+    public List<String> parentShas(RevCommit commit) { ... }
+}
+
+// Bad - hand-rolled utility class (noisy, easy to forget the private constructor)
+public final class GitRefs {
+    private GitRefs() {
+    }
+
+    public static String stripPrefix(String refName) { ... }
+    public static List<String> parentShas(RevCommit commit) { ... }
+}
+```
+
+Apply this to every existing and new utility class. Examples already in the codebase: [CommitRevertDetector](api/src/main/java/io/codiqo/util/CommitRevertDetector.java), [DriverScore](api/src/main/java/io/codiqo/api/metrics/DriverScore.java), [JavaLineFilters](api/src/main/java/io/codiqo/api/diff/JavaLineFilters.java).
+
 ### Lombok @Builder with Collections
 
 **When using Lombok `@Builder`, all collection fields (List, Set, Map) must have `@Builder.Default` with Guava factory initialization**:

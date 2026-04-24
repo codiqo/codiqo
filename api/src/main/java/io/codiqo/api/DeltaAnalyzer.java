@@ -19,10 +19,10 @@ public interface DeltaAnalyzer {
     CommitAnalysis analyzeUncommittedNoHead(Status status) throws Exception;
     CommitAnalysis analyzeUncommitted(Status status) throws Exception;
 
-    FileAnalysis analyzeFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit parent, RevCommit current) throws Exception;
-    FileAnalysis analyzeUncommittedFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit headCommit) throws Exception;
+    Optional<FileAnalysis> analyzeFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit parent, RevCommit current) throws Exception;
+    Optional<FileAnalysis> analyzeUncommittedFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit headCommit) throws Exception;
     Optional<FileAnalysis> analyzeUntrackedFile(String filePath) throws Exception;
-    FileAnalysis analyzeUncommittedFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit headCommit, CanonicalTreeParser oldTree) throws Exception;
+    Optional<FileAnalysis> analyzeUncommittedFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit headCommit, CanonicalTreeParser oldTree) throws Exception;
 
     Optional<String> fileContentFromCommit(RevCommit commit, String filePath) throws Exception;
     Optional<String> fileContentFromWorkingTree(String filePath) throws Exception;

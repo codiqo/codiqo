@@ -26,6 +26,7 @@ import lombok.experimental.Delegate;
 @Getter
 public class MavenProjectWrapper implements MavenProjectSpec {
     private String id;
+    private String code;
     private String groupId;
     private String artifactId;
     private String name;
