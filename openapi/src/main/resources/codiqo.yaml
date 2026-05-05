@@ -476,26 +476,28 @@ components:
           minimum: 0
           description: |
             P95 of driver-score distribution over prod method population.
-            Effective density cap = this value × statementsDensityCapMultiplier (default 2.5).
-            Any single block scoring above the effective cap is clamped to prevent outliers from dominating the volume score.
+            Used as the per-block contribution to the global driver-score cap budget:
+            totalBaseline = Σ_block (bucketP95 × operationMult × testWeight),
+            globalCap = totalBaseline × driverScoreCapMultiplier (default 2.5).
+            The total summed effort across all changed blocks is clipped at globalCap.
         methodCapQuantileTest:
           type: integer
           minimum: 0
           description: |
             P95 of driver-score distribution over test method population.
-            Effective density cap = this value × statementsDensityCapMultiplier (default 2.5).
+            Contributes to the global cap baseline (see methodCapQuantileProd).
         constructorCapQuantileProd:
           type: integer
           minimum: 0
           description: |
             P95 of driver-score distribution over prod constructor population.
-            Effective density cap = this value × statementsDensityCapMultiplier (default 2.5).
+            Contributes to the global cap baseline (see methodCapQuantileProd).
         constructorCapQuantileTest:
           type: integer
           minimum: 0
           description: |
             P95 of driver-score distribution over test constructor population.
-            Effective density cap = this value × statementsDensityCapMultiplier (default 2.5).
+            Contributes to the global cap baseline (see methodCapQuantileProd).
         driverScalers:
           $ref: '#/components/schemas/DriverScalersModel'
 
@@ -542,25 +544,46 @@ components:
           $ref: '#/components/schemas/DimensionStatsModel'
         invocations:
           $ref: '#/components/schemas/DimensionStatsModel'
+        ncssFactor:
+          type: number
+          format: double
+          description: |
+            Raw projection factor k_S = lines.p50 / ncss.p50 for this bucket. 0.0 when ncss.p50 == 0
+            (degenerate dimension — no signal). Computed once globally per (kind, scope) population
+            and applied uniformly to every block in that bucket. Reflects the project's actual coding style
+            (how many physical lines correspond to one NCSS statement on average) — no clamp at this level.
+            The driverFactorMaxDeviation knob applies only to per-block deviation flagging, not to this factor.
+        invocationsFactor:
+          type: number
+          format: double
+          description: Raw projection factor k_I = lines.p50 / invocations.p50 for this bucket. See `ncssFactor`.
 
     DimensionStatsModel:
       type: object
-      description: Distribution stats for one scaler dimension — min/max used by the MinMax normalization, percentiles for debug output.
+      description: |
+        Distribution stats for one scaler dimension. min/max are observed integer counts; the percentiles are
+        kept as doubles because Apache Commons NIST percentile estimation interpolates between samples — for
+        discrete-integer populations the real medians are typically fractional (e.g. 3.7 vs 3.2) and truncating
+        to integer would silently collapse meaningfully different medians to the same value, distorting `k_S`/`k_I`.
       properties:
         min:
           type: integer
           minimum: 0
         p50:
-          type: integer
+          type: number
+          format: double
           minimum: 0
         p75:
-          type: integer
+          type: number
+          format: double
           minimum: 0
         p90:
-          type: integer
+          type: number
+          format: double
           minimum: 0
         p95:
-          type: integer
+          type: number
+          format: double
           minimum: 0
         max:
           type: integer
@@ -2103,6 +2126,29 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CodeBlockEffortModel'
+        blocksFlaggedAsRatioOutlier:
+          type: integer
+          minimum: 0
+          description: Count of code blocks in this file with blockRatioOutlier == true.
+        blocksFlaggedAsGlobalCapDriver:
+          type: integer
+          minimum: 0
+          description: Count of code blocks in this file with globalCapDriver == true.
+        maxBlockRatioDeviationNcss:
+          type: number
+          format: double
+          minimum: 0
+          description: Maximum blockRatioDeviationNcss across the file's code blocks. 0.0 if no blocks.
+        maxBlockRatioDeviationInvocations:
+          type: number
+          format: double
+          minimum: 0
+          description: Maximum blockRatioDeviationInvocations across the file's code blocks.
+        fileFlaggedAsAbusive:
+          type: boolean
+          description: |
+            True iff a strict majority (blocksFlaggedAsRatioOutlier × 2 > total blocks) of this file's blocks
+            are flagged as ratio outliers. Per-file aggregation of the per-block abuse signal.
 
     CodeBlockEffortModel:
       type: object
@@ -2179,6 +2225,45 @@ components:
         isTest:
           type: boolean
           description: Whether this code block is in a test file
+        blockRatioDeviationNcss:
+          type: number
+          format: double
+          minimum: 0
+          description: |
+            Relative deviation of this block's own S/L ratio from the bucket median ncss.p50/lines.p50.
+            Computed only for NEW blocks (NCSS dropped from MODIFY score) — 0.0 for MODIFY or when any
+            denominator is zero. A value > driverFactorMaxDeviation marks the block as a ratio outlier.
+            Per-developer abuse signal: high values point to blocks that are unusually NCSS-dense for the project.
+        blockRatioDeviationInvocations:
+          type: number
+          format: double
+          minimum: 0
+          description: |
+            Relative deviation of this block's own I/L ratio from the bucket median invocations.p50/lines.p50.
+            Computed only for NEW blocks — always 0.0 for MODIFY blocks because their effective invocations/lines
+            is a diff-shape artifact rather than block structure. Also 0.0 when any denominator is zero.
+        blockRatioOutlier:
+          type: boolean
+          description: |
+            True iff blockRatioDeviationNcss > driverFactorMaxDeviation OR blockRatioDeviationInvocations > driverFactorMaxDeviation.
+            Per-developer signal candidate — repeated outlier blocks from the same author warrant review.
+            Note: driverFactorMaxDeviation is reused as the threshold here even though its primary role is
+            clamping the per-bucket projection factor; the same number is intentionally applied to per-block deviation.
+        effortShare:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: |
+            block.effort / sum(block.effort across the commit). 0.0 if total effort is 0.
+            Used to attribute global-cap overruns to specific blocks.
+        globalCapDriver:
+          type: boolean
+          description: |
+            True iff effortBreakdown.globalCapApplied AND effortShare > driverFactorMaxDeviation.
+            Marks a block whose effort alone owns more than driverFactorMaxDeviation (default 75%) of the
+            commit's total effort during a cap event — i.e. this block is the principal cause of the global
+            cap binding.
 
     VolumeScoreModel:
       type: object
@@ -2217,7 +2302,37 @@ components:
         blockEffortSum:
           type: number
           format: double
-          description: Raw sum of per-block efforts before exponent is applied
+          description: |
+            Sum of per-block efforts fed into the volume exponent.
+            Equals `globalCap` when `globalCapApplied && !globalCapDryRun`, otherwise `totalEffortRaw`.
+        totalEffortRaw:
+          type: number
+          format: double
+          description: |
+            Raw sum of per-block efforts before any global-cap clipping.
+            Equal to blockEffortSum when the cap does not bind or when `globalCapDryRun == true`.
+        totalBaseline:
+          type: number
+          format: double
+          description: |
+            Σ_block (bucketP95 × operationMult × testWeight). Reference effort against which the global cap is computed.
+        globalCap:
+          type: number
+          format: double
+          description: |
+            totalBaseline × driverScoreCapMultiplier. Hard ceiling on summed block effort to prevent abuse.
+        globalCapApplied:
+          type: boolean
+          description: |
+            True iff totalBaseline > 0 and totalEffortRaw exceeded globalCap (i.e. the cap "would bind").
+            When `globalCapDryRun == true` this remains true so the abuse-signal flags (`globalCapDriver`,
+            file-level rollups) still fire — only the actual clipping of `blockEffortSum` is skipped.
+        globalCapDryRun:
+          type: boolean
+          description: |
+            Mirrors the submission-level `scoringConfig.driverScoreCapDryRun`. When true, the cap was computed
+            and abuse signals were populated, but `blockEffortSum` was NOT clipped (kept equal to `totalEffortRaw`).
+            Lets analytics distinguish "cap was enforced" from "cap was only audited".
         sizeFactor:
           type: number
           format: double
@@ -2918,9 +3033,29 @@ components:
         filesScopeMaxBonus:
           type: number
           format: double
-        statementsDensityCapMultiplier:
+        driverScoreCapMultiplier:
           type: number
           format: double
+          description: |
+            Multiplier on `totalBaseline` to derive the global cap on summed block effort.
+            globalCap = totalBaseline × driverScoreCapMultiplier. Default: 2.5.
+        driverFactorMaxDeviation:
+          type: number
+          format: double
+          description: |
+            Per-block deviation threshold for the abuse signals (`blockRatioOutlier`, `globalCapDriver`).
+            A NEW block is flagged when |block.S/L − bucket.ncss.p50/lines.p50| / bucketRatio exceeds this fraction
+            (or the same shape using invocations). Same value gates `globalCapDriver` against `effortShare`.
+            Has NO effect on bucket-level projection factors `k_S`/`k_I`. Default: 0.75.
+        driverScoreCapDryRun:
+          type: boolean
+          description: |
+            When `true`, the global driver-score cap is computed and `globalCapApplied` plus all per-block abuse
+            signals (`blockRatioOutlier`, `globalCapDriver`, `effortShare`, file-level rollups) are populated
+            exactly as if the cap were live — but the cap is NOT clipped from `blockEffortSum`. The score uses the
+            uncapped `totalEffortRaw`, matching the pre-cap behavior in HEAD. Use this to compare scoring under
+            the new cap logic against the legacy uncapped scoring while still surfacing abuse signals to the DB.
+            Default: false (cap is enforced).
         statsQuantile:
           type: number
           format: double

@@ -56,13 +56,14 @@
         <jakarta.annotation-api.version>3.0.0</jakarta.annotation-api.version>
         <jakarta.validation-api.version>3.1.1</jakarta.validation-api.version>
         <jakarta.ws.rs-api.version>3.1.0</jakarta.ws.rs-api.version>
-        <lombok.version>1.18.44</lombok.version>
-        <gson.version>2.13.2</gson.version>
-        <jackson.version>2.21.2</jackson.version>
+        <lombok.version>1.18.46</lombok.version>
+        <gson.version>2.14.0</gson.version>
+        <jackson.version>2.21.3</jackson.version>
         <snakeyaml.version>2.6</snakeyaml.version>
         <okio.version>3.17.0</okio.version>
         <okhttp.version>5.3.2</okhttp.version>
         <guava.version>33.6.0-jre</guava.version>
+        <vavr.version>0.10.7</vavr.version>
         <jgit.version>6.10.1.202505221210-r</jgit.version>
         <listenablefuture.version>9999.0-empty-to-avoid-conflict-with-guava</listenablefuture.version>
         <reactor.version>2025.0.5</reactor.version>
@@ -72,30 +73,30 @@
         <jarchivelib.version>1.2.0</jarchivelib.version>
         <ecj.version>3.45.0</ecj.version>
         <lsp4j.version>1.0.0</lsp4j.version>
-        <openrewrite.version>8.79.6</openrewrite.version>
-        <openrewrite.recipe.version>2.32.0</openrewrite.recipe.version>
-        <pmd.version>7.23.0</pmd.version>
+        <openrewrite.version>8.81.4</openrewrite.version>
+        <openrewrite.recipe.version>2.34.0</openrewrite.recipe.version>
+        <pmd.version>7.24.0</pmd.version>
         <spotbugs.version>4.9.8</spotbugs.version>
         <findbugs.sec.version>1.14.0</findbugs.sec.version>
         <findbugs.contrib.version>7.7.4</findbugs.contrib.version>
         <jacoco.version>0.8.14</jacoco.version>
         <classgraph.version>4.8.184</classgraph.version>
-        <openapi.version>4.32.0</openapi.version>
-        <thymeleaf.version>3.1.4.RELEASE</thymeleaf.version>
+        <openapi.version>4.33.0</openapi.version>
+        <thymeleaf.version>3.1.5.RELEASE</thymeleaf.version>
         <commons-lang3.version>3.20.0</commons-lang3.version>
         <commons-collections4.version>4.5.0</commons-collections4.version>
         <commons-cli.version>1.11.0</commons-cli.version>
-        <commons-io.version>2.21.0</commons-io.version>
+        <commons-io.version>2.22.0</commons-io.version>
         <commons-text.version>1.15.0</commons-text.version>
         <commons-compress.version>1.28.0</commons-compress.version>
-        <commons-codec.version>1.21.0</commons-codec.version>
+        <commons-codec.version>1.22.0</commons-codec.version>
         <commons-math3.version>3.6.1</commons-math3.version>
         <failsafe.version>3.3.2</failsafe.version>
-        <ascii-table.version>1.9.0</ascii-table.version>
+        <ascii-table.version>1.12.1</ascii-table.version>
         <antlr4.version>4.13.2</antlr4.version>
-        <aether.version>2.0.16</aether.version>
+        <aether.version>2.0.17</aether.version>
         <maven.plugin-annotations.version>3.15.2</maven.plugin-annotations.version>
-        <maven.version>3.9.14</maven.version>
+        <maven.version>3.9.15</maven.version>
         <maven.invoker.version>3.3.0</maven.invoker.version>
         <scala.binary.version>2.13</scala.binary.version>
         <scala.version>${scala.binary.version}.18</scala.version>
@@ -103,34 +104,34 @@
         <!-- TESTING -->
         <!-- -->
         <surefire.tree-report.version>1.5.1</surefire.tree-report.version>
-        <junit.version>5.14.3</junit.version>
+        <junit.version>5.14.4</junit.version>
         <mockito.version>5.23.0</mockito.version>
-        <testcontainers.version>2.0.4</testcontainers.version>
+        <testcontainers.version>2.0.5</testcontainers.version>
         <!-- -->
         <!-- plugins -->
         <!-- -->
-        <version.compiler.plugin>3.14.1</version.compiler.plugin>
+        <version.compiler.plugin>3.15.0</version.compiler.plugin>
         <version.enforcer.plugin>3.6.2</version.enforcer.plugin>
         <version.source.plugin>3.4.0</version.source.plugin>
         <version.clean.plugin>3.5.0</version.clean.plugin>
-        <version.resources.plugin>3.4.0</version.resources.plugin>
-        <version.surefire.plugin>3.5.4</version.surefire.plugin>
-        <version.jar.plugin>3.4.2</version.jar.plugin>
-        <version.dependency.plugin>3.9.0</version.dependency.plugin>
-        <version.versions.plugin>2.20.1</version.versions.plugin>
+        <version.resources.plugin>3.5.0</version.resources.plugin>
+        <version.surefire.plugin>3.5.5</version.surefire.plugin>
+        <version.jar.plugin>3.5.0</version.jar.plugin>
+        <version.dependency.plugin>3.10.0</version.dependency.plugin>
+        <version.versions.plugin>2.21.0</version.versions.plugin>
         <version.install.plugin>3.1.4</version.install.plugin>
         <version.javadoc.plugin>3.12.0</version.javadoc.plugin>
         <version.release.plugin>3.3.1</version.release.plugin>
         <version.deploy.plugin>3.1.4</version.deploy.plugin>
         <version.site.plugin>4.0.0-M16</version.site.plugin>
         <version.gpg.plugin>3.2.8</version.gpg.plugin>
-        <version.license.plugin>2.7.0</version.license.plugin>
+        <version.license.plugin>2.7.1</version.license.plugin>
         <version.pmd.plugin>3.28.0</version.pmd.plugin>
-        <version.openapi.plugin>7.21.0</version.openapi.plugin>
+        <version.openapi.plugin>7.22.0</version.openapi.plugin>
         <version.buildhelper.plugin>3.6.1</version.buildhelper.plugin>
         <version.os.plugin>1.7.1</version.os.plugin>
-        <version.plugin.plugin>3.13.1</version.plugin.plugin>
-        <version.central-publishing.plugin>0.9.0</version.central-publishing.plugin>
+        <version.plugin.plugin>3.15.2</version.plugin.plugin>
+        <version.central-publishing.plugin>0.10.0</version.central-publishing.plugin>
     </properties>
     <distributionManagement>
         <snapshotRepository>

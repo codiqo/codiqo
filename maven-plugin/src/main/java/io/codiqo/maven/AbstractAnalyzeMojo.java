@@ -242,6 +242,15 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             defaultValue = "org.scala-lang, org.apache.kafka, org.apache.pekko, org.apache.spark, org.apache.flink, com.typesafe.akka, com.typesafe, io.gatling, com.lightbend.lagom, com.twitter, org.json4s, org.scalactic, org.scalatest")
     protected String jdtSourceExclusions;
 
+    @Parameter(property = "codiqo.driverScoreCapMultiplier", defaultValue = "2.5")
+    protected double driverScoreCapMultiplier;
+
+    @Parameter(property = "codiqo.driverFactorMaxDeviation", defaultValue = "0.75")
+    protected double driverFactorMaxDeviation;
+
+    @Parameter(property = "codiqo.driverScoreCapDryRun", defaultValue = "false")
+    protected boolean driverScoreCapDryRun;
+
     @Override
     @SuppressWarnings("deprecation")
     public final Collection<File> apply(Artifact artifact) {
@@ -299,6 +308,11 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setJdtUseSharedIndex(jdtUseSharedIndex);
         args.setJdtIncludeDecompiledSources(jdtIncludeDecompiledSources);
         args.setJdtDebugPort(jdtDebugPort);
+
+        args.setDriverScoreCapMultiplier(driverScoreCapMultiplier);
+        args.setDriverFactorMaxDeviation(driverFactorMaxDeviation);
+        args.setDriverScoreCapDryRun(driverScoreCapDryRun);
+
         Env.resolveInto(llmApiKey, args::setLlmApiKey);
         args.validate();
         try (InputStream stream = Resources.getResource("codiqo.versions").openStream()) {
@@ -698,7 +712,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         toReturn.setVolumeExponent(args.getVolumeExponent());
         toReturn.setFilesScopeLogCoefficient(args.getFilesScopeLogCoefficient());
         toReturn.setFilesScopeMaxBonus(args.getFilesScopeMaxBonus());
-        toReturn.setStatementsDensityCapMultiplier(args.getStatementsDensityCapMultiplier());
+        toReturn.setDriverScoreCapMultiplier(args.getDriverScoreCapMultiplier());
+        toReturn.setDriverFactorMaxDeviation(args.getDriverFactorMaxDeviation());
+        toReturn.setDriverScoreCapDryRun(args.isDriverScoreCapDryRun());
         toReturn.setStatsQuantile(args.getStatsQuantile());
 
         toReturn.setCoverageLowThreshold(args.getCoverageLowThreshold());

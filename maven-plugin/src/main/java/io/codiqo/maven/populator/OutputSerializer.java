@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.util.Objects;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.maven.plugin.logging.Log;
 
@@ -37,11 +38,15 @@ public class OutputSerializer implements SubmissionPopulator {
                 mapper.registerModule(new JavaTimeModule());
 
                 String extension = preferYaml ? "yaml" : "json";
+                String commitId = ctx.getAnalysis().getCommitId();
+                String fileName = StringUtils.isNotBlank(commitId)
+                        ? "codiqo-submission-" + commitId + "." + extension
+                        : "codiqo-submission." + extension;
                 File outputDir = ctx.getArgs().getOutputDirectory();
                 File file;
                 if (Objects.nonNull(outputDir)) {
                     FileUtils.forceMkdir(outputDir);
-                    file = new File(outputDir, "codiqo-submission." + extension);
+                    file = new File(outputDir, fileName);
                 } else {
                     file = Files.createTempFile("codiqo-submission-", "." + extension).toFile();
                 }

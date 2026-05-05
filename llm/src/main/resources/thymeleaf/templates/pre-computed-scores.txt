@@ -10,22 +10,28 @@ Project Normalization:
   modifyMult: [(${#numbers.formatDecimal(scores.modifyMult, 1, 2)})]
   addMult: [(${#numbers.formatDecimal(scores.addMult, 1, 2)})]
 
-Code Block Efforts (per-block: cappedDriverScore × operationMult × testWeight):
+Code Block Efforts (per-block: driverScore × operationMult × testWeight; no per-block cap):
   driverScore = weighted average of three dimensions projected onto lines-equivalent units:
     - L = non-comment code lines
     - S = NCSS (logical statements)
     - I = direct method invocations
   Projection factors are derived from baseline medians: k_S = lines.p50/ncss.p50, k_I = lines.p50/invocs.p50.
+  Factors are taken raw at the bucket level — no clamp. A dimension whose median is 0 (no signal in this population) gets factor = 0 (drops from the projection). The driverFactorMaxDeviation knob (default 0.75) only flags per-block ratio outliers; it does NOT clamp the bucket-level projection factors.
   For NEW blocks: driver = (L + S·k_S + I·k_I) / 3.
   For MODIFY blocks: driver = (linesChanged + invocationsChanged·k_I) / 2 (NCSS dropped — already reflected in linesChanged; both come from the precise diff).
   Scalers are computed per-kind (method vs constructor) and per-scope (prod vs test) from the full project, so values auto-calibrate to your codebase norms.
-  Density caps (P{statsQuantile} of driver-score distribution × densityCapMultiplier, per kind × scope):
+  Bucket P{statsQuantile} (driver-score 95th-percentile within each population, used as the per-block contribution to the global cap baseline):
     method/prod:       [(${scores.methodCapQuantileProd})]
     method/test:       [(${scores.methodCapQuantileTest})]
     constructor/prod:  [(${scores.constructorCapQuantileProd})]
     constructor/test:  [(${scores.constructorCapQuantileTest})]
-  totalEffectiveStatements: [(${scores.totalEffectiveStatements})] (sum of capped driver magnitudes across all blocks)
-  blockEffortSum: [(${#numbers.formatDecimal(scores.blockEffortSum, 1, 2)})] (sum of per-block efforts)
+  Global driver-score cap (single ceiling on the sum of all per-block efforts; per-block scores are not individually clipped):
+    totalBaseline    = [(${#numbers.formatDecimal(scores.totalBaseline, 1, 2)})]   (Σ_block bucketP{statsQuantile} × operationMult × testWeight)
+    globalCap        = [(${#numbers.formatDecimal(scores.globalCap, 1, 2)})]   (totalBaseline × driverScoreCapMultiplier)
+    totalEffortRaw   = [(${#numbers.formatDecimal(scores.totalEffortRaw, 1, 2)})]   (Σ_block effort, uncapped)
+    globalCapApplied = [(${scores.globalCapApplied})]
+  totalEffectiveStatements: [(${scores.totalEffectiveStatements})] (sum of rounded driver scores across all blocks)
+  blockEffortSum: [(${#numbers.formatDecimal(scores.blockEffortSum, 1, 2)})] (= min(totalEffortRaw, globalCap); feeds the volume score)
 
 Volume Score (blockEffortSum^[(${#numbers.formatDecimal(scores.volumeExponent, 1, 2)})] exponent, then × filesScopeMultiplier):
   filesChanged: [(${scores.filesChanged})]

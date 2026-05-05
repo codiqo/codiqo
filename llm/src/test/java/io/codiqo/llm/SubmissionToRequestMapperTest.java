@@ -508,10 +508,10 @@ class SubmissionToRequestMapperTest {
     private static DimensionStatsModel dimStats(int min, int max) {
         DimensionStatsModel stats = new DimensionStatsModel();
         stats.setMin(min);
-        stats.setP50((min + max) / 2);
-        stats.setP75((min + max) * 3 / 4);
-        stats.setP90((min + max) * 9 / 10);
-        stats.setP95((int) ((min + max) * new RunArgs().getStatsQuantile()));
+        stats.setP50((min + max) / 2.0);
+        stats.setP75((min + max) * 3.0 / 4);
+        stats.setP90((min + max) * 9.0 / 10);
+        stats.setP95((min + max) * new RunArgs().getStatsQuantile());
         stats.setMax(max);
         return stats;
     }

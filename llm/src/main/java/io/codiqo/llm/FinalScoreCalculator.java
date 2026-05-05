@@ -14,6 +14,7 @@ import io.codiqo.llm.schema.LlmScoringResponse.ArchitectureEffortBonus;
 import io.codiqo.llm.schema.LlmScoringResponse.CodeBlockEffortView;
 import io.codiqo.llm.schema.LlmScoringResponse.FileEffortView;
 import io.codiqo.llm.schema.LlmScoringResponse.QualityMultiplier;
+import io.codiqo.llm.schema.LlmScoringResponse.VolumeScore;
 import lombok.RequiredArgsConstructor;
 
 @RequiredArgsConstructor
@@ -32,6 +33,7 @@ public class FinalScoreCalculator {
         }
         if (Objects.nonNull(response.getEffortBreakdown())) {
             response.getEffortBreakdown().setBaseEffortScore(Precision.round(baseEffort, ROUNDING_PRECISION));
+            response.getEffortBreakdown().setVolumeScore(toVolumeScore(preComputed));
             response.getEffortBreakdown().setFileEfforts(
                     preComputed.getFileEfforts().stream()
                             .map(FinalScoreCalculator::toFileEffortView)
@@ -97,14 +99,40 @@ public class FinalScoreCalculator {
         response.setScore(finalScore);
         response.setScoreCalculation(scoreCalculation);
     }
+    private static VolumeScore toVolumeScore(PreComputedScores p) {
+        return VolumeScore.builder()
+                .linesChanged(p.getLinesChanged())
+                .filesChanged(p.getFilesChanged())
+                .filesScopeMultiplier(Precision.round(p.getFilesScopeMultiplier(), ROUNDING_PRECISION))
+                .codeBlocksModified(p.getCodeBlocksModified())
+                .codeBlocksAdded(p.getCodeBlocksAdded())
+                .classesModified(p.getClassesModified())
+                .classesAdded(p.getClassesAdded())
+                .blockEffortSum(Precision.round(p.getBlockEffortSum(), ROUNDING_PRECISION))
+                .totalEffortRaw(Precision.round(p.getTotalEffortRaw(), ROUNDING_PRECISION))
+                .totalBaseline(Precision.round(p.getTotalBaseline(), ROUNDING_PRECISION))
+                .globalCap(Precision.round(p.getGlobalCap(), ROUNDING_PRECISION))
+                .globalCapApplied(p.isGlobalCapApplied())
+                .globalCapDryRun(p.isGlobalCapDryRun())
+                .sizeFactor(Precision.round(p.getSizeFactor(), ROUNDING_PRECISION))
+                .modifyMultiplier(Precision.round(p.getModifyMult(), ROUNDING_PRECISION))
+                .addMultiplier(Precision.round(p.getAddMult(), ROUNDING_PRECISION))
+                .totalVolumeScore(Precision.round(p.getVolumeScore(), ROUNDING_PRECISION))
+                .build();
+    }
     private static FileEffortView toFileEffortView(FileEffort fe) {
         return FileEffortView.builder()
                 .file(fe.getFile())
-                .totalEffort(fe.getTotalEffort())
+                .totalEffort(Precision.round(fe.getTotalEffort(), ROUNDING_PRECISION))
                 .isTest(fe.isTest())
                 .codeBlockEfforts(fe.getCodeBlockEfforts().stream()
                         .map(FinalScoreCalculator::toCodeBlockEffortView)
                         .collect(Collectors.toList()))
+                .blocksFlaggedAsRatioOutlier(fe.getBlocksFlaggedAsRatioOutlier())
+                .blocksFlaggedAsGlobalCapDriver(fe.getBlocksFlaggedAsGlobalCapDriver())
+                .maxBlockRatioDeviationNcss(Precision.round(fe.getMaxBlockRatioDeviationNcss(), ROUNDING_PRECISION))
+                .maxBlockRatioDeviationInvocations(Precision.round(fe.getMaxBlockRatioDeviationInvocations(), ROUNDING_PRECISION))
+                .fileFlaggedAsAbusive(fe.isFileFlaggedAsAbusive())
                 .build();
     }
     private static CodeBlockEffortView toCodeBlockEffortView(CodeBlockEffort cbe) {
@@ -122,10 +150,15 @@ public class FinalScoreCalculator {
                 .scaledLines(cbe.getScaledLines())
                 .scaledNcss(cbe.getScaledNcss())
                 .scaledInvocations(cbe.getScaledInvocations())
-                .driverScore(cbe.getDriverScore())
+                .driverScore(Precision.round(cbe.getDriverScore(), ROUNDING_PRECISION))
                 .cappedStatements(cbe.getCappedStatements())
-                .effort(cbe.getEffort())
+                .effort(Precision.round(cbe.getEffort(), ROUNDING_PRECISION))
                 .isTest(cbe.isTest())
+                .blockRatioDeviationNcss(cbe.getBlockRatioDeviationNcss())
+                .blockRatioDeviationInvocations(cbe.getBlockRatioDeviationInvocations())
+                .blockRatioOutlier(cbe.isBlockRatioOutlier())
+                .effortShare(Precision.round(cbe.getEffortShare(), ROUNDING_PRECISION))
+                .globalCapDriver(cbe.isGlobalCapDriver())
                 .build();
     }
 }

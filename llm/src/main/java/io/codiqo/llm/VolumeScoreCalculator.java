@@ -48,17 +48,25 @@ public class VolumeScoreCalculator {
         double modifyMult = 1.0 + Math.min(sizeFactor * args.getModifyMultiplierScale(), args.getModifyMultiplierCap());
         double addMult = 1.0 + args.getAddMultiplierScale() / (1.0 + sizeFactor);
 
-        List<CodeBlockEffort> codeBlockEfforts = calculateCodeBlockEfforts(
+        double maxDeviation = args.getDriverFactorMaxDeviation();
+        List<CodeBlockEffort> initialEfforts = calculateCodeBlockEfforts(
                 request.getCodeBlockChanges(),
                 request.getMethodScalerProd(), request.getMethodScalerTest(),
                 request.getConstructorScalerProd(), request.getConstructorScalerTest(),
                 methodCapQuantileProd, methodCapQuantileTest,
                 constructorCapQuantileProd, constructorCapQuantileTest,
-                args.getStatementsDensityCapMultiplier(), addMult, modifyMult, testMult);
-        List<FileEffort> fileEfforts = groupByFile(codeBlockEfforts);
+                addMult, modifyMult, testMult, maxDeviation);
 
-        double blockEffortSum = codeBlockEfforts.stream().mapToDouble(CodeBlockEffort::getEffort).sum();
+        double totalEffortRaw = initialEfforts.stream().mapToDouble(CodeBlockEffort::getEffort).sum();
+        double totalBaseline = initialEfforts.stream().mapToDouble(CodeBlockEffort::getBucketBaseline).sum();
+        double globalCap = totalBaseline * args.getDriverScoreCapMultiplier();
+        boolean globalCapApplied = totalBaseline > 0 && totalEffortRaw > globalCap;
+        boolean capDryRun = args.isDriverScoreCapDryRun();
+        double blockEffortSum = globalCapApplied && !capDryRun ? globalCap : totalEffortRaw;
         double volumeScore = Math.pow(blockEffortSum, args.getVolumeExponent());
+
+        List<CodeBlockEffort> codeBlockEfforts = applyAbuseSignals(initialEfforts, totalEffortRaw, globalCapApplied, maxDeviation);
+        List<FileEffort> fileEfforts = groupByFile(codeBlockEfforts, maxDeviation);
 
         int filesChanged = changeSummary.getTotalFilesChanged();
         double filesScopeMultiplier = 1.0;
@@ -70,7 +78,7 @@ public class VolumeScoreCalculator {
         double totalVolumeScore = volumeScore * filesScopeMultiplier;
         double baseEffort = totalVolumeScore;
 
-        int totalEffectiveStatements = codeBlockEfforts.stream().mapToInt(CodeBlockEffort::getCappedStatements).sum();
+        int totalEffectiveStatements = (int) Math.round(codeBlockEfforts.stream().mapToDouble(CodeBlockEffort::getDriverScore).sum());
 
         CpdPreComputed cpd = calculateCpdPenalty(request);
         StaticAnalysisPreComputed sa = calculateStaticAnalysisPenalty(request);
@@ -90,6 +98,11 @@ public class VolumeScoreCalculator {
                 .filesChanged(filesChanged)
                 .filesScopeMultiplier(Precision.round(filesScopeMultiplier, ROUNDING_PRECISION))
                 .blockEffortSum(Precision.round(blockEffortSum, ROUNDING_PRECISION))
+                .totalEffortRaw(Precision.round(totalEffortRaw, ROUNDING_PRECISION))
+                .totalBaseline(Precision.round(totalBaseline, ROUNDING_PRECISION))
+                .globalCap(Precision.round(globalCap, ROUNDING_PRECISION))
+                .globalCapApplied(globalCapApplied)
+                .globalCapDryRun(capDryRun)
                 .codeBlocksModified(changeSummary.getCodeBlocksModified())
                 .codeBlocksAdded(changeSummary.getCodeBlocksAdded())
                 .classesModified(changeSummary.getClassesModified())
@@ -205,18 +218,13 @@ public class VolumeScoreCalculator {
             int methodCapQuantileTest,
             int constructorCapQuantileProd,
             int constructorCapQuantileTest,
-            double densityCapMultiplier,
             double addMult,
             double modifyMult,
-            double testMult) {
+            double testMult,
+            double maxDeviation) {
         if (CollectionUtils.isEmpty(codeBlocks)) {
             return Lists.newArrayList();
         }
-        int maxMethodProd = (int) (methodCapQuantileProd * densityCapMultiplier);
-        int maxMethodTest = (int) (methodCapQuantileTest * densityCapMultiplier);
-        int maxCtorProd = (int) (constructorCapQuantileProd * densityCapMultiplier);
-        int maxCtorTest = (int) (constructorCapQuantileTest * densityCapMultiplier);
-        boolean hasCap = BooleanUtils.or(new boolean[] { maxMethodProd > 0, maxMethodTest > 0, maxCtorProd > 0, maxCtorTest > 0 });
 
         List<CodeBlockEffort> toReturn = Lists.newArrayList();
         for (CodeBlockChange block : codeBlocks) {
@@ -232,6 +240,8 @@ public class VolumeScoreCalculator {
             double projectedLines;
             double projectedNcss;
             double projectedInvocations;
+            double deviationNcss;
+            double deviationInvocations;
             if (block.isModify()) {
                 int linesChanged = Math.min(block.getTotalLinesChanged(), block.getNonCommentCodeLines());
                 changeRatio = computeChangeRatio(block);
@@ -240,20 +250,26 @@ public class VolumeScoreCalculator {
                 projectedLines = linesChanged;
                 projectedNcss = 0.0;
                 projectedInvocations = invocationsChanged * scaler.invocationsFactor();
+                deviationNcss = 0.0;
+                deviationInvocations = 0.0;
             } else {
                 driverScore = DriverScore.forNew(scaler, block.getNonCommentCodeLines(),
                         block.getNonCommentCodeStatements(), block.getDirectInvocationCount());
                 projectedLines = block.getNonCommentCodeLines();
                 projectedNcss = block.getNonCommentCodeStatements() * scaler.ncssFactor();
                 projectedInvocations = block.getDirectInvocationCount() * scaler.invocationsFactor();
+                deviationNcss = relativeDeviation(block.getNonCommentCodeStatements(), block.getNonCommentCodeLines(), bucketRatio(scaler.ncss(), scaler.lines()));
+                deviationInvocations = relativeDeviation(block.getDirectInvocationCount(), block.getNonCommentCodeLines(), bucketRatio(scaler.invocations(), scaler.lines()));
             }
 
-            int cap = selectCap(block, maxMethodProd, maxMethodTest, maxCtorProd, maxCtorTest);
-            boolean applyCap = hasCap && cap > 0;
-            int cappedStatements = (int) Math.round(applyCap ? Math.min(driverScore, cap) : driverScore);
+            int bucketQuantile = selectBucketQuantile(block, methodCapQuantileProd, methodCapQuantileTest, constructorCapQuantileProd, constructorCapQuantileTest);
+            int cappedStatements = (int) Math.round(driverScore);
             double operationMult = block.isNew() ? addMult : modifyMult;
             double testWeight = block.isTest() ? testMult : 1.0;
-            double effort = Precision.round(cappedStatements * operationMult * testWeight, ROUNDING_PRECISION);
+            double effort = driverScore * operationMult * testWeight;
+            double bucketBaseline = bucketQuantile * operationMult * testWeight;
+
+            boolean ratioOutlier = deviationNcss > maxDeviation || deviationInvocations > maxDeviation;
 
             toReturn.add(new CodeBlockEffort(block.getFile(), block.getName(), block.getSignature(),
                     block.getOperation(), block.getNonCommentCodeStatements(), block.getDirectInvocationCount(),
@@ -262,9 +278,44 @@ public class VolumeScoreCalculator {
                     Precision.round(projectedLines, ROUNDING_PRECISION),
                     Precision.round(projectedNcss, ROUNDING_PRECISION),
                     Precision.round(projectedInvocations, ROUNDING_PRECISION),
-                    driverScore, cappedStatements, effort, block.isTest()));
+                    driverScore, cappedStatements, effort, bucketBaseline, block.isTest(),
+                    Precision.round(deviationNcss, ROUNDING_PRECISION),
+                    Precision.round(deviationInvocations, ROUNDING_PRECISION),
+                    ratioOutlier, 0.0, false));
         }
         return toReturn;
+    }
+    static List<CodeBlockEffort> applyAbuseSignals(List<CodeBlockEffort> initialEfforts, double totalEffortRaw, boolean globalCapApplied, double maxDeviation) {
+        if (CollectionUtils.isEmpty(initialEfforts)) {
+            return initialEfforts;
+        }
+        List<CodeBlockEffort> toReturn = Lists.newArrayListWithCapacity(initialEfforts.size());
+        for (CodeBlockEffort cbe : initialEfforts) {
+            double effortShare = totalEffortRaw > 0 ? cbe.getEffort() / totalEffortRaw : 0.0;
+            boolean globalCapDriver = globalCapApplied && effortShare > maxDeviation;
+            toReturn.add(new CodeBlockEffort(cbe.getFile(), cbe.getName(), cbe.getSignature(),
+                    cbe.getOperation(), cbe.getNonCommentCodeStatements(), cbe.getDirectInvocationCount(),
+                    cbe.getEffectiveInvocationsChanged(), cbe.getNonCommentCodeLines(), cbe.getCommentLines(),
+                    cbe.getEffectiveLinesChanged(), cbe.getChangeRatio(),
+                    cbe.getScaledLines(), cbe.getScaledNcss(), cbe.getScaledInvocations(),
+                    cbe.getDriverScore(), cbe.getCappedStatements(), cbe.getEffort(), cbe.getBucketBaseline(), cbe.isTest(),
+                    cbe.getBlockRatioDeviationNcss(), cbe.getBlockRatioDeviationInvocations(), cbe.isBlockRatioOutlier(),
+                    effortShare, globalCapDriver));
+        }
+        return toReturn;
+    }
+    private static double bucketRatio(DriverScaler.DimensionStats numerator, DriverScaler.DimensionStats denominator) {
+        if (denominator.p50() <= 0.0) {
+            return 0.0;
+        }
+        return numerator.p50() / denominator.p50();
+    }
+    private static double relativeDeviation(int blockNumerator, int blockDenominator, double bucketRatio) {
+        if (blockDenominator <= 0 || bucketRatio <= 0.0) {
+            return 0.0;
+        }
+        double blockRatio = (double) blockNumerator / blockDenominator;
+        return Math.abs(blockRatio - bucketRatio) / bucketRatio;
     }
     private static DriverScaler selectScaler(
             CodeBlockChange block,
@@ -277,20 +328,20 @@ public class VolumeScoreCalculator {
         }
         return block.isTest() ? methodScalerTest : methodScalerProd;
     }
-    private static int selectCap(
+    private static int selectBucketQuantile(
             CodeBlockChange block,
-            int maxMethodProd,
-            int maxMethodTest,
-            int maxCtorProd,
-            int maxCtorTest) {
+            int methodCapQuantileProd,
+            int methodCapQuantileTest,
+            int constructorCapQuantileProd,
+            int constructorCapQuantileTest) {
         int primary;
         int fallback;
         if (block.isConstructor()) {
-            primary = block.isTest() ? maxCtorTest : maxCtorProd;
-            fallback = block.isTest() ? maxCtorProd : maxCtorTest;
+            primary = block.isTest() ? constructorCapQuantileTest : constructorCapQuantileProd;
+            fallback = block.isTest() ? constructorCapQuantileProd : constructorCapQuantileTest;
         } else {
-            primary = block.isTest() ? maxMethodTest : maxMethodProd;
-            fallback = block.isTest() ? maxMethodProd : maxMethodTest;
+            primary = block.isTest() ? methodCapQuantileTest : methodCapQuantileProd;
+            fallback = block.isTest() ? methodCapQuantileProd : methodCapQuantileTest;
         }
         return primary > 0 ? primary : fallback;
     }
@@ -301,7 +352,7 @@ public class VolumeScoreCalculator {
         double ratio = (double) block.getTotalLinesChanged() / block.getNonCommentCodeLines();
         return Math.min(ratio, 1.0);
     }
-    static List<FileEffort> groupByFile(List<CodeBlockEffort> blockEfforts) {
+    static List<FileEffort> groupByFile(List<CodeBlockEffort> blockEfforts, double maxDeviation) {
         if (CollectionUtils.isEmpty(blockEfforts)) {
             return Lists.newArrayList();
         }
@@ -310,10 +361,17 @@ public class VolumeScoreCalculator {
 
         return byFile.entrySet().stream().map(entry -> {
             List<CodeBlockEffort> blocks = entry.getValue();
-            double totalEffort = Precision.round(
-                    blocks.stream().mapToDouble(CodeBlockEffort::getEffort).sum(), ROUNDING_PRECISION);
+            double totalEffort = blocks.stream().mapToDouble(CodeBlockEffort::getEffort).sum();
             boolean isTest = blocks.get(0).isTest();
-            return new FileEffort(entry.getKey(), totalEffort, isTest, blocks);
+
+            int outliers = (int) blocks.stream().filter(CodeBlockEffort::isBlockRatioOutlier).count();
+            int capDrivers = (int) blocks.stream().filter(CodeBlockEffort::isGlobalCapDriver).count();
+            double maxDevNcss = blocks.stream().mapToDouble(CodeBlockEffort::getBlockRatioDeviationNcss).max().orElse(0.0);
+            double maxDevInvocs = blocks.stream().mapToDouble(CodeBlockEffort::getBlockRatioDeviationInvocations).max().orElse(0.0);
+            boolean abusive = outliers * 2 > blocks.size();
+
+            return new FileEffort(entry.getKey(), totalEffort, isTest, blocks,
+                    outliers, capDrivers, maxDevNcss, maxDevInvocs, abusive);
         }).sorted(Comparator.comparingDouble(FileEffort::getTotalEffort).reversed()).collect(Collectors.toList());
     }
 
@@ -334,6 +392,11 @@ public class VolumeScoreCalculator {
         int filesChanged;
         double filesScopeMultiplier;
         double blockEffortSum;
+        double totalEffortRaw;
+        double totalBaseline;
+        double globalCap;
+        boolean globalCapApplied;
+        boolean globalCapDryRun;
         int codeBlocksModified;
         int codeBlocksAdded;
         int classesModified;
@@ -416,7 +479,13 @@ public class VolumeScoreCalculator {
         double driverScore;
         int cappedStatements;
         double effort;
+        double bucketBaseline;
         boolean isTest;
+        double blockRatioDeviationNcss;
+        double blockRatioDeviationInvocations;
+        boolean blockRatioOutlier;
+        double effortShare;
+        boolean globalCapDriver;
     }
 
     @Value
@@ -425,5 +494,10 @@ public class VolumeScoreCalculator {
         double totalEffort;
         boolean isTest;
         List<CodeBlockEffort> codeBlockEfforts;
+        int blocksFlaggedAsRatioOutlier;
+        int blocksFlaggedAsGlobalCapDriver;
+        double maxBlockRatioDeviationNcss;
+        double maxBlockRatioDeviationInvocations;
+        boolean fileFlaggedAsAbusive;
     }
 }

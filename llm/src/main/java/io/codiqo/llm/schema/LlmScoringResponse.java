@@ -160,6 +160,11 @@ public class LlmScoringResponse {
         private int classesModified;
         private int classesAdded;
         private double blockEffortSum;
+        private double totalEffortRaw;
+        private double totalBaseline;
+        private double globalCap;
+        private boolean globalCapApplied;
+        private boolean globalCapDryRun;
         private double sizeFactor;
         private double modifyMultiplier;
         private double addMultiplier;
@@ -403,6 +408,11 @@ public class LlmScoringResponse {
         private boolean isTest;
         @Builder.Default
         private List<CodeBlockEffortView> codeBlockEfforts = Lists.newArrayList();
+        private int blocksFlaggedAsRatioOutlier;
+        private int blocksFlaggedAsGlobalCapDriver;
+        private double maxBlockRatioDeviationNcss;
+        private double maxBlockRatioDeviationInvocations;
+        private boolean fileFlaggedAsAbusive;
     }
 
     @Data
@@ -427,5 +437,10 @@ public class LlmScoringResponse {
         private int cappedStatements;
         private double effort;
         private boolean isTest;
+        private double blockRatioDeviationNcss;
+        private double blockRatioDeviationInvocations;
+        private boolean blockRatioOutlier;
+        private double effortShare;
+        private boolean globalCapDriver;
     }
 }

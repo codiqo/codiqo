@@ -344,31 +344,33 @@
                                 <tbody>
                                     <tr class="border-b has-tooltip">
                                         <td class="py-1 text-gray-500">
-                                            Effective Statements <span th:if="${totalEffectiveStatements != null and totalEffectiveStatements != linesChanged}" class="text-amber-600 text-xs">(density capped)</span>
+                                            Effective Statements <span th:if="${globalCapApplied}" class="text-amber-600 text-xs">(global cap applied)</span>
                                             <span class="tooltip-trigger" data-tooltip="stmts">?</span>
                                             <div id="tooltip-stmts" class="tooltip-popover">
-                                                Sum of capped driver magnitudes across all code blocks.<br>
-                                                Each block is capped at P<span th:text="${statsQuantilePercent}">90</span> &times; <span th:text="${#numbers.formatDecimal(statementsDensityCapMultiplier, 1, 1)}">2.5</span> using the quantile for its own kind (method/constructor) and scope (prod/test).
+                                                Sum of rounded driver-score magnitudes across all code blocks.<br>
+                                                Per-block driver scores are not individually clipped; the cap binds only on their sum (see Block Effort Sum).
                                             </div>
                                         </td>
-                                        <td class="py-1 text-right font-mono"><span th:if="${totalEffectiveStatements != null and totalEffectiveStatements != linesChanged}" th:text="${linesChanged}" class="text-gray-400 line-through mr-1">0</span> <span th:text="${totalEffectiveStatements != null ? totalEffectiveStatements : linesChanged}">0</span></td>
+                                        <td class="py-1 text-right font-mono"><span th:text="${totalEffectiveStatements != null ? totalEffectiveStatements : linesChanged}">0</span></td>
                                         <td class="py-1 text-right text-gray-400 text-xs">input</td>
                                     </tr>
-                                    <tr th:if="${totalEffectiveStatements != null and totalEffectiveStatements != linesChanged}" class="border-b">
+                                    <tr th:if="${globalCapApplied}" class="border-b">
                                         <td colspan="3" class="py-1">
                                             <div class="bg-amber-50 border border-amber-200 rounded px-3 py-1.5 text-xs text-amber-800">
-                                                <strong>Density cap:</strong>
-                                                per-block cap = P<span th:text="${statsQuantilePercent}">90</span> driver-score &times;
-                                                <code th:text="${#numbers.formatDecimal(statementsDensityCapMultiplier, 1, 1)}">2.5</code>,
-                                                selected by kind (method/constructor) and scope (prod/test):
+                                                <strong>Driver-score cap:</strong>
+                                                global cap = totalBaseline &times;
+                                                <code th:text="${#numbers.formatDecimal(driverScoreCapMultiplier, 1, 1)}">2.5</code>
+                                                applied to the sum of efforts (not per block).
+                                                Per-bucket P<span th:text="${statsQuantilePercent}">95</span> contributing to baseline:
                                                 method/prod=<code th:text="${methodCapQuantileProd}">20</code>,
                                                 method/test=<code th:text="${methodCapQuantileTest}">30</code>,
                                                 ctor/prod=<code th:text="${constructorCapQuantileProd}">8</code>,
-                                                ctor/test=<code th:text="${constructorCapQuantileTest}">5</code>;
-                                                summed across <code th:text="${codeBlocksModified + codeBlocksAdded}">10</code> blocks =
-                                                <code th:text="${totalEffectiveStatements}">90</code> max effective statements
-                                                <span class="text-amber-600 ml-1">(<span th:text="${linesChanged}">349</span> raw &rarr; <span th:text="${totalEffectiveStatements}">90</span>)</span>
-                                                <div class="text-[10px] text-amber-600 mt-1">P<span th:text="${statsQuantilePercent}">90</span> = <span th:text="${statsQuantilePercent}">90</span>th percentile of the driver-score distribution over samples of that kind and scope. Each block capped individually using its own (kind, scope) quantile.</div>
+                                                ctor/test=<code th:text="${constructorCapQuantileTest}">5</code>.
+                                                totalBaseline = <code th:text="${#numbers.formatDecimal(totalBaseline, 1, 2)}">0</code>,
+                                                globalCap = <code th:text="${#numbers.formatDecimal(globalCap, 1, 2)}">0</code>,
+                                                totalEffortRaw = <code th:text="${#numbers.formatDecimal(totalEffortRaw, 1, 2)}">0</code>
+                                                <span class="text-amber-600 ml-1">(<span th:text="${#numbers.formatDecimal(totalEffortRaw, 1, 2)}">0</span> raw &rarr; <span th:text="${#numbers.formatDecimal(blockEffortSum, 1, 2)}">0</span> capped)</span>
+                                                <div class="text-[10px] text-amber-600 mt-1">P<span th:text="${statsQuantilePercent}">95</span> = <span th:text="${statsQuantilePercent}">95</span>th percentile of the driver-score distribution within each (kind, scope) population.</div>
                                             </div>
                                         </td>
                                     </tr>
@@ -624,20 +626,20 @@
                             <!-- Step 2: Code Block Efforts -->
                             <div class="bg-white rounded-lg p-3 border border-slate-200">
                                 <h5 class="text-xs font-bold text-slate-700 mb-1">Step 2: Code Block Efforts</h5>
-                                <p class="text-xs text-gray-400 mb-2">Per block: cappedDriverScore &times; operationMult &times; testWeight. Driver score = weighted average of L, S·k_S, I·k_I (lines-equivalent projection); NCSS dropped for MODIFY.</p>
+                                <p class="text-xs text-gray-400 mb-2">Per block: driverScore &times; operationMult &times; testWeight (no per-block cap). Driver score = weighted average of L, S·k_S, I·k_I (lines-equivalent projection); NCSS dropped for MODIFY.</p>
                                 <table class="w-full text-xs border-collapse">
                                     <thead><tr class="text-gray-400 border-b"><th class="text-left py-0.5 font-normal">Metric</th><th class="text-right py-0.5 font-normal">Value</th></tr></thead>
                                     <tbody class="font-mono">
                                         <tr class="border-b">
-                                            <td class="py-0.5 text-gray-600">Effective Statements <span th:if="${totalEffectiveStatements != null and totalEffectiveStatements != linesChanged}" class="text-amber-600">(capped)</span></td>
-                                            <td class="py-0.5 text-right"><span th:if="${totalEffectiveStatements != null and totalEffectiveStatements != linesChanged}" th:text="${linesChanged}" class="text-gray-400 line-through mr-1">0</span> <span th:text="${totalEffectiveStatements != null ? totalEffectiveStatements : linesChanged}">0</span></td>
+                                            <td class="py-0.5 text-gray-600">Effective Statements</td>
+                                            <td class="py-0.5 text-right"><span th:text="${totalEffectiveStatements != null ? totalEffectiveStatements : linesChanged}">0</span></td>
                                         </tr>
-                                        <tr th:if="${totalEffectiveStatements != null and totalEffectiveStatements != linesChanged}" class="border-b">
+                                        <tr th:if="${globalCapApplied}" class="border-b">
                                             <td colspan="2" class="py-0.5">
-                                                <span class="text-amber-700 text-[10px]">cap = &Sigma; min(driverScore, P<span th:text="${statsQuantilePercent}">90</span> &times; <span th:text="${#numbers.formatDecimal(statementsDensityCapMultiplier, 1, 1)}">2.5</span>) across <span th:text="${codeBlocksModified + codeBlocksAdded}">10</span> blocks = <span th:text="${totalEffectiveStatements}">90</span> (per-block cap picked from method/ctor × prod/test)</span>
+                                                <span class="text-amber-700 text-[10px]">global cap = totalBaseline &times; <span th:text="${#numbers.formatDecimal(driverScoreCapMultiplier, 1, 1)}">2.5</span> = <span th:text="${#numbers.formatDecimal(globalCap, 1, 2)}">0</span>; totalEffortRaw = <span th:text="${#numbers.formatDecimal(totalEffortRaw, 1, 2)}">0</span> &rarr; capped sum = <span th:text="${#numbers.formatDecimal(blockEffortSum, 1, 2)}">0</span></span>
                                             </td>
                                         </tr>
-                                        <tr class="border-b"><td class="py-0.5 text-gray-600">Block Effort Sum</td><td class="py-0.5 text-right font-bold text-blue-600" th:text="${blockEffortSum != null ? #numbers.formatDecimal(blockEffortSum, 1, 2) : '—'}">0.00</td></tr>
+                                        <tr class="border-b"><td class="py-0.5 text-gray-600">Block Effort Sum <span th:if="${globalCapApplied}" class="text-amber-600 text-[10px]">(global cap applied)</span></td><td class="py-0.5 text-right font-bold text-blue-600" th:text="${blockEffortSum != null ? #numbers.formatDecimal(blockEffortSum, 1, 2) : '—'}">0.00</td></tr>
                                     </tbody>
                                     <tfoot><tr class="bg-blue-50"><td class="py-0.5 font-semibold text-gray-700">Volume Score (sum<sup th:text="${#numbers.formatDecimal(volumeExponent, 1, 2)}">0.98</sup>)</td><td class="py-0.5 text-right font-bold text-blue-700" th:text="${#numbers.formatDecimal(totalVolumeScore / (filesScopeMultiplier != null and filesScopeMultiplier > 0 ? filesScopeMultiplier : 1), 1, 2)}">0.00</td></tr></tfoot>
                                 </table>

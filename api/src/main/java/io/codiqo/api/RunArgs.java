@@ -176,7 +176,11 @@ public class RunArgs {
     @Nullable
     private double filesScopeMaxBonus = 0.10;
     @Nullable
-    private double statementsDensityCapMultiplier = 2.5;
+    private double driverScoreCapMultiplier = 2.5;
+    @Nullable
+    private double driverFactorMaxDeviation = 0.75;
+    @Nullable
+    private boolean driverScoreCapDryRun = false;
     @Nullable
     private double statsQuantile = 0.95;
     @Nullable
