@@ -256,6 +256,8 @@ public class MetricsAggregator implements SubmissionPopulator {
         toReturn.setLines(toModel(scaler.lines()));
         toReturn.setNcss(toModel(scaler.ncss()));
         toReturn.setInvocations(toModel(scaler.invocations()));
+        toReturn.setNcssFactor(scaler.ncssFactor());
+        toReturn.setInvocationsFactor(scaler.invocationsFactor());
         return toReturn;
     }
     private static DimensionStatsModel toModel(DimensionStats stats) {

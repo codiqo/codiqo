@@ -123,10 +123,10 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         }
         return DriverScaler.DimensionStats.builder()
                 .min(Optional.ofNullable(model.getMin()).orElse(0))
-                .p50(Optional.ofNullable(model.getP50()).orElse(0))
-                .p75(Optional.ofNullable(model.getP75()).orElse(0))
-                .p90(Optional.ofNullable(model.getP90()).orElse(0))
-                .p95(Optional.ofNullable(model.getP95()).orElse(0))
+                .p50(Optional.ofNullable(model.getP50()).orElse(0.0))
+                .p75(Optional.ofNullable(model.getP75()).orElse(0.0))
+                .p90(Optional.ofNullable(model.getP90()).orElse(0.0))
+                .p95(Optional.ofNullable(model.getP95()).orElse(0.0))
                 .max(Optional.ofNullable(model.getMax()).orElse(0))
                 .build();
     }

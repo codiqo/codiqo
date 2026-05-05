@@ -36,13 +36,62 @@ class DriverScalerTest {
     }
 
     @Test
-    void shouldReturnUnitFactorsWhenP50IsZero() {
+    void shouldReturnZeroFactorWhenDimensionMedianIsZero() {
         DriverScaler scaler = DriverScaler.of(List.of(
                 new DriverScaler.Sample(5, 0, 0),
                 new DriverScaler.Sample(10, 0, 0)));
 
-        assertEquals(1.0, scaler.ncssFactor(), 0.0001);
-        assertEquals(1.0, scaler.invocationsFactor(), 0.0001);
-        assertTrue(!scaler.isEmpty());
+        assertEquals(0.0, scaler.ncssFactor(), 0.0001,
+                "no signal in NCSS dimension (p50=0) → factor 0.0 (drop dimension), not silent 1.0 fallback");
+        assertEquals(0.0, scaler.invocationsFactor(), 0.0001,
+                "no signal in invocations dimension (p50=0) → factor 0.0");
+        assertTrue(!scaler.isEmpty(), "scaler with non-zero population is not empty even when projection dimensions are degenerate");
+    }
+
+    @Test
+    void shouldReturnEmptyWhenLinesMedianIsZero() {
+        DriverScaler scaler = DriverScaler.of(List.of(
+                new DriverScaler.Sample(0, 5, 5),
+                new DriverScaler.Sample(0, 10, 10)));
+
+        assertTrue(scaler.isEmpty(),
+                "lines.p50 == 0 makes the scaler degenerate — DriverScore.forNew/forModify will short-circuit to 0.0");
+    }
+
+    @Test
+    void factorsAreRawRatiosOfMediansWithoutClamping() {
+        DriverScaler scaler = DriverScaler.of(List.of(
+                new DriverScaler.Sample(30, 1, 1),
+                new DriverScaler.Sample(30, 1, 1),
+                new DriverScaler.Sample(30, 1, 1)));
+
+        assertEquals(30.0, scaler.ncssFactor(), 0.0001,
+                "factors are raw lines.p50 / dim.p50 — no bucket-level clamp. Per-block deviation cap lives elsewhere.");
+        assertEquals(30.0, scaler.invocationsFactor(), 0.0001);
+    }
+
+    @Test
+    void factorsCanBeBelowOneWhenNcssExceedsLines() {
+        DriverScaler scaler = DriverScaler.of(List.of(
+                new DriverScaler.Sample(1, 30, 30),
+                new DriverScaler.Sample(1, 30, 30),
+                new DriverScaler.Sample(1, 30, 30)));
+
+        assertEquals(1.0 / 30.0, scaler.ncssFactor(), 0.0001,
+                "factors below 1.0 reflect projects where NCSS density exceeds line density");
+        assertEquals(1.0 / 30.0, scaler.invocationsFactor(), 0.0001);
+    }
+
+    @Test
+    void fromPersistedReproducesFactorsFromOf() {
+        DriverScaler.DimensionStats lines = new DriverScaler.DimensionStats(1, 30, 30, 30, 30, 30);
+        DriverScaler.DimensionStats ncss = new DriverScaler.DimensionStats(1, 1, 1, 1, 1, 1);
+        DriverScaler.DimensionStats invocs = new DriverScaler.DimensionStats(1, 1, 1, 1, 1, 1);
+
+        DriverScaler scaler = DriverScaler.fromPersisted(3, lines, ncss, invocs);
+
+        assertEquals(30.0, scaler.ncssFactor(), 0.0001,
+                "fromPersisted reproduces the same factors as of() — both use the raw median ratio");
+        assertEquals(30.0, scaler.invocationsFactor(), 0.0001);
     }
 }

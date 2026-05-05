@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -54,6 +55,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
     private static final List<ColumnData<MaxRow>> MAX_CONTRIBUTOR_COLUMNS;
     private static final List<ColumnData<BlockRow>> CHANGED_BLOCKS_FIXED_COLUMNS;
     private static final List<ColumnData<BlockRow>> TRIVIAL_BLOCKS_FIXED_COLUMNS;
+    private static final List<ColumnData<BlockRow>> OUTLIER_BLOCKS_FIXED_COLUMNS;
 
     static {
         ClassLoaderTemplateResolver resolver = new ClassLoaderTemplateResolver();
@@ -88,6 +90,14 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
                 new Column().header("L").dataAlign(HorizontalAlign.RIGHT).with((BlockRow r) -> String.valueOf(r.lines())),
                 new Column().header("S").dataAlign(HorizontalAlign.RIGHT).with((BlockRow r) -> String.valueOf(r.ncss())),
                 new Column().header("I").dataAlign(HorizontalAlign.RIGHT).with((BlockRow r) -> String.valueOf(r.invocations())));
+
+        OUTLIER_BLOCKS_FIXED_COLUMNS = Arrays.<ColumnData<BlockRow>> asList(
+                new Column().header("Kind").dataAlign(HorizontalAlign.LEFT).with((BlockRow r) -> r.kind()),
+                new Column().header("Scope").dataAlign(HorizontalAlign.LEFT).with((BlockRow r) -> r.test() ? "test" : "prod"),
+                new Column().header("Op").dataAlign(HorizontalAlign.LEFT).with(SubmissionSummaryPrinter::formatOperation),
+                new Column().header("Driver").dataAlign(HorizontalAlign.RIGHT).with((BlockRow r) -> formatDouble(r.driver())),
+                new Column().header("S/L_dev").dataAlign(HorizontalAlign.RIGHT).with((BlockRow r) -> r.operation() == OperationEnum.MODIFY ? "—" : formatPercent(r.deviationNcss())),
+                new Column().header("I/L_dev").dataAlign(HorizontalAlign.RIGHT).with((BlockRow r) -> r.operation() == OperationEnum.MODIFY ? "—" : formatPercent(r.deviationInvocations())));
     }
 
     private final Log log;
@@ -119,6 +129,57 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
             log.info("Trivial changed code blocks (excluded from driver score):");
             logLines(renderTrivialBlocksTable(rowBundle.trivial()));
         }
+
+        List<BlockRow> outliers = rowBundle.nonTrivial().stream()
+                .filter(BlockRow::outlier)
+                .sorted(Comparator.comparingDouble((BlockRow r) -> Math.max(r.deviationNcss(), r.deviationInvocations())).reversed())
+                .collect(Collectors.toList());
+        double maxDeviation = ctx.getArgs().getDriverFactorMaxDeviation();
+        log.info("");
+        log.info(String.format("Ratio outliers in this commit (block S/L or I/L deviates > %.2f from bucket median):", maxDeviation));
+        if (outliers.isEmpty()) {
+            log.info("  none");
+        } else {
+            logLines(renderOutliersTable(outliers));
+        }
+
+        OutlierBucketCounts bucketCounts = countOutliersByBucket(rowBundle.nonTrivial());
+        log.info("");
+        log.info("Ratio outlier counts by bucket:");
+        log.info(String.format("  method/prod:       %d", bucketCounts.methodProd()));
+        log.info(String.format("  method/test:       %d", bucketCounts.methodTest()));
+        log.info(String.format("  constructor/prod:  %d", bucketCounts.ctorProd()));
+        log.info(String.format("  constructor/test:  %d", bucketCounts.ctorTest()));
+    }
+    private static String renderOutliersTable(List<BlockRow> rows) {
+        List<ColumnData<BlockRow>> columns = Lists.newArrayList();
+        columns.add(new Column().header("File").dataAlign(HorizontalAlign.LEFT).maxWidth(determineWidth(rows, BlockRow::file, "File")).with((BlockRow r) -> r.file()));
+        columns.add(new Column().header("Block").dataAlign(HorizontalAlign.LEFT).maxWidth(determineWidth(rows, BlockRow::block, "Block")).with((BlockRow r) -> r.block()));
+        columns.addAll(OUTLIER_BLOCKS_FIXED_COLUMNS);
+        return AsciiTable.getTable(rows, columns);
+    }
+    private static OutlierBucketCounts countOutliersByBucket(List<BlockRow> rows) {
+        OutlierBucketCounts counts = new OutlierBucketCounts();
+        for (BlockRow row : rows) {
+            if (!row.outlier()) {
+                continue;
+            }
+            boolean isCtor = SymbolKind.Constructor.name().equals(row.kind());
+            if (isCtor) {
+                if (row.test()) {
+                    counts.ctorTest++;
+                } else {
+                    counts.ctorProd++;
+                }
+            } else {
+                if (row.test()) {
+                    counts.methodTest++;
+                } else {
+                    counts.methodProd++;
+                }
+            }
+        }
+        return counts;
     }
     private void logLines(String text) {
         for (String line : text.split("\n", -1)) {
@@ -129,13 +190,13 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         AnalysisSubmissionModel submission = ctx.getSubmissionModel();
         CommitModel commit = submission.getCommit();
         TrivialCounts trivials = aggregateTrivialCounts(ctx);
-        double densityMultiplier = ctx.getArgs().getStatementsDensityCapMultiplier();
+        double capMultiplier = ctx.getArgs().getDriverScoreCapMultiplier();
 
         List<ScalerRow> rows = Arrays.asList(
-                new ScalerRow("method/prod", trivials.methodProd(), ctx.getMethodCapQuantileProd(), ctx.getMethodScalerProd(), densityMultiplier),
-                new ScalerRow("method/test", trivials.methodTest(), ctx.getMethodCapQuantileTest(), ctx.getMethodScalerTest(), densityMultiplier),
-                new ScalerRow("constructor/prod", trivials.ctorProd(), ctx.getConstructorCapQuantileProd(), ctx.getConstructorScalerProd(), densityMultiplier),
-                new ScalerRow("constructor/test", trivials.ctorTest(), ctx.getConstructorCapQuantileTest(), ctx.getConstructorScalerTest(), densityMultiplier));
+                new ScalerRow("method/prod", trivials.methodProd(), ctx.getMethodCapQuantileProd(), ctx.getMethodScalerProd(), capMultiplier),
+                new ScalerRow("method/test", trivials.methodTest(), ctx.getMethodCapQuantileTest(), ctx.getMethodScalerTest(), capMultiplier),
+                new ScalerRow("constructor/prod", trivials.ctorProd(), ctx.getConstructorCapQuantileProd(), ctx.getConstructorScalerProd(), capMultiplier),
+                new ScalerRow("constructor/test", trivials.ctorTest(), ctx.getConstructorCapQuantileTest(), ctx.getConstructorScalerTest(), capMultiplier));
 
         Context tctx = new Context(Locale.ENGLISH);
         tctx.setVariable("title", TITLE);
@@ -147,7 +208,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         tctx.setVariable("blocks", countChangedBlocks(submission));
         tctx.setVariable("rows", rows);
         tctx.setVariable("quantilePercent", (int) Math.round(ctx.getArgs().getStatsQuantile() * 100));
-        tctx.setVariable("densityMultiplierFmt", String.format("%.2f", densityMultiplier));
+        tctx.setVariable("capMultiplierFmt", String.format("%.2f", capMultiplier));
         tctx.setVariable("weightLines", String.format("%.2f", DriverScore.WEIGHT_LINES));
         tctx.setVariable("weightNcss", String.format("%.2f", DriverScore.WEIGHT_NCSS));
         tctx.setVariable("weightInvocs", String.format("%.2f", DriverScore.WEIGHT_INVOCATIONS));
@@ -273,6 +334,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
 
         boolean isConstructor = unit.getKind() == SymbolKindModel.CONSTRUCTOR;
         DriverScaler scaler = selectScaler(ctx, isConstructor, isTest);
+        double maxDeviation = ctx.getArgs().getDriverFactorMaxDeviation();
 
         boolean modify = unit.getOperation() == OperationEnum.MODIFY;
         int rowLines = lines;
@@ -282,6 +344,8 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         double projectedNcss;
         double projectedInvocations;
         double driver;
+        double deviationNcss;
+        double deviationInvocations;
         if (modify) {
             int effectiveChanged = Optional.ofNullable(unit.getEffectiveLinesChanged()).orElse(0);
             rowLines = Math.min(effectiveChanged, lines);
@@ -290,26 +354,48 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
             projectedLines = rowLines;
             projectedNcss = 0.0;
             projectedInvocations = rowInvocations * scaler.invocationsFactor();
+            deviationNcss = 0.0;
+            deviationInvocations = 0.0;
         } else {
             driver = DriverScore.forNew(scaler, lines, ncss, invocations);
             projectedLines = lines;
             projectedNcss = ncss * scaler.ncssFactor();
             projectedInvocations = invocations * scaler.invocationsFactor();
+            deviationNcss = relativeDeviation(ncss, lines, bucketRatio(scaler.ncss(), scaler.lines()));
+            deviationInvocations = relativeDeviation(invocations, lines, bucketRatio(scaler.invocations(), scaler.lines()));
         }
 
         String fileLabel = shortFileName(file.getPath());
         String blockLabel = StringUtils.normalizeSpace(Optional.ofNullable(unit.getName()).orElse("-"));
+        boolean outlier = deviationNcss > maxDeviation || deviationInvocations > maxDeviation;
 
         return new BlockRow(
                 fileLabel,
                 blockLabel,
                 kindLabel(unit.getKind()),
+                isTest,
                 unit.getOperation(),
                 rowLines, rowNcss, rowInvocations,
                 Precision.round(projectedLines, ROUNDING),
                 Precision.round(projectedNcss, ROUNDING),
                 Precision.round(projectedInvocations, ROUNDING),
-                driver);
+                driver,
+                Precision.round(deviationNcss, ROUNDING),
+                Precision.round(deviationInvocations, ROUNDING),
+                outlier);
+    }
+    private static double bucketRatio(DimensionStats numerator, DimensionStats denominator) {
+        if (denominator.p50() <= 0.0) {
+            return 0.0;
+        }
+        return numerator.p50() / denominator.p50();
+    }
+    private static double relativeDeviation(int blockNumerator, int blockDenominator, double bucketRatio) {
+        if (blockDenominator <= 0 || bucketRatio <= 0.0) {
+            return 0.0;
+        }
+        double blockRatio = (double) blockNumerator / blockDenominator;
+        return Math.abs(blockRatio - bucketRatio) / bucketRatio;
     }
     private static DriverScaler selectScaler(SubmissionContext ctx, boolean isConstructor, boolean isTest) {
         if (isConstructor) {
@@ -356,8 +442,11 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
     private static String formatDouble(double value) {
         return String.format("%.2f", value);
     }
+    private static String formatPercent(double ratio) {
+        return String.format("%.0f%%", ratio * 100);
+    }
     private static String formatDimension(DimensionStats stats) {
-        return String.format("min=%-4d p50=%-4d p75=%-4d p90=%-4d p95=%-4d max=%d",
+        return String.format("min=%-4d p50=%-6.1f p75=%-6.1f p90=%-6.1f p95=%-6.1f max=%d",
                 stats.min(),
                 stats.p50(),
                 stats.p75(),
@@ -406,14 +495,14 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         int trivialsExcluded;
         int capQuantile;
         DriverScaler scaler;
-        double densityMultiplier;
+        double capMultiplier;
 
         public String baselineLine() {
             return String.format("  %-17s  N=%-5d  trivials_excluded=%d", label + ":", scaler.population(), trivialsExcluded);
         }
         public String capLine() {
-            int effective = (int) Math.round(capQuantile * densityMultiplier);
-            return String.format("  %-17s quantile=%-5d effective_cap=%d", label + ":", capQuantile, effective);
+            int budgetPerBlock = (int) Math.round(capQuantile * capMultiplier);
+            return String.format("  %-17s quantile=%-5d bucket_budget_per_block=%d", label + ":", capQuantile, budgetPerBlock);
         }
         public List<String> scalerLines() {
             if (scaler.isEmpty()) {
@@ -429,7 +518,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
             if (scaler.isEmpty()) {
                 return String.format("    %-17s (N=0)", label + ":");
             }
-            return String.format("    %-17s k_S=%.3f  k_I=%.3f   (lines.p50=%d, ncss.p50=%d, invocs.p50=%d)",
+            return String.format("    %-17s k_S=%.3f  k_I=%.3f   (lines.p50=%.1f, ncss.p50=%.1f, invocs.p50=%.1f)",
                     label + ":",
                     scaler.ncssFactor(),
                     scaler.invocationsFactor(),
@@ -454,6 +543,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         String file;
         String block;
         String kind;
+        boolean test;
         OperationEnum operation;
         int lines;
         int ncss;
@@ -462,6 +552,18 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         double projectedNcss;
         double projectedInvocations;
         double driver;
+        double deviationNcss;
+        double deviationInvocations;
+        boolean outlier;
+    }
+
+    @Getter
+    @Accessors(fluent = true)
+    private static final class OutlierBucketCounts {
+        private int methodProd;
+        private int methodTest;
+        private int ctorProd;
+        private int ctorTest;
     }
 
     @Value

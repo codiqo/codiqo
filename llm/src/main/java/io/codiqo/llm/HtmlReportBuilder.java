@@ -113,7 +113,9 @@ public class HtmlReportBuilder implements ReportBuilder {
         ctx.setVariable("volumeExponent", args.getVolumeExponent());
         ctx.setVariable("filesScopeLogCoefficient", args.getFilesScopeLogCoefficient());
         ctx.setVariable("filesScopeMaxBonus", args.getFilesScopeMaxBonus());
-        ctx.setVariable("statementsDensityCapMultiplier", args.getStatementsDensityCapMultiplier());
+        ctx.setVariable("driverScoreCapMultiplier", args.getDriverScoreCapMultiplier());
+        ctx.setVariable("driverFactorMaxDeviation", args.getDriverFactorMaxDeviation());
+        ctx.setVariable("driverScoreCapDryRun", args.isDriverScoreCapDryRun());
         ctx.setVariable("statsQuantilePercent", (int) (args.getStatsQuantile() * 100));
         ctx.setVariable("architectureBonusFactor", args.getArchitectureBonusFactor());
         ctx.setVariable("qualityMultiplierMin", args.getQualityMultiplierMin());
@@ -307,6 +309,10 @@ public class HtmlReportBuilder implements ReportBuilder {
             ctx.setVariable("filesChanged", preComputed.getFilesChanged());
             ctx.setVariable("filesScopeMultiplier", preComputed.getFilesScopeMultiplier());
             ctx.setVariable("blockEffortSum", preComputed.getBlockEffortSum());
+            ctx.setVariable("totalEffortRaw", preComputed.getTotalEffortRaw());
+            ctx.setVariable("totalBaseline", preComputed.getTotalBaseline());
+            ctx.setVariable("globalCap", preComputed.getGlobalCap());
+            ctx.setVariable("globalCapApplied", preComputed.isGlobalCapApplied());
             ctx.setVariable("codeBlocksModified", preComputed.getCodeBlocksModified());
             ctx.setVariable("codeBlocksAdded", preComputed.getCodeBlocksAdded());
             ctx.setVariable("classesModified", preComputed.getClassesModified());

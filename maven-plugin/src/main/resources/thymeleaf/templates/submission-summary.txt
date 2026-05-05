@@ -16,10 +16,14 @@ changed_blocks:
 baseline_populations:
 [# th:each="row : ${rows}"][(${row.baselineLine()})]
 [/]
-density_cap (limits single block contribution to volume score):
-  formula:  effective_cap = P[(${quantilePercent})](driver_scores) × [(${densityMultiplierFmt})]
-  P[(${quantilePercent})] = [(${quantilePercent})]th percentile of driver-score distribution across all blocks in project
-  [(${densityMultiplierFmt})] = density cap multiplier (prevents outlier blocks from dominating the score)
+driver_score_cap (global ceiling on total code-block effort):
+  bucket_baseline = P[(${quantilePercent})](driver_scores) × operationMult × testWeight, per (kind, scope)
+  total_baseline  = Σ_block bucket_baseline (summed over all changed non-trivial blocks)
+  global_cap      = total_baseline × [(${capMultiplierFmt})]
+  total_effort    = min(Σ_block effort, global_cap)
+  P[(${quantilePercent})] = [(${quantilePercent})]th percentile of driver-score distribution within each (kind, scope) population
+  [(${capMultiplierFmt})] = driver score cap multiplier (caps the total summed effort at this multiple of the baseline budget)
+  per-block driver scores are not individually clipped; the cap binds only on their sum
 [# th:each="row : ${rows}"][(${row.capLine()})]
 [/]
 scalers:
@@ -29,6 +33,6 @@ driver_formula:
   weights:          W_L=[(${weightLines})]  W_S=[(${weightNcss})]  W_I=[(${weightInvocs})]   (total=[(${totalWeight})])
   formula_new:      (W_L·lines + W_S·ncss·k_S + W_I·invocs·k_I) / total
   formula_modify:   (W_L·linesChanged + W_I·invocsChanged·k_I) / (W_L + W_I)
-  factors (k_S = lines.p50 / ncss.p50, k_I = lines.p50 / invocs.p50):
+  factors (k_S = lines.p50 / ncss.p50, k_I = lines.p50 / invocs.p50; raw bucket-level — no clamp):
 [# th:each="row : ${rows}"][(${row.factorLine()})]
 [/]

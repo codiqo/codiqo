@@ -1,7 +1,5 @@
 package io.codiqo.api.metrics;
 
-import org.apache.commons.math3.util.Precision;
-
 import lombok.experimental.UtilityClass;
 
 @UtilityClass
@@ -19,7 +17,7 @@ public class DriverScore {
         double sum = WEIGHT_LINES * lines
                 + WEIGHT_NCSS * ncss * scaler.ncssFactor()
                 + WEIGHT_INVOCATIONS * invocations * scaler.invocationsFactor();
-        return Precision.round(sum / TOTAL_WEIGHT, 2);
+        return sum / TOTAL_WEIGHT;
     }
     public static double forModify(DriverScaler scaler, int linesChanged, int invocationsChanged) {
         if (scaler.isEmpty()) {
@@ -27,6 +25,6 @@ public class DriverScore {
         }
         double sum = WEIGHT_LINES * linesChanged
                 + WEIGHT_INVOCATIONS * invocationsChanged * scaler.invocationsFactor();
-        return Precision.round(sum / MODIFY_WEIGHT, 2);
+        return sum / MODIFY_WEIGHT;
     }
 }
