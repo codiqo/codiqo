@@ -354,6 +354,9 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             callLocation.setEndColumn(methodCall.getEndColumn());
             methodCallModel.setLocation(callLocation);
 
+            methodCallModel.setNameStartLine(methodCall.getNameStartLine());
+            methodCallModel.setNameStartColumn(methodCall.getNameStartColumn());
+
             methodCall.artifact().ifPresent(artifact -> methodCallModel.setArtifact(artifact.getId()));
 
             infoModel.getInvocations().add(methodCallModel);
@@ -454,6 +457,15 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         metricsModel.setParameterCount(javaBlock.getArity());
         metricsModel.setNonCommentCodeLines(metrics.nonCommentCodeLines());
         metricsModel.setCommentLines(metrics.commentLines());
+        metricsModel.setDeclarationCodeLines(metrics.declarationCodeLines());
+        metricsModel.setBodyCodeLines(metrics.bodyCodeLines());
+        metricsModel.setBodyCommentLines(metrics.bodyCommentLines());
+
+        if (metrics.bodyStartLine() > 0 && metrics.bodyEndLine() >= metrics.bodyStartLine()) {
+            LocationModel location = codeUnitModel.getLocation();
+            location.setBodyStartLine(metrics.bodyStartLine());
+            location.setBodyEndLine(metrics.bodyEndLine());
+        }
 
         codeUnitModel.setMetrics(metricsModel);
 

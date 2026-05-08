@@ -1548,6 +1548,14 @@ components:
         endColumn:
           type: integer
           minimum: 0
+        bodyStartLine:
+          type: integer
+          minimum: 1
+          description: For methods/constructors — line of the body block's opening brace. Absent for code units without a body (abstract methods, interface methods, fields)
+        bodyEndLine:
+          type: integer
+          minimum: 1
+          description: For methods/constructors — line of the body block's closing brace. Absent for code units without a body
 
     CodeUnitDuplicationModel:
       type: object
@@ -1649,6 +1657,12 @@ components:
           description: true for enum constant constructor invocations
         location:
           $ref: '#/components/schemas/LocationModel'
+        nameStartLine:
+          type: integer
+          description: line of the method-name IDENTIFIER token; used for per-line invocation counts in chained calls
+        nameStartColumn:
+          type: integer
+          description: column of the method-name IDENTIFIER token
         artifact:
           type: string
         targetDescriptor:
@@ -1735,11 +1749,23 @@ components:
         nonCommentCodeLines:
           type: integer
           minimum: 0
-          description: Physical code lines excluding comments, javadoc, and blank lines
+          description: Physical code lines (signature + body) excluding comments, javadoc, and blank lines. Includes signature/parameter lines — for the driver-score input that excludes signatures, see bodyCodeLines
         commentLines:
           type: integer
           minimum: 0
           description: Comment and javadoc lines (including block comments and line comments)
+        declarationCodeLines:
+          type: integer
+          minimum: 0
+          description: Declaration-only physical code lines (signature, parameter list, throws clause, and modifiers — everything before the opening `{`). 1 for an abstract or interface method (the signature line). For methods/constructors with a body, the line containing `{` is attributed to the body, not to the declaration. Use `nonCommentCodeLines = declarationCodeLines + bodyCodeLines` only when the `{` is on its own line; when `{` shares a line with the signature both `declarationCodeLines` and `bodyCodeLines` count it (so the sum can exceed `nonCommentCodeLines` by 1)
+        bodyCodeLines:
+          type: integer
+          minimum: 0
+          description: Body-only physical code lines (from the opening `{` to the closing `}`, inclusive) excluding comments and blank lines. Used as L (lines) in driver-score calibration and per-block scoring. 0 for code units without a body
+        bodyCommentLines:
+          type: integer
+          minimum: 0
+          description: Body-only comment lines (within the `{` ... `}` block)
 
     # ==========================================================================
     # Coverage
@@ -2107,6 +2133,102 @@ components:
           description: Per-file effort breakdown sorted by effort descending
           items:
             $ref: '#/components/schemas/FileEffortModel'
+        diffClassification:
+          $ref: '#/components/schemas/DiffClassificationModel'
+
+    DiffClassificationModel:
+      type: object
+      description: |
+        LLM-provided classification of git diff delete/add pairs to compensate for git's lack of a "modified"
+        line concept. Populated only when the commit has any deleted lines. The server uses these per-file counts
+        to deterministically scale the volume score down — cosmetic lines drop entirely, in-place edits collapse
+        from 2 lines to 1 line of effort, and true delete+add pairs are kept as 2 lines.
+      properties:
+        totalLinesAddedRaw:
+          type: integer
+          minimum: 0
+        totalLinesDeletedRaw:
+          type: integer
+          minimum: 0
+        cosmeticLines:
+          type: integer
+          minimum: 0
+          description: Total lines whose semantics did not change (whitespace, comment text, log strings).
+        inPlaceModifyLines:
+          type: integer
+          minimum: 0
+          description: |
+            Total delete/add lines the LLM identified as in-place edits (same intent, different form).
+            The server treats each pair as 1 line of effort, not 2, so the effective contribution is
+            inPlaceModifyLines / 2.
+        trueDeleteAddLines:
+          type: integer
+          minimum: 0
+          description: Total delete/add lines that are genuine removals plus genuine new code, kept at full 2× weight.
+        perFile:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileDiffClassificationModel'
+        rationale:
+          type: string
+          description: One or two sentences explaining the classification call.
+
+    FileDiffClassificationModel:
+      type: object
+      description: |
+        Per-file breakdown of LLM diff classification. The `added` and `deleted` line-number groups are the
+        source of truth supplied by the LLM; the count fields (cosmeticLines, inPlaceModifyLines, trueDeleteAddLines)
+        are derived server-side from those arrays during the post-LLM scoring step and persisted alongside for
+        fast aggregation.
+      properties:
+        file:
+          type: string
+          description: File path matching one of the request's fileChanges entries.
+        cosmeticLines:
+          type: integer
+          minimum: 0
+          description: Server-derived count of COSMETIC line numbers across both sides. Read-only from the LLM's perspective.
+        inPlaceModifyLines:
+          type: integer
+          minimum: 0
+          description: Server-derived count of IN_PLACE_MODIFY line numbers across both sides (always even — each pair has one entry on each side).
+        trueDeleteAddLines:
+          type: integer
+          minimum: 0
+          description: Server-derived count of TRUE line numbers across both sides.
+        added:
+          $ref: '#/components/schemas/LineGroupsModel'
+        deleted:
+          $ref: '#/components/schemas/LineGroupsModel'
+
+    LineGroupsModel:
+      type: object
+      description: |
+        Three line-number arrays grouping every changed line on one side (added or deleted) by classification.
+        Used in `FileDiffClassificationModel.added` (new-file line numbers) and `.deleted` (old-file line numbers).
+        Together the three arrays must cover ALL changed lines on that side with NO duplicates. Sum of array sizes
+        must equal the request's `linesAdded` (for `added`) or `linesDeleted` (for `deleted`) for that file.
+      properties:
+        cosmetic:
+          type: array
+          description: Line numbers whose presence or absence does not change program behavior. Effort weight 0.
+          items:
+            type: integer
+            minimum: 1
+        inPlaceModify:
+          type: array
+          description: |
+            Line numbers that are paired with the matching side as in-place edits (same intent, different form).
+            `len(added.inPlaceModify)` MUST equal `len(deleted.inPlaceModify)`. Each pair contributes 1 line of effort, not 2.
+          items:
+            type: integer
+            minimum: 1
+        trueDeleteAdd:
+          type: array
+          description: Line numbers representing genuine work — real removals, real additions of new logic, real delete+add pairs of different intent. Each line keeps full weight.
+          items:
+            type: integer
+            minimum: 1
 
     FileEffortModel:
       type: object
@@ -2355,6 +2477,28 @@ components:
           type: number
           format: double
           description: Final volume score (sum of all component scores)
+        linesChangedRaw:
+          type: integer
+          minimum: 0
+          description: |
+            Raw lines-changed total (linesAdded + linesDeleted) across files that the LLM classified.
+            Populated only when an LLM diff classification was applied; zero otherwise.
+        linesChangedAdjusted:
+          type: integer
+          minimum: 0
+          description: |
+            Effective lines-changed total after dropping cosmetic pairs and collapsing in-place edit pairs.
+            Populated only when an LLM diff classification was applied; zero otherwise.
+        cosmeticLinesDropped:
+          type: integer
+          minimum: 0
+          description: Total lines reclassified as cosmetic by the LLM and excluded from the volume score.
+        inPlaceLinesCollapsed:
+          type: integer
+          minimum: 0
+          description: |
+            Number of delete/add line pairs the LLM identified as in-place edits and the server collapsed
+            from 2 lines to 1 line of effort each. Equals inPlaceModifyLines / 2.
         testCodeScoreMultiplier:
           type: number
           format: double
@@ -2963,6 +3107,9 @@ components:
         cpdIntroducedThreshold:
           type: number
           format: double
+        diffContextLines:
+          type: integer
+          description: number of unchanged lines to include before/after each diff hunk
         llmModel:
           type: string
         llmBaseUrl:

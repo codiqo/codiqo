@@ -116,6 +116,7 @@ public class LlmScoringRequest {
         private String language;
         private boolean isTest;
         private boolean isConfig;
+        private boolean linesJustificationRequired;
     }
 
     public enum FileChangeType {
@@ -148,6 +149,9 @@ public class LlmScoringRequest {
         private String file;
         private int startLine;
         private int endLine;
+        // body block range — line of `{` and `}`. 0 when block has no body (abstract / interface methods)
+        private int bodyStartLine;
+        private int bodyEndLine;
 
         /**
          * change metrics
@@ -155,10 +159,14 @@ public class LlmScoringRequest {
         private int linesAdded;
         private int linesDeleted;
         private int totalLinesChanged;
-        // total physical code lines (excluding comments/blanks) in this code block
+        // total physical code lines (signature + body, excluding comments/blanks) in this code block
         private int nonCommentCodeLines;
         // comment and javadoc lines in this code block
         private int commentLines;
+        // declaration-only physical code lines (signature, parameters, throws, modifiers — everything before `{`). 1 for an abstract / interface method (signature line). When `{` shares a line with the signature it is attributed to the body, not the declaration
+        private int declarationCodeLines;
+        // body-only physical code lines (`{` ... `}`, excluding comments/blanks). Used as L in driver score
+        private int bodyCodeLines;
 
         /**
          * Complexity metrics (CRITICAL for scoring)

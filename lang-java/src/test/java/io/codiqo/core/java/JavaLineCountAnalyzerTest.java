@@ -184,6 +184,144 @@ class JavaLineCountAnalyzerTest {
 
         assertEquals(1, counts.getCodeLines());
         assertEquals(0, counts.getCommentLines());
+        assertEquals(0, counts.getBodyStartLine());
+        assertEquals(0, counts.getBodyEndLine());
+        assertEquals(0, counts.getBodyCodeLines());
+        assertEquals(1, counts.getDeclarationCodeLines());
+    }
+    @Test
+    void bodyCountsExcludeSingleLineSignature() throws Exception {
+        String source = String.join("\n",
+                "class C {",
+                "    void m() {",
+                "        return;",
+                "    }",
+                "}");
+
+        JavaLineCountAnalyzer.LineCounts counts = analyzeFirstMethod(source);
+
+        assertEquals(3, counts.getCodeLines());
+        assertEquals(2, counts.getBodyStartLine());
+        assertEquals(4, counts.getBodyEndLine());
+        assertEquals(3, counts.getBodyCodeLines());
+        assertEquals(1, counts.getDeclarationCodeLines());
+    }
+    @Test
+    void bodyCountsExcludeMultiLineSignature() throws Exception {
+        String source = String.join("\n",
+                "class C {",
+                "    void m(",
+                "            String a,",
+                "            String b,",
+                "            String c) {",
+                "        return;",
+                "    }",
+                "}");
+
+        JavaLineCountAnalyzer.LineCounts counts = analyzeFirstMethod(source);
+
+        assertEquals(6, counts.getCodeLines());
+        assertEquals(5, counts.getBodyStartLine());
+        assertEquals(7, counts.getBodyEndLine());
+        assertEquals(3, counts.getBodyCodeLines());
+        assertEquals(4, counts.getDeclarationCodeLines());
+    }
+    @Test
+    void bodyCountsExcludeStackedAnnotationsInSignature() throws Exception {
+        String source = String.join("\n",
+                "class C {",
+                "    @Deprecated",
+                "    @SuppressWarnings(\"unused\")",
+                "    void m() {",
+                "        int x = 1;",
+                "        return;",
+                "    }",
+                "}");
+
+        JavaLineCountAnalyzer.LineCounts counts = analyzeFirstMethod(source);
+
+        assertEquals(6, counts.getCodeLines());
+        assertEquals(4, counts.getBodyStartLine());
+        assertEquals(7, counts.getBodyEndLine());
+        assertEquals(4, counts.getBodyCodeLines());
+    }
+    @Test
+    void bodyCountsExcludeMultiLineThrowsClause() throws Exception {
+        String source = String.join("\n",
+                "class C {",
+                "    void m()",
+                "            throws java.io.IOException,",
+                "            IllegalStateException {",
+                "        return;",
+                "    }",
+                "}");
+
+        JavaLineCountAnalyzer.LineCounts counts = analyzeFirstMethod(source);
+
+        assertEquals(5, counts.getCodeLines());
+        assertEquals(4, counts.getBodyStartLine());
+        assertEquals(6, counts.getBodyEndLine());
+        assertEquals(3, counts.getBodyCodeLines());
+    }
+    @Test
+    void interfaceMethodHasNoBody() throws Exception {
+        String source = String.join("\n",
+                "interface I {",
+                "    void m();",
+                "}");
+
+        JavaLineCountAnalyzer.LineCounts counts = analyzeFirstMethod(source);
+
+        assertEquals(1, counts.getCodeLines());
+        assertEquals(0, counts.getBodyStartLine());
+        assertEquals(0, counts.getBodyEndLine());
+        assertEquals(0, counts.getBodyCodeLines());
+        assertEquals(1, counts.getDeclarationCodeLines());
+    }
+    @Test
+    void declarationLineCountsBraceOnOwnLineAsBodyOnly() throws Exception {
+        String source = String.join("\n",
+                "class C {",
+                "    void m()",
+                "    {",
+                "        return;",
+                "    }",
+                "}");
+
+        JavaLineCountAnalyzer.LineCounts counts = analyzeFirstMethod(source);
+
+        assertEquals(4, counts.getCodeLines());
+        assertEquals(1, counts.getDeclarationCodeLines());
+        assertEquals(3, counts.getBodyCodeLines());
+        assertEquals(3, counts.getBodyStartLine());
+    }
+    @Test
+    void declarationLineCountsStackedAnnotations() throws Exception {
+        String source = String.join("\n",
+                "class C {",
+                "    @Deprecated",
+                "    @SuppressWarnings(\"unused\")",
+                "    void m() {",
+                "        int x = 1;",
+                "        return;",
+                "    }",
+                "}");
+
+        JavaLineCountAnalyzer.LineCounts counts = analyzeFirstMethod(source);
+
+        assertEquals(6, counts.getCodeLines());
+        assertEquals(3, counts.getDeclarationCodeLines());
+        assertEquals(4, counts.getBodyCodeLines());
+    }
+    @Test
+    void declarationLineCountsSingleLineMethod() throws Exception {
+        String source = "class C { void m() { int x = 1; } }";
+
+        JavaLineCountAnalyzer.LineCounts counts = analyzeFirstMethod(source);
+
+        assertEquals(1, counts.getCodeLines());
+        assertEquals(1, counts.getDeclarationCodeLines());
+        assertEquals(1, counts.getBodyCodeLines());
     }
     private static JavaLineCountAnalyzer.LineCounts analyzeFirstMethod(String source) throws Exception {
         ASTExecutableDeclaration node = parse(source).descendants(ASTMethodDeclaration.class).first();

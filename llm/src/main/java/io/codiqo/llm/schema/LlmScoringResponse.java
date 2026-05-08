@@ -145,6 +145,7 @@ public class LlmScoringResponse {
         private double baseEffortScore;
         @Builder.Default
         private List<FileEffortView> fileEfforts = Lists.newArrayList();
+        private DiffClassification diffClassification;
     }
 
     @Data
@@ -169,6 +170,51 @@ public class LlmScoringResponse {
         private double modifyMultiplier;
         private double addMultiplier;
         private double totalVolumeScore;
+        private int linesChangedRaw;
+        private int linesChangedAdjusted;
+        private int cosmeticLinesDropped;
+        private int inPlaceLinesCollapsed;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class DiffClassification {
+        private int totalLinesAddedRaw;
+        private int totalLinesDeletedRaw;
+        private int cosmeticLines;
+        private int inPlaceModifyLines;
+        private int trueDeleteAddLines;
+        @Builder.Default
+        private List<FileDiffClassification> perFile = Lists.newArrayList();
+        private String rationale;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class FileDiffClassification {
+        private String file;
+        private int cosmeticLines;
+        private int inPlaceModifyLines;
+        private int trueDeleteAddLines;
+        private LineGroups added;
+        private LineGroups deleted;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class LineGroups {
+        @Builder.Default
+        private List<Integer> cosmetic = Lists.newArrayList();
+        @Builder.Default
+        private List<Integer> inPlaceModify = Lists.newArrayList();
+        @Builder.Default
+        private List<Integer> trueDeleteAdd = Lists.newArrayList();
     }
 
     @Data

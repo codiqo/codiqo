@@ -16,9 +16,9 @@ import io.codiqo.api.diff.JavaLineFilters;
 import io.codiqo.client.model.CodeUnitModel;
 import io.codiqo.client.model.CodeUnitModel.OperationEnum;
 import io.codiqo.client.model.FileChangeModel;
-import io.codiqo.client.model.FileChangeModel.LanguageEnum;
 import io.codiqo.client.model.LocationModel;
 import io.codiqo.client.model.MetricsModel;
+import io.codiqo.llm.lang.LanguageCapabilities;
 
 public class EffectiveChangePopulator implements SubmissionPopulator {
     @Override
@@ -28,11 +28,11 @@ public class EffectiveChangePopulator implements SubmissionPopulator {
             if (Objects.isNull(diff) || diff.isEmpty()) {
                 continue;
             }
-            boolean isJava = file.getLanguage() == LanguageEnum.JAVA;
-            Predicate<String> addedIneffective = isJava ? JavaLineFilters.COMMENT : JavaLineFilters.NONE;
-            Predicate<String> deletedIneffective = isJava ? JavaLineFilters.COMMENT_OR_IMPORT : JavaLineFilters.NONE;
+            boolean requiresLineFiltering = LanguageCapabilities.requiresLineFiltering(file);
+            Predicate<String> addedIneffective = requiresLineFiltering ? JavaLineFilters.COMMENT : JavaLineFilters.NONE;
+            Predicate<String> deletedIneffective = requiresLineFiltering ? JavaLineFilters.COMMENT_OR_IMPORT : JavaLineFilters.NONE;
             Set<Integer> effectiveAddedLines = EffectiveLineParser.parseEffectiveAddedLines(diff, addedIneffective);
-            Map<Integer, List<String>> effectiveDeletedContents = isJava ? EffectiveLineParser.parseEffectiveDeletedLineContents(diff, deletedIneffective) : Collections.emptyMap();
+            Map<Integer, List<String>> effectiveDeletedContents = requiresLineFiltering ? EffectiveLineParser.parseEffectiveDeletedLineContents(diff, deletedIneffective) : Collections.emptyMap();
 
             for (CodeUnitModel codeUnit : CollectionUtils.emptyIfNull(file.getCodeUnits())) {
                 if (codeUnit.getOperation() != OperationEnum.MODIFY) {
