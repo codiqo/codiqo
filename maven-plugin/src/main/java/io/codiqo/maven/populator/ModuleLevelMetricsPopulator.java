@@ -72,7 +72,8 @@ public class ModuleLevelMetricsPopulator implements SubmissionPopulator {
                                 tracker.incrementTrivialMethod(isTest);
                             }
                         } else {
-                            DriverScaler.Sample sample = new DriverScaler.Sample(metrics.nonCommentCodeLines(), metrics.ncss(), metrics.directInvocationCount());
+                            int sampleLines = metrics.bodyCodeLines() > 0 ? metrics.bodyCodeLines() : metrics.nonCommentCodeLines();
+                            DriverScaler.Sample sample = new DriverScaler.Sample(sampleLines, metrics.ncss(), metrics.directInvocationCount());
 
                             String fileDisplay = FilenameUtils.getBaseName(javaBlock.getFile().getName());
                             String blockDisplay = PrettyPrintingUtil.displaySignature(javaBlock.getDeclaration());

@@ -67,6 +67,11 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
         JavaLineCountAnalyzer.LineCounts lineCounts = JavaLineCountAnalyzer.analyze(node);
         int nonCommentCodeLines = lineCounts.getCodeLines();
         int commentLines = lineCounts.getCommentLines();
+        int declarationCodeLines = lineCounts.getDeclarationCodeLines();
+        int bodyStartLine = lineCounts.getBodyStartLine();
+        int bodyEndLine = lineCounts.getBodyEndLine();
+        int bodyCodeLines = lineCounts.getBodyCodeLines();
+        int bodyCommentLines = lineCounts.getBodyCommentLines();
         int cyclo = MetricsUtil.computeMetric(JavaMetrics.CYCLO, node, MetricOptions.emptyOptions());
         int cognitive = MetricsUtil.computeMetric(JavaMetrics.COGNITIVE_COMPLEXITY, node, MetricOptions.emptyOptions());
         int ncss = MetricsUtil.computeMetric(JavaMetrics.NCSS, node, MetricOptions.emptyOptions());
@@ -91,6 +96,26 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
             @Override
             public int commentLines() {
                 return commentLines;
+            }
+            @Override
+            public int declarationCodeLines() {
+                return declarationCodeLines;
+            }
+            @Override
+            public int bodyStartLine() {
+                return bodyStartLine;
+            }
+            @Override
+            public int bodyEndLine() {
+                return bodyEndLine;
+            }
+            @Override
+            public int bodyCodeLines() {
+                return bodyCodeLines;
+            }
+            @Override
+            public int bodyCommentLines() {
+                return bodyCommentLines;
             }
             @Override
             public int cyclo() {
@@ -122,7 +147,7 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
             }
             @Override
             public String toString() {
-                return String.format("lines: %d, cyclo: %d, cognitive: %d, ncss: %d, invocations: %d", lineCount(), cyclo(), cognitive(), ncss(), directInvocationCount());
+                return String.format("lines: %d, body_lines: %d, cyclo: %d, cognitive: %d, ncss: %d, invocations: %d", lineCount(), bodyCodeLines(), cyclo(), cognitive(), ncss(), directInvocationCount());
             }
         };
     });

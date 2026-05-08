@@ -19,6 +19,9 @@ public interface JInvocationBlock extends Consumer<MavenProjectSpec> {
     int getEndLine();
     int getEndColumn();
 
+    int getNameStartLine();
+    int getNameStartColumn();
+
     int getModifiers();
     boolean isConstructor();
     boolean isAbstract();

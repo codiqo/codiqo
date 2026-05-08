@@ -1,6 +1,7 @@
 package io.codiqo.core.java;
 
 import java.util.List;
+import java.util.Objects;
 
 import org.apache.commons.lang3.StringUtils;
 
@@ -12,6 +13,7 @@ import net.sourceforge.pmd.lang.ast.impl.javacc.JavaccToken;
 import net.sourceforge.pmd.lang.document.FileLocation;
 import net.sourceforge.pmd.lang.document.TextDocument;
 import net.sourceforge.pmd.lang.document.TextRegion;
+import net.sourceforge.pmd.lang.java.ast.ASTBlock;
 import net.sourceforge.pmd.lang.java.ast.ASTCompilationUnit;
 import net.sourceforge.pmd.lang.java.ast.ASTExecutableDeclaration;
 import net.sourceforge.pmd.lang.java.ast.JavaComment;
@@ -30,8 +32,16 @@ public class JavaLineCountAnalyzer {
         int nodeEndCol = endLoc.getEndColumn();
         List<CommentSpan> spans = collectContainedComments(root, nodeBeginLine, nodeBeginCol, nodeEndLine, nodeEndCol);
 
+        BodyRange bodyRange = bodyRange(node);
+
+        int declEndLine = Objects.nonNull(bodyRange) ? bodyRange.startLine : nodeEndLine;
+        int declEndColExclusive = Objects.nonNull(bodyRange) ? bodyRange.startCol : nodeEndCol;
+
         int codeLines = 0;
         int commentLines = 0;
+        int declarationCodeLines = 0;
+        int bodyCodeLines = 0;
+        int bodyCommentLines = 0;
         for (int line = nodeBeginLine; line <= nodeEndLine; line++) {
             int effStart = line == nodeBeginLine ? nodeBeginCol : 1;
             int effEnd = line == nodeEndLine ? nodeEndCol : Integer.MAX_VALUE;
@@ -44,9 +54,42 @@ public class JavaLineCountAnalyzer {
             if (classification.hasComment) {
                 commentLines++;
             }
+
+            if (line <= declEndLine) {
+                int declEffStart = line == nodeBeginLine ? nodeBeginCol : 1;
+                int declEffEnd = line == declEndLine ? declEndColExclusive : Integer.MAX_VALUE;
+                if (declEffStart < declEffEnd) {
+                    LineClassification declClassification = classifyLine(lineText, line, declEffStart, declEffEnd, spans);
+                    if (declClassification.hasCode) {
+                        declarationCodeLines++;
+                    }
+                }
+            }
+
+            if (Objects.nonNull(bodyRange) && line >= bodyRange.startLine && line <= bodyRange.endLine) {
+                int bodyEffStart = line == bodyRange.startLine ? bodyRange.startCol : 1;
+                int bodyEffEnd = line == bodyRange.endLine ? bodyRange.endCol : Integer.MAX_VALUE;
+                LineClassification bodyClassification = classifyLine(lineText, line, bodyEffStart, bodyEffEnd, spans);
+                if (bodyClassification.hasCode) {
+                    bodyCodeLines++;
+                }
+                if (bodyClassification.hasComment) {
+                    bodyCommentLines++;
+                }
+            }
         }
 
-        return new LineCounts(codeLines, commentLines);
+        int bodyStartLine = Objects.nonNull(bodyRange) ? bodyRange.startLine : 0;
+        int bodyEndLine = Objects.nonNull(bodyRange) ? bodyRange.endLine : 0;
+        return new LineCounts(codeLines, commentLines, declarationCodeLines, bodyStartLine, bodyEndLine, bodyCodeLines, bodyCommentLines);
+    }
+    private static BodyRange bodyRange(ASTExecutableDeclaration node) {
+        ASTBlock body = node.getBody();
+        if (Objects.isNull(body)) {
+            return null;
+        }
+        FileLocation loc = body.getReportLocation();
+        return new BodyRange(loc.getStartLine(), loc.getStartColumn(), loc.getEndLine(), loc.getEndColumn());
     }
     private static List<CommentSpan> collectContainedComments(ASTCompilationUnit root, int nodeBeginLine, int nodeBeginCol, int nodeEndLine, int nodeEndCol) {
         List<CommentSpan> toReturn = Lists.newArrayList();
@@ -128,6 +171,11 @@ public class JavaLineCountAnalyzer {
     public static class LineCounts {
         int codeLines;
         int commentLines;
+        int declarationCodeLines;
+        int bodyStartLine;
+        int bodyEndLine;
+        int bodyCodeLines;
+        int bodyCommentLines;
     }
 
     @Value
@@ -142,5 +190,13 @@ public class JavaLineCountAnalyzer {
     private static class LineClassification {
         boolean hasCode;
         boolean hasComment;
+    }
+
+    @Value
+    private static class BodyRange {
+        int startLine;
+        int startCol;
+        int endLine;
+        int endCol;
     }
 }

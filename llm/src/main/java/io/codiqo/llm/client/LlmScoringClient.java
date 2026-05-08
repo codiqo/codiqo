@@ -205,7 +205,7 @@ public class LlmScoringClient implements ScoringClient {
                 throw lastError;
             }
 
-            finalScoreCalculator.apply(scoringResponse, preComputedScores);
+            finalScoreCalculator.apply(scoringResponse, preComputedScores, request);
 
             ScoringResult result = ScoringResult.builder()
                     .response(scoringResponse)

@@ -322,6 +322,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
                                 .setOldTree(oldTreeIter)
                                 .setNewTree(new FileTreeIterator(args.getGit()))
                                 .setPathFilter(PathFilter.create(path))
+                                .setContextLines(args.getDiffContextLines())
                                 .setOutputStream(output)
                                 .call();
                     }
@@ -367,6 +368,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
             try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
                 try (DiffFormatter formatter = new DiffFormatter(output)) {
                     formatter.setRepository(args.getGit());
+                    formatter.setContext(args.getDiffContextLines());
                     formatter.setPathFilter(PathFilter.create(filePath));
 
                     FileTreeIterator workingTreeIter = new FileTreeIterator(args.getGit());
@@ -436,6 +438,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
             try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
                 try (DiffFormatter printer = new DiffFormatter(output)) {
                     printer.setRepository(args.getGit());
+                    printer.setContext(args.getDiffContextLines());
                     printer.format(diff);
                     output.flush();
                     toReturn.setDiffText(output.toString(StandardCharsets.UTF_8.name()));

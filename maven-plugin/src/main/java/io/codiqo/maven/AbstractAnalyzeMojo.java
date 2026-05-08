@@ -95,11 +95,11 @@ import io.codiqo.maven.populator.FileAnalysisPopulator;
 import io.codiqo.maven.populator.IndexModelPopulator;
 import io.codiqo.maven.populator.LlmScoringPopulator;
 import io.codiqo.maven.populator.MetricsAggregator;
-import io.codiqo.maven.populator.SubmissionSummaryPrinter;
 import io.codiqo.maven.populator.ModuleLevelMetricsPopulator;
 import io.codiqo.maven.populator.OutputSerializer;
 import io.codiqo.maven.populator.ProjectModelPopulator;
 import io.codiqo.maven.populator.SubmissionContext;
+import io.codiqo.maven.populator.SubmissionSummaryPrinter;
 import io.codiqo.util.Env;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
@@ -169,6 +169,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.cpdMinimumTileSize", defaultValue = "64")
     protected int cpdMinimumTileSize;
 
+    @Parameter(property = "codiqo.diffContextLines", defaultValue = "10")
+    protected int diffContextLines;
+
     @Parameter(property = "codiqo.jdtlsVersion", defaultValue = "1.58.0")
     protected String jdtlsVersion;
 
@@ -199,7 +202,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.spotbugsOmitVisitors")
     protected String spotbugsOmitVisitors;
 
-    @Parameter(property = "codiqo.llm.model", defaultValue = "nemotron-3-super:cloud")
+    @Parameter(property = "codiqo.llm.model", defaultValue = "deepseek-v4-pro:cloud")
     protected String llmModel;
 
     @Parameter(property = "codiqo.llm.apiKey")
@@ -286,6 +289,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setMaxRequests(maxRequests);
         args.setMaxRequestsPerHost(maxRequestsPerHost);
         args.setCpdMinimumTileSize(cpdMinimumTileSize);
+        args.setDiffContextLines(diffContextLines);
         args.setJdtlsVersion(jdtlsVersion);
         args.setDumpAnalysis(dumpAnalysis);
         args.setIgnoreCoverage(ignoreCoverage);
@@ -683,6 +687,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         toReturn.setMaxRequestsPerHost(args.getMaxRequestsPerHost());
         toReturn.setCpdMinimumTileSize(args.getCpdMinimumTileSize());
         toReturn.setCpdIntroducedThreshold(args.getCpdIntroducedThreshold());
+        toReturn.setDiffContextLines(args.getDiffContextLines());
 
         toReturn.setLlmModel(args.getLlmModel());
         toReturn.setLlmBaseUrl(args.getLlmBaseUrl());

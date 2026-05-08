@@ -19,4 +19,19 @@ public interface CodeBlockMetrics {
     default List<Integer> directInvocationLines() {
         return Collections.emptyList();
     }
+    default int declarationCodeLines() {
+        return 0;
+    }
+    default int bodyStartLine() {
+        return 0;
+    }
+    default int bodyEndLine() {
+        return 0;
+    }
+    default int bodyCodeLines() {
+        return 0;
+    }
+    default int bodyCommentLines() {
+        return 0;
+    }
 }

@@ -66,6 +66,17 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 # Codiqo Development Guidelines
 
+## Multi-Language by Design
+
+**Codiqo analyzes Java today, but is designed as a multi-language tool.** Kotlin, Scala, and JavaScript/TypeScript are expected next, and most analysis logic should generalize. Engineer with that constraint in mind:
+
+- **Name by capability, not by language.** Prefer `requiresLineFiltering`, `isStructuredLanguage`, `hasJvmTypes` over `isJava` whenever the underlying logic isn't Java-exclusive. A predicate that happens to return true only for Java today, but conceptually applies to Kotlin/Scala tomorrow, must not be named after Java.
+- **Avoid hard-coded language branches in shared code.** Don't sprinkle `if (isJava)` through general modules — push the language-specific behavior behind a capability check (`file.getLanguage().requiresLineFiltering()`) or into the language-specific module.
+- **Keep language-specific code in language-specific modules.** Java-only logic belongs in `lang-java/` (e.g., bytecode parsing, JDT integration, PMD rules). Shared modules (`api/`, `llm/`, `maven-plugin/`) should treat language as data, not as a hardcoded assumption.
+- **Question every Java reference.** When you write `Java`, `java`, or `.java` in a name, type, or string in shared code, stop and ask: "Would this same logic apply to Kotlin or JavaScript?" If yes, rename or abstract before committing.
+- **Bad:** `boolean isJava = isJavaFile(file);` used to gate line-filtering.
+- **Good:** `boolean requiresLineFiltering = LanguageCapabilities.requiresLineFiltering(file);` — the predicate names the capability, and the per-language answer lives in one place (a `LanguageCapabilities` `@UtilityClass`, since `LanguageEnum` is generated from OpenAPI and can't host instance methods).
+
 ## Code Organization
 
 ### Method Ordering in Classes

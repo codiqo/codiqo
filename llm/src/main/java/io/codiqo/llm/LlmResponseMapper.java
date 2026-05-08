@@ -20,8 +20,11 @@ import io.codiqo.client.model.BugsModel;
 import io.codiqo.client.model.ComplexityMultiplierModel;
 import io.codiqo.client.model.CoverageAnalysisModel;
 import io.codiqo.client.model.CpdAnalysisModel;
+import io.codiqo.client.model.DiffClassificationModel;
 import io.codiqo.client.model.DimensionScoreModel;
 import io.codiqo.client.model.EffortBreakdownModel;
+import io.codiqo.client.model.FileDiffClassificationModel;
+import io.codiqo.client.model.LineGroupsModel;
 import io.codiqo.client.model.QualityGateAnalysisModel;
 import io.codiqo.client.model.QualityMultiplierModel;
 import io.codiqo.client.model.ReviewTagsModel;
@@ -235,6 +238,9 @@ public class LlmResponseMapper {
             toReturn.setComplexityMultiplier(mapComplexityMultiplier(effortBreakdown.getComplexityMultiplier()));
         }
         toReturn.setBaseEffortScore(effortBreakdown.getBaseEffortScore());
+        if (Objects.nonNull(effortBreakdown.getDiffClassification())) {
+            toReturn.setDiffClassification(mapDiffClassification(effortBreakdown.getDiffClassification()));
+        }
         return toReturn;
     }
     private static VolumeScoreModel mapVolumeScore(LlmScoringResponse.VolumeScore volumeScore) {
@@ -251,6 +257,44 @@ public class LlmResponseMapper {
         toReturn.setModifyMultiplier(volumeScore.getModifyMultiplier());
         toReturn.setAddMultiplier(volumeScore.getAddMultiplier());
         toReturn.setTotalVolumeScore(volumeScore.getTotalVolumeScore());
+        toReturn.setLinesChangedRaw(volumeScore.getLinesChangedRaw());
+        toReturn.setLinesChangedAdjusted(volumeScore.getLinesChangedAdjusted());
+        toReturn.setCosmeticLinesDropped(volumeScore.getCosmeticLinesDropped());
+        toReturn.setInPlaceLinesCollapsed(volumeScore.getInPlaceLinesCollapsed());
+        return toReturn;
+    }
+    private static DiffClassificationModel mapDiffClassification(LlmScoringResponse.DiffClassification source) {
+        DiffClassificationModel toReturn = new DiffClassificationModel();
+        toReturn.setTotalLinesAddedRaw(source.getTotalLinesAddedRaw());
+        toReturn.setTotalLinesDeletedRaw(source.getTotalLinesDeletedRaw());
+        toReturn.setCosmeticLines(source.getCosmeticLines());
+        toReturn.setInPlaceModifyLines(source.getInPlaceModifyLines());
+        toReturn.setTrueDeleteAddLines(source.getTrueDeleteAddLines());
+        toReturn.setRationale(source.getRationale());
+        toReturn.setPerFile(Optional.ofNullable(source.getPerFile()).orElse(Collections.emptyList()).stream()
+                .map(LlmResponseMapper::mapFileDiffClassification)
+                .collect(Collectors.toList()));
+        return toReturn;
+    }
+    private static FileDiffClassificationModel mapFileDiffClassification(LlmScoringResponse.FileDiffClassification source) {
+        FileDiffClassificationModel toReturn = new FileDiffClassificationModel();
+        toReturn.setFile(source.getFile());
+        toReturn.setCosmeticLines(source.getCosmeticLines());
+        toReturn.setInPlaceModifyLines(source.getInPlaceModifyLines());
+        toReturn.setTrueDeleteAddLines(source.getTrueDeleteAddLines());
+        if (Objects.nonNull(source.getAdded())) {
+            toReturn.setAdded(mapLineGroups(source.getAdded()));
+        }
+        if (Objects.nonNull(source.getDeleted())) {
+            toReturn.setDeleted(mapLineGroups(source.getDeleted()));
+        }
+        return toReturn;
+    }
+    private static LineGroupsModel mapLineGroups(LlmScoringResponse.LineGroups source) {
+        LineGroupsModel toReturn = new LineGroupsModel();
+        toReturn.setCosmetic(Optional.ofNullable(source.getCosmetic()).orElse(Collections.emptyList()));
+        toReturn.setInPlaceModify(Optional.ofNullable(source.getInPlaceModify()).orElse(Collections.emptyList()));
+        toReturn.setTrueDeleteAdd(Optional.ofNullable(source.getTrueDeleteAdd()).orElse(Collections.emptyList()));
         return toReturn;
     }
     private static ComplexityMultiplierModel mapComplexityMultiplier(LlmScoringResponse.ComplexityMultiplier complexityMultiplier) {

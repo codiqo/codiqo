@@ -22,15 +22,15 @@ import org.apache.commons.cli.Options;
 import org.apache.commons.lang3.StringUtils;
 import org.eclipse.jgit.annotations.Nullable;
 import org.eclipse.jgit.lib.Repository;
+
 import com.google.common.base.CaseFormat;
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
-import io.codiqo.util.JGit;
-
 import edu.umd.cs.findbugs.Priorities;
+import io.codiqo.util.JGit;
 import lombok.Data;
 import net.sourceforge.pmd.lang.rule.RulePriority;
 import okhttp3.HttpUrl;
@@ -106,6 +106,8 @@ public class RunArgs {
     private int maxRequestsPerHost = Byte.MAX_VALUE;
     @Nullable
     private int cpdMinimumTileSize = Byte.MAX_VALUE / 2;
+    @Nullable
+    private int diffContextLines = 10;
     /**
      * Threshold ratio (0.0-1.0) for determining if a clone was "introduced" in the commit.
      * A clone is considered "introduced" only if this percentage of its lines overlap with added lines.
@@ -126,7 +128,7 @@ public class RunArgs {
     @Nullable
     private String llmApiKey = System.getProperty("ollama.apiKey");
     @Nullable
-    private String llmModel = System.getProperty("ollama.model", "nemotron-3-super:cloud");
+    private String llmModel = System.getProperty("ollama.model", "deepseek-v4-pro:cloud");
     @Nullable
     private String llmBaseUrl = System.getProperty("ollama.url", "https://ollama.com/v1");
     @Nullable
