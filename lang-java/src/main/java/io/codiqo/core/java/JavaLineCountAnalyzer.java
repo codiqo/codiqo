@@ -151,7 +151,11 @@ public class JavaLineCountAnalyzer {
     }
     private static String readLine(TextDocument doc, int line) {
         TextRegion region = doc.createLineRange(line, line);
-        return StringUtils.chomp(doc.sliceTranslatedText(region).toString());
+        int length = doc.getLength();
+        int start = Math.min(region.getStartOffset(), length);
+        int end = Math.min(region.getEndOffset(), length);
+        TextRegion safe = TextRegion.fromBothOffsets(start, end);
+        return StringUtils.chomp(doc.sliceTranslatedText(safe).toString());
     }
     private static JavaccToken skipLeadingComments(JavaccToken first, JavaccToken last) {
         JavaccToken current = first;
