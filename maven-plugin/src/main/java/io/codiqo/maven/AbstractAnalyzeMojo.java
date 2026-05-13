@@ -103,6 +103,7 @@ import io.codiqo.maven.populator.SubmissionSummaryPrinter;
 import io.codiqo.util.Env;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
+import io.codiqo.util.MemoryReport;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
 
@@ -822,7 +823,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         Path workTree = args.getGit().getWorkTree().toPath().normalize();
         try (Fetch fetch = new Fetch(args)) {
             try (LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, args, fetch)) {
+                getLog().info(MemoryReport.snapshot("before-load"));
                 registry.load().block();
+                getLog().info(MemoryReport.snapshot("after-load"));
                 MutableBoolean toApply = new MutableBoolean();
                 DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, args);
                 CommitAnalysis analysis = analyzer.analyze();
@@ -840,8 +843,11 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 }
                 if (toApply.isTrue()) {
                     IndexingSummary index = registry.index(analysis);
+                    getLog().info(MemoryReport.snapshot("after-index"));
                     registry.identifyAffectedSymbols(index, analysis);
+                    getLog().info(MemoryReport.snapshot("after-identify-symbols"));
                     registry.collectAndCapture(index, analysis);
+                    getLog().info(MemoryReport.snapshot("after-collect-capture"));
                     SubmissionContext ctx = SubmissionContext.create(
                             args,
                             index,

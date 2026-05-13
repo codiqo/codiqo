@@ -27,6 +27,7 @@ import com.google.common.collect.Lists;
 
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.RunArgs;
+import io.codiqo.util.MemoryReport;
 
 @Mojo(name = "analyze-commit",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
@@ -45,6 +46,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     }
     @Override
     protected void doExecute(RunArgs args) throws Exception {
+        getLog().info(MemoryReport.snapshot("before-clone"));
         File temp = Files.createTempDirectory("codiqo").toFile();
         temp.deleteOnExit();
 
@@ -120,11 +122,14 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
              */
             InvocationRequest invocationReq = invocationRequest(args);
             ProjectBuildingRequest buildingReq = buildingRequest();
+            getLog().info(MemoryReport.snapshot("before-maven-build"));
             ProjectBuildingResult result = buildProject(args, invocationReq, buildingReq);
+            getLog().info(MemoryReport.snapshot("after-maven-build"));
 
             Collection<MavenProject> reactors = Lists.newLinkedList();
             buildAndCollectModules(result.getProject(), clone.getWorkTree(), buildingReq, reactors);
             try (ClassGraphSpec scan = scanProjects(args, reactors)) {
+                getLog().info(MemoryReport.snapshot("after-classgraph-scan"));
                 args.setClassGraph(scan);
                 super.doExecute(args);
             }
