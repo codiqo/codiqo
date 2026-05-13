@@ -36,6 +36,10 @@ import reactor.core.publisher.Sinks;
 import reactor.core.publisher.Sinks.EmitResult;
 
 class JdtLspProcess implements Closeable {
+    private static final int MIN_JDK_ZGC = 15;
+    private static final int MIN_JDK_NATIVE_ACCESS = 16;
+    private static final int MIN_JDK_SUN_MISC_UNSAFE_FLAG = 23;
+
     @Delegate
     private final Sinks.Many<Integer> processor = Sinks.many().multicast().directBestEffort();
     private final Log log;
@@ -151,6 +155,8 @@ class JdtLspProcess implements Closeable {
                 cmd.add("-Djdt.core.sharedIndexLocation=" + RunArgs.JDT_SHARED_INDEX.resolve(args.getJdtlsVersion()).toFile().getAbsolutePath());
             }
 
+            cmd.addAll(JvmOptionsFilter.keepMemory(System.getenv("MAVEN_OPTS")));
+
             cmd.addAll(ImmutableList.of("-jar", launcherJar.toString()));
             cmd.addAll(ImmutableList.of("-configuration", config.toString()));
             cmd.addAll(ImmutableList.of("-data", data.toString()));
@@ -159,11 +165,11 @@ class JdtLspProcess implements Closeable {
             // ~ advance JVM options matched to the spawned JDK, not the current JVM
             //
             Runtime.Version spawnedJavaVersion = detectSpawnedJavaVersion(args.getJavaHome());
-            cmd.add(spawnedJavaVersion.feature() >= 15 ? "-XX:+UseZGC" : "-XX:+UseParallelGC");
-            if (spawnedJavaVersion.feature() >= 16) {
+            cmd.add(spawnedJavaVersion.feature() >= MIN_JDK_ZGC ? "-XX:+UseZGC" : "-XX:+UseParallelGC");
+            if (spawnedJavaVersion.feature() >= MIN_JDK_NATIVE_ACCESS) {
                 cmd.add("--enable-native-access=ALL-UNNAMED");
             }
-            if (spawnedJavaVersion.feature() >= 23) {
+            if (spawnedJavaVersion.feature() >= MIN_JDK_SUN_MISC_UNSAFE_FLAG) {
                 cmd.add("--sun-misc-unsafe-memory-access=allow");
             }
 
