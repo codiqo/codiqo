@@ -18,6 +18,7 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ResetCommand;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.StoredConfig;
+import org.eclipse.jgit.transport.RefSpec;
 
 import com.google.common.collect.Lists;
 
@@ -57,6 +58,14 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                 .setCloneAllBranches(true)
                 .call()
                 .getRepository();
+
+        try (Git tmpGit = Git.wrap(clone)) {
+            tmpGit.fetch()
+                    .setRemote("origin")
+                    .setRefSpecs(new RefSpec("+refs/*:refs/*"))
+                    .call();
+        }
+
         stopWatch.stop();
         getLog().info(String.format("cloned directory: %s for analysis in %s", temp.getAbsolutePath(), stopWatch.toString()));
 
