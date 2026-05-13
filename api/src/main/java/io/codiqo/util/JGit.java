@@ -25,6 +25,7 @@ import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 import lombok.experimental.UtilityClass;
 
@@ -63,14 +64,17 @@ public class JGit {
         return toReturn;
     }
     public static List<String> branchesContaining(Repository repo, String commitSha) throws Exception {
-        List<String> toReturn = Lists.newArrayList();
+        Set<String> toReturn = Sets.newLinkedHashSet();
 
         try (Git git = Git.wrap(repo)) {
-            for (Ref ref : git.branchList().setContains(commitSha).call()) {
-                toReturn.add(stripRefPrefix(ref.getName()));
+            for (Ref ref : git.branchList().setListMode(ListMode.ALL).setContains(commitSha).call()) {
+                String branchName = logicalBranchName(ref);
+                if (StringUtils.isNotBlank(branchName)) {
+                    toReturn.add(branchName);
+                }
             }
         }
-        return toReturn;
+        return Lists.newArrayList(toReturn);
     }
     public static Optional<String> detectDefaultBranch(Repository repo) throws IOException {
         Ref originHead = repo.exactRef(Constants.R_REMOTES + Constants.DEFAULT_REMOTE_NAME + "/" + Constants.HEAD);
@@ -104,15 +108,37 @@ public class JGit {
 
         try (Git git = Git.wrap(repo)) {
             for (Ref ref : git.branchList().setListMode(ListMode.ALL).call()) {
-                String branchName = stripRefPrefix(ref.getName());
+                String branchName = logicalBranchName(ref);
+                if (StringUtils.isBlank(branchName)) {
+                    continue;
+                }
                 try (RevWalk walk = new RevWalk(repo)) {
                     walk.markStart(walk.parseCommit(ref.getObjectId()));
                     for (RevCommit commit : walk) {
-                        toReturn.computeIfAbsent(commit.getName(), k -> Lists.newArrayList()).add(branchName);
+                        List<String> branches = toReturn.computeIfAbsent(commit.getName(), k -> Lists.newArrayList());
+                        if (!branches.contains(branchName)) {
+                            branches.add(branchName);
+                        }
                     }
                 }
             }
         }
         return toReturn;
+    }
+    private static String logicalBranchName(Ref ref) {
+        String name = ref.getName();
+        if (name.startsWith(Constants.R_HEADS)) {
+            return name.substring(Constants.R_HEADS.length());
+        }
+        if (name.startsWith(Constants.R_REMOTES)) {
+            String remoteTracking = name.substring(Constants.R_REMOTES.length());
+            int slash = remoteTracking.indexOf('/');
+            if (slash > 0) {
+                String shortName = remoteTracking.substring(slash + 1);
+                return Constants.HEAD.equals(shortName) ? null : shortName;
+            }
+            return remoteTracking;
+        }
+        return name;
     }
 }
