@@ -124,7 +124,7 @@ public class IndexCommitsMojo extends AbstractMojo {
             getLog().info("connecting to " + apiUrl);
 
             indexBatches(client, projectId, projectMetadata, commits);
-            writeMissingAnalyses(client, projectId, resolvedBranch);
+            writeMissingAnalyses(client, repo, projectId, resolvedBranch);
         } catch (MojoExecutionException | MojoFailureException err) {
             throw err;
         } catch (Exception err) {
@@ -191,16 +191,42 @@ public class IndexCommitsMojo extends AbstractMojo {
             getLog().warn("server reported " + unknownParents.size() + " unknown parent SHAs (re-run with a wider codiqo.commitWindow): " + sample + suffix);
         }
     }
-    private void writeMissingAnalyses(CommitIndexApi client, String projectId, String resolvedBranch) throws IOException, ApiException {
+    private void writeMissingAnalyses(CommitIndexApi client, Repository repo, String projectId, String resolvedBranch) throws IOException, ApiException {
         MissingAnalysesModel response = ApiRetry.call(
                 getLog(),
                 "listMissingAnalyses",
                 apiUrl,
                 () -> client.listMissingAnalyses(projectId, resolvedBranch, missingAnalysesLimit));
         List<String> shas = Optional.ofNullable(response.getCommitShas()).orElse(Collections.emptyList());
+
+        List<String> analyzable = Lists.newArrayListWithExpectedSize(shas.size());
+        int skippedMissingCommit = 0;
+        int skippedMissingParent = 0;
+
+        try (RevWalk walk = new RevWalk(repo)) {
+            for (String sha : shas) {
+                ObjectId commitId = repo.resolve(sha);
+                if (Objects.isNull(commitId)) {
+                    skippedMissingCommit++;
+                    continue;
+                }
+                RevCommit commit = walk.parseCommit(commitId);
+                if (commit.getParentCount() > 0 && Objects.isNull(repo.resolve(commit.getParent(0).getId().getName()))) {
+                    skippedMissingParent++;
+                    continue;
+                }
+                analyzable.add(sha);
+            }
+        }
+
         FileUtils.forceMkdir(missingAnalysesOutputFile.getParentFile());
-        FileUtils.writeLines(missingAnalysesOutputFile, StandardCharsets.UTF_8.name(), shas);
-        getLog().info("wrote " + shas.size() + " missing-analysis SHAs to " + missingAnalysesOutputFile.getAbsolutePath());
+        FileUtils.writeLines(missingAnalysesOutputFile, StandardCharsets.UTF_8.name(), analyzable);
+        getLog().info("wrote " + analyzable.size() + " missing-analysis SHAs to " + missingAnalysesOutputFile.getAbsolutePath());
+        if (skippedMissingCommit > 0 || skippedMissingParent > 0) {
+            getLog().warn("skipped " + skippedMissingCommit + " commits not present locally and "
+                    + skippedMissingParent + " commits whose first parent is not present locally"
+                    + " (deepen the Jenkins clone if you want these analyzed)");
+        }
     }
     private String resolveBranch(Repository repo) throws IOException, MojoExecutionException {
         if (StringUtils.isNotBlank(branch)) {
