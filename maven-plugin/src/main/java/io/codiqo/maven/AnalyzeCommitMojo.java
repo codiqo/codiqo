@@ -16,8 +16,11 @@ import org.apache.maven.project.ProjectBuildingResult;
 import org.apache.maven.shared.invoker.InvocationRequest;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ResetCommand;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.StoredConfig;
+import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.RefSpec;
 
 import com.google.common.collect.Lists;
@@ -51,13 +54,18 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
         StopWatch stopWatch = StopWatch.createStarted();
         StoredConfig originalConfig = args.getGit().getConfig();
         args.setDefaultBranch(args.getGit().getBranch());
-        Repository clone = Git.cloneRepository()
-                .setURI(args.getGit().getDirectory().toURI().toString())
-                .setDirectory(temp)
-                .setNoCheckout(true)
-                .setCloneAllBranches(true)
-                .call()
-                .getRepository();
+
+        String sourceUri = args.getGit().getDirectory().toURI().toString();
+        ObjectId sourceHead = args.getGit().resolve(org.eclipse.jgit.lib.Constants.HEAD);
+
+        Repository clone = new FileRepositoryBuilder()
+                .setGitDir(new File(temp, ".git"))
+                .build();
+        clone.create(false);
+
+        StoredConfig initialConfig = clone.getConfig();
+        initialConfig.setString("remote", "origin", "url", sourceUri);
+        initialConfig.save();
 
         try (Git tmpGit = Git.wrap(clone)) {
             tmpGit.fetch()
@@ -65,6 +73,10 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                     .setRefSpecs(new RefSpec("+refs/*:refs/*"))
                     .call();
         }
+
+        RefUpdate headUpdate = clone.updateRef(org.eclipse.jgit.lib.Constants.HEAD, true);
+        headUpdate.setNewObjectId(sourceHead);
+        headUpdate.forceUpdate();
 
         stopWatch.stop();
         getLog().info(String.format("cloned directory: %s for analysis in %s", temp.getAbsolutePath(), stopWatch.toString()));
