@@ -549,24 +549,29 @@ public class JavaLanguageSpec implements LanguageSpec {
             if (project instanceof MavenProjectSpec mvn) {
                 File outputDir = project.getOutputDirectory();
                 if (outputDir.exists()) {
-                    verifyClassesNotStale(project, outputDir);
-                    projects.computeIfAbsent(project, target -> {
-                        edu.umd.cs.findbugs.Project spotbugs = new edu.umd.cs.findbugs.Project();
-                        spotbugs.setProjectName(target.getName());
-                        spotbugs.addFile(target.getOutputDirectory().getAbsolutePath());
+                    if (hasClassFiles(outputDir)) {
+                        verifyClassesNotStale(project, outputDir);
+                        projects.computeIfAbsent(project, target -> {
+                            edu.umd.cs.findbugs.Project spotbugs = new edu.umd.cs.findbugs.Project();
+                            spotbugs.setProjectName(target.getName());
+                            spotbugs.addFile(target.getOutputDirectory().getAbsolutePath());
 
-                        mvn.getCompileClasspathElements().stream().forEach(element -> spotbugs.addAuxClasspathEntry(element.getAbsolutePath()));
-                        mvn.getTestClasspathElements().stream().forEach(element -> spotbugs.addAuxClasspathEntry(element.getAbsolutePath()));
+                            mvn.getCompileClasspathElements().stream().forEach(element -> spotbugs.addAuxClasspathEntry(element.getAbsolutePath()));
+                            mvn.getTestClasspathElements().stream().forEach(element -> spotbugs.addAuxClasspathEntry(element.getAbsolutePath()));
 
-                        for (File dir : mvn.getCompileSourceRoots()) {
-                            spotbugs.addSourceDirs(Collections.singletonList(dir.getAbsolutePath()));
-                        }
-                        for (File dir : mvn.getTestCompileSourceRoots()) {
-                            spotbugs.addSourceDirs(Collections.singletonList(dir.getAbsolutePath()));
-                        }
+                            for (File dir : mvn.getCompileSourceRoots()) {
+                                spotbugs.addSourceDirs(Collections.singletonList(dir.getAbsolutePath()));
+                            }
+                            for (File dir : mvn.getTestCompileSourceRoots()) {
+                                spotbugs.addSourceDirs(Collections.singletonList(dir.getAbsolutePath()));
+                            }
 
-                        return spotbugs;
-                    });
+                            return spotbugs;
+                        });
+                    } else {
+                        log.info("skipping spotbugs for project '%s': no .class files in %s (likely a pom-only aggregator, a test-only module, or an un-compiled module)",
+                                project.getName(), outputDir.getAbsolutePath());
+                    }
                 }
             }
         }
@@ -696,6 +701,11 @@ public class JavaLanguageSpec implements LanguageSpec {
 
         spotbugsWatch.stop();
         log.info("spotbugs analysis completed in %s", spotbugsWatch);
+    }
+    private static boolean hasClassFiles(File outputDir) throws IOException {
+        try (Stream<Path> walk = Files.walk(outputDir.toPath())) {
+            return walk.anyMatch(p -> "class".equals(FilenameUtils.getExtension(p.toString())));
+        }
     }
     private static void verifyClassesNotStale(ProjectSpec project, File outputDir) throws IOException {
         Optional<Date> lm = project.latestSourceModified();
