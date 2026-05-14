@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.math.BigDecimal;
 import java.net.JarURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -15,6 +16,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.EnumSet;
 import java.util.Enumeration;
@@ -27,6 +29,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FilenameUtils;
@@ -76,7 +79,6 @@ import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.SourceLocation;
-import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
@@ -113,8 +115,8 @@ import net.sourceforge.pmd.lang.java.ast.MethodUsage;
 import net.sourceforge.pmd.lang.java.internal.JavaLanguageProperties;
 import net.sourceforge.pmd.lang.java.symbols.JClassSymbol;
 import net.sourceforge.pmd.lang.java.symbols.JTypeDeclSymbol;
-import net.sourceforge.pmd.lang.java.types.JMethodSig;
 import net.sourceforge.pmd.lang.java.types.JClassType;
+import net.sourceforge.pmd.lang.java.types.JMethodSig;
 import net.sourceforge.pmd.lang.java.types.JTypeMirror;
 import net.sourceforge.pmd.lang.java.types.OverloadSelectionResult;
 import net.sourceforge.pmd.lang.rule.RulePriority;
@@ -128,19 +130,10 @@ public class JavaLanguageSpec implements LanguageSpec {
     private final Log log;
     private final RunArgs args;
     private final JavaLanguageModule language = new JavaLanguageModule();
-    private final ImmutableList<String> pmdRules = ImmutableList.of(
-            "category/java/bestpractices.xml",
-            "category/java/codestyle.xml",
-            "category/java/design.xml",
-            "category/java/errorprone.xml",
-            "category/java/performance.xml",
-            "category/java/multithreading.xml",
-            "category/java/security.xml");
     private final Function<NodeStream<? extends JavaNode>, Collection<JInvocationBlock>> outboundASTconverter = stream -> {
         ImmutableList.Builder<JInvocationBlock> builder = ImmutableList.builder();
         stream.toStream().forEach(node -> {
-            if (node instanceof MethodUsage) {
-                MethodUsage usage = (MethodUsage) node;
+            if (node instanceof MethodUsage usage) {
                 OverloadSelectionResult overload = usage.getOverloadSelectionInfo();
 
                 if (Objects.nonNull(overload) && BooleanUtils.negate(overload.isFailed())) {
@@ -161,7 +154,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         return builder.build();
     };
     private final IncomingCallsResolver incomingCallsResolver;
-    private JdtLspProjectImporter jdt;
+    private final JdtLspProjectImporter jdt;
 
     public JavaLanguageSpec(LogFactory logFactory, RunArgs args, Fetch fetch) throws IOException {
         this.log = logFactory.getLogger(getClass());
@@ -182,35 +175,35 @@ public class JavaLanguageSpec implements LanguageSpec {
         return true;
     }
     @Override
-    public List<CodeBlockInfo> parse(File destination) throws IOException {
+    public List<CodeBlockInfo> parse(ProjectSpec owner, Collection<File> files) throws IOException {
         ImmutableList.Builder<CodeBlockInfo> builder = ImmutableList.builder();
 
-        if (FilenameUtils.isExtension(destination.getName(), lang().getExtensions())) {
-            LanguagePropertyBundle bundle = language.newPropertyBundle();
-            bundle.setProperty(JavaLanguageProperties.FIRST_CLASS_LOMBOK, true);
+        LanguagePropertyBundle bundle = language.newPropertyBundle();
+        bundle.setProperty(JavaLanguageProperties.FIRST_CLASS_LOMBOK, true);
 
-            Optional<ProjectSpec> owner = args.owner(destination);
-            owner.ifPresent(project -> {
-                if (project instanceof MavenProjectSpec) {
-                    MavenProjectSpec mvn = (MavenProjectSpec) project;
+        if (owner instanceof MavenProjectSpec mvn) {
+            Set<String> jars = Sets.newLinkedHashSet();
+            mvn.getCompileClasspathElements().stream().forEach(element -> jars.add(element.getAbsolutePath()));
+            mvn.getTestClasspathElements().stream().forEach(element -> jars.add(element.getAbsolutePath()));
+            bundle.setProperty(JvmLanguagePropertyBundle.AUX_CLASSPATH, jars.stream().collect(Collectors.joining(File.pathSeparator)));
+        }
 
-                    Set<String> jars = Sets.newLinkedHashSet();
-                    mvn.getCompileClasspathElements().stream().forEach(element -> jars.add(element.getAbsolutePath()));
-                    mvn.getTestClasspathElements().stream().forEach(element -> jars.add(element.getAbsolutePath()));
-                    bundle.setProperty(JvmLanguagePropertyBundle.AUX_CLASSPATH, jars.stream().collect(Collectors.joining(File.pathSeparator)));
+        LanguageRegistry languageRegistry = LanguageRegistry.singleton(language);
+        ImmutableMap<Language, LanguagePropertyBundle> languageProperties = ImmutableMap.of(language, bundle);
+        try (LanguageProcessorRegistry processingRegistry = LanguageProcessorRegistry.create(languageRegistry, languageProperties, log)) {
+            Parser pmd = processingRegistry.getProcessor(language).services().getParser();
+            SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
+
+            for (File destination : files) {
+                if (BooleanUtils.negate(FilenameUtils.isExtension(destination.getName(), lang().getExtensions()))) {
+                    continue;
                 }
-            });
 
-            try (InputStream io = Files.newInputStream(destination.toPath())) {
-                String source = IOUtils.toString(io, StandardCharsets.UTF_8);
-                FileId fileId = FileId.fromPath(destination.toPath().normalize());
-                try (TextFile file = TextFile.forCharSeq(source, fileId, language.getDefaultVersion())) {
-                    try (TextDocument doc = TextDocument.create(file)) {
-                        LanguageRegistry languageRegistry = LanguageRegistry.singleton(language);
-                        ImmutableMap<Language, LanguagePropertyBundle> languageProperties = ImmutableMap.of(language, bundle);
-                        try (LanguageProcessorRegistry processingRegistry = LanguageProcessorRegistry.create(languageRegistry, languageProperties, log)) {
-                            Parser pmd = processingRegistry.getProcessor(language).services().getParser();
-                            SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
+                try (InputStream io = Files.newInputStream(destination.toPath())) {
+                    String source = IOUtils.toString(io, StandardCharsets.UTF_8);
+                    FileId fileId = FileId.fromPath(destination.toPath().normalize());
+                    try (TextFile file = TextFile.forCharSeq(source, fileId, language.getDefaultVersion())) {
+                        try (TextDocument doc = TextDocument.create(file)) {
                             ParserTask task = new ParserTask(doc, errorReporter, processingRegistry);
                             ASTCompilationUnit tree = (ASTCompilationUnit) pmd.parse(task);
 
@@ -258,12 +251,9 @@ public class JavaLanguageSpec implements LanguageSpec {
                                                 .build());
                                     }
 
-                                    owner.ifPresent(project -> {
-                                        if (project instanceof MavenProjectSpec) {
-                                            MavenProjectSpec mvn = (MavenProjectSpec) project;
-                                            toAdd.stream().forEach(signature -> signature.accept(mvn));
-                                        }
-                                    });
+                                    if (owner instanceof MavenProjectSpec mvn) {
+                                        toAdd.stream().forEach(signature -> signature.accept(mvn));
+                                    }
                                 }
                             };
 
@@ -291,7 +281,10 @@ public class JavaLanguageSpec implements LanguageSpec {
     }
     @Override
     public boolean equals(Object other) {
-        return Objects.equals(language, ((JavaLanguageSpec) other).language);
+        if (other instanceof JavaLanguageSpec spec) {
+            return Objects.equals(language, spec.language);
+        }
+        return false;
     }
     @Override
     public String toString() {
@@ -389,15 +382,16 @@ public class JavaLanguageSpec implements LanguageSpec {
         Map<File, ISourceFileCoverage> coverages = Maps.newConcurrentMap();
 
         summary.getProjects().forEach(project -> {
-            if (project instanceof MavenProjectSpec) {
-                MavenProjectSpec mvn = (MavenProjectSpec) project;
+            if (project instanceof MavenProjectSpec mvn) {
                 for (File sourceRoot : mvn.getCompileSourceRoots()) {
                     Path normalized = sourceRoot.toPath().normalize().toAbsolutePath();
                     for (IPackageCoverage pkg : bundle.getPackages()) {
                         for (ISourceFileCoverage source : pkg.getSourceFiles()) {
                             Path sourcePath = Paths.get(source.getPackageName(), source.getName());
                             File resolved = normalized.resolve(sourcePath).normalize().toFile();
-                            coverages.put(resolved, source);
+                            if (resolved.exists()) {
+                                coverages.put(resolved, source);
+                            }
                         }
                     }
                 }
@@ -416,8 +410,7 @@ public class JavaLanguageSpec implements LanguageSpec {
                 ISourceFileCoverage source = coverages.get(file);
                 if (Objects.nonNull(source)) {
                     for (CodeBlockInfo block : blocksCollection) {
-                        if (block instanceof JavaCodeBlockInfo) {
-                            JavaCodeBlockInfo javaBlock = (JavaCodeBlockInfo) block;
+                        if (block instanceof JavaCodeBlockInfo javaBlock) {
                             int startLine = block.getLocation().getStartLine();
                             int endLine = block.getLocation().getEndLine();
                             boolean hasCoverage = false;
@@ -452,24 +445,13 @@ public class JavaLanguageSpec implements LanguageSpec {
                 if (Objects.nonNull(source)) {
                     matched.incrementAndGet();
 
-                    for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
-                        symbol.block().ifPresent(block -> {
-                            int startLine = symbol.getLocation().getStartLine();
-                            int endLine = symbol.getLocation().getEndLine();
-
-                            for (int lineNum = startLine; lineNum <= endLine; lineNum++) {
-                                ILine line = source.getLine(lineNum);
-                                ((JavaCodeBlockInfo) block).lineCoverage(lineNum, line);
-                                if (BooleanUtils.or(new boolean[] { line.getStatus() == ICounter.FULLY_COVERED, line.getStatus() == ICounter.PARTLY_COVERED })) {
-                                    linesWithCoverage.incrementAndGet();
-                                }
-                            }
-                        });
-                    }
-
                     if (source.getFirstLine() > 0) {
                         for (int lineNum = source.getFirstLine(); lineNum <= source.getLastLine(); lineNum++) {
-                            fileAnalysis.lineCoverage(lineNum, source.getLine(lineNum));
+                            ILine line = source.getLine(lineNum);
+                            fileAnalysis.lineCoverage(lineNum, line);
+                            if (BooleanUtils.or(new boolean[] { line.getStatus() == ICounter.FULLY_COVERED, line.getStatus() == ICounter.PARTLY_COVERED })) {
+                                linesWithCoverage.incrementAndGet();
+                            }
                         }
                     }
                 } else {
@@ -483,6 +465,32 @@ public class JavaLanguageSpec implements LanguageSpec {
         log.info("coverage analysis: %d files affected matched, %d unmatched, %d lines with coverage", matched.get(), unmatched.get(), linesWithCoverage.get());
     }
     private void capturePmdViolations(IndexingSummary summary, CommitAnalysis analysis) {
+        Map<ProjectSpec, List<File>> filesByProject = Maps.newLinkedHashMap();
+        List<File> orphans = Lists.newArrayList();
+        for (File sourceFile : summary.getBlocks().keySet()) {
+            if (FilenameUtils.isExtension(sourceFile.getName(), language.getExtensions())) {
+                Optional<ProjectSpec> owner = args.owner(sourceFile);
+                if (owner.isPresent()) {
+                    filesByProject.computeIfAbsent(owner.get(), k -> Lists.newArrayList()).add(sourceFile);
+                } else {
+                    orphans.add(sourceFile);
+                }
+            }
+        }
+
+        List<Collection<File>> groups = Lists.newArrayList();
+        groups.addAll(filesByProject.values());
+        if (CollectionUtils.isNotEmpty(orphans)) {
+            groups.add(orphans);
+        }
+
+        StopWatch pmdWatch = StopWatch.createStarted();
+        groups.parallelStream().forEach(filesForProject -> runPmdForGroup(filesForProject, summary, analysis));
+        pmdWatch.stop();
+
+        log.info("PMD analysis completed in %s", pmdWatch);
+    }
+    private void runPmdForGroup(Collection<File> filesForProject, IndexingSummary summary, CommitAnalysis analysis) {
         PMDConfiguration cfg = new PMDConfiguration(LanguageRegistry.singleton(lang()));
         cfg.setReporter(log);
         cfg.setDefaultLanguageVersion(lang().getDefaultVersion());
@@ -491,24 +499,21 @@ public class JavaLanguageSpec implements LanguageSpec {
         cfg.setFailOnError(true);
         cfg.setSourceEncoding(StandardCharsets.UTF_8);
         cfg.setMinimumPriority(RulePriority.valueOf(args.getPmdMinPriority().toUpperCase()));
-        cfg.setThreads(Runtime.getRuntime().availableProcessors());
-        pmdRules.forEach(cfg::addRuleSet);
+        cfg.setThreads(BigDecimal.ONE.intValue());
 
-        StopWatch pmdWatch = StopWatch.createStarted();
         try (PmdAnalysis pmd = PmdAnalysis.create(cfg)) {
+            pmd.addRuleSets(pmd.newRuleSetLoader().warnDeprecated(false).loadFromResources(args.getPmdRules()));
             MutableBoolean toApply = new MutableBoolean();
 
-            for (File sourceFile : summary.getBlocks().keySet()) {
-                if (FilenameUtils.isExtension(sourceFile.getName(), language.getExtensions())) {
-                    if (pmd.files().addFile(sourceFile.toPath().normalize())) {
-                        toApply.setTrue();
-                    }
+            for (File sourceFile : filesForProject) {
+                if (pmd.files().addFile(sourceFile.toPath().normalize())) {
+                    toApply.setTrue();
                 }
             }
 
             if (toApply.isTrue()) {
                 Map<String, File> filesByAbsolutePath = Maps.newHashMap();
-                for (File sourceFile : summary.getBlocks().keySet()) {
+                for (File sourceFile : filesForProject) {
                     filesByAbsolutePath.put(sourceFile.getAbsolutePath(), sourceFile);
                 }
 
@@ -537,16 +542,14 @@ public class JavaLanguageSpec implements LanguageSpec {
                 });
             }
         }
-
-        pmdWatch.stop();
-        log.info("PMD analysis completed in %s", pmdWatch);
     }
-    private void captureSpotbugsViolations(IndexingSummary summary, CommitAnalysis analysis) {
+    private void captureSpotbugsViolations(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
         Map<ProjectSpec, edu.umd.cs.findbugs.Project> projects = Maps.newHashMap();
         for (ProjectSpec project : summary.getProjects()) {
-            if (project instanceof MavenProjectSpec) {
-                if (project.getOutputDirectory().exists()) {
-                    MavenProjectSpec mvn = (MavenProjectSpec) project;
+            if (project instanceof MavenProjectSpec mvn) {
+                File outputDir = project.getOutputDirectory();
+                if (outputDir.exists()) {
+                    verifyClassesNotStale(project, outputDir);
                     projects.computeIfAbsent(project, target -> {
                         edu.umd.cs.findbugs.Project spotbugs = new edu.umd.cs.findbugs.Project();
                         spotbugs.setProjectName(target.getName());
@@ -595,7 +598,7 @@ public class JavaLanguageSpec implements LanguageSpec {
                     log.info("loaded custom spotbugs plugin from %s with id '%s'", resource, customPlugin.getPluginId());
                     plugins.add(customPlugin);
                 } catch (DuplicatePluginIdException err) {
-
+                    log.log(Level.DEBUG, "spotbugs plugin from %s already registered: %s", resource, err.getMessage());
                 }
             }
         } catch (Exception err) {
@@ -607,8 +610,7 @@ public class JavaLanguageSpec implements LanguageSpec {
 
         Set<Path> sourceRoots = Sets.newHashSet();
         for (ProjectSpec project : projects.keySet()) {
-            if (project instanceof MavenProjectSpec) {
-                MavenProjectSpec mvn = (MavenProjectSpec) project;
+            if (project instanceof MavenProjectSpec mvn) {
                 mvn.getCompileSourceRoots().forEach(dir -> sourceRoots.add(dir.toPath().normalize()));
                 mvn.getTestCompileSourceRoots().forEach(dir -> sourceRoots.add(dir.toPath().normalize()));
             }
@@ -625,6 +627,12 @@ public class JavaLanguageSpec implements LanguageSpec {
             }
         }
 
+        Set<String> omitVisitors = Sets.newHashSet(
+                Splitter.on(',')
+                        .trimResults()
+                        .omitEmptyStrings()
+                        .splitToList(Optional.ofNullable(args.getSpotbugsOmitVisitors()).orElse(StringUtils.EMPTY)));
+
         StopWatch spotbugsWatch = StopWatch.createStarted();
         projects.values().parallelStream().forEach(spotbugs -> {
             try (StringWriter writer = new StringWriter()) {
@@ -640,13 +648,7 @@ public class JavaLanguageSpec implements LanguageSpec {
                         findBugs.setScanNestedArchives(false);
 
                         UserPreferences prefs = UserPreferences.createDefaultUserPreferences();
-                        prefs.setEffort(UserPreferences.EFFORT_DEFAULT);
 
-                        Set<String> omitVisitors = Sets.newHashSet(
-                                Splitter.on(',')
-                                        .trimResults()
-                                        .omitEmptyStrings()
-                                        .splitToList(Optional.ofNullable(args.getSpotbugsOmitVisitors()).orElse(StringUtils.EMPTY)));
                         detectorFactory.factoryIterator().forEachRemaining(factory -> {
                             if (omitVisitors.contains(factory.getShortName())) {
                                 prefs.enableDetector(factory, false);
@@ -695,11 +697,39 @@ public class JavaLanguageSpec implements LanguageSpec {
         spotbugsWatch.stop();
         log.info("spotbugs analysis completed in %s", spotbugsWatch);
     }
+    private static void verifyClassesNotStale(ProjectSpec project, File outputDir) throws IOException {
+        Optional<Date> lm = project.latestSourceModified();
+        if (lm.isPresent()) {
+            Date latestModified = lm.get();
+
+            Optional<FileTime> latestClass;
+            try (Stream<Path> walk = Files.walk(outputDir.toPath())) {
+                latestClass = walk.filter(p -> p.toString().endsWith(".class"))
+                        .map(p -> {
+                            for (;;) {
+                                try {
+                                    return Files.getLastModifiedTime(p);
+                                } catch (IOException err) {
+                                    ExceptionUtils.wrapAndThrow(err);
+                                }
+                            }
+                        })
+                        .max(Comparator.naturalOrder());
+            }
+
+            if (latestClass.isPresent() && latestClass.get().toInstant().isBefore(latestModified.toInstant())) {
+                throw new IOException(String.format(
+                        "compiled classes in %s are older than sources (latest .class: %s, latest source: %s) — recompile before re-running spotbugs",
+                        outputDir.getAbsolutePath(),
+                        latestClass.get().toInstant(),
+                        latestModified.toInstant()));
+            }
+        }
+    }
     @Override
     public void captureIncomingCalls(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
         incomingCallsResolver.resolve(summary, analysis);
     }
-
     private static void collectExecutables(Node node, Consumer<ASTExecutableDeclaration> consumer) {
         if (node instanceof ASTExecutableDeclaration) {
             consumer.accept((ASTExecutableDeclaration) node);

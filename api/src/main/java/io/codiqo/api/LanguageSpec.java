@@ -16,7 +16,7 @@ public interface LanguageSpec extends Closeable {
     default Mono<?> load() {
         return Mono.empty();
     }
-    Collection<CodeBlockInfo> parse(File file) throws IOException;
+    Collection<CodeBlockInfo> parse(ProjectSpec owner, Collection<File> files) throws IOException;
     void captureCoverage(IndexingSummary summary, CommitAnalysis analysis) throws IOException;
     void captureViolations(IndexingSummary summary, CommitAnalysis analysis) throws IOException;
     void captureIncomingCalls(IndexingSummary summary, CommitAnalysis analysis) throws IOException;

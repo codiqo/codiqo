@@ -61,6 +61,15 @@ public class RunArgs {
     @Nullable
     private String pmdMinPriority = RulePriority.HIGH.name();
     @Nullable
+    private List<String> pmdRules = Lists.newArrayList(
+            "category/java/bestpractices.xml",
+            "category/java/codestyle.xml",
+            "category/java/design.xml",
+            "category/java/errorprone.xml",
+            "category/java/performance.xml",
+            "category/java/multithreading.xml",
+            "category/java/security.xml");
+    @Nullable
     private Integer spotbugsPriorityThreshold = Priorities.HIGH_PRIORITY;
     @Nullable
     private String spotbugsOmitVisitors;
@@ -414,6 +423,8 @@ public class RunArgs {
                     field.set(toReturn, new File(value));
                 } else if (field.getType().equals(Repository.class)) {
                     field.set(toReturn, JGit.openRepository(new File(value)));
+                } else if (field.getType().equals(List.class)) {
+                    field.set(toReturn, Splitter.on(',').trimResults().omitEmptyStrings().splitToList(value));
                 }
             }
         }

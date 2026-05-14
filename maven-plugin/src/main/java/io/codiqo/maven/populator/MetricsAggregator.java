@@ -2,6 +2,7 @@ package io.codiqo.maven.populator;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Function;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.math3.stat.descriptive.rank.Percentile;
@@ -28,9 +29,6 @@ public class MetricsAggregator implements SubmissionPopulator {
 
     @Override
     public void accept(SubmissionContext ctx) {
-        /**
-         * affected metrics aggregation (commit-level)
-         */
         int totalFilesChanged = 0;
         int totalCodeUnitsAffected = 0;
         int totalPmdViolations = 0;
@@ -41,9 +39,6 @@ public class MetricsAggregator implements SubmissionPopulator {
         int coverageCount = 0;
         int complexityCount = 0;
 
-        /**
-         * full project coverage aggregation (all code units)
-         */
         int fullTotalMethods = 0;
         int fullCoveredMethods = 0;
         int fullTotalExecutableLines = 0;
@@ -62,9 +57,6 @@ public class MetricsAggregator implements SubmissionPopulator {
             if (Objects.nonNull(tracker)) {
                 ModuleQualityModel qualityModel = new ModuleQualityModel();
 
-                /**
-                 * affected metrics (commit-level)
-                 */
                 qualityModel.setFilesChanged(tracker.affectedFilesChanged().intValue());
                 qualityModel.setCodeUnitsAffected(tracker.affectedCodeUnits().intValue());
                 qualityModel.setTotalStatements(tracker.affectedTotalStatements().intValue());
@@ -77,9 +69,6 @@ public class MetricsAggregator implements SubmissionPopulator {
                 qualityModel.setTotalSpotbugsIssuesInModule(tracker.moduleTotalSpotbugsIssues().intValue());
                 qualityModel.setCriticalViolations(tracker.criticalViolations());
 
-                /**
-                 * module-level totals
-                 */
                 qualityModel.setTotalMethodsInModule(tracker.moduleTotalMethods().intValue());
                 qualityModel.setTotalStatementsInModule(tracker.moduleTotalStatements().intValue());
 
@@ -90,9 +79,6 @@ public class MetricsAggregator implements SubmissionPopulator {
                     qualityModel.setAverageComplexity(tracker.affectedAverageComplexity());
                 }
 
-                /**
-                 * full module coverage
-                 */
                 ModuleFullCoverageModel moduleFullCoverage = new ModuleFullCoverageModel();
                 moduleFullCoverage.setModuleId(moduleModel.getId());
                 moduleFullCoverage.setTotalMethods(tracker.moduleTotalMethods().intValue());
@@ -110,9 +96,6 @@ public class MetricsAggregator implements SubmissionPopulator {
                 qualityModel.setFullCoverage(moduleFullCoverage);
                 ctx.getModuleFullCoverages().put(moduleModel.getId(), moduleFullCoverage);
 
-                /**
-                 * aggregate module metrics to project totals
-                 */
                 fullTotalMethods += tracker.moduleTotalMethods().intValue();
                 fullCoveredMethods += tracker.moduleCoveredMethods().intValue();
                 fullTotalExecutableLines += tracker.moduleTotalExecutableLines().intValue();
@@ -130,9 +113,6 @@ public class MetricsAggregator implements SubmissionPopulator {
 
                 moduleModel.setQuality(qualityModel);
 
-                /**
-                 * aggregate affected metrics to project totals
-                 */
                 totalFilesChanged += tracker.affectedFilesChanged().intValue();
                 totalCodeUnitsAffected += tracker.affectedCodeUnits().intValue();
                 totalPmdViolations += tracker.affectedPmdViolations().intValue();
@@ -158,9 +138,9 @@ public class MetricsAggregator implements SubmissionPopulator {
             projectQualityModel.setAverageComplexity(totalComplexity / complexityCount);
         }
         if (totalStatements > 0 && totalDuplicatedLines > 0) {
-            double cpdPercent = totalDuplicatedLines * 100.0 / totalStatements;
-            projectQualityModel.setCpdDuplicationPercent(Math.min(cpdPercent, 100.0));
-            ctx.getSubmissionModel().getDuplication().setDuplicatedPercentage(Math.min(cpdPercent, 100.0));
+            double cpdPercent = Math.min(totalDuplicatedLines * 100.0 / totalStatements, 100.0);
+            projectQualityModel.setCpdDuplicationPercent(cpdPercent);
+            ctx.getSubmissionModel().getDuplication().setDuplicatedPercentage(cpdPercent);
         }
 
         ctx.getSubmissionModel().setProjectQuality(projectQualityModel);
@@ -184,7 +164,7 @@ public class MetricsAggregator implements SubmissionPopulator {
         if (fullTotalBranches > 0) {
             fullProjectCoverageModel.setBranchPercentage(fullCoveredBranches * 100.0 / fullTotalBranches);
         } else {
-            fullProjectCoverageModel.setBranchPercentage(100.0);
+            fullProjectCoverageModel.setBranchPercentage(0.0);
         }
 
         fullProjectCoverageModel.setByModule(ctx.getModuleFullCoverages());
@@ -289,7 +269,7 @@ public class MetricsAggregator implements SubmissionPopulator {
         model.setTrivialConstructorsProdExcluded(ctorProd);
         model.setTrivialConstructorsTestExcluded(ctorTest);
     }
-    private static List<DriverScaler.Sample> collectSamples(SubmissionContext ctx, java.util.function.Function<ModuleQualityTracker, List<DriverScaler.Sample>> extractor) {
+    private static List<DriverScaler.Sample> collectSamples(SubmissionContext ctx, Function<ModuleQualityTracker, List<DriverScaler.Sample>> extractor) {
         List<DriverScaler.Sample> toReturn = Lists.newArrayList();
         for (ModuleModel moduleModel : ctx.getProjectModel().getModules()) {
             ModuleQualityTracker tracker = ctx.getQualityTrackers().getIfPresent(moduleModel.getId());
@@ -299,7 +279,7 @@ public class MetricsAggregator implements SubmissionPopulator {
         }
         return toReturn;
     }
-    private static SampleMaxTracker mergeMaxTrackers(SubmissionContext ctx, java.util.function.Function<ModuleQualityTracker, SampleMaxTracker> extractor) {
+    private static SampleMaxTracker mergeMaxTrackers(SubmissionContext ctx, Function<ModuleQualityTracker, SampleMaxTracker> extractor) {
         SampleMaxTracker toReturn = new SampleMaxTracker();
         for (ModuleModel moduleModel : ctx.getProjectModel().getModules()) {
             ModuleQualityTracker tracker = ctx.getQualityTrackers().getIfPresent(moduleModel.getId());

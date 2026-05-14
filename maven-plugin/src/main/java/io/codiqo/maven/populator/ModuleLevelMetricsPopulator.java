@@ -12,7 +12,7 @@ import org.jacoco.core.analysis.ICounter;
 import org.jacoco.core.analysis.ILine;
 
 import edu.umd.cs.findbugs.BugInstance;
-import edu.umd.cs.findbugs.Priorities;
+import edu.umd.cs.findbugs.BugRankCategory;
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.metrics.CodeBlockMetrics;
 import io.codiqo.api.metrics.DriverScaler;
@@ -58,7 +58,7 @@ public class ModuleLevelMetricsPopulator implements SubmissionPopulator {
                         tracker.addModuleCoverageLines(coveredLines, missedLines);
                         tracker.addModuleCoverageBranches(coveredBranches, missedBranches);
 
-                        boolean isTest = Boolean.TRUE.equals(spec.isTestResource(sourceFile));
+                        boolean isTest = spec.isTestResource(sourceFile);
                         boolean isConstructor = javaBlock instanceof JavaConstructorBlockInfo;
                         boolean isTrivial = javaBlock.isTrivial();
                         CodeBlockMetrics metrics = javaBlock.metrics();
@@ -90,7 +90,7 @@ public class ModuleLevelMetricsPopulator implements SubmissionPopulator {
                         tracker.addModuleSpotbugsIssues(javaBlock.getSpotbugs().size());
                         tracker.addModuleUniqueClass(javaBlock.getEnclosingType().getBinaryName());
 
-                        if (Boolean.FALSE.equals(spec.isTestResource(sourceFile))) {
+                        if (!isTest) {
                             String relativePath = ctx.getWorkTree().relativize(sourceFile.toPath()).toString();
                             collectCriticalViolations(tracker, javaBlock, relativePath);
                         }
@@ -101,7 +101,7 @@ public class ModuleLevelMetricsPopulator implements SubmissionPopulator {
     }
     private static void collectCriticalViolations(ModuleQualityTracker tracker, JavaCodeBlockInfo javaBlock, String filePath) {
         for (BugInstance bug : javaBlock.getSpotbugs()) {
-            if (bug.getPriority() == Priorities.HIGH_PRIORITY) {
+            if (BugRankCategory.getRank(bug.getBugRank()) == BugRankCategory.SCARIEST) {
                 DiagnosticModel diag = new DiagnosticModel();
                 diag.setTool(DiagnosticModel.ToolEnum.SPOTBUGS);
                 diag.setRuleId(bug.getBugPattern().getType());

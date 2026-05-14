@@ -17,4 +17,6 @@ public interface ProjectSpec extends Closeable {
     boolean contains(File filePath);
     Optional<Date> latestModified();
     void setLatestModified(Date date);
+    Optional<Date> latestSourceModified();
+    void setLatestSourceModified(Date date);
 }

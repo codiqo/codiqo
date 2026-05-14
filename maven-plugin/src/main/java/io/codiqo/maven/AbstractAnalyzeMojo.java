@@ -141,7 +141,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     protected File mavenHome;
 
     @Parameter(property = "codiqo.preferYaml", defaultValue = "true")
-    protected boolean preferYaml = true;
+    protected boolean preferYaml;
 
     @Parameter(property = "codiqo.buildTimeoutMinutes", defaultValue = "30")
     protected long buildTimeoutMinutes;
@@ -177,25 +177,28 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     protected String jdtlsVersion;
 
     @Parameter(property = "codiqo.dumpAnalysis", defaultValue = "true")
-    protected boolean dumpAnalysis = true;
+    protected boolean dumpAnalysis;
 
     @Parameter(property = "codiqo.ignoreCoverage", defaultValue = "false")
-    protected boolean ignoreCoverage = false;
+    protected boolean ignoreCoverage;
 
     @Parameter(property = "codiqo.ignoreCpd", defaultValue = "false")
-    protected boolean ignoreCpd = false;
+    protected boolean ignoreCpd;
 
     @Parameter(property = "codiqo.ignoreDiagnostics", defaultValue = "false")
-    protected boolean ignoreDiagnostics = false;
+    protected boolean ignoreDiagnostics;
 
     @Parameter(property = "codiqo.ignoreComplexity", defaultValue = "false")
-    protected boolean ignoreComplexity = false;
+    protected boolean ignoreComplexity;
 
     @Parameter(property = "codiqo.failOnJdtlsError", defaultValue = "false")
-    protected boolean failOnJdtlsError = false;
+    protected boolean failOnJdtlsError;
 
     @Parameter(property = "codiqo.pmdMinPriority", defaultValue = "medium_high")
     protected String pmdMinPriority;
+
+    @Parameter(property = "codiqo.pmdRules")
+    protected String pmdRules;
 
     @Parameter(property = "codiqo.spotbugsPriorityThreshold", defaultValue = "2")
     protected int spotbugsPriorityThreshold;
@@ -231,13 +234,13 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     protected String includeAuthorEmails;
 
     @Parameter(property = "codiqo.hideSourceCode", defaultValue = "false")
-    protected boolean hideSourceCode = false;
+    protected boolean hideSourceCode;
 
     @Parameter(property = "codiqo.jdtUseSharedIndex", defaultValue = "true")
-    protected boolean jdtUseSharedIndex = true;
+    protected boolean jdtUseSharedIndex;
 
     @Parameter(property = "codiqo.jdtIncludeDecompiledSources", defaultValue = "false")
-    protected boolean jdtIncludeDecompiledSources = false;
+    protected boolean jdtIncludeDecompiledSources;
 
     @Parameter(property = "codiqo.jdtDebugPort")
     protected Integer jdtDebugPort;
@@ -299,6 +302,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setIgnoreComplexity(ignoreComplexity);
         args.setFailOnJdtlsError(failOnJdtlsError);
         args.setPmdMinPriority(pmdMinPriority);
+        if (StringUtils.isNotBlank(pmdRules)) {
+            args.setPmdRules(Splitter.on(',').trimResults().omitEmptyStrings().splitToList(pmdRules));
+        }
         args.setSpotbugsPriorityThreshold(spotbugsPriorityThreshold);
         Optional.ofNullable(spotbugsOmitVisitors).ifPresent(args::setSpotbugsOmitVisitors);
         args.setLlmModel(llmModel);
@@ -638,7 +644,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     }
     protected void doPrepare(RunArgs args) throws Exception {
         if (StringUtils.isEmpty(args.getDefaultBranch())) {
-            args.setDefaultBranch(args.getDefaultBranch());
+            JGit.detectDefaultBranch(args.getGit()).ifPresent(args::setDefaultBranch);
         }
         if (args.getRemoteUrls().isEmpty()) {
             StoredConfig config = args.getGit().getConfig();
@@ -651,10 +657,13 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         }
     }
     protected void doExecute(RunArgs args) throws Exception {
-        SubmissionContext ctx = doAnalyze(args);
-        if (Objects.nonNull(ctx) && BooleanUtils.negate(ctx.getAnalysis().isRevertCommit())) {
-            ctx.getSubmissionModel().setScoringConfig(mapScoringConfig(args));
-            doLlmScoring(ctx);
+        Optional<SubmissionContext> opt = doAnalyze(args);
+        if (opt.isPresent()) {
+            SubmissionContext ctx = opt.get();
+            if (BooleanUtils.negate(ctx.getAnalysis().isRevertCommit())) {
+                ctx.getSubmissionModel().setScoringConfig(mapScoringConfig(args));
+                doLlmScoring(ctx);
+            }
         }
     }
     private static ScoringConfigModel mapScoringConfig(RunArgs args) {
@@ -663,6 +672,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         toReturn.setCommitId(args.getCommitId());
         toReturn.setJdtlsVersion(args.getJdtlsVersion());
         toReturn.setPmdMinPriority(args.getPmdMinPriority());
+        toReturn.setPmdRules(args.getPmdRules());
         toReturn.setSpotbugsPriorityThreshold(args.getSpotbugsPriorityThreshold());
         toReturn.setSpotbugsOmitVisitors(args.getSpotbugsOmitVisitors());
 
@@ -816,7 +826,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
         return toReturn;
     }
-    protected SubmissionContext doAnalyze(RunArgs args) throws Exception {
+    protected Optional<SubmissionContext> doAnalyze(RunArgs args) throws Exception {
         purgeNonJavaSourceJars(args);
 
         LogFactory logFactory = new MavenLogFactory(getLog());
@@ -867,11 +877,11 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     new MetricsAggregator(duplicationPopulator.getTotalDuplicatedLines()).accept(ctx);
                     new SubmissionSummaryPrinter(getLog()).accept(ctx);
                     new OutputSerializer(preferYaml, getLog()).accept(ctx);
-                    return ctx;
+                    return Optional.of(ctx);
                 }
             }
         }
-        return null;
+        return Optional.empty();
     }
     protected void doLlmScoring(SubmissionContext ctx) throws Exception {
         new LlmScoringPopulator(getLog()).accept(ctx);
