@@ -44,6 +44,7 @@ import org.openrewrite.internal.InMemoryLargeSourceSet;
 import org.openrewrite.java.JavaParser;
 import org.openrewrite.java.RemoveUnusedImports;
 import org.openrewrite.java.ShortenFullyQualifiedTypeReferences;
+import org.openrewrite.java.internal.DefaultJavaTypeFactory;
 import org.openrewrite.java.internal.JavaTypeCache;
 import org.openrewrite.staticanalysis.AtomicPrimitiveEqualsUsesGet;
 import org.openrewrite.staticanalysis.BigDecimalDoubleConstructorRecipe;
@@ -86,14 +87,14 @@ import org.openrewrite.staticanalysis.UseDiamondOperator;
 import org.openrewrite.staticanalysis.UseJavaStyleArrayDeclarations;
 import org.openrewrite.staticanalysis.UsePortableNewlines;
 
-import io.codiqo.util.JGit;
-
 import com.google.common.base.Joiner;
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+
+import io.codiqo.util.JGit;
 
 @Mojo(name = "normalize-sources",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
@@ -274,7 +275,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
                 JavaParser parser = JavaParser.fromJavaVersion()
                         .classpath(classpath)
                         .logCompilationWarningsAndErrors(true)
-                        .typeCache(typeCache)
+                        .typeFactory(new DefaultJavaTypeFactory(typeCache))
                         .build();
 
                 parser.parse(sourceFiles, baseDir, ctx).forEach(toReturn::add);

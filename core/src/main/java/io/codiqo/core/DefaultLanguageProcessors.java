@@ -2,7 +2,6 @@ package io.codiqo.core;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
@@ -15,6 +14,7 @@ import java.util.Collection;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -34,6 +34,7 @@ import org.eclipse.jgit.lib.Repository;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.MultimapBuilder;
 import com.google.common.collect.Multimaps;
@@ -43,8 +44,8 @@ import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.IndexingSummary.IndexingSummaryBuilder;
 import io.codiqo.api.LanguageProcessors;
 import io.codiqo.api.LanguageSpec;
+import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
-import io.codiqo.util.JGit;
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.cpd.DuplicationMatch;
@@ -62,6 +63,7 @@ import io.codiqo.core.java.JavaLanguageSpec;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.lang.spec.PmdAffectedSymbolInfo;
 import io.codiqo.util.Fetch;
+import io.codiqo.util.JGit;
 import net.sourceforge.pmd.cpd.CPDConfiguration;
 import net.sourceforge.pmd.cpd.CpdAnalysis;
 import net.sourceforge.pmd.cpd.Match;
@@ -93,8 +95,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         for (FileAnalysis fileAnalysis : analysis) {
             for (AffectedSymbolInfo affectedSymbolInfo : fileAnalysis.getPotentiallyAffectedSymbols()) {
                 affectedSymbolInfo.block().ifPresent(block -> {
-                    if (block instanceof JavaCodeBlockInfo) {
-                        JavaCodeBlockInfo java = (JavaCodeBlockInfo) block;
+                    if (block instanceof JavaCodeBlockInfo java) {
                         java.getInvocations().forEach(outbound -> {
 
                         });
@@ -157,14 +158,19 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                         File file = path.toFile();
                         if (FilenameUtils.isExtension(file.getName(), extensions)) {
                             args.owner(file).ifPresent(prj -> {
-                                Optional<Date> opt = prj.latestModified();
                                 FileTime fileTime = attrs.lastModifiedTime();
                                 if (Objects.nonNull(fileTime)) {
                                     Date date = Date.from(fileTime.toInstant());
-                                    if (opt.isEmpty()) {
+                                    Optional<Date> opt = prj.latestModified();
+                                    if (opt.isEmpty() || opt.get().before(date)) {
                                         prj.setLatestModified(date);
-                                    } else if (opt.get().before(date)) {
-                                        prj.setLatestModified(date);
+                                    }
+
+                                    if (Boolean.FALSE.equals(prj.isTestResource(file))) {
+                                        Optional<Date> srcOpt = prj.latestSourceModified();
+                                        if (srcOpt.isEmpty() || srcOpt.get().before(date)) {
+                                            prj.setLatestSourceModified(date);
+                                        }
                                     }
                                 }
                             });
@@ -179,31 +185,45 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                 }
             });
 
-            totalFiles.parallelStream().forEach(path -> {
+            Map<ProjectSpec, List<File>> filesByOwner = Maps.newLinkedHashMap();
+            List<File> orphans = Lists.newArrayList();
+            for (Path path : totalFiles) {
                 File file = path.toFile();
-                forEach(processor -> {
+                Optional<ProjectSpec> opt = args.owner(file);
+                if (opt.isPresent()) {
+                    filesByOwner.computeIfAbsent(opt.get(), k -> Lists.newArrayList()).add(file);
+                } else {
+                    orphans.add(file);
+                }
+            }
+
+            filesByOwner.entrySet().parallelStream().forEach(group -> processors.forEach(processor -> {
+                List<File> matching = group.getValue().stream()
+                        .filter(file -> FilenameUtils.isExtension(file.getName(), processor.lang().getExtensions()))
+                        .collect(ImmutableList.toImmutableList());
+                if (CollectionUtils.isNotEmpty(matching)) {
                     for (;;) {
                         try {
-                            if (FilenameUtils.isExtension(file.getName(), processor.lang().getExtensions())) {
-                                try (InputStream input = Files.newInputStream(file.toPath())) {
-                                    processor.parse(file).forEach(block -> {
-                                        blocks.put(file, block);
+                            processor.parse(group.getKey(), matching).forEach(block -> {
+                                blocks.put(block.getFile(), block);
 
-                                        if (block.isTrivial()) {
-                                            skippedTrivial.incrementAndGet();
-                                        } else {
-                                            totalSymbols.incrementAndGet();
-                                        }
-                                    });
+                                if (block.isTrivial()) {
+                                    skippedTrivial.incrementAndGet();
+                                } else {
+                                    totalSymbols.incrementAndGet();
                                 }
-                            }
+                            });
                             return;
                         } catch (IOException err) {
                             ExceptionUtils.wrapAndThrow(err);
                         }
                     }
-                });
-            });
+                }
+            }));
+            if (CollectionUtils.isNotEmpty(orphans)) {
+                log.error("could not determine owner for %d orphan files: %s", orphans.size(), orphans);
+            }
+
             stopWatch.stop();
 
             log.info("indexed %d symbols from %d files (skipped: %d, ignored: %d, trivial: %d) in %s",
@@ -233,8 +253,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         for (LanguageSpec processor : processors) {
             for (FileAnalysis it : analysis) {
                 if (it.isExtension(processor.lang())) {
-                    if (it instanceof GitFileAnalysis) {
-                        GitFileAnalysis gitAnalysis = (GitFileAnalysis) it;
+                    if (it instanceof GitFileAnalysis gitAnalysis) {
                         gitAnalysis.setLanguage(processor.lang());
 
                         /**
@@ -252,8 +271,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                         if (CollectionUtils.isNotEmpty(lines)) {
                             Collection<CodeBlockInfo> fileBlocks = summary.getBlocks().get(gitAnalysis.getFile());
                             for (CodeBlockInfo next : fileBlocks) {
-                                if (next instanceof JavaCodeBlockInfo) {
-                                    JavaCodeBlockInfo block = (JavaCodeBlockInfo) next;
+                                if (next instanceof JavaCodeBlockInfo block) {
                                     int startLine = block.getLocation().getStartLine();
                                     int endLine = block.getLocation().getEndLine();
                                     boolean isAffected = lines.stream().anyMatch(line -> line >= startLine && line <= endLine);

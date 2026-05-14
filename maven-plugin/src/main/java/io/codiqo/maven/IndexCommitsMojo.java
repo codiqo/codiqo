@@ -257,7 +257,7 @@ public class IndexCommitsMojo extends AbstractMojo {
 
         try (RevWalk walk = new RevWalk(repo)) {
             walk.sort(RevSort.TOPO);
-            walk.setRevFilter(CommitTimeRevFilter.after(cutoff));
+            walk.setRevFilter(CommitTimeRevFilter.after(cutoff.toInstant()));
             walk.markStart(walk.parseCommit(startId));
 
             for (RevCommit commit : walk) {
@@ -280,7 +280,7 @@ public class IndexCommitsMojo extends AbstractMojo {
         toReturn.setMessage(commit.getFullMessage());
         toReturn.setAuthor(commit.getAuthorIdent().getName());
         toReturn.setAuthorEmail(commit.getAuthorIdent().getEmailAddress());
-        toReturn.setTimestamp(commit.getAuthorIdent().getWhen().toInstant().atOffset(ZoneOffset.UTC));
+        toReturn.setTimestamp(commit.getAuthorIdent().getWhenAsInstant().atOffset(ZoneOffset.UTC));
 
         toReturn.setParents(JGit.parentShas(commit));
         toReturn.setBranches(branches);

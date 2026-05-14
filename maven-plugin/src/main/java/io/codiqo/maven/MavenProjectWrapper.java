@@ -38,6 +38,9 @@ public class MavenProjectWrapper implements MavenProjectSpec {
     @Getter(AccessLevel.NONE)
     private Optional<Date> latestModified = Optional.empty();
 
+    @Getter(AccessLevel.NONE)
+    private Optional<Date> latestSourceModified = Optional.empty();
+
     private String description;
     private String version;
     private File baseDirectory;
@@ -81,6 +84,14 @@ public class MavenProjectWrapper implements MavenProjectSpec {
     @Override
     public Optional<Date> latestModified() {
         return latestModified;
+    }
+    @Override
+    public void setLatestSourceModified(Date date) {
+        this.latestSourceModified = Optional.of(date);
+    }
+    @Override
+    public Optional<Date> latestSourceModified() {
+        return latestSourceModified;
     }
     @Override
     public Optional<String> parent() {

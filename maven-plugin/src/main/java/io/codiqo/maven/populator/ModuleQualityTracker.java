@@ -167,6 +167,6 @@ public class ModuleQualityTracker {
     }
     double moduleBranchCoveragePercent() {
         int total = moduleTotalBranches.intValue();
-        return total > 0 ? moduleCoveredBranches.intValue() * 100.0 / total : 100.0;
+        return total > 0 ? moduleCoveredBranches.intValue() * 100.0 / total : 0.0;
     }
 }

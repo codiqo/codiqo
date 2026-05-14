@@ -2,7 +2,6 @@ package io.codiqo.core.java;
 
 import java.util.Iterator;
 import java.util.List;
-import java.util.Objects;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
@@ -96,9 +95,6 @@ public class JavaBinaryFormat {
         return sb.toString();
     }
     public static String toTypeDescriptor(JTypeMirror type) {
-        if (Objects.isNull(type)) {
-            return OBJECT_DESCRIPTOR;
-        }
         return type.acceptVisitor(INSTANCE, null);
     }
 
@@ -132,13 +128,7 @@ public class JavaBinaryFormat {
         }
         @Override
         public String visitClass(JClassType t, Void data) {
-            JClassSymbol sym = t.getSymbol();
-            String binaryName = sym.getBinaryName();
-
-            if (Objects.isNull(binaryName)) {
-                return OBJECT_DESCRIPTOR;
-            }
-            return Type.getObjectType(binaryName.replace('.', '/')).getDescriptor();
+            return Type.getObjectType(getInternalName(t.getSymbol().getBinaryName())).getDescriptor();
         }
         @Override
         public String visitTypeVar(JTypeVar t, Void data) {

@@ -3056,6 +3056,10 @@ components:
           type: string
         pmdMinPriority:
           type: string
+        pmdRules:
+          type: array
+          items:
+            type: string
         spotbugsPriorityThreshold:
           type: integer
         spotbugsOmitVisitors:

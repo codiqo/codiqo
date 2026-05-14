@@ -29,8 +29,8 @@ class DriverScalerTest {
         assertTrue(scaler.lines().p90() <= scaler.lines().p95());
         assertTrue(scaler.lines().p95() <= scaler.lines().max());
 
-        double ncssFactor = (double) scaler.lines().p50() / scaler.ncss().p50();
-        double invocsFactor = (double) scaler.lines().p50() / scaler.invocations().p50();
+        double ncssFactor = scaler.lines().p50() / scaler.ncss().p50();
+        double invocsFactor = scaler.lines().p50() / scaler.invocations().p50();
         assertEquals(ncssFactor, scaler.ncssFactor(), 0.0001);
         assertEquals(invocsFactor, scaler.invocationsFactor(), 0.0001);
     }
