@@ -90,6 +90,8 @@ public class RunArgs {
     @Nullable
     private boolean failOnJdtlsError = false;
     @Nullable
+    private boolean skipOnUnresolvedDependencies = false;
+    @Nullable
     private transient File javaHome;
     @Nullable
     private transient File mavenHome;
