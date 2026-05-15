@@ -3,6 +3,7 @@ package io.codiqo.maven;
 import java.io.File;
 import java.nio.file.Files;
 import java.util.Collection;
+import java.util.Optional;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -120,8 +121,16 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
              * attempt to build the project at the specified commit ID (potentially completely different multiple modules structure).
              * this may require different JDK/MVN home since the project's build requirements may have changed since then.
              */
+            ProjectBuildingRequest buildingReq = Maven.buildingRequest(mavenSession);
+            getLog().info(MemoryReport.snapshot("before-dependency-resolution"));
+            Optional<String> skipReason = resolveDependenciesOffline(args);
+            if (skipReason.isPresent()) {
+                getLog().warn(String.format("commit %s skipped: %s", commitId, skipReason.get()));
+                doExcludeAnalysis(commitId, skipReason.get());
+                return;
+            }
+
             InvocationRequest invocationReq = invocationRequest(args);
-            ProjectBuildingRequest buildingReq = buildingRequest();
             getLog().info(MemoryReport.snapshot("before-maven-build"));
             ProjectBuildingResult result = buildProject(args, invocationReq, buildingReq);
             getLog().info(MemoryReport.snapshot("after-maven-build"));

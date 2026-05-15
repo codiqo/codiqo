@@ -36,8 +36,8 @@ public class MemoryReport {
         long freePhys = OS_BEAN.getFreeMemorySize();
 
         StringBuilder sb = new StringBuilder(192);
-        sb.append("memory[").append(checkpoint).append("] ");
-        sb.append("heap=").append(human(heapUsed)).append('/').append(human(heapMax));
+        sb.append("memory (").append(checkpoint).append(")");
+        sb.append(" heap=").append(human(heapUsed)).append('/').append(human(heapMax));
         sb.append(" non-heap=").append(human(nonHeap.getUsed()));
         sb.append(" rss=").append(human(self.getResidentMemory()));
         sb.append(" virt=").append(human(self.getVirtualSize()));
@@ -49,7 +49,6 @@ public class MemoryReport {
 
         return sb.toString();
     }
-
     private static String human(long bytes) {
         return FileUtils.byteCountToDisplaySize(bytes);
     }

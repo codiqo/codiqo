@@ -5,7 +5,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
@@ -16,7 +15,6 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
-import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import javax.inject.Inject;
@@ -31,15 +29,13 @@ import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.execution.MavenSession;
-import org.apache.maven.model.Plugin;
-import org.apache.maven.model.PluginManagement;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Parameter;
-import org.apache.maven.project.DefaultProjectBuildingRequest;
 import org.apache.maven.project.MavenProject;
 import org.apache.maven.project.ProjectBuilder;
+import org.apache.maven.project.ProjectBuildingException;
 import org.apache.maven.project.ProjectBuildingRequest;
 import org.apache.maven.project.ProjectBuildingResult;
 import org.apache.maven.rtinfo.RuntimeInformation;
@@ -51,7 +47,6 @@ import org.apache.maven.shared.invoker.InvocationResult;
 import org.apache.maven.shared.invoker.Invoker;
 import org.apache.maven.shared.invoker.PrintStreamHandler;
 import org.apache.maven.shared.utils.cli.CommandLineTimeOutException;
-import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
@@ -69,6 +64,7 @@ import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.transport.HttpTransport;
 import org.eclipse.jgit.transport.TagOpt;
 
+import com.google.common.base.Joiner;
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
@@ -84,7 +80,6 @@ import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.LogFactory;
-import io.codiqo.client.model.ScoringConfigModel;
 import io.codiqo.core.ClassGraphWrapper;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
@@ -113,10 +108,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     private static final String JAR_EXTENSION = "jar";
     private static final String LOMBOK_GROUP_ID = "org.projectlombok";
     private static final String LOMBOK_ARTIFACT_ID = "lombok";
-    private static final String JACOCO_GROUP_ID = "org.jacoco";
-    private static final String JACOCO_MAVEN_PLUGIN_ARTIFACT_ID = "jacoco-maven-plugin";
-    private static final String JACOCO_MAVEN_PLUGIN_DEST_FILE = "destFile";
-    private static final String JACOCO_MAVEN_PLUGIN_DEST_FILE_DEFAULT_VALUE = "jacoco.exec";
 
     @Inject
     private RuntimeInformation runtimeInformation;
@@ -129,6 +120,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
     @Inject
     protected ProjectBuilder projectBuilder;
+
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
     protected MavenProject project;
 
@@ -194,6 +186,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
     @Parameter(property = "codiqo.failOnJdtlsError", defaultValue = "false")
     protected boolean failOnJdtlsError;
+
+    @Parameter(property = "codiqo.skipOnUnresolvedDependencies", defaultValue = "false")
+    protected boolean skipOnUnresolvedDependencies;
 
     @Parameter(property = "codiqo.pmdMinPriority", defaultValue = "medium_high")
     protected String pmdMinPriority;
@@ -302,6 +297,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setIgnoreDiagnostics(ignoreDiagnostics);
         args.setIgnoreComplexity(ignoreComplexity);
         args.setFailOnJdtlsError(failOnJdtlsError);
+        args.setSkipOnUnresolvedDependencies(skipOnUnresolvedDependencies);
         args.setPmdMinPriority(pmdMinPriority);
         if (StringUtils.isNotBlank(pmdRules)) {
             args.setPmdRules(Splitter.on(',').trimResults().omitEmptyStrings().splitToList(pmdRules));
@@ -387,7 +383,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     if (Objects.nonNull(prj.getParent())) {
                         toReturn.setParent(Optional.of(prj.getParent().getId()));
                     }
-                    File jacocoDestFile = autoDetectJacocoDestFile(prj);
+                    File jacocoDestFile = Maven.autoDetectJacocoDestFile(prj);
                     if (jacocoDestFile.exists()) {
                         toReturn.setCoverage(Optional.of(jacocoDestFile));
                     }
@@ -459,8 +455,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             AtomicInteger purged = new AtomicInteger();
 
             for (ProjectSpec prj : args.getProjects()) {
-                if (prj instanceof MavenProjectSpec) {
-                    MavenProjectSpec mvn = (MavenProjectSpec) prj;
+                if (prj instanceof MavenProjectSpec mvn) {
                     mvn.getArtifacts().keySet().forEach(artifact -> {
                         boolean matches = exclusions.stream().anyMatch(prefix -> artifact.getGroupId().startsWith(prefix));
                         if (matches) {
@@ -499,29 +494,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             }
         }
     }
-    protected File autoDetectJacocoDestFile(MavenProject reactor) {
-        Predicate<Plugin> filter = plugin -> BooleanUtils.and(new boolean[] {
-                JACOCO_GROUP_ID.equals(plugin.getGroupId()),
-                JACOCO_MAVEN_PLUGIN_ARTIFACT_ID.equals(plugin.getArtifactId())
-        });
-        Optional<Plugin> opt = reactor.getBuild().getPlugins().stream().filter(filter).findAny();
-        if (opt.isEmpty()) {
-            PluginManagement pluginManagement = reactor.getBuild().getPluginManagement();
-            if (Objects.nonNull(pluginManagement)) {
-                opt = pluginManagement.getPlugins().stream().filter(filter).findAny();
-            }
-        }
-        if (opt.isPresent()) {
-            Xpp3Dom config = (Xpp3Dom) opt.get().getConfiguration();
-            if (Objects.nonNull(config)) {
-                Xpp3Dom destFileNode = config.getChild(JACOCO_MAVEN_PLUGIN_DEST_FILE);
-                if (Objects.nonNull(destFileNode)) {
-                    return Paths.get(destFileNode.getValue()).toFile();
-                }
-            }
-        }
-        return Paths.get(reactor.getBuild().getDirectory(), JACOCO_MAVEN_PLUGIN_DEST_FILE_DEFAULT_VALUE).toFile();
-    }
     protected void resolveCommit(RunArgs args, String commitId) throws Exception {
         ObjectId objectId = args.getGit().resolve(commitId);
         if (Objects.isNull(objectId)) {
@@ -532,8 +504,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                         .setTimeout((int) args.getReadTimeout().getSeconds())
                         .setRefSpecs(Constants.R_HEADS + "*", Constants.R_REMOTES + Constants.DEFAULT_REMOTE_NAME + "/" + "*")
                         .setTransportConfigCallback(transport -> {
-                            if (transport instanceof HttpTransport) {
-                                HttpTransport http = (HttpTransport) transport;
+                            if (transport instanceof HttpTransport http) {
                                 http.setTimeout((int) args.getReadTimeout().getSeconds());
                             }
                         }).call();
@@ -558,7 +529,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     "-Dmdep.analyze.skip=true"));
         } else {
             long surefireTimeout = args.getTestTimeout().getSeconds();
-            long surefireExitTimeout = args.getBuildTimeout().minusMinutes(2).getSeconds();
+            long surefireExitTimeout = args.getBuildTimeout().minusMinutes(1).getSeconds();
             request.addArgs(ImmutableList.of(
                     "clean",
                     "verify",
@@ -599,12 +570,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         }
         return request;
     }
-    protected ProjectBuildingRequest buildingRequest() {
-        ProjectBuildingRequest req = new DefaultProjectBuildingRequest(mavenSession.getProjectBuildingRequest());
-        req.setResolveDependencies(true);
-        req.setProcessPlugins(true);
-        return req;
-    }
     protected ProjectBuildingResult buildProject(
             RunArgs args,
             InvocationRequest request,
@@ -620,6 +585,38 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             }
         }
         return projectBuilder.build(rootPom, buildingRequest);
+    }
+    protected Optional<String> resolveDependenciesOffline(RunArgs args) throws Exception {
+        File rootPom = new File(args.getGit().getWorkTree(), "pom.xml");
+
+        ProjectBuildingRequest request = Maven.buildingRequest(mavenSession);
+        Properties systemProperties = new Properties();
+        if (Objects.nonNull(request.getSystemProperties())) {
+            systemProperties.putAll(request.getSystemProperties());
+        }
+        systemProperties.putAll(Maven.detectOsProperties());
+        request.setSystemProperties(systemProperties);
+
+        try {
+            projectBuilder.build(rootPom, request);
+            return Optional.empty();
+        } catch (ProjectBuildingException pbe) {
+            List<String> unresolved = Maven.unresolvedDependencyCoords(pbe);
+            if (CollectionUtils.isNotEmpty(unresolved)) {
+                String reason = "unresolved dependencies: " + Joiner.on(", ").join(unresolved);
+                if (args.isSkipOnUnresolvedDependencies()) {
+                    return Optional.of(reason);
+                }
+                throw new MojoExecutionException(reason, pbe);
+            }
+
+            Optional<String> structural = Maven.severeProblem(pbe.getResults().stream().flatMap(r -> r.getProblems().stream()));
+            if (structural.isPresent()) {
+                return structural;
+            }
+
+            throw new MojoExecutionException("project build failed: " + Objects.toString(pbe.getMessage(), pbe.getClass().getSimpleName()), pbe);
+        }
     }
     protected void buildAndCollectModules(
             MavenProject parent,
@@ -665,170 +662,10 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 getLog().warn(String.format("commit %s skipped: revert commit (no LLM scoring or submission)", args.getCommitId()));
                 doExcludeAnalysis(args.getCommitId(), "revert commit (no LLM scoring performed)");
             } else {
-                ctx.getSubmissionModel().setScoringConfig(mapScoringConfig(args));
+                ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
                 doLlmScoring(ctx);
             }
         }
-    }
-    private static ScoringConfigModel mapScoringConfig(RunArgs args) {
-        ScoringConfigModel toReturn = new ScoringConfigModel();
-
-        toReturn.setCommitId(args.getCommitId());
-        toReturn.setJdtlsVersion(args.getJdtlsVersion());
-        toReturn.setPmdMinPriority(args.getPmdMinPriority());
-        toReturn.setPmdRules(args.getPmdRules());
-        toReturn.setSpotbugsPriorityThreshold(args.getSpotbugsPriorityThreshold());
-        toReturn.setSpotbugsOmitVisitors(args.getSpotbugsOmitVisitors());
-
-        toReturn.setIncludeUntracked(args.isIncludeUntracked());
-        toReturn.setAutoBuild(args.isAutoBuild());
-        toReturn.setDumpAnalysis(args.isDumpAnalysis());
-        toReturn.setIgnoreCoverage(args.isIgnoreCoverage());
-        toReturn.setIgnoreComplexity(args.isIgnoreComplexity());
-        toReturn.setIgnoreCpd(args.isIgnoreCpd());
-        toReturn.setIgnoreDiagnostics(args.isIgnoreDiagnostics());
-        toReturn.setFailOnJdtlsError(args.isFailOnJdtlsError());
-        toReturn.setHideSourceCode(args.isHideSourceCode());
-        toReturn.setJdtUseSharedIndex(args.isJdtUseSharedIndex());
-
-        toReturn.setBuildTimeout(Optional.ofNullable(args.getBuildTimeout()).map(Duration::toString).orElse(null));
-        toReturn.setTestTimeout(Optional.ofNullable(args.getTestTimeout()).map(Duration::toString).orElse(null));
-        toReturn.setImportTimeout(Optional.ofNullable(args.getImportTimeout()).map(Duration::toString).orElse(null));
-        toReturn.setLspQueryTimeout(Optional.ofNullable(args.getLspQueryTimeout()).map(Duration::toString).orElse(null));
-        toReturn.setConnectTimeout(Optional.ofNullable(args.getConnectTimeout()).map(Duration::toString).orElse(null));
-        toReturn.setReadTimeout(Optional.ofNullable(args.getReadTimeout()).map(Duration::toString).orElse(null));
-
-        toReturn.setMaxRequests(args.getMaxRequests());
-        toReturn.setMaxRequestsPerHost(args.getMaxRequestsPerHost());
-        toReturn.setCpdMinimumTileSize(args.getCpdMinimumTileSize());
-        toReturn.setCpdIntroducedThreshold(args.getCpdIntroducedThreshold());
-        toReturn.setDiffContextLines(args.getDiffContextLines());
-
-        toReturn.setLlmModel(args.getLlmModel());
-        toReturn.setLlmBaseUrl(args.getLlmBaseUrl());
-        toReturn.setLlmTemperature(args.getLlmTemperature());
-        toReturn.setLlmTopP(args.getLlmTopP());
-        toReturn.setLlmMaxTokens(args.getLlmMaxTokens());
-        toReturn.setLlmMaxRetries(Optional.ofNullable(args.getLlmMaxRetries()).map(Short::intValue).orElse(null));
-        toReturn.setLlmEnableWebSearchTool(args.isLlmEnableWebSearchTool());
-
-        toReturn.setIncludeBranches(args.getIncludeBranches());
-        toReturn.setIncludeAuthorEmails(args.getIncludeAuthorEmails());
-
-        toReturn.setSizeFactorDivisor(args.getSizeFactorDivisor());
-        toReturn.setModifyMultiplierScale(args.getModifyMultiplierScale());
-        toReturn.setModifyMultiplierCap(args.getModifyMultiplierCap());
-        toReturn.setAddMultiplierScale(args.getAddMultiplierScale());
-        toReturn.setQualityMultiplierMin(args.getQualityMultiplierMin());
-        toReturn.setQualityMultiplierMax(args.getQualityMultiplierMax());
-
-        toReturn.setStaticAnalysisPenaltyCap(args.getStaticAnalysisPenaltyCap());
-        toReturn.setStaticAnalysisIntroducedPenalty(args.getStaticAnalysisIntroducedPenalty());
-        toReturn.setStaticAnalysisPreExistingPenalty(args.getStaticAnalysisPreExistingPenalty());
-        toReturn.setStaticAnalysisCleanBonus(args.getStaticAnalysisCleanBonus());
-        toReturn.setArchitecturePenaltyCap(args.getArchitecturePenaltyCap());
-        toReturn.setQualityGatePenaltyCap(args.getQualityGatePenaltyCap());
-
-        toReturn.setVolumeExponent(args.getVolumeExponent());
-        toReturn.setFilesScopeLogCoefficient(args.getFilesScopeLogCoefficient());
-        toReturn.setFilesScopeMaxBonus(args.getFilesScopeMaxBonus());
-        toReturn.setDriverScoreCapMultiplier(args.getDriverScoreCapMultiplier());
-        toReturn.setDriverFactorMaxDeviation(args.getDriverFactorMaxDeviation());
-        toReturn.setDriverScoreCapDryRun(args.isDriverScoreCapDryRun());
-        toReturn.setStatsQuantile(args.getStatsQuantile());
-
-        toReturn.setCoverageLowThreshold(args.getCoverageLowThreshold());
-        toReturn.setCoverageCriticalThreshold(args.getCoverageCriticalThreshold());
-        toReturn.setCoverageHighThreshold(args.getCoverageHighThreshold());
-        toReturn.setHighComplexityThreshold(args.getHighComplexityThreshold());
-
-        toReturn.setCpdCleanBonus(args.getCpdCleanBonus());
-        toReturn.setCpdModeratePenalty(args.getCpdModeratePenalty());
-        toReturn.setCpdHighPenalty(args.getCpdHighPenalty());
-        toReturn.setCpdSeverePenalty(args.getCpdSeverePenalty());
-        toReturn.setCpdCleanThreshold(args.getCpdCleanThreshold());
-        toReturn.setCpdAcceptableThreshold(args.getCpdAcceptableThreshold());
-        toReturn.setCpdModerateThreshold(args.getCpdModerateThreshold());
-        toReturn.setCpdHighThreshold(args.getCpdHighThreshold());
-        toReturn.setTestCodeScoreMultiplier(args.getTestCodeScoreMultiplier());
-        toReturn.setTestCodePenaltyWeight(args.getTestCodePenaltyWeight());
-
-        toReturn.setScoreThresholdHuge(args.getScoreThresholdHuge());
-        toReturn.setScoreThresholdLarge(args.getScoreThresholdLarge());
-        toReturn.setScoreThresholdMedium(args.getScoreThresholdMedium());
-        toReturn.setScoreThresholdSmall(args.getScoreThresholdSmall());
-
-        toReturn.setDimensionScoreCritical(args.getDimensionScoreCritical());
-        toReturn.setDimensionScoreMajor(args.getDimensionScoreMajor());
-        toReturn.setDimensionScoreModerate(args.getDimensionScoreModerate());
-
-        toReturn.setCallerThresholdHigh(args.getCallerThresholdHigh());
-        toReturn.setCallerThresholdModerate(args.getCallerThresholdModerate());
-
-        toReturn.setMaxClonesToShow(args.getMaxClonesToShow());
-        toReturn.setMaxSourceLines(args.getMaxSourceLines());
-        toReturn.setTruncateSourceLines(args.getTruncateSourceLines());
-
-        toReturn.setArchitectureBonusFactor(args.getArchitectureBonusFactor());
-
-        toReturn.setPmdPriority1Penalty(args.getPmdPriority1Penalty());
-        toReturn.setPmdPriority2Penalty(args.getPmdPriority2Penalty());
-        toReturn.setPmdPriority3Penalty(args.getPmdPriority3Penalty());
-        toReturn.setSpotbugsScariestPenalty(args.getSpotbugsScariestPenalty());
-        toReturn.setSpotbugsScaryPenalty(args.getSpotbugsScaryPenalty());
-        toReturn.setSpotbugsTroublingPenalty(args.getSpotbugsTroublingPenalty());
-
-        toReturn.setCoverageExcellentBonus(args.getCoverageExcellentBonus());
-        toReturn.setCoverageGoodBonus(args.getCoverageGoodBonus());
-        toReturn.setCoverageLowPenalty(args.getCoverageLowPenalty());
-        toReturn.setCoveragePoorPenalty(args.getCoveragePoorPenalty());
-        toReturn.setCoverageTerriblePenalty(args.getCoverageTerriblePenalty());
-
-        toReturn.setArchitectureMinorPenalty(args.getArchitectureMinorPenalty());
-        toReturn.setArchitectureSolidPenalty(args.getArchitectureSolidPenalty());
-        toReturn.setArchitectureMajorPenalty(args.getArchitectureMajorPenalty());
-        toReturn.setQualityGateFailurePenalty(args.getQualityGateFailurePenalty());
-
-        toReturn.setArchitectureImpactScoreThreshold(args.getArchitectureImpactScoreThreshold());
-        toReturn.setArchitectureImpactCoverageRequired(args.getArchitectureImpactCoverageRequired());
-        toReturn.setConcurrencyRiskThreshold(args.getConcurrencyRiskThreshold());
-        toReturn.setIntegrationSurfaceThreshold(args.getIntegrationSurfaceThreshold());
-        toReturn.setDataIntegrityThreshold(args.getDataIntegrityThreshold());
-        toReturn.setSecuritySensitivityThreshold(args.getSecuritySensitivityThreshold());
-        toReturn.setScalabilityImpactThreshold(args.getScalabilityImpactThreshold());
-        toReturn.setObservabilityThreshold(args.getObservabilityThreshold());
-        toReturn.setResilienceThreshold(args.getResilienceThreshold());
-        toReturn.setPerformanceThreshold(args.getPerformanceThreshold());
-        toReturn.setSeniorReviewThreshold(args.getSeniorReviewThreshold());
-        toReturn.setSeniorReviewCriticalThreshold(args.getSeniorReviewCriticalThreshold());
-
-        toReturn.setComplexityHighDisplayThreshold(args.getComplexityHighDisplayThreshold());
-        toReturn.setComplexityModerateDisplayThreshold(args.getComplexityModerateDisplayThreshold());
-
-        toReturn.setSimilarityCriticalThreshold(args.getSimilarityCriticalThreshold());
-        toReturn.setSimilarityMajorThreshold(args.getSimilarityMajorThreshold());
-
-        toReturn.setRiskHighDimensionThreshold(args.getRiskHighDimensionThreshold());
-        toReturn.setRiskBaseMultiplier(args.getRiskBaseMultiplier());
-        toReturn.setRiskHighDimensionPenalty(args.getRiskHighDimensionPenalty());
-        toReturn.setRiskCoreLibraryPenalty(args.getRiskCoreLibraryPenalty());
-        toReturn.setRiskBreakingChangesPenalty(args.getRiskBreakingChangesPenalty());
-        toReturn.setRiskScoreMax(args.getRiskScoreMax());
-        toReturn.setRiskLevelLowMax(args.getRiskLevelLowMax());
-        toReturn.setRiskLevelModerateMax(args.getRiskLevelModerateMax());
-        toReturn.setRiskLevelHighMax(args.getRiskLevelHighMax());
-        toReturn.setRiskLevelVeryHighMax(args.getRiskLevelVeryHighMax());
-
-        toReturn.setCoverageImpactExcellentMin(args.getCoverageImpactExcellentMin());
-        toReturn.setCoverageImpactGoodMin(args.getCoverageImpactGoodMin());
-        toReturn.setCoverageImpactAcceptableMin(args.getCoverageImpactAcceptableMin());
-        toReturn.setCoverageImpactLowMin(args.getCoverageImpactLowMin());
-        toReturn.setCoverageImpactPoorMin(args.getCoverageImpactPoorMin());
-
-        toReturn.setFanOutHighThreshold(args.getFanOutHighThreshold());
-        toReturn.setNpathComplexThreshold(args.getNpathComplexThreshold());
-
-        return toReturn;
     }
     protected Optional<SubmissionContext> doAnalyze(RunArgs args) throws Exception {
         purgeNonJavaSourceJars(args);
@@ -852,8 +689,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 });
                 String skipReason = null;
                 if (toApply.isFalse()) {
-                    skipReason = String.format("no diff files match registered language extensions %s — changed files: %s",
-                            registry.extensions(), changedFiles);
+                    skipReason = String.format("no diff files match registered language extensions %s — changed files: %s", registry.extensions(),
+                            changedFiles);
                     getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), skipReason));
                 }
 
@@ -864,7 +701,10 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                         BooleanUtils.negate(authorMatches)
                 })) {
                     skipReason = String.format("filtered by include-rules — branch match: %s (branches=%s), author match: %s (author=%s)",
-                            branchMatches, analysis.getBranches(), authorMatches, analysis.getAuthorEmail());
+                            branchMatches,
+                            analysis.getBranches(),
+                            authorMatches,
+                            analysis.getAuthorEmail());
                     getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), skipReason));
                     toApply.setFalse();
                 }
@@ -908,5 +748,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         new LlmScoringPopulator(getLog()).accept(ctx);
     }
     protected void doExcludeAnalysis(String commitSha, String reason) throws Exception {
+        getLog().debug(String.format("no exclusion handler configured; commit %s would be excluded with reason: %s", commitSha, reason));
     }
 }
