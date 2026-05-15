@@ -33,4 +33,17 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
                 getLog());
         getLog().info(String.format("accepted analysis id: %s status: %s", response.getAnalysisId(), response.getStatus()));
     }
+    @Override
+    protected void doExcludeAnalysis(String commitSha, String reason) throws Exception {
+        String resolvedApiKey = Env.resolveRequired(apiKey, "codiqo.apiKey");
+
+        AnalysisSubmitter.exclude(
+                apiUrl,
+                resolvedApiKey,
+                connectTimeoutSeconds,
+                readTimeoutSeconds,
+                commitSha,
+                reason,
+                getLog());
+    }
 }

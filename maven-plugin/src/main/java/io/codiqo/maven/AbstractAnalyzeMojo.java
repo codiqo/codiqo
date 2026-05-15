@@ -71,6 +71,7 @@ import org.eclipse.jgit.transport.TagOpt;
 
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.common.io.Resources;
 
@@ -660,7 +661,10 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         Optional<SubmissionContext> opt = doAnalyze(args);
         if (opt.isPresent()) {
             SubmissionContext ctx = opt.get();
-            if (BooleanUtils.negate(ctx.getAnalysis().isRevertCommit())) {
+            if (ctx.getAnalysis().isRevertCommit()) {
+                getLog().warn(String.format("commit %s skipped: revert commit (no LLM scoring or submission)", args.getCommitId()));
+                doExcludeAnalysis(args.getCommitId(), "revert commit (no LLM scoring performed)");
+            } else {
                 ctx.getSubmissionModel().setScoringConfig(mapScoringConfig(args));
                 doLlmScoring(ctx);
             }
@@ -839,17 +843,34 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 MutableBoolean toApply = new MutableBoolean();
                 DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, args);
                 CommitAnalysis analysis = analyzer.analyze();
+                List<String> changedFiles = Lists.newArrayList();
                 analysis.forEach(diff -> {
+                    changedFiles.add(diff.getFile().getName());
                     if (FilenameUtils.isExtension(diff.getFile().getName(), registry.extensions())) {
                         toApply.setTrue();
                     }
                 });
+                String skipReason = null;
+                if (toApply.isFalse()) {
+                    skipReason = String.format("no diff files match registered language extensions %s — changed files: %s",
+                            registry.extensions(), changedFiles);
+                    getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), skipReason));
+                }
+
+                boolean branchMatches = args.matchesByBranch(analysis.getBranches());
+                boolean authorMatches = args.matchesByAuthor(analysis.getAuthorEmail());
                 if (BooleanUtils.or(new boolean[] {
-                        BooleanUtils.negate(args.matchesByBranch(analysis.getBranches())),
-                        BooleanUtils.negate(args.matchesByAuthor(analysis.getAuthorEmail()))
+                        BooleanUtils.negate(branchMatches),
+                        BooleanUtils.negate(authorMatches)
                 })) {
-                    getLog().info("commit filtered out — branch: " + analysis.getBranches() + ", author: " + analysis.getAuthorEmail());
+                    skipReason = String.format("filtered by include-rules — branch match: %s (branches=%s), author match: %s (author=%s)",
+                            branchMatches, analysis.getBranches(), authorMatches, analysis.getAuthorEmail());
+                    getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), skipReason));
                     toApply.setFalse();
+                }
+
+                if (Objects.nonNull(skipReason)) {
+                    doExcludeAnalysis(args.getCommitId(), skipReason);
                 }
                 if (toApply.isTrue()) {
                     IndexingSummary index = registry.index(analysis);
@@ -885,5 +906,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     }
     protected void doLlmScoring(SubmissionContext ctx) throws Exception {
         new LlmScoringPopulator(getLog()).accept(ctx);
+    }
+    protected void doExcludeAnalysis(String commitSha, String reason) throws Exception {
     }
 }
