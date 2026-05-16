@@ -296,7 +296,18 @@ components:
       properties:
         reason:
           type: string
-          description: Optional reason for excluding this analysis
+          description: Optional human-readable reason for excluding this analysis
+        category:
+          description: Optional structured failure category; omitted for non-failure exclusions (revert commit, branch/author filter, no relevant files)
+          allOf:
+            - $ref: '#/components/schemas/AnalysisExcludeCategory'
+
+    AnalysisExcludeCategory:
+      type: string
+      description: Structured failure category for excluded analyses
+      enum:
+        - DEPENDENCY_RESOLUTION_FAILURE
+        - BUILD_FAILURE
 
     AnalysisSubmissionModel:
       type: object

@@ -3,7 +3,6 @@ package io.codiqo.maven;
 import java.io.File;
 import java.nio.file.Files;
 import java.util.Collection;
-import java.util.Optional;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -47,7 +46,6 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     }
     @Override
     protected void doExecute(RunArgs args) throws Exception {
-        getLog().info(MemoryReport.snapshot("before-clone"));
         File temp = Files.createTempDirectory("codiqo").toFile();
         temp.deleteOnExit();
 
@@ -122,23 +120,26 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
              * this may require different JDK/MVN home since the project's build requirements may have changed since then.
              */
             ProjectBuildingRequest buildingReq = Maven.buildingRequest(mavenSession);
-            getLog().info(MemoryReport.snapshot("before-dependency-resolution"));
-            Optional<String> skipReason = resolveDependenciesOffline(args);
-            if (skipReason.isPresent()) {
-                getLog().warn(String.format("commit %s skipped: %s", commitId, skipReason.get()));
-                doExcludeAnalysis(commitId, skipReason.get());
+            BuildOutcome resolveOutcome = resolveDependenciesOffline(args);
+            if (resolveOutcome.isSkipped()) {
+                getLog().warn(String.format("commit %s skipped: %s", commitId, resolveOutcome.skipReason()));
+                doExcludeAnalysis(commitId, resolveOutcome.skipReason(), resolveOutcome.category());
                 return;
             }
 
             InvocationRequest invocationReq = invocationRequest(args);
-            getLog().info(MemoryReport.snapshot("before-maven-build"));
-            ProjectBuildingResult result = buildProject(args, invocationReq, buildingReq);
-            getLog().info(MemoryReport.snapshot("after-maven-build"));
+            BuildOutcome buildOutcome = buildProject(args, invocationReq, buildingReq);
+            if (buildOutcome.isSkipped()) {
+                getLog().warn(String.format("commit %s skipped: %s", commitId, buildOutcome.skipReason()));
+                doExcludeAnalysis(commitId, buildOutcome.skipReason(), buildOutcome.category());
+                return;
+            }
+            ProjectBuildingResult result = buildOutcome.result();
 
             Collection<MavenProject> reactors = Lists.newLinkedList();
             buildAndCollectModules(result.getProject(), clone.getWorkTree(), buildingReq, reactors);
             try (ClassGraphSpec scan = scanProjects(args, reactors)) {
-                getLog().info(MemoryReport.snapshot("after-classgraph-scan"));
+                getLog().info(MemoryReport.snapshot("after classgraph scan"));
                 args.setClassGraph(scan);
                 super.doExecute(args);
             }

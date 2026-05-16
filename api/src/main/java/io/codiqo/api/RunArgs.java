@@ -92,6 +92,8 @@ public class RunArgs {
     @Nullable
     private boolean skipOnUnresolvedDependencies = false;
     @Nullable
+    private boolean skipOnBuildFailure = true;
+    @Nullable
     private transient File javaHome;
     @Nullable
     private transient File mavenHome;
