@@ -9,6 +9,7 @@ import io.codiqo.client.ApiClient;
 import io.codiqo.client.ApiException;
 import io.codiqo.client.api.AnalysisApi;
 import io.codiqo.client.model.AnalysisAcceptedModel;
+import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.AnalysisExcludeModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import lombok.experimental.UtilityClass;
@@ -36,12 +37,14 @@ public class AnalysisSubmitter {
             long readTimeoutSeconds,
             String commitSha,
             String reason,
+            AnalysisExcludeCategory category,
             Log log) throws ApiException {
         AnalysisApi client = buildClient(apiUrl, apiKey, connectTimeoutSeconds, readTimeoutSeconds);
-        log.info("excluding commit " + commitSha + " at " + apiUrl + " (reason: " + reason + ")");
+        log.info("excluding commit " + commitSha + " at " + apiUrl + " (reason: " + reason + ", category: " + category + ")");
 
         AnalysisExcludeModel body = new AnalysisExcludeModel();
         body.setReason(reason);
+        body.setCategory(category);
 
         ApiRetry.call(log, "excludeAnalysis", apiUrl, () -> {
             client.excludeAnalysis(commitSha, body);

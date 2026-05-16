@@ -6,6 +6,7 @@ import org.apache.maven.plugins.annotations.ResolutionScope;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisAcceptedModel;
+import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.maven.populator.SubmissionContext;
 import io.codiqo.util.Env;
 
@@ -34,7 +35,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
         getLog().info(String.format("accepted analysis id: %s status: %s", response.getAnalysisId(), response.getStatus()));
     }
     @Override
-    protected void doExcludeAnalysis(String commitSha, String reason) throws Exception {
+    protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category) throws Exception {
         String resolvedApiKey = Env.resolveRequired(apiKey, "codiqo.apiKey");
 
         AnalysisSubmitter.exclude(
@@ -44,6 +45,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
                 readTimeoutSeconds,
                 commitSha,
                 reason,
+                category,
                 getLog());
     }
 }

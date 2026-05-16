@@ -15,6 +15,7 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import javax.inject.Inject;
@@ -24,6 +25,7 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.commons.lang3.time.StopWatch;
@@ -80,6 +82,7 @@ import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.LogFactory;
+import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.core.ClassGraphWrapper;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
@@ -190,6 +193,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.skipOnUnresolvedDependencies", defaultValue = "false")
     protected boolean skipOnUnresolvedDependencies;
 
+    @Parameter(property = "codiqo.skipOnBuildFailure", defaultValue = "true")
+    protected boolean skipOnBuildFailure;
+
     @Parameter(property = "codiqo.pmdMinPriority", defaultValue = "medium_high")
     protected String pmdMinPriority;
 
@@ -298,6 +304,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setIgnoreComplexity(ignoreComplexity);
         args.setFailOnJdtlsError(failOnJdtlsError);
         args.setSkipOnUnresolvedDependencies(skipOnUnresolvedDependencies);
+        args.setSkipOnBuildFailure(skipOnBuildFailure);
         args.setPmdMinPriority(pmdMinPriority);
         if (StringUtils.isNotBlank(pmdRules)) {
             args.setPmdRules(Splitter.on(',').trimResults().omitEmptyStrings().splitToList(pmdRules));
@@ -546,22 +553,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         }
         request.setBatchMode(true);
         request.setThreads(String.valueOf(mavenSession.getRequest().getDegreeOfConcurrency()));
-        request.setOutputHandler(new InvocationOutputHandler() {
-            PrintStreamHandler sysout = new PrintStreamHandler(System.out, false);
-
-            @Override
-            public void consumeLine(String line) throws IOException {
-                sysout.consumeLine(line);
-            }
-        });
-        request.setErrorHandler(new InvocationOutputHandler() {
-            PrintStreamHandler syserr = new PrintStreamHandler(System.err, false);
-
-            @Override
-            public void consumeLine(String line) throws IOException {
-                syserr.consumeLine(line);
-            }
-        });
         if (Objects.nonNull(javaHome)) {
             request.setJavaHome(javaHome);
         }
@@ -570,23 +561,44 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         }
         return request;
     }
-    protected ProjectBuildingResult buildProject(
+    protected BuildOutcome buildProject(
             RunArgs args,
             InvocationRequest request,
             ProjectBuildingRequest buildingRequest) throws Exception {
         File rootPom = new File(args.getGit().getWorkTree(), "pom.xml");
+
+        CapturingOutputHandler sysout = new CapturingOutputHandler(new PrintStreamHandler(System.out, false));
+        CapturingOutputHandler syserr = new CapturingOutputHandler(new PrintStreamHandler(System.err, false));
+        request.setOutputHandler(sysout);
+        request.setErrorHandler(syserr);
+
         Invoker invoker = new DefaultInvoker();
         InvocationResult result = invoker.execute(request);
         if (result.getExitCode() != 0) {
             if (result.getExecutionException() instanceof CommandLineTimeOutException) {
+                if (args.isSkipOnBuildFailure()) {
+                    String reason = "fork build timed out after " + args.getBuildTimeout();
+                    getLog().warn(reason + ", skipping with category " + AnalysisExcludeCategory.BUILD_FAILURE);
+                    return BuildOutcome.skipped(reason, AnalysisExcludeCategory.BUILD_FAILURE);
+                }
                 getLog().warn("maven build timed out after " + args.getBuildTimeout() + " — test coverage may be incomplete");
+            } else if (args.isSkipOnBuildFailure()) {
+                String reason = Optional.ofNullable(sysout.firstErrorLine())
+                        .or(() -> Optional.ofNullable(syserr.firstErrorLine()))
+                        .orElse("fork build failed (exit code " + result.getExitCode() + ")");
+                List<String> helpLines = Lists.newArrayList();
+                helpLines.addAll(sysout.helpUrlLines());
+                helpLines.addAll(syserr.helpUrlLines());
+                AnalysisExcludeCategory category = Maven.classifyForkFailure(helpLines);
+                getLog().warn(String.format("fork build failed (exit code %d), skipping with category %s: %s", result.getExitCode(), category, reason));
+                return BuildOutcome.skipped(reason, category);
             } else {
                 throw new MojoExecutionException("maven build failed in fork", result.getExecutionException());
             }
         }
-        return projectBuilder.build(rootPom, buildingRequest);
+        return BuildOutcome.success(projectBuilder.build(rootPom, buildingRequest));
     }
-    protected Optional<String> resolveDependenciesOffline(RunArgs args) throws Exception {
+    protected BuildOutcome resolveDependenciesOffline(RunArgs args) throws Exception {
         File rootPom = new File(args.getGit().getWorkTree(), "pom.xml");
 
         ProjectBuildingRequest request = Maven.buildingRequest(mavenSession);
@@ -599,20 +611,20 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
         try {
             projectBuilder.build(rootPom, request);
-            return Optional.empty();
+            return BuildOutcome.ok();
         } catch (ProjectBuildingException pbe) {
             List<String> unresolved = Maven.unresolvedDependencyCoords(pbe);
             if (CollectionUtils.isNotEmpty(unresolved)) {
                 String reason = "unresolved dependencies: " + Joiner.on(", ").join(unresolved);
                 if (args.isSkipOnUnresolvedDependencies()) {
-                    return Optional.of(reason);
+                    return BuildOutcome.skipped(reason, AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE);
                 }
                 throw new MojoExecutionException(reason, pbe);
             }
 
             Optional<String> structural = Maven.severeProblem(pbe.getResults().stream().flatMap(r -> r.getProblems().stream()));
             if (structural.isPresent()) {
-                return structural;
+                return BuildOutcome.skipped(structural.get(), AnalysisExcludeCategory.BUILD_FAILURE);
             }
 
             throw new MojoExecutionException("project build failed: " + Objects.toString(pbe.getMessage(), pbe.getClass().getSimpleName()), pbe);
@@ -660,7 +672,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             SubmissionContext ctx = opt.get();
             if (ctx.getAnalysis().isRevertCommit()) {
                 getLog().warn(String.format("commit %s skipped: revert commit (no LLM scoring or submission)", args.getCommitId()));
-                doExcludeAnalysis(args.getCommitId(), "revert commit (no LLM scoring performed)");
+                doExcludeAnalysis(args.getCommitId(), "revert commit (no LLM scoring performed)", null);
             } else {
                 ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
                 doLlmScoring(ctx);
@@ -674,9 +686,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         Path workTree = args.getGit().getWorkTree().toPath().normalize();
         try (Fetch fetch = new Fetch(args)) {
             try (LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, args, fetch)) {
-                getLog().info(MemoryReport.snapshot("before-load"));
+                getLog().info(MemoryReport.snapshot("before language server load"));
                 registry.load().block();
-                getLog().info(MemoryReport.snapshot("after-load"));
+                getLog().info(MemoryReport.snapshot("after language server load"));
                 MutableBoolean toApply = new MutableBoolean();
                 DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, args);
                 CommitAnalysis analysis = analyzer.analyze();
@@ -689,8 +701,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 });
                 String skipReason = null;
                 if (toApply.isFalse()) {
-                    skipReason = String.format("no diff files match registered language extensions %s — changed files: %s", registry.extensions(),
-                            changedFiles);
+                    skipReason = String.format("no diff files match registered languages %s — changed files: %s", registry.extensions(), changedFiles);
                     getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), skipReason));
                 }
 
@@ -710,15 +721,15 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 }
 
                 if (Objects.nonNull(skipReason)) {
-                    doExcludeAnalysis(args.getCommitId(), skipReason);
+                    doExcludeAnalysis(args.getCommitId(), skipReason, null);
                 }
                 if (toApply.isTrue()) {
                     IndexingSummary index = registry.index(analysis);
-                    getLog().info(MemoryReport.snapshot("after-index"));
+                    getLog().info(MemoryReport.snapshot("after index"));
                     registry.identifyAffectedSymbols(index, analysis);
-                    getLog().info(MemoryReport.snapshot("after-identify-symbols"));
+                    getLog().info(MemoryReport.snapshot("after identify symbols"));
                     registry.collectAndCapture(index, analysis);
-                    getLog().info(MemoryReport.snapshot("after-collect-capture"));
+                    getLog().info(MemoryReport.snapshot("after collect capture"));
                     SubmissionContext ctx = SubmissionContext.create(
                             args,
                             index,
@@ -747,7 +758,49 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     protected void doLlmScoring(SubmissionContext ctx) throws Exception {
         new LlmScoringPopulator(getLog()).accept(ctx);
     }
-    protected void doExcludeAnalysis(String commitSha, String reason) throws Exception {
-        getLog().debug(String.format("no exclusion handler configured; commit %s would be excluded with reason: %s", commitSha, reason));
+    protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category) throws Exception {
+        getLog().debug(String.format("no exclusion handler configured; commit %s would be excluded with reason: %s (category: %s)",
+                commitSha, reason, category));
+    }
+    protected record BuildOutcome(ProjectBuildingResult result, String skipReason, AnalysisExcludeCategory category) {
+        public static BuildOutcome ok() {
+            return new BuildOutcome(null, null, null);
+        }
+        public static BuildOutcome success(ProjectBuildingResult result) {
+            return new BuildOutcome(result, null, null);
+        }
+        public static BuildOutcome skipped(String reason, AnalysisExcludeCategory category) {
+            return new BuildOutcome(null, reason, category);
+        }
+        public boolean isSkipped() {
+            return Objects.nonNull(skipReason);
+        }
+    }
+    private static final class CapturingOutputHandler implements InvocationOutputHandler {
+        private static final Pattern HELP_LINE = Pattern.compile("\\[ERROR\\]\\s+\\[Help\\s+\\d+\\]\\s+");
+
+        private final InvocationOutputHandler delegate;
+        private final List<String> helpUrlLines = Lists.newArrayList();
+        private String firstErrorLine;
+
+        CapturingOutputHandler(InvocationOutputHandler delegate) {
+            this.delegate = delegate;
+        }
+        @Override
+        public void consumeLine(String line) throws IOException {
+            delegate.consumeLine(line);
+            if (Objects.isNull(firstErrorLine) && Strings.CS.startsWithAny(line, "[FATAL]", "[ERROR]")) {
+                firstErrorLine = line;
+            }
+            if (HELP_LINE.matcher(line).find()) {
+                helpUrlLines.add(line);
+            }
+        }
+        public String firstErrorLine() {
+            return firstErrorLine;
+        }
+        public List<String> helpUrlLines() {
+            return helpUrlLines;
+        }
     }
 }
