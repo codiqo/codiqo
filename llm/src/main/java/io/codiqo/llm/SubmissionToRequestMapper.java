@@ -739,18 +739,12 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         return StringUtils.isNotEmpty(extension) ? extension : null;
     }
     private static LlmScoringRequest.FileChangeType mapFileChangeType(FileChangeModel.ChangeTypeEnum changeType) {
-        switch (changeType) {
-            case ADD:
-                return LlmScoringRequest.FileChangeType.ADDED;
-            case MODIFY:
-                return LlmScoringRequest.FileChangeType.MODIFIED;
-            case DELETE:
-                return LlmScoringRequest.FileChangeType.DELETED;
-            case RENAME:
-                return LlmScoringRequest.FileChangeType.RENAMED;
-            default:
-                throw new IllegalArgumentException("Unknown change type: " + changeType);
-        }
+        return switch (changeType) {
+            case ADD, COPY -> LlmScoringRequest.FileChangeType.ADDED;
+            case MODIFY -> LlmScoringRequest.FileChangeType.MODIFIED;
+            case DELETE -> LlmScoringRequest.FileChangeType.DELETED;
+            case RENAME -> LlmScoringRequest.FileChangeType.RENAMED;
+        };
     }
     private static LlmScoringRequest.Operation mapOperation(OperationEnum operation) {
         switch (operation) {

@@ -15,6 +15,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ListBranchCommand.ListMode;
+import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
@@ -39,6 +40,27 @@ public class JGit {
                 .readEnvironment()
                 .findGitDir()
                 .build();
+    }
+    public static String effectivePath(DiffEntry diff) {
+        return effectivePath(diff.getChangeType(), diff.getOldPath(), diff.getNewPath());
+    }
+    public static String effectivePath(DiffEntry.ChangeType changeType, String oldPath, String newPath) {
+        return switch (changeType) {
+            case DELETE -> oldPath;
+            case ADD, MODIFY, RENAME, COPY -> newPath;
+        };
+    }
+    public static boolean hasContentBefore(DiffEntry.ChangeType changeType) {
+        return switch (changeType) {
+            case ADD -> false;
+            case MODIFY, DELETE, RENAME, COPY -> true;
+        };
+    }
+    public static boolean hasContentAfter(DiffEntry.ChangeType changeType) {
+        return switch (changeType) {
+            case DELETE -> false;
+            case ADD, MODIFY, RENAME, COPY -> true;
+        };
     }
     public static Optional<String> detectRevertedSha(String fullMessage) {
         Matcher matcher = REVERT_PATTERN.matcher(fullMessage);

@@ -3,7 +3,6 @@ package io.codiqo.llm;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.OffsetDateTime;
@@ -91,8 +90,8 @@ class SubmissionToRequestMapperTest {
     }
 
     @ParameterizedTest
-    @EnumSource(value = FileChangeModel.ChangeTypeEnum.class, names = {"ADD", "MODIFY", "DELETE", "RENAME"})
-    void fileChangeTypeIsExhaustivelyMappedForSupportedValues(FileChangeModel.ChangeTypeEnum input) {
+    @EnumSource(FileChangeModel.ChangeTypeEnum.class)
+    void fileChangeTypeIsExhaustivelyMapped(FileChangeModel.ChangeTypeEnum input) {
         AnalysisSubmissionModel submission = baseSubmission();
         submission.getFiles().get(0).setChangeType(input);
 
@@ -100,16 +99,6 @@ class SubmissionToRequestMapperTest {
 
         FileChangeType mapped = request.getFileChanges().get(0).getChangeType();
         assertNotNull(mapped);
-    }
-
-    @Test
-    void copyChangeTypeCurrentlyThrowsAndNeedsMapperSupport() {
-        AnalysisSubmissionModel submission = baseSubmission();
-        submission.getFiles().get(0).setChangeType(FileChangeModel.ChangeTypeEnum.COPY);
-
-        // NOTE: mapper's switch doesn't handle COPY — git copy detection currently crashes the pipeline.
-        // This test pins the current behavior; flip to a positive assertion once COPY is added to the mapper.
-        assertThrows(IllegalArgumentException.class, () -> mapper.apply(submission));
     }
 
     @ParameterizedTest
