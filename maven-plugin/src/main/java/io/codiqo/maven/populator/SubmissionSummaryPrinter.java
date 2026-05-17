@@ -33,7 +33,6 @@ import io.codiqo.client.model.CodeUnitModel;
 import io.codiqo.client.model.CodeUnitModel.OperationEnum;
 import io.codiqo.client.model.CommitModel;
 import io.codiqo.client.model.FileChangeModel;
-import io.codiqo.client.model.FileChangeModel.ChangeTypeEnum;
 import io.codiqo.client.model.MetricsModel;
 import io.codiqo.client.model.ModuleModel;
 import io.codiqo.client.model.SymbolKindModel;
@@ -224,15 +223,11 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
             } else {
                 counts.prod++;
             }
-            ChangeTypeEnum type = file.getChangeType();
-            if (type == ChangeTypeEnum.ADD) {
-                counts.added++;
-            } else if (type == ChangeTypeEnum.MODIFY) {
-                counts.modified++;
-            } else if (type == ChangeTypeEnum.DELETE) {
-                counts.deleted++;
-            } else if (type == ChangeTypeEnum.RENAME) {
-                counts.renamed++;
+            switch (file.getChangeType()) {
+                case ADD, COPY -> counts.added++;
+                case MODIFY -> counts.modified++;
+                case DELETE -> counts.deleted++;
+                case RENAME -> counts.renamed++;
             }
         }
         return counts;

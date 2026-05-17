@@ -290,7 +290,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
     public Optional<FileAnalysis> analyzeUncommittedFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit head, CanonicalTreeParser old) throws Exception {
         FileHeader fileHeader = formatter.toFileHeader(diff);
         if (fileHeader.getPatchType() == FileHeader.PatchType.UNIFIED) {
-            String path = diff.getChangeType() == DiffEntry.ChangeType.DELETE ? diff.getOldPath() : diff.getNewPath();
+            String path = JGit.effectivePath(diff);
             File destination = args.getGit().getWorkTree().toPath().resolve(path).toFile();
             GitFileAnalysis toReturn = new GitFileAnalysis();
 
@@ -304,11 +304,11 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
             toReturn.setFile(destination);
             toReturn.setChangeType(diff.getChangeType());
 
-            if (diff.getChangeType() != DiffEntry.ChangeType.ADD) {
+            if (JGit.hasContentBefore(diff.getChangeType())) {
                 fileContentFromCommit(head, diff.getOldPath()).ifPresent(toReturn::setContentBefore);
             }
 
-            if (diff.getChangeType() != DiffEntry.ChangeType.DELETE) {
+            if (JGit.hasContentAfter(diff.getChangeType())) {
                 fileContentFromWorkingTree(diff.getNewPath()).ifPresent(toReturn::setContentAfter);
             }
 
@@ -415,7 +415,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
     public Optional<FileAnalysis> analyzeFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit parent, RevCommit current) throws Exception {
         FileHeader fileHeader = formatter.toFileHeader(diff);
         if (fileHeader.getPatchType() == FileHeader.PatchType.UNIFIED) {
-            String path = diff.getChangeType() == DiffEntry.ChangeType.DELETE ? diff.getOldPath() : diff.getNewPath();
+            String path = JGit.effectivePath(diff);
             File destination = args.getGit().getWorkTree().toPath().resolve(path).toFile();
             GitFileAnalysis toReturn = new GitFileAnalysis();
 
@@ -428,10 +428,10 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
             toReturn.setNewPath(diff.getNewPath());
             toReturn.setFile(destination);
             toReturn.setChangeType(diff.getChangeType());
-            if (diff.getChangeType() != DiffEntry.ChangeType.ADD) {
+            if (JGit.hasContentBefore(diff.getChangeType())) {
                 fileContentFromCommit(parent, diff.getOldPath()).ifPresent(toReturn::setContentBefore);
             }
-            if (diff.getChangeType() != DiffEntry.ChangeType.DELETE) {
+            if (JGit.hasContentAfter(diff.getChangeType())) {
                 fileContentFromCommit(current, diff.getNewPath()).ifPresent(toReturn::setContentAfter);
             }
 

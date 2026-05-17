@@ -55,6 +55,7 @@ import io.codiqo.client.model.SpotbugsPropertiesModel;
 import io.codiqo.client.model.SymbolKindModel;
 import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
+import io.codiqo.util.JGit;
 import lombok.RequiredArgsConstructor;
 import net.sourceforge.pmd.lang.java.ast.ASTAnnotation;
 import net.sourceforge.pmd.lang.java.ast.ASTAnonymousClassDeclaration;
@@ -97,7 +98,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             }
             fileChangeModel.setChangeType(FileChangeModel.ChangeTypeEnum.fromValue(fileAnalysis.getChangeType().name().toLowerCase()));
             fileChangeModel.setPreviousPath(fileAnalysis.getOldPath());
-            fileChangeModel.setPath(fileAnalysis.getNewPath());
+            fileChangeModel.setPath(JGit.effectivePath(fileAnalysis.getChangeType(), fileAnalysis.getOldPath(), fileAnalysis.getNewPath()));
             fileChangeModel.setIsTest(fileAnalysis.isTestFile());
             if (Objects.nonNull(fileAnalysis.getLanguage())) {
                 fileChangeModel.setLanguage(FileChangeModel.LanguageEnum.fromValue(fileAnalysis.getLanguage().getId()));
@@ -160,12 +161,11 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         codeUnitModel.setIsTrivial(javaBlock.isTrivial());
         codeUnitModel.setJavaInfo(infoModel);
 
-        switch (fileAnalysis.getChangeType()) {
-            case ADD, COPY -> codeUnitModel.setOperation(CodeUnitModel.OperationEnum.NEW);
-            case DELETE -> codeUnitModel.setOperation(CodeUnitModel.OperationEnum.DELETE);
-            case MODIFY, RENAME -> codeUnitModel.setOperation(CodeUnitModel.OperationEnum.MODIFY);
-            default -> codeUnitModel.setOperation(CodeUnitModel.OperationEnum.MODIFY);
-        }
+        codeUnitModel.setOperation(switch (fileAnalysis.getChangeType()) {
+            case ADD, COPY -> CodeUnitModel.OperationEnum.NEW;
+            case DELETE -> CodeUnitModel.OperationEnum.DELETE;
+            case MODIFY, RENAME -> CodeUnitModel.OperationEnum.MODIFY;
+        });
 
         populateSymbolInfo(ctx, affectedSymbol, codeUnitModel, infoModel, workTreeRealPath, fileAnalysis, fileContentCache);
 
