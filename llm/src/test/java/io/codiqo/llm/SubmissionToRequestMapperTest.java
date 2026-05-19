@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.OffsetDateTime;
 
+import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -41,15 +42,17 @@ import io.codiqo.llm.schema.LlmScoringRequest.FileChangeType;
 
 class SubmissionToRequestMapperTest {
     private static final String METHOD_DIFF =
-            "--- a/Foo.java\n"
-          + "+++ b/Foo.java\n"
-          + "@@ -1,2 +1,6 @@\n"
-          + " package com.example;\n"
-          + "+import java.util.List;\n"
-          + "+// a comment\n"
-          + "+int realCode = 1;\n"
-          + "+\n"
-          + " class Foo {}\n";
+            """
+        --- a/Foo.java
+        +++ b/Foo.java
+        @@ -1,2 +1,6 @@
+         package com.example;
+        +import java.util.List;
+        +// a comment
+        +int realCode = 1;
+        +
+         class Foo {}
+        """;
 
     private final SubmissionToRequestMapper mapper = new SubmissionToRequestMapper(new RunArgs());
 
@@ -144,7 +147,7 @@ class SubmissionToRequestMapperTest {
     void emptyPathFallsBackToPreviousPath() {
         AnalysisSubmissionModel submission = baseSubmission();
         FileChangeModel file = submission.getFiles().get(0);
-        file.setPath("");
+        file.setPath(StringUtils.EMPTY);
         file.setPreviousPath("Renamed.java");
 
         LlmScoringRequest request = mapper.apply(submission);
@@ -211,15 +214,17 @@ class SubmissionToRequestMapperTest {
     void diffStatsFiltersBlanksCommentsImportsFromDeletedLines() {
         AnalysisSubmissionModel submission = baseSubmission();
         submission.getFiles().get(0).setDiff(
-                "--- a/Foo.java\n"
-              + "+++ b/Foo.java\n"
-              + "@@ -1,6 +1,2 @@\n"
-              + " package com.example;\n"
-              + "-import java.util.List;\n"
-              + "-// removed comment\n"
-              + "-\n"
-              + "-int removed = 1;\n"
-              + " class Foo {}\n");
+                """
+                    --- a/Foo.java
+                    +++ b/Foo.java
+                    @@ -1,6 +1,2 @@
+                     package com.example;
+                    -import java.util.List;
+                    -// removed comment
+                    -
+                    -int removed = 1;
+                     class Foo {}
+                    """);
 
         LlmScoringRequest request = mapper.apply(submission);
 
@@ -408,12 +413,14 @@ class SubmissionToRequestMapperTest {
     void filesWithOnlyImportAndBlankAdditionsProduceNoCodeBlockChanges() {
         AnalysisSubmissionModel submission = baseSubmission();
         submission.getFiles().get(0).setDiff(
-                "--- a/Foo.java\n"
-              + "+++ b/Foo.java\n"
-              + "@@ -1,1 +1,3 @@\n"
-              + " package com.example;\n"
-              + "+import java.util.List;\n"
-              + "+\n");
+                """
+                    --- a/Foo.java
+                    +++ b/Foo.java
+                    @@ -1,1 +1,3 @@
+                     package com.example;
+                    +import java.util.List;
+                    +
+                    """);
 
         LlmScoringRequest request = mapper.apply(submission);
 

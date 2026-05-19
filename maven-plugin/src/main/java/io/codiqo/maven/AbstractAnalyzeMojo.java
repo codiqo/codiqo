@@ -6,6 +6,8 @@ import java.io.InputStream;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map.Entry;
@@ -105,12 +107,20 @@ import io.codiqo.util.JGit;
 import io.codiqo.util.MemoryReport;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
+import lombok.RequiredArgsConstructor;
 
 abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Artifact, Collection<File>> {
     private static final Set<String> NON_CODE_PACKAGINGS = Set.of("pom", "bom");
     private static final String JAR_EXTENSION = "jar";
     private static final String LOMBOK_GROUP_ID = "org.projectlombok";
     private static final String LOMBOK_ARTIFACT_ID = "lombok";
+    private static final String CODIQO_GROUP_ID = "io.codiqo";
+    private static final String TIME_MACHINE_ARTIFACT_ID = "codiqo-maven-time-machine";
+    // Jar name prefixes excluded from maven.ext.class.path. slf4j-api: Maven Core already provides 1.7.x,
+    // and a transitive 2.x copy on the extension classpath silences every log call in the extension.
+    private static final Set<String> TIME_MACHINE_EXTENSION_JAR_BLACKLIST = Set.of("slf4j-api-");
+
+    private Collection<File> timeMachineExtensionJars;
 
     @Inject
     private RuntimeInformation runtimeInformation;
@@ -338,6 +348,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             }) {
                 args.getAgents().addAll(apply(agent));
             }
+            timeMachineExtensionJars = apply(new DefaultArtifact(
+                    CODIQO_GROUP_ID, TIME_MACHINE_ARTIFACT_ID, JAR_EXTENSION, versions.get("codiqo.version").toString()));
         } catch (IOException err) {
             throw new MojoExecutionException(err);
         }
@@ -454,53 +466,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         getLog().info(String.format("configured maven projects in %s, classgraph classes: %d", stopWatch, graphSpec.getAllClasses().size()));
         return graphSpec;
     }
-    @SuppressWarnings("deprecation")
-    private void purgeNonJavaSourceJars(RunArgs args) throws IOException {
-        List<String> exclusions = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(jdtSourceExclusions);
-        if (CollectionUtils.isNotEmpty(exclusions)) {
-            LocalRepositoryManager localRepoManager = mavenSession.getRepositorySession().getLocalRepositoryManager();
-            AtomicInteger purged = new AtomicInteger();
-
-            for (ProjectSpec prj : args.getProjects()) {
-                if (prj instanceof MavenProjectSpec mvn) {
-                    mvn.getArtifacts().keySet().forEach(artifact -> {
-                        boolean matches = exclusions.stream().anyMatch(prefix -> artifact.getGroupId().startsWith(prefix));
-                        if (matches) {
-                            try {
-                                DefaultArtifact sources = new DefaultArtifact(
-                                        artifact.getGroupId(),
-                                        artifact.getArtifactId(),
-                                        "sources",
-                                        "jar",
-                                        artifact.getVersion());
-                                File sourceJar = new File(
-                                        localRepoManager.getRepository().getBasedir(),
-                                        localRepoManager.getPathForLocalArtifact(sources));
-                                if (sourceJar.exists()) {
-                                    getLog().info("purging source JAR: " + sourceJar.getAbsolutePath());
-                                    if (sourceJar.delete()) {
-                                        purged.incrementAndGet();
-                                    }
-                                }
-                            } catch (Exception err) {
-                                ExceptionUtils.wrapAndThrow(err);
-                            }
-                        }
-                    });
-                }
-            }
-
-            if (purged.get() > 0) {
-                getLog().info("purged " + purged.get() + " non-Java source JARs from local repository");
-
-                File sharedIndex = RunArgs.JDT_SHARED_INDEX.resolve(args.getJdtlsVersion()).toFile();
-                if (sharedIndex.exists()) {
-                    FileUtils.deleteDirectory(sharedIndex);
-                    getLog().info("invalidated JDT shared index cache: " + sharedIndex.getAbsolutePath());
-                }
-            }
-        }
-    }
     protected void resolveCommit(RunArgs args, String commitId) throws Exception {
         ObjectId objectId = args.getGit().resolve(commitId);
         if (Objects.isNull(objectId)) {
@@ -522,7 +487,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             }
         }
     }
-    protected InvocationRequest invocationRequest(RunArgs args) {
+    protected InvocationRequest invocationRequest(RunArgs args) throws IOException {
         File rootPom = new File(args.getGit().getWorkTree(), "pom.xml");
         InvocationRequest request = new DefaultInvocationRequest();
         request.setPomFile(rootPom);
@@ -559,6 +524,22 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         if (Objects.nonNull(mavenHome)) {
             request.setMavenHome(mavenHome);
         }
+
+        if (StringUtils.isNotBlank(args.getCommitId())) {
+            Instant ts = TimeMachineSupport.resolveCommitTimestamp(args);
+
+            List<String> extensionClasspath = timeMachineExtensionJars.stream()
+                    .filter(jar -> TIME_MACHINE_EXTENSION_JAR_BLACKLIST.stream().noneMatch(prefix -> jar.getName().startsWith(prefix)))
+                    .map(File::getAbsolutePath)
+                    .toList();
+
+            Properties props = Optional.ofNullable(request.getProperties()).orElseGet(Properties::new);
+            props.setProperty("maven.ext.class.path", Joiner.on(File.pathSeparator).join(extensionClasspath));
+            props.setProperty("codiqo.commit.timestamp", DateTimeFormatter.ISO_INSTANT.format(ts));
+            request.setProperties(props);
+
+            getLog().info(String.format("time-machine enabled for commit %s (timestamp=%s)", args.getCommitId(), ts));
+        }
         return request;
     }
     protected BuildOutcome buildProject(
@@ -579,7 +560,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 if (args.isSkipOnBuildFailure()) {
                     String reason = "fork build timed out after " + args.getBuildTimeout();
                     getLog().warn(reason + ", skipping with category " + AnalysisExcludeCategory.BUILD_FAILURE);
-                    return BuildOutcome.skipped(reason, AnalysisExcludeCategory.BUILD_FAILURE);
+                    return new BuildOutcome.Skipped(reason, AnalysisExcludeCategory.BUILD_FAILURE);
                 }
                 getLog().warn("maven build timed out after " + args.getBuildTimeout() + " — test coverage may be incomplete");
             } else if (args.isSkipOnBuildFailure()) {
@@ -591,12 +572,12 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 helpLines.addAll(syserr.helpUrlLines());
                 AnalysisExcludeCategory category = Maven.classifyForkFailure(helpLines);
                 getLog().warn(String.format("fork build failed (exit code %d), skipping with category %s: %s", result.getExitCode(), category, reason));
-                return BuildOutcome.skipped(reason, category);
+                return new BuildOutcome.Skipped(reason, category);
             } else {
                 throw new MojoExecutionException("maven build failed in fork", result.getExecutionException());
             }
         }
-        return BuildOutcome.success(projectBuilder.build(rootPom, buildingRequest));
+        return new BuildOutcome.Proceeded(projectBuilder.build(rootPom, buildingRequest));
     }
     protected BuildOutcome resolveDependenciesOffline(RunArgs args) throws Exception {
         File rootPom = new File(args.getGit().getWorkTree(), "pom.xml");
@@ -609,48 +590,49 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         systemProperties.putAll(Maven.detectOsProperties());
         request.setSystemProperties(systemProperties);
 
+        if (StringUtils.isNotBlank(args.getCommitId())) {
+            request.setResolveDependencies(false);
+        }
+
         try {
-            projectBuilder.build(rootPom, request);
-            return BuildOutcome.ok();
+            return new BuildOutcome.Proceeded(projectBuilder.build(rootPom, request));
         } catch (ProjectBuildingException pbe) {
-            List<String> unresolved = Maven.unresolvedDependencyCoords(pbe);
-            if (CollectionUtils.isNotEmpty(unresolved)) {
-                String reason = "unresolved dependencies: " + Joiner.on(", ").join(unresolved);
-                if (args.isSkipOnUnresolvedDependencies()) {
-                    return BuildOutcome.skipped(reason, AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE);
-                }
-                throw new MojoExecutionException(reason, pbe);
-            }
-
-            Optional<String> structural = Maven.severeProblem(pbe.getResults().stream().flatMap(r -> r.getProblems().stream()));
-            if (structural.isPresent()) {
-                return BuildOutcome.skipped(structural.get(), AnalysisExcludeCategory.BUILD_FAILURE);
-            }
-
-            throw new MojoExecutionException("project build failed: " + Objects.toString(pbe.getMessage(), pbe.getClass().getSimpleName()), pbe);
+            return classifyProjectBuildingException(pbe, args);
         }
     }
-    protected void buildAndCollectModules(
+    protected Optional<BuildOutcome.Skipped> buildAndCollectModules(
             MavenProject parent,
             File baseDir,
             ProjectBuildingRequest buildingRequest,
+            RunArgs args,
             Collection<MavenProject> collected) throws Exception {
         if (CollectionUtils.isEmpty(parent.getModules())) {
             collected.add(parent);
-            return;
+            return Optional.empty();
         }
         for (String moduleName : parent.getModules()) {
             File modulePom = new File(new File(baseDir, moduleName), "pom.xml");
             if (modulePom.exists()) {
-                ProjectBuildingResult moduleResult = projectBuilder.build(modulePom, buildingRequest);
+                ProjectBuildingResult moduleResult;
+                try {
+                    moduleResult = projectBuilder.build(modulePom, buildingRequest);
+                } catch (ProjectBuildingException pbe) {
+                    return Optional.of(classifyProjectBuildingException(pbe, args));
+                }
+
                 MavenProject moduleProject = moduleResult.getProject();
                 if (CollectionUtils.isEmpty(moduleProject.getModules())) {
                     collected.add(moduleProject);
                 } else {
-                    buildAndCollectModules(moduleProject, new File(baseDir, moduleName), buildingRequest, collected);
+                    Optional<BuildOutcome.Skipped> nested = buildAndCollectModules(
+                            moduleProject, new File(baseDir, moduleName), buildingRequest, args, collected);
+                    if (nested.isPresent()) {
+                        return nested;
+                    }
                 }
             }
         }
+        return Optional.empty();
     }
     protected void doPrepare(RunArgs args) throws Exception {
         if (StringUtils.isEmpty(args.getDefaultBranch())) {
@@ -759,23 +741,79 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         new LlmScoringPopulator(getLog()).accept(ctx);
     }
     protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category) throws Exception {
-        getLog().debug(String.format("no exclusion handler configured; commit %s would be excluded with reason: %s (category: %s)",
-                commitSha, reason, category));
+        getLog().debug(String.format("no exclusion handler, commit %s would be excluded with reason: %s (category: %s)", commitSha, reason, category));
     }
-    protected record BuildOutcome(ProjectBuildingResult result, String skipReason, AnalysisExcludeCategory category) {
-        public static BuildOutcome ok() {
-            return new BuildOutcome(null, null, null);
-        }
-        public static BuildOutcome success(ProjectBuildingResult result) {
-            return new BuildOutcome(result, null, null);
-        }
-        public static BuildOutcome skipped(String reason, AnalysisExcludeCategory category) {
-            return new BuildOutcome(null, reason, category);
-        }
-        public boolean isSkipped() {
-            return Objects.nonNull(skipReason);
+    @SuppressWarnings("deprecation")
+    private void purgeNonJavaSourceJars(RunArgs args) throws IOException {
+        List<String> exclusions = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(jdtSourceExclusions);
+        if (CollectionUtils.isNotEmpty(exclusions)) {
+            LocalRepositoryManager localRepoManager = mavenSession.getRepositorySession().getLocalRepositoryManager();
+            AtomicInteger purged = new AtomicInteger();
+
+            for (ProjectSpec prj : args.getProjects()) {
+                if (prj instanceof MavenProjectSpec mvn) {
+                    mvn.getArtifacts().keySet().forEach(artifact -> {
+                        boolean matches = exclusions.stream().anyMatch(prefix -> artifact.getGroupId().startsWith(prefix));
+                        if (matches) {
+                            try {
+                                DefaultArtifact sources = new DefaultArtifact(
+                                        artifact.getGroupId(),
+                                        artifact.getArtifactId(),
+                                        "sources",
+                                        "jar",
+                                        artifact.getVersion());
+                                File sourceJar = new File(
+                                        localRepoManager.getRepository().getBasedir(),
+                                        localRepoManager.getPathForLocalArtifact(sources));
+                                if (sourceJar.exists()) {
+                                    getLog().info("purging source JAR: " + sourceJar.getAbsolutePath());
+                                    if (sourceJar.delete()) {
+                                        purged.incrementAndGet();
+                                    }
+                                }
+                            } catch (Exception err) {
+                                ExceptionUtils.wrapAndThrow(err);
+                            }
+                        }
+                    });
+                }
+            }
+
+            if (purged.get() > 0) {
+                getLog().info("purged " + purged.get() + " non-Java source JARs from local repository");
+
+                File sharedIndex = RunArgs.JDT_SHARED_INDEX.resolve(args.getJdtlsVersion()).toFile();
+                if (sharedIndex.exists()) {
+                    FileUtils.deleteDirectory(sharedIndex);
+                    getLog().info("invalidated JDT shared index cache: " + sharedIndex.getAbsolutePath());
+                }
+            }
         }
     }
+    private static BuildOutcome.Skipped classifyProjectBuildingException(ProjectBuildingException pbe, RunArgs args) throws MojoExecutionException {
+        List<String> unresolved = Maven.unresolvedDependencyCoords(pbe);
+        if (CollectionUtils.isNotEmpty(unresolved)) {
+            String reason = "unresolved dependencies: " + Joiner.on(", ").join(unresolved);
+            if (args.isSkipOnUnresolvedDependencies()) {
+                return new BuildOutcome.Skipped(reason, AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE);
+            }
+            throw new MojoExecutionException(reason, pbe);
+        }
+
+        Optional<String> structural = Maven.severeProblem(pbe.getResults().stream().flatMap(r -> r.getProblems().stream()));
+        if (structural.isPresent()) {
+            return new BuildOutcome.Skipped(structural.get(), AnalysisExcludeCategory.BUILD_FAILURE);
+        }
+
+        throw new MojoExecutionException("project build failed: " + Objects.toString(pbe.getMessage(), pbe.getClass().getSimpleName()), pbe);
+    }
+
+    protected sealed interface BuildOutcome {
+        record Skipped(String reason, AnalysisExcludeCategory category) implements BuildOutcome {}
+        record Proceeded(ProjectBuildingResult result) implements BuildOutcome {}
+    }
+
+    @RequiredArgsConstructor
     private static final class CapturingOutputHandler implements InvocationOutputHandler {
         private static final Pattern HELP_LINE = Pattern.compile("\\[ERROR\\]\\s+\\[Help\\s+\\d+\\]\\s+");
 
@@ -783,9 +821,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         private final List<String> helpUrlLines = Lists.newArrayList();
         private String firstErrorLine;
 
-        CapturingOutputHandler(InvocationOutputHandler delegate) {
-            this.delegate = delegate;
-        }
         @Override
         public void consumeLine(String line) throws IOException {
             delegate.consumeLine(line);
