@@ -228,6 +228,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
                 case MODIFY -> counts.modified++;
                 case DELETE -> counts.deleted++;
                 case RENAME -> counts.renamed++;
+                default -> throw new IllegalArgumentException("Unexpected value: " + file.getChangeType());
             }
         }
         return counts;

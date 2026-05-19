@@ -1,0 +1,4 @@
+io.codiqo.maven.timemachine.TimeMachineVersionResolver
+io.codiqo.maven.timemachine.repo.DefaultRepoClient
+io.codiqo.maven.timemachine.repo.GoogleArtifactRegistryConnector
+io.codiqo.maven.timemachine.repo.AetherSnapshotConnector

@@ -327,14 +327,14 @@ public class NormalizeSourcesMojo extends AbstractMojo {
             return;
         }
 
-        getLog().info("");
+        getLog().info(StringUtils.EMPTY);
         getLog().info("per-file summary:");
         for (Map.Entry<Path, List<String>> entry : fileRecipeMap.entrySet()) {
             getLog().info(String.format("  %s — [%s]",
                     baseDir.resolve(entry.getKey()),
                     Joiner.on(", ").join(entry.getValue())));
         }
-        getLog().info("");
+        getLog().info(StringUtils.EMPTY);
     }
     private void writeResults(List<Result> results, Path baseDir) throws IOException {
         for (Result result : results) {

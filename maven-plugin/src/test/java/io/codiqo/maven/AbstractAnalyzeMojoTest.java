@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.Optional;
 import java.util.stream.Stream;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.maven.model.building.DefaultModelProblem;
 import org.apache.maven.model.building.ModelProblem;
 import org.apache.maven.model.building.ModelProblem.Severity;
@@ -64,7 +65,7 @@ class AbstractAnalyzeMojoTest {
     @Test
     void formatProblemFallsBackToDefaultsWhenSourceAndModelIdBlank() {
         String formatted = Maven.formatProblem(
-                problem("msg", Severity.ERROR, "", 0, 0, ""));
+                problem("msg", Severity.ERROR, StringUtils.EMPTY, 0, 0, StringUtils.EMPTY));
 
         assertEquals("broken POM at unknown [modelId=?, severity=ERROR]: msg", formatted);
     }

@@ -58,6 +58,11 @@
         <jakarta.ws.rs-api.version>3.1.0</jakarta.ws.rs-api.version>
         <lombok.version>1.18.46</lombok.version>
         <gson.version>2.14.0</gson.version>
+        <google-auth.version>1.47.0</google-auth.version>
+        <google-api-client.version>2.7.2</google-api-client.version>
+        <google-http-client.version>1.46.3</google-http-client.version>
+        <google-api-services-artifactregistry.version>v1-rev20260320-2.0.0</google-api-services-artifactregistry.version>
+        <artifactregistry-auth-common.version>2.2.5</artifactregistry-auth-common.version>
         <jackson.version>2.21.3</jackson.version>
         <snakeyaml.version>2.6</snakeyaml.version>
         <okio.version>3.17.0</okio.version>
@@ -197,6 +202,35 @@
                 <version>${testcontainers.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.google.auth</groupId>
+                <artifactId>google-auth-library-bom</artifactId>
+                <version>${google-auth.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.google.apis</groupId>
+                <artifactId>google-api-services-artifactregistry</artifactId>
+                <version>${google-api-services-artifactregistry.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.api-client</groupId>
+                <artifactId>google-api-client</artifactId>
+                <version>${google-api-client.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.http-client</groupId>
+                <artifactId>google-http-client-bom</artifactId>
+                <version>${google-http-client.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.google.cloud.artifactregistry</groupId>
+                <artifactId>artifactregistry-auth-common</artifactId>
+                <version>${artifactregistry-auth-common.version}</version>
             </dependency>
             <!-- -->
             <!-- logging -->
@@ -764,6 +798,11 @@
                 <artifactId>ascii-table</artifactId>
                 <version>${ascii-table.version}</version>
             </dependency>
+            <dependency>
+                <groupId>io.codiqo</groupId>
+                <artifactId>codiqo-maven-time-machine</artifactId>
+                <version>${project.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
     <build>
@@ -1228,6 +1267,7 @@
         <module>api</module>
         <module>core</module>
         <module>lang-java</module>
+        <module>maven-time-machine</module>
         <module>maven-plugin</module>
         <module>openapi</module>
         <module>llm</module>

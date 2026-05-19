@@ -145,6 +145,11 @@
             <artifactId>codiqo-llm</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>codiqo-maven-time-machine</artifactId>
+            <scope>provided</scope>
+        </dependency>
         <!-- -->
         <!-- runtime -->
         <!-- -->

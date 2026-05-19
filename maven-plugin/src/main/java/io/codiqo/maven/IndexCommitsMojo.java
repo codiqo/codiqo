@@ -187,7 +187,7 @@ public class IndexCommitsMojo extends AbstractMojo {
 
         if (CollectionUtils.isNotEmpty(unknownParents)) {
             String sample = Joiner.on(", ").join(Iterables.limit(unknownParents, UNKNOWN_PARENTS_SAMPLE_LIMIT));
-            String suffix = unknownParents.size() > UNKNOWN_PARENTS_SAMPLE_LIMIT ? " ..." : "";
+            String suffix = unknownParents.size() > UNKNOWN_PARENTS_SAMPLE_LIMIT ? " ..." : StringUtils.EMPTY;
             getLog().warn("server reported " + unknownParents.size() + " unknown parent SHAs (re-run with a wider codiqo.commitWindow): " + sample + suffix);
         }
     }

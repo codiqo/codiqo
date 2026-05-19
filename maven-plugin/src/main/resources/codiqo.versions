@@ -1,1 +1,2 @@
 lombok.version=${lombok.version}
+codiqo.version=${project.version}

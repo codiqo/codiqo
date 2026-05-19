@@ -8,8 +8,10 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.thymeleaf.TemplateEngine;
 import org.thymeleaf.context.Context;
 import org.thymeleaf.templatemode.TemplateMode;
@@ -18,9 +20,8 @@ import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
-import io.codiqo.client.model.DiagnosticModel;
-
 import io.codiqo.api.RunArgs;
+import io.codiqo.client.model.DiagnosticModel;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
 import io.codiqo.llm.client.ScoringClient.ScoringResult;
 import io.codiqo.llm.schema.LlmScoringRequest;
@@ -601,10 +602,10 @@ public class HtmlReportBuilder implements ReportBuilder {
                         .module(moduleId)
                         .tool(Objects.nonNull(diag.getTool()) ? diag.getTool().getValue() : "unknown")
                         .ruleId(diag.getRuleId())
-                        .file(Optional.ofNullable(diag.getFilePath()).orElse(""))
+                        .file(Optional.ofNullable(diag.getFilePath()).orElse(StringUtils.EMPTY))
                         .line(startLine)
                         .message(diag.getMessage())
-                        .category(Optional.ofNullable(diag.getCategory()).orElse(""))
+                        .category(Optional.ofNullable(diag.getCategory()).orElse(StringUtils.EMPTY))
                         .build());
             }
         }

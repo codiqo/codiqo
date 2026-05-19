@@ -106,8 +106,8 @@ public class Maven {
         int col = p.getColumnNumber();
         return String.format("broken POM at %s%s%s [modelId=%s, severity=%s]: %s",
                 src,
-                line > 0 ? ":" + line : "",
-                col > 0 ? ":" + col : "",
+                line > 0 ? ":" + line : StringUtils.EMPTY,
+                col > 0 ? ":" + col : StringUtils.EMPTY,
                 modelId,
                 p.getSeverity(),
                 p.getMessage());
