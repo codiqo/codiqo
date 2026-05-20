@@ -64,6 +64,14 @@
             <artifactId>org.eclipse.jgit</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.knuddels</groupId>
+            <artifactId>jtokkit</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.ws.rs</groupId>
+            <artifactId>jakarta.ws.rs-api</artifactId>
+        </dependency>
+        <dependency>
             <groupId>${project.groupId}</groupId>
             <artifactId>codiqo-api</artifactId>
             <version>${project.version}</version>

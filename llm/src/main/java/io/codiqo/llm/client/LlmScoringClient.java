@@ -15,9 +15,14 @@ import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
+import com.openai.core.JsonValue;
+import com.openai.errors.OpenAIServiceException;
+import com.openai.errors.RateLimitException;
 import com.openai.models.ResponseFormatJsonObject;
 import com.openai.models.chat.completions.ChatCompletionAssistantMessageParam;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
@@ -37,6 +42,7 @@ import io.codiqo.llm.client.OpenAIClientWrapper.AccumulatedToolCall;
 import io.codiqo.llm.client.OpenAIClientWrapper.StreamingResult;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringResponse;
+import jakarta.ws.rs.core.Response.Status.Family;
 
 public class LlmScoringClient implements ScoringClient {
     private static final int MAX_TOOL_CALLS = Byte.MAX_VALUE;
@@ -56,6 +62,7 @@ public class LlmScoringClient implements ScoringClient {
     private final Double temperature;
     private final Double topP;
     private final Integer maxTokens;
+    private final Integer numCtx;
     private final int maxRetries;
     private final boolean enableWebSearch;
 
@@ -80,9 +87,16 @@ public class LlmScoringClient implements ScoringClient {
         this.temperature = args.getLlmTemperature();
         this.topP = args.getLlmTopP();
         this.maxTokens = args.getLlmMaxTokens();
+        this.numCtx = args.getLlmNumCtx();
         this.maxRetries = args.getLlmMaxRetries();
         this.enableWebSearch = args.isLlmEnableWebSearchTool();
         this.webSearchClient = enableWebSearch ? new OllamaWebSearchClient(args, promptBuilder) : null;
+
+        Preconditions.checkArgument(this.maxRetries >= 1, "llmMaxRetries must be >= 1 (was %s)", this.maxRetries);
+
+        if (Objects.nonNull(numCtx)) {
+            log.info(String.format("configuring LLM client num_ctx=%d", numCtx));
+        }
 
         this.objectMapper = JsonMapper.builder()
                 .propertyNamingStrategy(PropertyNamingStrategies.LOWER_CAMEL_CASE)
@@ -102,7 +116,15 @@ public class LlmScoringClient implements ScoringClient {
         String userMessage = userMessageResult.getMessage();
         PreComputedScores preComputedScores = userMessageResult.getPreComputedScores();
         int promptLength = systemPrompt.length() + userMessage.length();
-        log.info(String.format("prompt system: %d user: %d total: %d chars", systemPrompt.length(), userMessage.length(), promptLength));
+        int systemTokens = ThymeleafPromptBuilder.estimateTokens(systemPrompt);
+        int userTokens = ThymeleafPromptBuilder.estimateTokens(userMessage);
+        log.info(String.format("prompt system: %d chars (~%d tokens) user: %d chars (~%d tokens) total: %d chars (~%d tokens)",
+                systemPrompt.length(),
+                systemTokens,
+                userMessage.length(),
+                userTokens,
+                promptLength,
+                systemTokens + userTokens));
 
         ChatCompletionCreateParams.Builder paramsBuilder = ChatCompletionCreateParams.builder();
         paramsBuilder.model(model);
@@ -117,6 +139,9 @@ public class LlmScoringClient implements ScoringClient {
         }
         if (Objects.nonNull(maxTokens)) {
             paramsBuilder.maxCompletionTokens(maxTokens.longValue());
+        }
+        if (Objects.nonNull(numCtx)) {
+            paramsBuilder.putAdditionalBodyProperty("options", JsonValue.from(ImmutableMap.of("num_ctx", numCtx)));
         }
         paramsBuilder.responseFormat(ResponseFormatJsonObject.builder().build());
         if (enableWebSearch) {
@@ -262,18 +287,28 @@ public class LlmScoringClient implements ScoringClient {
         }
         return trimmed;
     }
-    private StreamingResult streamWithRetry(ChatCompletionCreateParams params, OpenAIClientWrapper.StreamingHandler handler) throws Exception {
-        Exception lastException = null;
+    private StreamingResult streamWithRetry(ChatCompletionCreateParams params, OpenAIClientWrapper.StreamingHandler handler) {
+        RuntimeException lastException = null;
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 return wrapper.stream(params, handler);
-            } catch (Exception err) {
+            } catch (RuntimeException err) {
                 lastException = err;
+                if (err instanceof OpenAIServiceException ose && isNonRetryableClientError(ose)) {
+                    log.error(String.format("non-retryable %d from LLM: %s", ose.statusCode(), ose.getMessage()));
+                    break;
+                }
                 if (attempt < maxRetries) {
                     log.warn(String.format("streaming attempt %d/%d failed: %s, retrying", attempt, maxRetries, err.getMessage()));
                 }
             }
         }
         throw lastException;
+    }
+    public static boolean isNonRetryableClientError(OpenAIServiceException err) {
+        if (err instanceof RateLimitException) {
+            return false;
+        }
+        return Family.familyOf(err.statusCode()) == Family.CLIENT_ERROR;
     }
 }

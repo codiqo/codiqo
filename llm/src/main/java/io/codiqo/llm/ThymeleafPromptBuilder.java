@@ -2,19 +2,18 @@ package io.codiqo.llm;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import com.google.common.collect.Maps;
 
+import org.apache.commons.collections4.CollectionUtils;
 import org.thymeleaf.TemplateEngine;
 import org.thymeleaf.context.Context;
 import org.thymeleaf.templatemode.TemplateMode;
 import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver;
-
-import org.apache.commons.collections4.CollectionUtils;
 
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -22,11 +21,18 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.util.StdDateFormat;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.knuddels.jtokkit.Encodings;
+import com.knuddels.jtokkit.api.Encoding;
+import com.knuddels.jtokkit.api.EncodingType;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
 import io.codiqo.llm.schema.LlmScoringRequest;
+import lombok.Builder;
+import lombok.Data;
 import lombok.SneakyThrows;
 
 public class ThymeleafPromptBuilder implements PromptBuilder {
@@ -36,6 +42,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private static final String TEMPLATE_PRE_COMPUTED_SCORES = "pre-computed-scores";
     private static final TemplateEngine TEMPLATE_ENGINE;
     private static final ObjectMapper MAPPER;
+    private static final Encoding TOKEN_ENCODER = Encodings.newLazyEncodingRegistry().getEncoding(EncodingType.O200K_BASE);
 
     static {
         ClassLoaderTemplateResolver resolver = new ClassLoaderTemplateResolver();
@@ -81,9 +88,14 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
 
         ctx.setVariable("requestJson", requestJson);
 
-        PreComputedScores preComputedScores = volumeCalculator.calculate(request, context.getProjectTotalStatements(), context.getProjectTotalMethods(),
-                context.getMethodCapQuantileProd(), context.getMethodCapQuantileTest(),
-                context.getConstructorCapQuantileProd(), context.getConstructorCapQuantileTest());
+        PreComputedScores preComputedScores = volumeCalculator.calculate(
+                request,
+                context.getProjectTotalStatements(),
+                context.getProjectTotalMethods(),
+                context.getMethodCapQuantileProd(),
+                context.getMethodCapQuantileTest(),
+                context.getConstructorCapQuantileProd(),
+                context.getConstructorCapQuantileTest());
         logPromptMetrics(request, preComputedScores, requestJson);
         ctx.setVariable("preComputedScores", preComputedScores);
         ctx.setVariable("preComputedScoresSection", buildPreComputedScoresSection(preComputedScores));
@@ -91,14 +103,42 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         String message = TEMPLATE_ENGINE.process(TEMPLATE_USER_PROMPT, ctx);
         return new UserMessageResult(message, preComputedScores);
     }
+    @SneakyThrows
     private void logPromptMetrics(LlmScoringRequest request, PreComputedScores scores, String requestJson) {
         LlmScoringRequest.ChangeSummary cs = request.getChangeSummary();
-        log.info("prompt: files=%d, methods=%d, lines=%d (effectiveStmts=%d) | json=%d chars",
+        log.info("prompt: files=%d, methods=%d, lines=%d (effectiveStmts=%d) | json=%d chars (~%d tokens)",
                 cs.getTotalFilesChanged(),
                 cs.getCodeBlocksModified() + cs.getCodeBlocksAdded(),
                 cs.getTotalLinesChanged(),
                 scores.getTotalEffectiveStatements(),
-                requestJson.length());
+                requestJson.length(),
+                estimateTokens(requestJson));
+
+        if (CollectionUtils.isEmpty(request.getFileChanges())) {
+            return;
+        }
+
+        List<FileTokens> perFile = Lists.newArrayList();
+        for (LlmScoringRequest.FileChange file : request.getFileChanges()) {
+            int tokens = estimateTokens(MAPPER.writeValueAsString(file));
+            perFile.add(FileTokens.builder().path(file.getPath()).tokens(tokens).linesChanged(file.getLinesAdded() + file.getLinesDeleted()).build());
+        }
+        perFile.sort(Comparator.comparingInt(FileTokens::getTokens).reversed());
+
+        log.info("token breakdown by file (largest first):");
+        for (FileTokens entry : perFile) {
+            log.info("  %s: ~%d tokens (%d lines changed)", entry.getPath(), entry.getTokens(), entry.getLinesChanged());
+        }
+    }
+    @Override
+    public String buildWebSearchResults(String query, List<WebSearchResultItem> results) {
+        Context ctx = new Context(Locale.ENGLISH);
+        ctx.setVariable("query", query);
+        ctx.setVariable("results", Optional.ofNullable(results).orElse(Collections.emptyList()));
+        return TEMPLATE_ENGINE.process(TEMPLATE_WEB_SEARCH_RESULTS, ctx);
+    }
+    public static int estimateTokens(String text) {
+        return TOKEN_ENCODER.countTokensOrdinary(text);
     }
     private static Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> stripSourceSlices(LlmScoringRequest request) {
         Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> saved = Maps.newIdentityHashMap();
@@ -118,13 +158,6 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     }
     private static void restoreSourceSlices(Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> saved) {
         saved.forEach(LlmScoringRequest.DuplicationInfo.CloneLocation::setSourceSlice);
-    }
-    @Override
-    public String buildWebSearchResults(String query, List<WebSearchResultItem> results) {
-        Context ctx = new Context(Locale.ENGLISH);
-        ctx.setVariable("query", query);
-        ctx.setVariable("results", Optional.ofNullable(results).orElse(Collections.emptyList()));
-        return TEMPLATE_ENGINE.process(TEMPLATE_WEB_SEARCH_RESULTS, ctx);
     }
     private static String buildPreComputedScoresSection(PreComputedScores scores) {
         Context ctx = new Context(Locale.ENGLISH);
@@ -199,5 +232,12 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         ctx.setVariable("cov_poor_min", args.getCoverageImpactPoorMin());
         ctx.setVariable("stats_quantile_percent", (int) (args.getStatsQuantile() * 100));
         return ctx;
+    }
+    @Data
+    @Builder
+    public static class FileTokens {
+        String path;
+        int tokens;
+        int linesChanged;
     }
 }

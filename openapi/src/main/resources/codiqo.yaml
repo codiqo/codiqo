@@ -3139,6 +3139,9 @@ components:
           type: integer
         llmMaxRetries:
           type: integer
+        llmNumCtx:
+          type: integer
+          description: Ollama context window size sent as options.num_ctx; null means do not send
         llmEnableWebSearchTool:
           type: boolean
         includeBranches:
