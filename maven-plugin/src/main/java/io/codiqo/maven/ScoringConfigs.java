@@ -49,6 +49,7 @@ public class ScoringConfigs {
         toReturn.setLlmTopP(args.getLlmTopP());
         toReturn.setLlmMaxTokens(args.getLlmMaxTokens());
         toReturn.setLlmMaxRetries(Optional.ofNullable(args.getLlmMaxRetries()).map(Short::intValue).orElse(null));
+        toReturn.setLlmNumCtx(args.getLlmNumCtx());
         toReturn.setLlmEnableWebSearchTool(args.isLlmEnableWebSearchTool());
 
         toReturn.setIncludeBranches(args.getIncludeBranches());

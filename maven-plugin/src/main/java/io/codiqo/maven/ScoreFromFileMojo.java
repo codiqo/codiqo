@@ -71,6 +71,9 @@ public class ScoreFromFileMojo extends AbstractMojo {
     @Parameter(property = "codiqo.llm.maxTokens", defaultValue = "32767")
     private int llmMaxTokens;
 
+    @Parameter(property = "codiqo.llm.numCtx")
+    private Integer llmNumCtx;
+
     @Parameter(property = "codiqo.llm.enableWebSearchTool", defaultValue = "false")
     private boolean llmEnableWebSearchTool;
 
@@ -184,6 +187,7 @@ public class ScoreFromFileMojo extends AbstractMojo {
         toReturn.setLlmBaseUrl(llmBaseUrl);
         toReturn.setLlmTemperature(llmTemperature);
         toReturn.setLlmMaxTokens(llmMaxTokens);
+        toReturn.setLlmNumCtx(llmNumCtx);
         toReturn.setLlmEnableWebSearchTool(llmEnableWebSearchTool);
         toReturn.setReadTimeout(Duration.ofSeconds(readTimeoutSeconds));
         toReturn.setDumpAnalysis(dumpAnalysis);

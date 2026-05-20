@@ -233,6 +233,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.llm.maxTokens", defaultValue = "32767")
     protected int llmMaxTokens;
 
+    @Parameter(property = "codiqo.llm.numCtx")
+    protected Integer llmNumCtx;
+
     @Parameter(property = "codiqo.llm.enableWebSearchTool", defaultValue = "false")
     protected boolean llmEnableWebSearchTool;
 
@@ -325,6 +328,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setLlmBaseUrl(llmBaseUrl);
         args.setLlmTemperature(llmTemperature);
         args.setLlmMaxTokens(llmMaxTokens);
+        args.setLlmNumCtx(llmNumCtx);
         args.setLlmEnableWebSearchTool(llmEnableWebSearchTool);
         Optional.ofNullable(outputDirectory).ifPresent(args::setOutputDirectory);
         Optional.ofNullable(includeBranches).ifPresent(args::setIncludeBranches);

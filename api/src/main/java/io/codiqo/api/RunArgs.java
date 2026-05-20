@@ -153,6 +153,8 @@ public class RunArgs {
     @Nullable
     private Short llmMaxRetries = 3;
     @Nullable
+    private Integer llmNumCtx;
+    @Nullable
     private boolean llmEnableWebSearchTool = false;
     @Nullable
     private transient File outputDirectory;
