@@ -129,27 +129,28 @@ public class ScoreFromFileMojo extends AbstractMojo {
 
             StopWatch stopWatch = StopWatch.createStarted();
             ScoringResult result;
-            try (ExecutorService executor = DaemonExecutors.newCachedDaemonPool("codiqo-openai")) {
-                try (LlmScoringClient client = new LlmScoringClient(args, executor, new MavenMessageReporter(getLog()))) {
-                    ScoringClient.Params params = ScoringClient.Params.builder()
-                            .request(request)
-                            .context(promptContext)
-                            .handler(new ScoringClient.StreamingHandler() {
-                                @Override
-                                public void onContent(String delta) {
-                                    if (Objects.nonNull(delta)) {
-                                        if (delta.length() > 0) {
-                                            getLog().info("LLM responding... (" + delta.length() + " chars)");
-                                        }
+            ExecutorService executor = DaemonExecutors.newCachedDaemonPool("codiqo-openai");
+            try (LlmScoringClient client = new LlmScoringClient(args, executor, new MavenMessageReporter(getLog()))) {
+                ScoringClient.Params params = ScoringClient.Params.builder()
+                        .request(request)
+                        .context(promptContext)
+                        .handler(new ScoringClient.StreamingHandler() {
+                            @Override
+                            public void onContent(String delta) {
+                                if (Objects.nonNull(delta)) {
+                                    if (delta.length() > 0) {
+                                        getLog().info("LLM responding... (" + delta.length() + " chars)");
                                     }
                                 }
-                                @Override
-                                public void onToolCall(String toolName) {
-                                    getLog().info("tool call: " + toolName);
-                                }
-                            }).build();
-                    result = client.score(params);
-                }
+                            }
+                            @Override
+                            public void onToolCall(String toolName) {
+                                getLog().info("tool call: " + toolName);
+                            }
+                        }).build();
+                result = client.score(params);
+            } finally {
+                executor.shutdown();
             }
             stopWatch.stop();
 

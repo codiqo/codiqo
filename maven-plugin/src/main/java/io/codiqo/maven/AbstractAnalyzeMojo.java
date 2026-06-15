@@ -748,8 +748,11 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         return Optional.empty();
     }
     protected void doLlmScoring(SubmissionContext ctx) throws Exception {
-        try (ExecutorService executor = DaemonExecutors.newCachedDaemonPool("codiqo-openai")) {
+        ExecutorService executor = DaemonExecutors.newCachedDaemonPool("codiqo-openai");
+        try {
             new LlmScoringPopulator(getLog(), executor).accept(ctx);
+        } finally {
+            executor.shutdown();
         }
     }
     protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category) throws Exception {
