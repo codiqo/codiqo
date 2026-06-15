@@ -13,6 +13,7 @@ public interface PromptBuilder {
     String buildSystemPrompt(PromptContext context);
     UserMessageResult buildUserMessageWithScores(LlmScoringRequest request, PromptContext context);
     String buildWebSearchResults(String query, List<WebSearchResultItem> results);
+    String buildValidationFeedback(FinalScoreCalculator.ValidationReport report);
 
     @Value
     @Builder

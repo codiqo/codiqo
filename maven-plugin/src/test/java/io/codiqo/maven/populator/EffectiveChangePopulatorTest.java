@@ -13,6 +13,7 @@ import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.FileChangeModel.LanguageEnum;
 import io.codiqo.client.model.LocationModel;
 import io.codiqo.client.model.MetricsModel;
+import io.codiqo.client.model.SymbolKindModel;
 
 class EffectiveChangePopulatorTest {
     private static final String JAVA_DIFF = String.join("\n",
@@ -90,6 +91,30 @@ class EffectiveChangePopulatorTest {
         new EffectiveChangePopulator().accept(ctx);
 
         assertEquals(0, unit.getEffectiveInvocationsChanged());
+    }
+    @Test
+    void linesInsideNestedBlockAttributeOnlyToInnermostUnit() {
+        String diff = String.join("\n",
+                "diff --git a/A.java b/A.java",
+                "--- a/A.java",
+                "+++ b/A.java",
+                "@@ -38,2 +38,2 @@",
+                " protected Object createInstance() {",
+                "-    container.start();",
+                "+    container.restart();",
+                "") + "\n";
+        CodeUnitModel outer = modifyMethod(33, 53, List.of());
+        outer.setKind(SymbolKindModel.METHOD);
+        CodeUnitModel inner = modifyMethod(38, 43, List.of(39));
+        inner.setKind(SymbolKindModel.METHOD);
+        SubmissionContext ctx = contextWith(javaFile(diff, outer, inner));
+
+        new EffectiveChangePopulator().accept(ctx);
+
+        assertEquals(0, outer.getEffectiveLinesChanged());
+        assertEquals(0, outer.getEffectiveInvocationsChanged());
+        assertEquals(1, inner.getEffectiveLinesChanged());
+        assertEquals(2, inner.getEffectiveInvocationsChanged());
     }
     @Test
     void skipsCodeUnitsThatAreNotModifiedOperations() {

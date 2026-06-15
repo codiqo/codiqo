@@ -27,7 +27,6 @@ public class ScoringConfigs {
         toReturn.setIgnoreCpd(args.isIgnoreCpd());
         toReturn.setIgnoreDiagnostics(args.isIgnoreDiagnostics());
         toReturn.setFailOnJdtlsError(args.isFailOnJdtlsError());
-        toReturn.setHideSourceCode(args.isHideSourceCode());
         toReturn.setJdtUseSharedIndex(args.isJdtUseSharedIndex());
 
         toReturn.setBuildTimeout(Optional.ofNullable(args.getBuildTimeout()).map(Duration::toString).orElse(null));
@@ -49,8 +48,10 @@ public class ScoringConfigs {
         toReturn.setLlmTopP(args.getLlmTopP());
         toReturn.setLlmMaxTokens(args.getLlmMaxTokens());
         toReturn.setLlmMaxRetries(Optional.ofNullable(args.getLlmMaxRetries()).map(Short::intValue).orElse(null));
+        toReturn.setLlmValidationMaxRetries(Optional.ofNullable(args.getLlmValidationMaxRetries()).map(Short::intValue).orElse(null));
         toReturn.setLlmNumCtx(args.getLlmNumCtx());
         toReturn.setLlmEnableWebSearchTool(args.isLlmEnableWebSearchTool());
+        toReturn.setLlmReadTimeout(Optional.ofNullable(args.getLlmReadTimeout()).map(Duration::toString).orElse(null));
 
         toReturn.setIncludeBranches(args.getIncludeBranches());
         toReturn.setIncludeAuthorEmails(args.getIncludeAuthorEmails());

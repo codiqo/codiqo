@@ -2,12 +2,14 @@ package io.codiqo.llm.schema;
 
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -31,6 +33,12 @@ public class LlmScoringResponse {
     private QualityDimensions qualityDimensions;
     private RiskAssessment riskAssessment;
     private ChangeClassification changeClassification;
+
+    @Builder.Default
+    private List<TaskType> taskTypes = Lists.newArrayList();
+
+    private Integer taskComplexity;
+    private String taskComplexityRationale;
     private String thinking;
     private Bugs bugs;
     private StaticAnalysisReview staticAnalysisReview;
@@ -40,6 +48,9 @@ public class LlmScoringResponse {
     private List<String> seniorReviewReasons = Lists.newArrayList();
     private String summary;
     private Tags tags;
+
+    @Builder.Default
+    private List<ModifyImpactEstimate> modifyImpactEstimates = Lists.newArrayList();
 
     public boolean hasBlockingBugs() {
         return Objects.nonNull(bugs) && CollectionUtils.isNotEmpty(bugs.getBlocking());
@@ -80,6 +91,22 @@ public class LlmScoringResponse {
         MEDIUM,
         LARGE,
         HUGE
+    }
+
+    public enum TaskType {
+        FEATURE,
+        BUG_FIX,
+        REFACTOR,
+        TEST,
+        DOCS,
+        CHORE,
+        INFRA,
+        DEP_UPDATE,
+        SECURITY_PATCH,
+        PERFORMANCE,
+        DEDUPLICATION,
+        STYLE,
+        DATA_MIGRATION
     }
 
     public enum RiskLevel {
@@ -184,8 +211,8 @@ public class LlmScoringResponse {
         private int totalLinesAddedRaw;
         private int totalLinesDeletedRaw;
         private int cosmeticLines;
-        private int inPlaceModifyLines;
-        private int trueDeleteAddLines;
+        private int pairsCollapsed;
+        private int pureAddDeleteLines;
         @Builder.Default
         private List<FileDiffClassification> perFile = Lists.newArrayList();
         private String rationale;
@@ -198,23 +225,33 @@ public class LlmScoringResponse {
     public static class FileDiffClassification {
         private String file;
         private int cosmeticLines;
-        private int inPlaceModifyLines;
-        private int trueDeleteAddLines;
-        private LineGroups added;
-        private LineGroups deleted;
+        private int pairsCollapsed;
+        private int pureAddDeleteLines;
+        // LLM input: change-block id → "inPlace" | "trueModify". The pair/pure arrays below are
+        // server-derived from the diff's change blocks; the LLM no longer emits them.
+        @Builder.Default
+        private Map<String, String> blockKinds = Maps.newHashMap();
+        @Builder.Default
+        private List<Integer> cosmeticAdded = Lists.newArrayList();
+        @Builder.Default
+        private List<Integer> cosmeticDeleted = Lists.newArrayList();
+        @Builder.Default
+        private List<LinePair> inPlaceModifyPairs = Lists.newArrayList();
+        @Builder.Default
+        private List<LinePair> trueModifyPairs = Lists.newArrayList();
+        @Builder.Default
+        private List<Integer> pureAdd = Lists.newArrayList();
+        @Builder.Default
+        private List<Integer> pureDelete = Lists.newArrayList();
     }
 
     @Data
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class LineGroups {
-        @Builder.Default
-        private List<Integer> cosmetic = Lists.newArrayList();
-        @Builder.Default
-        private List<Integer> inPlaceModify = Lists.newArrayList();
-        @Builder.Default
-        private List<Integer> trueDeleteAdd = Lists.newArrayList();
+    public static class LinePair {
+        private int deleted;
+        private int added;
     }
 
     @Data
@@ -488,5 +525,41 @@ public class LlmScoringResponse {
         private boolean blockRatioOutlier;
         private double effortShare;
         private boolean globalCapDriver;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ModifyImpactEstimate {
+        private String signature;
+        private String file;
+        private CoverageDirection coverageDirection;
+        private ChangeMagnitude coverageMagnitude;
+        private DuplicationDirection duplicationDirection;
+        private ChangeMagnitude duplicationMagnitude;
+        private Confidence confidence;
+        private String rationale;
+    }
+
+    public enum CoverageDirection {
+        IMPROVED,
+        UNCHANGED,
+        REGRESSED,
+        UNKNOWN
+    }
+
+    public enum DuplicationDirection {
+        REDUCED,
+        UNCHANGED,
+        INCREASED,
+        UNKNOWN
+    }
+
+    public enum ChangeMagnitude {
+        NONE,
+        SLIGHT,
+        MODERATE,
+        SIGNIFICANT
     }
 }

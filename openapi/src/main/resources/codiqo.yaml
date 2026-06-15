@@ -404,6 +404,29 @@ components:
             - medium: 50-80 score (new feature, moderate refactor)
             - large: 90-140 score (major feature, significant refactor)
             - huge: 150-200+ score (architecture change, large migration)
+        taskTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskTypeModel'
+          description: |
+            All applicable intent classifications of the commit (independent of size),
+            ordered primary-first. A commit is often more than one kind of work (e.g. a
+            bug fix that also adds tests and removes duplication). Lets dashboards aggregate
+            "what kind of work" a developer is doing without losing the secondary intents.
+        taskComplexity:
+          type: integer
+          minimum: 1
+          maximum: 10
+          description: |
+            Overall difficulty of the change on a 1-10 scale, anchored to seniority bands:
+            - 1-3: junior-appropriate (trivial, isolated, low blast radius)
+            - 4-6: middle-appropriate (typical feature work, bounded refactor)
+            - 7-10: senior-appropriate (cross-cutting, security/concurrency/data-integrity sensitive,
+              breaking API changes, multi-module impact)
+            Holistic rollup of the 10 quality dimensions plus blast radius — NOT a size metric.
+        taskComplexityRationale:
+          type: string
+          description: One or two sentences naming the inputs that drove the taskComplexity score.
         bugs:
           $ref: '#/components/schemas/BugsModel'
         riskAssessment:
@@ -426,6 +449,14 @@ components:
             type: string
         tags:
           $ref: '#/components/schemas/ReviewTagsModel'
+        modifyImpactEstimates:
+          type: array
+          description: |
+            Per modified code unit — the LLM's APPROXIMATE, directional estimate of whether this change
+            improved test coverage and reduced duplication for the touched code. Informational only;
+            does not affect the score. Empty for changes with no MODIFY code units.
+          items:
+            $ref: '#/components/schemas/ModifyImpactEstimateModel'
         projectMetrics:
           $ref: '#/components/schemas/ProjectMetricsModel'
         projectQuality:
@@ -444,6 +475,71 @@ components:
         llmSummary:
           type: string
           description: Narrative summary of the commit from LLM analysis
+        developerId:
+          type: string
+          description: |
+            User id resolved from the commit author email via git_identities.
+            Null when the author email has not been linked to a user.
+        seniorityAtCommit:
+          type: string
+          enum: [junior, middle, senior, team_lead, tech_lead, architect, cto]
+          description: |
+            Snapshot of the author's seniority at the time the analysis ran.
+            Snapshotted so historical reports remain stable when people get promoted.
+        teamAtCommit:
+          type: string
+          description: |
+            Snapshot of the author's team at the time the analysis ran.
+        complexitySeniorityGap:
+          type: integer
+          description: |
+            Numeric gap between the author's seniority band and the taskComplexity score:
+            positive = over-qualified (senior doing junior work),
+            zero = match,
+            negative = under-qualified (junior doing senior work).
+            Bands: junior=2, middle=5, senior=8, team_lead=8, tech_lead=9, architect=9, cto=9.
+            Null when developerId or taskComplexity is null.
+
+    ModifyImpactEstimateModel:
+      type: object
+      description: |
+        The LLM's APPROXIMATE, directional estimate of how a single MODIFY code unit affected test
+        coverage and code duplication. Derived from the diff plus post-change coverage/CPD signals —
+        NOT a precise before/after delta. Informational only; does not affect the score.
+      properties:
+        signature:
+          type: string
+          description: Signature of the modified code unit this estimate refers to
+        file:
+          type: string
+        coverageDirection:
+          type: string
+          enum: [improved, unchanged, regressed, unknown]
+        coverageMagnitude:
+          $ref: '#/components/schemas/ChangeMagnitudeModel'
+        duplicationDirection:
+          type: string
+          enum: [reduced, unchanged, increased, unknown]
+        duplicationMagnitude:
+          $ref: '#/components/schemas/ChangeMagnitudeModel'
+        confidence:
+          type: string
+          enum: [high, medium, low]
+        rationale:
+          type: string
+          description: One sentence naming the signal(s) behind the estimate
+
+    ChangeMagnitudeModel:
+      type: string
+      description: Coarse magnitude bucket for an approximate directional change
+      enum: [none, slight, moderate, significant]
+
+    TaskTypeModel:
+      type: string
+      description: |
+        Intent-based classification of a commit (independent of size). A commit may
+        carry several of these; see AnalysisResultModel.taskTypes.
+      enum: [feature, bug_fix, refactor, test, docs, chore, infra, dep_update, security_patch, performance, deduplication, style, data_migration]
 
     # ==========================================================================
     # Project Metrics & Quality (Global Level)
@@ -1140,15 +1236,6 @@ components:
           $ref: '#/components/schemas/CoverageCounterModel'
         branch:
           $ref: '#/components/schemas/CoverageCounterModel'
-        delta:
-          type: object
-          properties:
-            line:
-              type: number
-              format: double
-            branch:
-              type: number
-              format: double
 
     DuplicationSummaryModel:
       type: object
@@ -2150,10 +2237,11 @@ components:
     DiffClassificationModel:
       type: object
       description: |
-        LLM-provided classification of git diff delete/add pairs to compensate for git's lack of a "modified"
-        line concept. Populated only when the commit has any deleted lines. The server uses these per-file counts
-        to deterministically scale the volume score down — cosmetic lines drop entirely, in-place edits collapse
-        from 2 lines to 1 line of effort, and true delete+add pairs are kept as 2 lines.
+        LLM-provided classification of git diff delete/add lines to compensate for git's lack of a "modified"
+        line concept. Populated only when the commit has any deleted lines. The server uses the per-file
+        line-number arrays to deterministically scale the volume score down — cosmetic lines drop entirely,
+        paired edits (in-place or true-modify) collapse from 2 lines to 1 line of effort, and unpaired
+        additions/deletions are kept at full weight.
       properties:
         totalLinesAddedRaw:
           type: integer
@@ -2164,18 +2252,20 @@ components:
         cosmeticLines:
           type: integer
           minimum: 0
-          description: Total lines whose semantics did not change (whitespace, comment text, log strings).
-        inPlaceModifyLines:
+          description: Total cosmetic lines across both sides (whitespace, comment text, log strings). Effort weight 0.
+        pairsCollapsed:
           type: integer
           minimum: 0
           description: |
-            Total delete/add lines the LLM identified as in-place edits (same intent, different form).
-            The server treats each pair as 1 line of effort, not 2, so the effective contribution is
-            inPlaceModifyLines / 2.
-        trueDeleteAddLines:
+            Total `LinePair` count across the analysis — sum of `inPlaceModifyPairs.size + trueModifyPairs.size`
+            over every file. Each pair represents 2 raw diff lines (1 deleted + 1 added) that collapse to 1 line
+            of effort.
+        pureAddDeleteLines:
           type: integer
           minimum: 0
-          description: Total delete/add lines that are genuine removals plus genuine new code, kept at full 2× weight.
+          description: |
+            Total unpaired add/delete lines — sum of `pureAdd.size + pureDelete.size` over every file.
+            Each line keeps full effort weight.
         perFile:
           type: array
           items:
@@ -2187,10 +2277,11 @@ components:
     FileDiffClassificationModel:
       type: object
       description: |
-        Per-file breakdown of LLM diff classification. The `added` and `deleted` line-number groups are the
-        source of truth supplied by the LLM; the count fields (cosmeticLines, inPlaceModifyLines, trueDeleteAddLines)
-        are derived server-side from those arrays during the post-LLM scoring step and persisted alongside for
-        fast aggregation.
+        Per-file breakdown of LLM diff classification. The six line-number arrays (`cosmeticAdded`,
+        `cosmeticDeleted`, `inPlaceModifyPairs`, `trueModifyPairs`, `pureAdd`, `pureDelete`) are the source of
+        truth supplied by the LLM; the count fields (`cosmeticLines`, `pairsCollapsed`, `pureAddDeleteLines`)
+        are derived server-side and persisted for fast aggregation. Pair balance is enforced structurally by
+        the `LinePairModel` tuple type — a pair always carries both `deleted` and `added` line numbers.
       properties:
         file:
           type: string
@@ -2198,48 +2289,70 @@ components:
         cosmeticLines:
           type: integer
           minimum: 0
-          description: Server-derived count of COSMETIC line numbers across both sides. Read-only from the LLM's perspective.
-        inPlaceModifyLines:
+          description: Server-derived count, equals `cosmeticAdded.size + cosmeticDeleted.size`.
+        pairsCollapsed:
           type: integer
           minimum: 0
-          description: Server-derived count of IN_PLACE_MODIFY line numbers across both sides (always even — each pair has one entry on each side).
-        trueDeleteAddLines:
+          description: Server-derived count, equals `inPlaceModifyPairs.size + trueModifyPairs.size`.
+        pureAddDeleteLines:
           type: integer
           minimum: 0
-          description: Server-derived count of TRUE line numbers across both sides.
-        added:
-          $ref: '#/components/schemas/LineGroupsModel'
-        deleted:
-          $ref: '#/components/schemas/LineGroupsModel'
-
-    LineGroupsModel:
-      type: object
-      description: |
-        Three line-number arrays grouping every changed line on one side (added or deleted) by classification.
-        Used in `FileDiffClassificationModel.added` (new-file line numbers) and `.deleted` (old-file line numbers).
-        Together the three arrays must cover ALL changed lines on that side with NO duplicates. Sum of array sizes
-        must equal the request's `linesAdded` (for `added`) or `linesDeleted` (for `deleted`) for that file.
-      properties:
-        cosmetic:
+          description: Server-derived count, equals `pureAdd.size + pureDelete.size`.
+        cosmeticAdded:
           type: array
-          description: Line numbers whose presence or absence does not change program behavior. Effort weight 0.
+          description: New-file line numbers added with no semantic change (whitespace, doc-comments, log strings, brace-only lines). Effort weight 0.
           items:
             type: integer
             minimum: 1
-        inPlaceModify:
+        cosmeticDeleted:
+          type: array
+          description: Old-file line numbers deleted with no semantic change. Effort weight 0.
+          items:
+            type: integer
+            minimum: 1
+        inPlaceModifyPairs:
           type: array
           description: |
-            Line numbers that are paired with the matching side as in-place edits (same intent, different form).
-            `len(added.inPlaceModify)` MUST equal `len(deleted.inPlaceModify)`. Each pair contributes 1 line of effort, not 2.
+            `{deleted, added}` tuples where the SAME intent survives in a different form (renamed local,
+            swapped operand, tweaked expression, switched method on same receiver). 1 effort per pair.
           items:
-            type: integer
-            minimum: 1
-        trueDeleteAdd:
+            $ref: '#/components/schemas/LinePairModel'
+        trueModifyPairs:
           type: array
-          description: Line numbers representing genuine work — real removals, real additions of new logic, real delete+add pairs of different intent. Each line keeps full weight.
+          description: |
+            `{deleted, added}` tuples where the line slot got REPLACED by something with a different intent
+            (rewritten method body, swapped control-flow block, unrelated block at same diff position).
+            1 effort per pair — same weight as `inPlaceModifyPairs`; the distinction is diagnostic only.
+          items:
+            $ref: '#/components/schemas/LinePairModel'
+        pureAdd:
+          type: array
+          description: New-file line numbers added with no replacement on the deleted side (brand-new method bodies, fresh branches, excess additions after pairing). 1 effort per line.
           items:
             type: integer
             minimum: 1
+        pureDelete:
+          type: array
+          description: Old-file line numbers removed with no replacement on the added side (genuine removal, dead-code purge, dropped method body). 1 effort per line.
+          items:
+            type: integer
+            minimum: 1
+
+    LinePairModel:
+      type: object
+      description: |
+        One delete/add line pair from the diff. `deleted` is an old-file line number, `added` is a new-file
+        line number. Pair balance is enforced structurally — a pair always has both sides.
+      required:
+        - deleted
+        - added
+      properties:
+        deleted:
+          type: integer
+          minimum: 1
+        added:
+          type: integer
+          minimum: 1
 
     FileEffortModel:
       type: object
@@ -2498,8 +2611,9 @@ components:
           type: integer
           minimum: 0
           description: |
-            Effective lines-changed total after dropping cosmetic pairs and collapsing in-place edit pairs.
-            Populated only when an LLM diff classification was applied; zero otherwise.
+            Effective lines-changed total after dropping cosmetic lines and collapsing paired modifications
+            (in-place + true-modify) to one line each. Equals `Σ (pairsCollapsed + pureAddDeleteLines)` across
+            validated files. Populated only when an LLM diff classification was applied; zero otherwise.
         cosmeticLinesDropped:
           type: integer
           minimum: 0
@@ -2508,8 +2622,9 @@ components:
           type: integer
           minimum: 0
           description: |
-            Number of delete/add line pairs the LLM identified as in-place edits and the server collapsed
-            from 2 lines to 1 line of effort each. Equals inPlaceModifyLines / 2.
+            Number of pairs the server collapsed from 2 raw lines to 1 line of effort each. Equals
+            `pairsCollapsed` (sum of `inPlaceModifyPairs.size + trueModifyPairs.size` across files).
+            Field name preserved for schema stability — both in-place pairs *and* true-modify pairs contribute.
         testCodeScoreMultiplier:
           type: number
           format: double
@@ -3091,8 +3206,6 @@ components:
           type: boolean
         failOnJdtlsError:
           type: boolean
-        hideSourceCode:
-          type: boolean
         jdtUseSharedIndex:
           type: boolean
         buildTimeout:
@@ -3139,11 +3252,17 @@ components:
           type: integer
         llmMaxRetries:
           type: integer
+        llmValidationMaxRetries:
+          type: integer
+          description: Max diff-classification validation retries (feedback message + re-stream); 0 disables the retry loop
         llmNumCtx:
           type: integer
           description: Ollama context window size sent as options.num_ctx; null means do not send
         llmEnableWebSearchTool:
           type: boolean
+        llmReadTimeout:
+          type: string
+          description: HTTP read timeout for LLM calls, serialized as an ISO-8601 duration (e.g. "PT10M"). Null means use the client default.
         includeBranches:
           type: string
         includeAuthorEmails:

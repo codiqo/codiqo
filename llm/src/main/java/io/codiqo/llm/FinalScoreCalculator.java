@@ -3,13 +3,15 @@ package io.codiqo.llm;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.MapUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.math3.util.Precision;
 
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 
@@ -24,8 +26,8 @@ import io.codiqo.llm.schema.LlmScoringResponse.ArchitectureEffortBonus;
 import io.codiqo.llm.schema.LlmScoringResponse.CodeBlockEffortView;
 import io.codiqo.llm.schema.LlmScoringResponse.DiffClassification;
 import io.codiqo.llm.schema.LlmScoringResponse.FileDiffClassification;
-import io.codiqo.llm.schema.LlmScoringResponse.LineGroups;
 import io.codiqo.llm.schema.LlmScoringResponse.FileEffortView;
+import io.codiqo.llm.schema.LlmScoringResponse.LinePair;
 import io.codiqo.llm.schema.LlmScoringResponse.QualityMultiplier;
 import io.codiqo.llm.schema.LlmScoringResponse.VolumeScore;
 import lombok.Value;
@@ -34,12 +36,13 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class FinalScoreCalculator {
     private static final int ROUNDING_PRECISION = 2;
+    private static final int MAX_ARCHITECTURE_IMPACT = 10;
 
     private final RunArgs args;
     private final VolumeScoreCalculator volumeScoreCalculator;
 
     public FinalScoreCalculator(RunArgs args) {
-        this.args = args;
+        this.args = Objects.requireNonNull(args);
         this.volumeScoreCalculator = new VolumeScoreCalculator(args);
     }
 
@@ -47,6 +50,7 @@ public class FinalScoreCalculator {
         apply(response, preComputed, null);
     }
     public void apply(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
+        DiffClassificationDeriver.derive(response, request);
         DiffAdjustment adjustment = computeDiffAdjustment(response, preComputed, request);
         PreComputedScores effective = adjustment.getScores();
         Map<String, FileDiffClassification> classificationByFile = buildClassificationByFile(response);
@@ -60,7 +64,7 @@ public class FinalScoreCalculator {
         }
         if (Objects.nonNull(response.getEffortBreakdown())) {
             response.getEffortBreakdown().setBaseEffortScore(Precision.round(baseEffort, ROUNDING_PRECISION));
-            response.getEffortBreakdown().setVolumeScore(toVolumeScore(effective, preComputed, adjustment));
+            response.getEffortBreakdown().setVolumeScore(toVolumeScore(effective, adjustment));
             response.getEffortBreakdown().setFileEfforts(
                     effective.getFileEfforts().stream()
                             .map(fe -> toFileEffortView(fe, classificationByFile))
@@ -84,7 +88,7 @@ public class FinalScoreCalculator {
         int architectureImpactScore = 0;
         double qualityFactor = 1.0;
         if (Objects.nonNull(response.getArchitectureEffortBonus())) {
-            architectureImpactScore = response.getArchitectureEffortBonus().getArchitectureImpactScore();
+            architectureImpactScore = Math.max(0, Math.min(MAX_ARCHITECTURE_IMPACT, response.getArchitectureEffortBonus().getArchitectureImpactScore()));
             qualityFactor = response.getArchitectureEffortBonus().getQualityFactor();
             qualityFactor = Math.max(0.0, Math.min(1.0, qualityFactor));
         }
@@ -135,6 +139,9 @@ public class FinalScoreCalculator {
         }
 
         DiffClassification classification = response.getEffortBreakdown().getDiffClassification();
+        if (CollectionUtils.isEmpty(classification.getPerFile())) {
+            return DiffAdjustment.unchanged(preComputed);
+        }
 
         Map<String, FileChange> fileChangesByPath = Maps.newHashMapWithExpectedSize(request.getFileChanges().size());
         for (FileChange fc : request.getFileChanges()) {
@@ -145,133 +152,88 @@ public class FinalScoreCalculator {
 
         Map<String, Double> perFileFactor = Maps.newHashMap();
         int totalCosmetic = 0;
-        int totalInPlaceCollapsed = 0;
+        int totalPairsCollapsed = 0;
         int totalRawLines = 0;
         int totalAdjustedLines = 0;
-        boolean fallback = false;
         for (FileDiffClassification entry : classification.getPerFile()) {
             FileChange fc = fileChangesByPath.get(entry.getFile());
             if (Objects.isNull(fc)) {
-                log.warn("diffClassification.skipReason=unknownFile file='{}'; entry skipped, valid entries still applied", entry.getFile());
+                log.debug("diffClassification.skipReason=unknownFile file='{}'", entry.getFile());
                 continue;
             }
             if (!fc.isLinesJustificationRequired()) {
-                log.warn("diffClassification.skipReason=notEligible file='{}' language='{}'; entry skipped (config/non-code file)", entry.getFile(), fc.getLanguage());
+                log.debug("diffClassification.skipReason=notEligible file='{}' language='{}'", entry.getFile(), fc.getLanguage());
                 continue;
             }
 
-            LineGroups added = Optional.ofNullable(entry.getAdded()).orElseGet(() -> LineGroups.builder().build());
-            LineGroups deleted = Optional.ofNullable(entry.getDeleted()).orElseGet(() -> LineGroups.builder().build());
+            int cosmeticAddedSize = sizeOfInts(entry.getCosmeticAdded());
+            int cosmeticDeletedSize = sizeOfInts(entry.getCosmeticDeleted());
+            int inPlacePairs = sizeOfPairs(entry.getInPlaceModifyPairs());
+            int trueModifyPairs = sizeOfPairs(entry.getTrueModifyPairs());
+            int pureAddSize = sizeOfInts(entry.getPureAdd());
+            int pureDeleteSize = sizeOfInts(entry.getPureDelete());
 
-            int addedCosmetic = sizeOf(added.getCosmetic());
-            int addedInPlace = sizeOf(added.getInPlaceModify());
-            int addedTrue = sizeOf(added.getTrueDeleteAdd());
-            int deletedCosmetic = sizeOf(deleted.getCosmetic());
-            int deletedInPlace = sizeOf(deleted.getInPlaceModify());
-            int deletedTrue = sizeOf(deleted.getTrueDeleteAdd());
+            int addedTotal = cosmeticAddedSize + inPlacePairs + trueModifyPairs + pureAddSize;
+            int deletedTotal = cosmeticDeletedSize + inPlacePairs + trueModifyPairs + pureDeleteSize;
 
-            int addedTotal = addedCosmetic + addedInPlace + addedTrue;
-            int deletedTotal = deletedCosmetic + deletedInPlace + deletedTrue;
-
+            // entries are server-derived from the diff (DiffClassificationDeriver), so totals match
+            // the effective targets by construction — a mismatch means candidate filtering drifted
+            // from DiffStats.categorize and the file's factor can't be trusted
             if (addedTotal != fc.getLinesAdded()) {
-                log.warn("diffClassification.fallback=addedTotalMismatch file='{}' addedTotal={} linesAdded={}; falling back to unadjusted volume score",
-                        entry.getFile(), addedTotal, fc.getLinesAdded());
-                fallback = true;
-                break;
+                log.warn("diffClassification.skipReason=addedTotalMismatch file='{}' addedTotal={} linesAdded={}",
+                        entry.getFile(),
+                        addedTotal,
+                        fc.getLinesAdded());
+                continue;
             }
             if (deletedTotal != fc.getLinesDeleted()) {
-                log.warn("diffClassification.fallback=deletedTotalMismatch file='{}' deletedTotal={} linesDeleted={}; falling back to unadjusted volume score",
-                        entry.getFile(), deletedTotal, fc.getLinesDeleted());
-                fallback = true;
-                break;
+                log.warn("diffClassification.skipReason=deletedTotalMismatch file='{}' deletedTotal={} linesDeleted={}",
+                        entry.getFile(),
+                        deletedTotal,
+                        fc.getLinesDeleted());
+                continue;
             }
-            if (hasDuplicateLineNumbers(added) || hasDuplicateLineNumbers(deleted)) {
-                log.warn("diffClassification.fallback=duplicateLineNumber file='{}'; same line number appears in multiple buckets — falling back to unadjusted volume score", entry.getFile());
-                fallback = true;
-                break;
-            }
-            if (addedInPlace != deletedInPlace) {
-                log.warn("diffClassification.fallback=inPlacePairMismatch file='{}' addedInPlace={} deletedInPlace={}; falling back to unadjusted volume score",
-                        entry.getFile(), addedInPlace, deletedInPlace);
-                fallback = true;
-                break;
-            }
-
-            int cosmeticForFile = addedCosmetic + deletedCosmetic;
-            int inPlaceForFile = addedInPlace + deletedInPlace;
-            int trueForFile = addedTrue + deletedTrue;
 
             int rawLines = fc.getLinesAdded() + fc.getLinesDeleted();
             if (rawLines == 0) {
                 continue;
             }
 
-            double effectiveLines = inPlaceForFile / 2.0 + trueForFile;
-            double factor = effectiveLines / rawLines;
+            int pairsCount = inPlacePairs + trueModifyPairs;
+            int effectiveLines = pairsCount + pureAddSize + pureDeleteSize;
+            double factor = (double) effectiveLines / rawLines;
             perFileFactor.put(entry.getFile(), factor);
 
-            totalCosmetic += cosmeticForFile;
-            totalInPlaceCollapsed += inPlaceForFile / 2;
+            totalCosmetic += cosmeticAddedSize + cosmeticDeletedSize;
+            totalPairsCollapsed += pairsCount;
             totalRawLines += rawLines;
-            totalAdjustedLines += (int) Math.round(effectiveLines);
+            totalAdjustedLines += effectiveLines;
         }
 
-        if (fallback) {
-            DiffBookkeeping bookkeeping = bookkeepingFromClassification(classification, fileChangesByPath);
-            return DiffAdjustment.notApplied(preComputed, bookkeeping);
-        }
         if (perFileFactor.isEmpty()) {
-            return DiffAdjustment.notApplied(preComputed, DiffBookkeeping.zero());
+            return DiffAdjustment.unchanged(preComputed);
         }
+
+        populatePerFileScalars(classification);
 
         PreComputedScores adjusted = volumeScoreCalculator.recompute(preComputed, perFileFactor);
-        DiffBookkeeping bookkeeping = new DiffBookkeeping(totalRawLines, totalAdjustedLines, totalCosmetic, totalInPlaceCollapsed);
+        DiffBookkeeping bookkeeping = new DiffBookkeeping(totalRawLines, totalAdjustedLines, totalCosmetic, totalPairsCollapsed);
         return DiffAdjustment.applied(adjusted, bookkeeping);
     }
     private static void populatePerFileScalars(DiffClassification classification) {
         for (FileDiffClassification entry : classification.getPerFile()) {
-            LineGroups added = Optional.ofNullable(entry.getAdded()).orElseGet(() -> LineGroups.builder().build());
-            LineGroups deleted = Optional.ofNullable(entry.getDeleted()).orElseGet(() -> LineGroups.builder().build());
-
-            int cosmeticForFile = sizeOf(added.getCosmetic()) + sizeOf(deleted.getCosmetic());
-            int inPlaceForFile = sizeOf(added.getInPlaceModify()) + sizeOf(deleted.getInPlaceModify());
-            int trueForFile = sizeOf(added.getTrueDeleteAdd()) + sizeOf(deleted.getTrueDeleteAdd());
+            int cosmeticForFile = sizeOfInts(entry.getCosmeticAdded()) + sizeOfInts(entry.getCosmeticDeleted());
+            int pairsForFile = sizeOfPairs(entry.getInPlaceModifyPairs()) + sizeOfPairs(entry.getTrueModifyPairs());
+            int pureAddDeleteForFile = sizeOfInts(entry.getPureAdd()) + sizeOfInts(entry.getPureDelete());
 
             entry.setCosmeticLines(cosmeticForFile);
-            entry.setInPlaceModifyLines(inPlaceForFile);
-            entry.setTrueDeleteAddLines(trueForFile);
+            entry.setPairsCollapsed(pairsForFile);
+            entry.setPureAddDeleteLines(pureAddDeleteForFile);
         }
 
         classification.setCosmeticLines(classification.getPerFile().stream().mapToInt(FileDiffClassification::getCosmeticLines).sum());
-        classification.setInPlaceModifyLines(classification.getPerFile().stream().mapToInt(FileDiffClassification::getInPlaceModifyLines).sum());
-        classification.setTrueDeleteAddLines(classification.getPerFile().stream().mapToInt(FileDiffClassification::getTrueDeleteAddLines).sum());
-    }
-    private static DiffBookkeeping bookkeepingFromClassification(DiffClassification classification, Map<String, FileChange> fileChangesByPath) {
-        int totalCosmetic = 0;
-        int totalInPlaceCollapsed = 0;
-        int totalRawLines = 0;
-        int totalAdjustedLines = 0;
-        for (FileDiffClassification entry : classification.getPerFile()) {
-            FileChange fc = fileChangesByPath.get(entry.getFile());
-            if (Objects.isNull(fc) || !fc.isLinesJustificationRequired()) {
-                continue;
-            }
-            int rawLines = fc.getLinesAdded() + fc.getLinesDeleted();
-            if (rawLines == 0) {
-                continue;
-            }
-
-            int addedInPlace = sizeOf(Optional.ofNullable(entry.getAdded()).map(LineGroups::getInPlaceModify).orElse(null));
-            int deletedInPlace = sizeOf(Optional.ofNullable(entry.getDeleted()).map(LineGroups::getInPlaceModify).orElse(null));
-            int validPairs = Math.min(addedInPlace, deletedInPlace);
-            int trueForFile = entry.getTrueDeleteAddLines();
-
-            totalRawLines += rawLines;
-            totalAdjustedLines += validPairs + trueForFile;
-            totalCosmetic += entry.getCosmeticLines();
-            totalInPlaceCollapsed += validPairs;
-        }
-        return new DiffBookkeeping(totalRawLines, totalAdjustedLines, totalCosmetic, totalInPlaceCollapsed);
+        classification.setPairsCollapsed(classification.getPerFile().stream().mapToInt(FileDiffClassification::getPairsCollapsed).sum());
+        classification.setPureAddDeleteLines(classification.getPerFile().stream().mapToInt(FileDiffClassification::getPureAddDeleteLines).sum());
     }
     private static Map<String, FileDiffClassification> buildClassificationByFile(LlmScoringResponse response) {
         if (Objects.isNull(response.getEffortBreakdown()) || Objects.isNull(response.getEffortBreakdown().getDiffClassification())) {
@@ -287,7 +249,7 @@ public class FinalScoreCalculator {
         }
         return toReturn;
     }
-    private static VolumeScore toVolumeScore(PreComputedScores effective, PreComputedScores original, DiffAdjustment adjustment) {
+    private static VolumeScore toVolumeScore(PreComputedScores effective, DiffAdjustment adjustment) {
         VolumeScore toReturn = VolumeScore.builder()
                 .linesChanged(effective.getLinesChanged())
                 .filesChanged(effective.getFilesChanged())
@@ -314,64 +276,21 @@ public class FinalScoreCalculator {
         toReturn.setInPlaceLinesCollapsed(bookkeeping.getInPlaceLinesCollapsed());
         return toReturn;
     }
-    private static int sizeOf(List<Integer> list) {
-        return Objects.isNull(list) ? 0 : list.size();
-    }
-    private static boolean hasDuplicateLineNumbers(LineGroups groups) {
-        Set<Integer> seen = Sets.newHashSet();
-        return !addAllUnique(seen, groups.getCosmetic())
-                || !addAllUnique(seen, groups.getInPlaceModify())
-                || !addAllUnique(seen, groups.getTrueDeleteAdd());
-    }
-    private static boolean addAllUnique(Set<Integer> seen, List<Integer> lines) {
-        if (Objects.isNull(lines)) {
-            return true;
-        }
-        for (Integer line : lines) {
-            if (Objects.isNull(line) || !seen.add(line)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    @Value
-    private static class DiffAdjustment {
-        PreComputedScores scores;
-        DiffBookkeeping bookkeeping;
-        boolean applied;
-
-        static DiffAdjustment unchanged(PreComputedScores preComputed) {
-            return new DiffAdjustment(preComputed, DiffBookkeeping.zero(), false);
-        }
-        static DiffAdjustment notApplied(PreComputedScores preComputed, DiffBookkeeping bookkeeping) {
-            return new DiffAdjustment(preComputed, bookkeeping, false);
-        }
-        static DiffAdjustment applied(PreComputedScores adjusted, DiffBookkeeping bookkeeping) {
-            return new DiffAdjustment(adjusted, bookkeeping, true);
-        }
-    }
-
-    @Value
-    private static class DiffBookkeeping {
-        int linesChangedRaw;
-        int linesChangedAdjusted;
-        int cosmeticLinesDropped;
-        int inPlaceLinesCollapsed;
-
-        static DiffBookkeeping zero() {
-            return new DiffBookkeeping(0, 0, 0, 0);
-        }
-    }
     private static FileEffortView toFileEffortView(FileEffort fe, Map<String, FileDiffClassification> classificationByFile) {
         FileDiffClassification fileClassification = classificationByFile.get(fe.getFile());
+        List<CodeBlockEffort> blocks = fe.getCodeBlockEfforts();
+        int[] collapsedPairs = collapsedPairsPerBlock(fileClassification, blocks);
+
+        List<CodeBlockEffortView> blockViews = Lists.newArrayListWithCapacity(blocks.size());
+        for (int i = 0; i < blocks.size(); i++) {
+            blockViews.add(toCodeBlockEffortView(blocks.get(i), collapsedPairs[i]));
+        }
+
         return FileEffortView.builder()
                 .file(fe.getFile())
                 .totalEffort(Precision.round(fe.getTotalEffort(), ROUNDING_PRECISION))
                 .isTest(fe.isTest())
-                .codeBlockEfforts(fe.getCodeBlockEfforts().stream()
-                        .map(cbe -> toCodeBlockEffortView(cbe, fileClassification))
-                        .collect(Collectors.toList()))
+                .codeBlockEfforts(blockViews)
                 .blocksFlaggedAsRatioOutlier(fe.getBlocksFlaggedAsRatioOutlier())
                 .blocksFlaggedAsGlobalCapDriver(fe.getBlocksFlaggedAsGlobalCapDriver())
                 .maxBlockRatioDeviationNcss(Precision.round(fe.getMaxBlockRatioDeviationNcss(), ROUNDING_PRECISION))
@@ -379,8 +298,7 @@ public class FinalScoreCalculator {
                 .fileFlaggedAsAbusive(fe.isFileFlaggedAsAbusive())
                 .build();
     }
-    private static CodeBlockEffortView toCodeBlockEffortView(CodeBlockEffort cbe, FileDiffClassification fileClassification) {
-        int collapsedPairs = countFullyInBlockInPlacePairs(fileClassification, cbe.getBodyStartLine(), cbe.getBodyEndLine());
+    private static CodeBlockEffortView toCodeBlockEffortView(CodeBlockEffort cbe, int collapsedPairs) {
         int effectiveLinesChanged = Math.max(0, cbe.getEffectiveLinesChanged() - collapsedPairs);
         double changeRatio = cbe.getChangeRatio();
         if (collapsedPairs > 0 && cbe.getBodyCodeLines() > 0) {
@@ -412,28 +330,174 @@ public class FinalScoreCalculator {
                 .globalCapDriver(cbe.isGlobalCapDriver())
                 .build();
     }
-    private static int countFullyInBlockInPlacePairs(FileDiffClassification fileClassification, int bodyStartLine, int bodyEndLine) {
-        if (Objects.isNull(fileClassification) || bodyStartLine <= 0 || bodyEndLine < bodyStartLine) {
-            return 0;
+    private static int[] collapsedPairsPerBlock(FileDiffClassification fileClassification, List<CodeBlockEffort> blocks) {
+        int[] toReturn = new int[blocks.size()];
+        if (Objects.isNull(fileClassification)) {
+            return toReturn;
         }
-        List<Integer> addedInPlace = Optional.ofNullable(fileClassification.getAdded()).map(LineGroups::getInPlaceModify).orElse(null);
-        List<Integer> deletedInPlace = Optional.ofNullable(fileClassification.getDeleted()).map(LineGroups::getInPlaceModify).orElse(null);
-        if (CollectionUtils.isEmpty(addedInPlace) || CollectionUtils.isEmpty(deletedInPlace)) {
-            return 0;
+        assignPairsToInnermostBlock(fileClassification.getInPlaceModifyPairs(), blocks, toReturn);
+        assignPairsToInnermostBlock(fileClassification.getTrueModifyPairs(), blocks, toReturn);
+        return toReturn;
+    }
+    /** A pair inside a nested block also falls within the enclosing block's body range — only the innermost block may collapse it. */
+    private static void assignPairsToInnermostBlock(List<LinePair> pairs, List<CodeBlockEffort> blocks, int[] counts) {
+        for (LinePair pair : CollectionUtils.emptyIfNull(pairs)) {
+            int innermost = -1;
+            for (int i = 0; i < blocks.size(); i++) {
+                if (blockContainsPair(blocks.get(i), pair)) {
+                    if (innermost < 0 || blockBodySpan(blocks.get(i)) < blockBodySpan(blocks.get(innermost))) {
+                        innermost = i;
+                    }
+                }
+            }
+            if (innermost >= 0) {
+                counts[innermost]++;
+            }
         }
-        int pairCount = Math.min(addedInPlace.size(), deletedInPlace.size());
-        int collapsed = 0;
-        for (int i = 0; i < pairCount; i++) {
-            Integer addedLine = addedInPlace.get(i);
-            Integer deletedLine = deletedInPlace.get(i);
-            if (Objects.isNull(addedLine) || Objects.isNull(deletedLine)) {
+    }
+    private static boolean blockContainsPair(CodeBlockEffort block, LinePair pair) {
+        int bodyStartLine = block.getBodyStartLine();
+        int bodyEndLine = block.getBodyEndLine();
+        if (bodyStartLine <= 0 || bodyEndLine < bodyStartLine) {
+            return false;
+        }
+        return pair.getAdded() >= bodyStartLine && pair.getAdded() <= bodyEndLine
+                && pair.getDeleted() >= bodyStartLine && pair.getDeleted() <= bodyEndLine;
+    }
+    private static int blockBodySpan(CodeBlockEffort block) {
+        return block.getBodyEndLine() - block.getBodyStartLine();
+    }
+    private static int sizeOfInts(List<Integer> list) {
+        return Objects.isNull(list) ? 0 : list.size();
+    }
+    private static int sizeOfPairs(List<LinePair> list) {
+        return Objects.isNull(list) ? 0 : list.size();
+    }
+
+    /**
+     * Validates the LLM's semantic labels against the diff's change blocks: every cited block id
+     * must exist and every cosmetic line number must be an effective changed line. Pairing and
+     * pure buckets are server-derived ({@link DiffClassificationDeriver}), so the old count and
+     * duplicate invariants cannot be violated and are no longer checked.
+     */
+    public static ValidationReport validate(LlmScoringResponse response, LlmScoringRequest request) {
+        List<ValidationFailure> failures = Lists.newArrayList();
+
+        if (Objects.isNull(response.getEffortBreakdown()) || Objects.isNull(response.getEffortBreakdown().getDiffClassification())) {
+            return new ValidationReport(failures);
+        }
+        // explicit "perFile": null from the LLM bypasses the @Builder.Default empty list
+        if (CollectionUtils.isEmpty(response.getEffortBreakdown().getDiffClassification().getPerFile())) {
+            return new ValidationReport(failures);
+        }
+        if (CollectionUtils.isEmpty(request.getFileChanges())) {
+            return new ValidationReport(failures);
+        }
+
+        Map<String, FileChange> fileChangesByPath = Maps.newHashMapWithExpectedSize(request.getFileChanges().size());
+        for (FileChange fc : request.getFileChanges()) {
+            fileChangesByPath.put(fc.getPath(), fc);
+        }
+
+        for (FileDiffClassification entry : response.getEffortBreakdown().getDiffClassification().getPerFile()) {
+            FileChange fc = fileChangesByPath.get(entry.getFile());
+            if (Objects.isNull(fc) || !fc.isLinesJustificationRequired() || StringUtils.isBlank(fc.getDiff())) {
                 continue;
             }
-            if (addedLine >= bodyStartLine && addedLine <= bodyEndLine
-                    && deletedLine >= bodyStartLine && deletedLine <= bodyEndLine) {
-                collapsed++;
+
+            UnifiedDiffLines diffLines = UnifiedDiffLines.parse(fc.getDiff(), fc.isLinesJustificationRequired());
+
+            Set<String> validBlockIds = Sets.newLinkedHashSet();
+            for (UnifiedDiffLines.ChangeBlock block : diffLines.getBlocks()) {
+                validBlockIds.add(block.getId());
+            }
+            List<String> unknownBlocks = Lists.newArrayList();
+            if (MapUtils.isNotEmpty(entry.getBlockKinds())) {
+                for (String blockId : entry.getBlockKinds().keySet()) {
+                    if (!validBlockIds.contains(blockId)) {
+                        unknownBlocks.add(blockId);
+                    }
+                }
+            }
+            if (CollectionUtils.isNotEmpty(unknownBlocks)) {
+                failures.add(new ValidationFailure(entry.getFile(), FailureReason.UNKNOWN_BLOCK,
+                        unknownBlocks, Lists.newArrayList(validBlockIds)));
+            }
+
+            List<String> unknownAdded = unknownLines(entry.getCosmeticAdded(), diffLines.getCandidateAddedLines());
+            if (CollectionUtils.isNotEmpty(unknownAdded)) {
+                failures.add(new ValidationFailure(entry.getFile(), FailureReason.UNKNOWN_ADDED_LINE,
+                        unknownAdded, asStrings(diffLines.getCandidateAddedLines())));
+            }
+            List<String> unknownDeleted = unknownLines(entry.getCosmeticDeleted(), diffLines.getCandidateDeletedLines());
+            if (CollectionUtils.isNotEmpty(unknownDeleted)) {
+                failures.add(new ValidationFailure(entry.getFile(), FailureReason.UNKNOWN_DELETED_LINE,
+                        unknownDeleted, asStrings(diffLines.getCandidateDeletedLines())));
             }
         }
-        return collapsed;
+
+        return new ValidationReport(failures);
+    }
+    private static List<String> unknownLines(List<Integer> cited, Set<Integer> valid) {
+        List<String> unknown = Lists.newArrayList();
+        for (Integer line : CollectionUtils.emptyIfNull(cited)) {
+            if (Objects.isNull(line) || !valid.contains(line)) {
+                unknown.add(String.valueOf(line));
+            }
+        }
+        return unknown;
+    }
+    private static List<String> asStrings(Set<Integer> lines) {
+        return lines.stream().map(String::valueOf).collect(Collectors.toList());
+    }
+
+    public enum FailureReason {
+        UNKNOWN_BLOCK,
+        UNKNOWN_ADDED_LINE,
+        UNKNOWN_DELETED_LINE,
+    }
+
+    @Value
+    public static class ValidationFailure {
+        String filePath;
+        FailureReason reason;
+        // what the LLM cited that does not exist (block ids or line numbers, as strings), and the
+        // complete valid set for that dimension — both rendered into the retry feedback
+        List<String> offending;
+        List<String> valid;
+    }
+
+    @Value
+    public static class ValidationReport {
+        List<ValidationFailure> failures;
+
+        public boolean hasFailures() {
+            return CollectionUtils.isNotEmpty(failures);
+        }
+    }
+
+    @Value
+    private static class DiffAdjustment {
+        PreComputedScores scores;
+        DiffBookkeeping bookkeeping;
+
+        static DiffAdjustment unchanged(PreComputedScores preComputed) {
+            return new DiffAdjustment(preComputed, DiffBookkeeping.zero());
+        }
+        static DiffAdjustment applied(PreComputedScores adjusted, DiffBookkeeping bookkeeping) {
+            return new DiffAdjustment(adjusted, bookkeeping);
+        }
+    }
+
+    @Value
+    private static class DiffBookkeeping {
+        int linesChangedRaw;
+        int linesChangedAdjusted;
+        int cosmeticLinesDropped;
+        int inPlaceLinesCollapsed;
+
+        static DiffBookkeeping zero() {
+            return new DiffBookkeeping(0, 0, 0, 0);
+        }
     }
 }

@@ -19,7 +19,7 @@ The driver score is a **weighted average of three dimensions, each projected ont
 2. **S** — NCSS (logical statement count)
 3. **I** — direct method invocations inside the block
 
-> **Why body-only?** A method whose parameters are formatted one-per-line can have a 6-line signature on a 4-line body. Counting those signature lines in `L` would inflate `lines.p50` upward without inflating `ncss.p50` or `invocations.p50` (both of which are body-only by construction), so `k_S = lines.p50 / ncss.p50` would lie about how many real *body* lines a statement projects to. Restricting `L` to the body keeps all three numerators on the same footing and makes the projection factors describe what the tooltips claim: "1 statement ≈ K body lines", "1 invocation ≈ K body lines". Signature-area edits aren't lost — they still appear in the file's overall `linesAdded`/`linesDeleted` and are subject to the LLM's `cosmetic` / `inPlaceModify` / `trueDeleteAdd` classification.
+> **Why body-only?** A method whose parameters are formatted one-per-line can have a 6-line signature on a 4-line body. Counting those signature lines in `L` would inflate `lines.p50` upward without inflating `ncss.p50` or `invocations.p50` (both of which are body-only by construction), so `k_S = lines.p50 / ncss.p50` would lie about how many real *body* lines a statement projects to. Restricting `L` to the body keeps all three numerators on the same footing and makes the projection factors describe what the tooltips claim: "1 statement ≈ K body lines", "1 invocation ≈ K body lines". Signature-area edits aren't lost — they still appear in the file's overall `linesAdded`/`linesDeleted` and are subject to the LLM's 5-bucket diff classification (cosmetic / in-place modify / true modify / pure add / pure delete).
 
 The projection factors `k_S` and `k_I` are derived from the baseline population's **median** (p50) — not its max — so a single outlier block can never distort the scoring of every other block. Scalers are computed **per project, per kind (method vs constructor), per scope (prod vs test)**, so the score auto-calibrates to the codebase's own norms. Factors are taken **as-is** at the bucket level (no clamp) so they faithfully reflect the project's coding style; the `driverFactorMaxDeviation` knob lives one level down and only flags **per-block** outliers (see [Driver-score abuse signals](#driver-score-abuse-signals)).
 
@@ -206,37 +206,53 @@ The outlier's excess (800 - 60 = 740 above its bucket baseline) absorbs all the 
 
 Git diff exposes only ADDED and DELETED lines. There is no native concept of MODIFIED. So a one-line in-place edit (`log.info("foo")` → `log.info("bar")`) shows as 1 deletion + 1 addition = 2 lines, double-counting effort. Pure-addition cosmetic content (new javadoc, log statements, formatting, license headers) similarly inflates volume even when nothing was deleted.
 
-To compensate, the LLM is asked to classify EVERY changed line in the commit. For each eligible file (those flagged `linesJustificationRequired: true` in the request — production code, NOT POMs / config / generated artefacts) the LLM returns two `LineGroups` objects on `effortBreakdown.diffClassification.perFile[*]`:
+To compensate, the LLM is asked to classify EVERY changed line in the commit. For each eligible file (those flagged `linesJustificationRequired: true` in the request — production code, NOT POMs / config / generated artefacts) the LLM returns six arrays on `effortBreakdown.diffClassification.perFile[*]`:
 
-- **`added: LineGroups`** — line numbers grouped by classification, using **new-file** line numbers.
-- **`deleted: LineGroups`** — line numbers grouped by classification, using **old-file** line numbers.
+- **`cosmeticAdded: List<Integer>`** — new-file line numbers for cosmetic *additions* (new javadoc, blank lines, log strings, formatting normalizations). 0 effort.
+- **`cosmeticDeleted: List<Integer>`** — old-file line numbers for cosmetic *deletions* (removed comments, whitespace). 0 effort.
+- **`inPlaceModifyPairs: List<LinePair>`** — `{deleted, added}` tuples for paired delete+add where the **same intent survives** in a different form (rename, swapped operand, tweaked expression). 1 effort per pair instead of 2.
+- **`trueModifyPairs: List<LinePair>`** — `{deleted, added}` tuples for paired delete+add where the **line slot now holds a different intent** (the position got re-used for something else). Same 1 effort per pair — the human still made one logical change, even though it's not a refactor of the prior line. The distinction from `inPlaceModifyPairs` is for human reviewers, not for the math.
+- **`pureAdd: List<Integer>`** — new-file line numbers for added lines that have **no counterpart on the deleted side** (real new logic, new branch, new method body). Full weight, 1 effort each.
+- **`pureDelete: List<Integer>`** — old-file line numbers for deleted lines with no counterpart on the added side (real removal). Full weight, 1 effort each.
 
-Each `LineGroups` has three line-number arrays:
+Each `LinePair` is a fixed `{deleted: int, added: int}` tuple. This makes pair balance **structurally impossible to violate** — the old shape stored two parallel arrays (`added.inPlaceModify` and `deleted.inPlaceModify`) and relied on a runtime invariant that they had matching lengths, which LLMs regularly broke. With tuples the LLM can no longer enumerate one side independently from the other.
 
-- **`cosmetic: List<Integer>`** — line numbers whose presence or absence does not change program behavior. Covers paired delete/add cosmetic edits (whitespace re-indent, comment-text changes, brace style flips, log-string tweaks) AND pure-addition cosmetic content (new javadoc, log statements, blank lines, formatting normalizations) AND pure-deletion cosmetic content (comments removed). Server treats these as 0 effort.
-- **`inPlaceModify: List<Integer>`** — paired delete/add line numbers where the same intent survives in a different form (renamed local, swapped operand, tweaked expression). The LLM puts both halves of the pair in the corresponding `inPlaceModify` array on each side. Server collapses each pair to 1 line of effort instead of 2.
-- **`trueDeleteAdd: List<Integer>`** — genuine work: real new logic, real removed logic, paired delete+add of different intent. Server keeps each line as 1 effort line.
-
-**Per-file invariants (server-validated):**
+**Per-file invariants (server-validated; one bad file is skipped, the rest still apply):**
 ```
-len(added.cosmetic)   + len(added.inPlaceModify)   + len(added.trueDeleteAdd)   == linesAdded   for that file
-len(deleted.cosmetic) + len(deleted.inPlaceModify) + len(deleted.trueDeleteAdd) == linesDeleted for that file
-len(added.inPlaceModify) == len(deleted.inPlaceModify)
-no line number repeats across the three arrays on the same side
-```
-
-**Server derives counts from arrays.** The `cosmeticLines`, `inPlaceModifyLines`, `trueDeleteAddLines` fields on `FileDiffClassification` and the corresponding totals on `DiffClassification` are populated by the server during validation by tallying the line-number arrays — any LLM-supplied values in those count fields are overwritten. Counts are persisted alongside the arrays so the DB layer / UI can aggregate without iterating the arrays.
-
-**Effective-line factor and how it folds into the volume score.** For each classified file the server computes (using the derived counts):
-
-```
-effectiveLines      = inPlaceModifyLines / 2 + trueDeleteAddLines    # 0 effort for cosmetic, half for in-place, full for true
-fileFactor          = effectiveLines / (linesAdded + linesDeleted)   # 1.0 means no reduction
+len(cosmeticAdded)   + len(inPlaceModifyPairs) + len(trueModifyPairs) + len(pureAdd)    == fileChange.linesAdded   (effective)
+len(cosmeticDeleted) + len(inPlaceModifyPairs) + len(trueModifyPairs) + len(pureDelete) == fileChange.linesDeleted (effective)
+no new-file line number repeats across cosmeticAdded / inPlaceModifyPairs[*].added / trueModifyPairs[*].added / pureAdd
+no old-file line number repeats across cosmeticDeleted / inPlaceModifyPairs[*].deleted / trueModifyPairs[*].deleted / pureDelete
 ```
 
-`fileFactor` is then applied to **every** block in that file (both NEW and MODIFY operations) by multiplying the block's `driverScore` and `effort`. The block-level math then re-runs unchanged from there: `totalEffortRaw = Σ scaled effort`, `globalCap` re-tested, `volumeScore = pow(blockEffortSum, volumeExponent) × filesScopeMultiplier`. So the reduction lands as a deterministic per-file scaling of effort, not as a black-box LLM-decided number.
+The first two invariants use **effective** counts. The server filters three categories of lines from `linesAdded` / `linesDeleted` before validation, and the prompt tells the LLM to exclude them from every bucket — the syntactic markers are **identical across all JVM source languages** (Java, Kotlin, Groovy, Scala), so the rule is language-agnostic by construction:
 
-**Failure mode.** If the LLM omits `effortBreakdown.diffClassification`, returns line-number arrays whose total size doesn't match `linesAdded`/`linesDeleted` for that file, returns mismatched `inPlaceModify` array lengths between the two sides (broken pairing), repeats a line number across the three arrays on a side (double-counting), or names a file the request never touched, the server logs a warning and falls back to the unreduced pre-computed volume score. The feature is fail-safe.
+- **Blank lines** (empty after trimming).
+- **Import lines** (trimmed content starts with `import ` — covers regular, static, and wildcard imports in every JVM language; Kotlin / Groovy variants without the trailing semicolon are caught by the same prefix).
+- **Comment-only lines** (`//…`, or a block-comment line beginning with `/*`, ` *`, or `*/` — these markers work identically for Javadoc / KDoc / ScalaDoc / GroovyDoc).
+
+**Server derives counts from arrays.** The `cosmeticLines`, `pairsCollapsed`, `pureAddDeleteLines` fields on `FileDiffClassification` and the corresponding totals on `DiffClassification` are populated by the server during validation by tallying the arrays — any LLM-supplied values are overwritten. Counts are persisted alongside the arrays so DB / UI consumers can aggregate without iterating.
+
+**Effective-line factor and how it folds into the volume score.** For each classified file the server computes:
+
+```
+effectiveLines = len(inPlaceModifyPairs) + len(trueModifyPairs) + len(pureAdd) + len(pureDelete)
+rawLines       = fileChange.linesAdded + fileChange.linesDeleted    # effective counts
+fileFactor     = effectiveLines / rawLines                          # 1.0 means no reduction
+```
+
+Worked examples:
+- 5 added + 5 deleted, all paired same-intent (5 in-place pairs): `effectiveLines = 5`, `rawLines = 10`, `fileFactor = 0.5` — half the work git double-counted.
+- 3 trueModify pairs + 4 pureAdd + 1 pureDelete: `effectiveLines = 3 + 4 + 1 = 8`, `rawLines = (3+4) + (3+1) = 11`, `fileFactor ≈ 0.73`.
+- 4 pureAdd, 0 deleted: `effectiveLines = 4`, `rawLines = 4`, `fileFactor = 1.0` — no reduction; all four lines are real new logic.
+
+`fileFactor` is then applied to **every** block in that file (both NEW and MODIFY operations) by multiplying the block's `driverScore` and `effort`. The block-level math then re-runs unchanged from there: `totalEffortRaw = Σ scaled effort`, `globalCap` re-tested, `volumeScore = pow(blockEffortSum, volumeExponent) × filesScopeMultiplier`. The reduction lands as a deterministic per-file scaling, not a black-box LLM-decided number.
+
+Because validated files only contribute `effectiveLines ≤ rawLines` lines to the accumulators, the bookkeeping invariant `linesChangedAdjusted ≤ linesChangedRaw` holds **by construction**.
+
+**Failure mode (per-file).** If a file's classification fails validation — array sizes whose four-bucket sum doesn't match `linesAdded` / `linesDeleted`, a line number repeated across buckets on a side (double-counting), or a file path the request never touched — the server logs a `debug` skipReason and **skips that file's reduction only**; other files in the same commit still get their factor applied. The bookkeeping accumulators only accrue over validated files, so `linesChangedAdjusted ≤ linesChangedRaw` continues to hold by construction. Only when **every** classified file fails validation (or the LLM omits `diffClassification` entirely) does the server fall back to the unreduced pre-computed volume score.
+
+The skipped file is still persisted in `file_diff_classifications` with its arrays (for UI display), but its factor is absent from the `perFileFactor` map — so the math behaves as if the LLM never classified it. There is no per-file `applied` flag on the schema; the only signal that a file was skipped is the analysis-level bookkeeping showing `linesChangedAdjusted < linesChangedRaw` by less than expected, or all-zeros in the rare case that every file failed.
 
 **Pipeline position.** This step runs in `FinalScoreCalculator` *after* the LLM call returns and *before* the `complexityMultiplier` step. So the LLM's `combinedMultiplier` operates on the already-reduced `volumeScore`. The four mirror counters on `effortBreakdown.volumeScore` (`linesChangedRaw`, `linesChangedAdjusted`, `cosmeticLinesDropped`, `inPlaceLinesCollapsed`) record the before/after so reviewers can see exactly how much was reclassified.
 
@@ -531,17 +547,21 @@ Driver-score math is deterministic given the scalers + per-block raw counts + se
 | `effortBreakdown.diffClassification` | `EffortBreakdownModel` → `DiffClassificationModel` | **Nullable.** Whole-commit roll-up + per-file array. Null when the LLM omitted it; in that case the volume score was not reduced and the mirror counters below are zero. |
 | `diffClassification.totalLinesAddedRaw` | `DiffClassificationModel` | Sum of `linesAdded` across the files the LLM classified. |
 | `diffClassification.totalLinesDeletedRaw` | `DiffClassificationModel` | Sum of `linesDeleted` across the same files. |
-| `diffClassification.cosmeticLines` | `DiffClassificationModel` | Total lines reclassified as cosmetic (paired or unpaired). Effort weight 0. |
-| `diffClassification.inPlaceModifyLines` | `DiffClassificationModel` | Total paired delete/add lines collapsed from 2 effort-lines per pair to 1. Always even. |
-| `diffClassification.trueDeleteAddLines` | `DiffClassificationModel` | Total lines kept at full weight (1 effort-line each). |
-| `diffClassification.perFile[*]` | `FileDiffClassificationModel` | Per-file breakdown — `{file, cosmeticLines, inPlaceModifyLines, trueDeleteAddLines, added, deleted}`. The two `LineGroups` objects are the **source of truth** supplied by the LLM; the three count fields are server-derived. The reduction is applied per-file from the line-number arrays; persist everything as-is so the classification is auditable line-by-line. |
-| `diffClassification.perFile[*].added` | `LineGroupsModel` | Three line-number arrays (`cosmetic`, `inPlaceModify`, `trueDeleteAdd`) for the `+` side of this file's diff. All numbers are NEW-file line numbers. Sum of array sizes equals the request's `fileChanges[*].linesAdded`. No line number appears in more than one of the three arrays. |
-| `diffClassification.perFile[*].deleted` | `LineGroupsModel` | Same shape, for the `-` side. All numbers are OLD-file line numbers. Sum equals `fileChanges[*].linesDeleted`. `len(added.inPlaceModify) == len(deleted.inPlaceModify)` (every in-place pair has both halves recorded). |
+| `diffClassification.cosmeticLines` | `DiffClassificationModel` | Total lines reclassified as cosmetic (added + deleted). Effort weight 0. |
+| `diffClassification.pairsCollapsed` | `DiffClassificationModel` | Total paired delete/add tuples across the commit (`inPlaceModifyPairs.size + trueModifyPairs.size` summed across files). Each pair removes 1 unit of effort versus the raw 2-line count. |
+| `diffClassification.pureAddDeleteLines` | `DiffClassificationModel` | Total unpaired added + unpaired deleted lines (`pureAdd.size + pureDelete.size` summed). Kept at full weight. |
+| `diffClassification.perFile[*]` | `FileDiffClassificationModel` | Per-file breakdown — `{file, cosmeticLines, pairsCollapsed, pureAddDeleteLines, cosmeticAdded, cosmeticDeleted, inPlaceModifyPairs, trueModifyPairs, pureAdd, pureDelete}`. The six arrays are the **source of truth** supplied by the LLM; the three count fields are server-derived. The reduction is applied per-file from the arrays; persist everything as-is so the classification is auditable line-by-line. |
+| `diffClassification.perFile[*].cosmeticAdded` | `List<Integer>` | New-file line numbers for cosmetic *additions* on this file. No overlap with any other added-side bucket. |
+| `diffClassification.perFile[*].cosmeticDeleted` | `List<Integer>` | Old-file line numbers for cosmetic *deletions* on this file. No overlap with any other deleted-side bucket. |
+| `diffClassification.perFile[*].inPlaceModifyPairs` | `List<LinePairModel>` | Each entry is `{deleted: <old-file line>, added: <new-file line>}` — paired delete+add with same intent (rename / refactor of same operation). 1 effort per pair. |
+| `diffClassification.perFile[*].trueModifyPairs` | `List<LinePairModel>` | Same tuple shape — paired delete+add where the line slot now holds a different intent. Same 1 effort per pair; the distinction from `inPlaceModifyPairs` is for human reviewers, not for the math. |
+| `diffClassification.perFile[*].pureAdd` | `List<Integer>` | New-file line numbers for added lines with no counterpart on the deleted side. Full weight, 1 effort each. |
+| `diffClassification.perFile[*].pureDelete` | `List<Integer>` | Old-file line numbers for deleted lines with no counterpart on the added side. Full weight, 1 effort each. |
 | `diffClassification.rationale` | `DiffClassificationModel` | One- or two-sentence explanation from the LLM. Display-only. |
 | `effortBreakdown.volumeScore.linesChangedRaw` | `VolumeScoreModel` | Sum of `linesAdded + linesDeleted` across the classified files BEFORE reduction. `0` when no reduction was applied. |
-| `effortBreakdown.volumeScore.linesChangedAdjusted` | `VolumeScoreModel` | Effective-line total after reduction (`Σ inPlace/2 + trueDeleteAdd`). `0` when no reduction was applied. |
-| `effortBreakdown.volumeScore.cosmeticLinesDropped` | `VolumeScoreModel` | Total `cosmeticLines` excluded from the volume score. Mirrors `diffClassification.cosmeticLines` for files that were actually present in the request. `0` when no reduction was applied. |
-| `effortBreakdown.volumeScore.inPlaceLinesCollapsed` | `VolumeScoreModel` | Number of pairs collapsed (`inPlaceModifyLines / 2`). Each pair removed 1 unit of effort versus the raw count. `0` when no reduction was applied. |
+| `effortBreakdown.volumeScore.linesChangedAdjusted` | `VolumeScoreModel` | Effective-line total after reduction (`Σ pairsCollapsed + pureAddDeleteLines` across validated files). `0` when no reduction was applied. Invariant: `linesChangedAdjusted ≤ linesChangedRaw` whenever validation passes. |
+| `effortBreakdown.volumeScore.cosmeticLinesDropped` | `VolumeScoreModel` | Total `cosmeticLines` excluded from the volume score. Mirrors `diffClassification.cosmeticLines` for files actually present in the request. `0` when no reduction was applied. |
+| `effortBreakdown.volumeScore.inPlaceLinesCollapsed` | `VolumeScoreModel` | Number of pairs collapsed (= `pairsCollapsed`). Each pair removed 1 unit of effort versus the raw 2-line count. `0` when no reduction was applied. Field name preserved for schema stability — both in-place pairs *and* true-modify pairs contribute. |
 
 The reduction itself (the per-file factor that scaled each block's `driverScore` and `effort`) is **not persisted as a separate field** — it is derivable on replay from `(per-file FileDiffClassification, request.fileChanges[*].linesAdded/linesDeleted)`. The persisted block-level fields (`driverScore`, `effort`, `bucketBaseline`, `effortShare`, etc.) and the volume aggregates already reflect the post-reduction values, so a downstream consumer that only needs to render the score doesn't have to redo the math.
 
@@ -630,8 +650,8 @@ Per-file row (above the per-block table):
 - `blocksFlaggedAsRatioOutlier`, `blocksFlaggedAsGlobalCapDriver` → small counters
 - `maxBlockRatioDeviationNcss`, `maxBlockRatioDeviationInvocations` → "worst block deviation" indicators
 - `fileFlaggedAsAbusive` → file-level badge (e.g. amber row highlight)
-- `effortBreakdown.diffClassification.perFile[file == this.path]` (look up by file path) → render the three counts as a small `cosmetic / in-place / true` chip when the file appears in the LLM classification. Files with `cosmeticLines > 0` should get a subdued indicator that "the LLM reclassified N lines as cosmetic"; files with `inPlaceModifyLines > 0` should indicate "M pairs collapsed". When `effortBreakdown.diffClassification` is null, omit the chip entirely.
-- `added` / `deleted` (`LineGroupsModel`) → use these for **line-level rendering in the diff view**. Build a lookup `Map<Integer, Classification>` per side by walking each of the three arrays once: every line number in `added.cosmetic` is COSMETIC, every line number in `added.inPlaceModify` is IN_PLACE_MODIFY, etc. Then for each `+` line at file line `N` color/badge it from the map (e.g. dim grey for `cosmetic`, soft yellow for `inPlaceModify`, normal for `trueDeleteAdd`); same for `-` lines on the deleted side using the deleted-side map. Hovering should show a tooltip with the classification name. This is purely visual — the score is already adjusted server-side.
+- `effortBreakdown.diffClassification.perFile[file == this.path]` (look up by file path) → render the three counts as a small `cosmetic / pairs collapsed / pure add-delete` chip when the file appears in the LLM classification. Files with `cosmeticLines > 0` should get a subdued indicator that "the LLM reclassified N lines as cosmetic"; files with `pairsCollapsed > 0` should indicate "M pairs collapsed". When `effortBreakdown.diffClassification` is null, omit the chip entirely.
+- `cosmeticAdded` / `cosmeticDeleted` / `inPlaceModifyPairs` / `trueModifyPairs` / `pureAdd` / `pureDelete` → use these for **line-level rendering in the diff view**. Build a lookup `Map<Integer, Classification>` per side by walking the six arrays once: every line number in `cosmeticAdded` is COSMETIC on the added side, each `inPlaceModifyPairs[i].added` is IN_PLACE_MODIFY on the added side and the matching `.deleted` is IN_PLACE_MODIFY on the deleted side, etc. Then for each `+` line at file line `N` color/badge it from the added-side map; same for `-` lines on the deleted side using the deleted-side map. Suggested colour mapping: dim grey for `cosmetic`, amber gutter for *either* paired bucket (in-place / true modify), emerald gutter for `pureAdd` / `pureDelete`. Hovering should show a tooltip with the classification name. This is purely visual — the score is already adjusted server-side.
 
 Volume-score panel (the existing `volumeScore` summary view):
 
@@ -680,15 +700,16 @@ The calibration panel should **also** render the new factor diagnostics from eac
 | **`effortShare`** | A code block's fraction of the commit's total raw effort: `block.effort / totalEffortRaw`. Always populated; used for cap-driver attribution and stacked visualizations. |
 | **`globalCapDriver`** | A code block flagged when `globalCapApplied == true` AND its `effortShare` exceeds `driverFactorMaxDeviation`. Identifies the principal cause of a cap event, attributable to a specific block (and author). |
 | **`fileFlaggedAsAbusive`** | A file where strict majority (`outliers × 2 > total`) of its blocks are ratio outliers. File-level rollup of the per-block abuse signal. |
-| **Diff classification** | LLM-provided per-line reclassification of changed lines. The LLM returns two `LineGroups` per eligible file (`added` for `+` lines using new-file line numbers, `deleted` for `-` lines using old-file line numbers), each grouping line numbers into `cosmetic`, `inPlaceModify`, `trueDeleteAdd`. Compensates for git's lack of a "modified" line concept. Lives on `effortBreakdown.diffClassification` of the LLM scoring response. |
-| **`LineGroups` (`added` / `deleted`)** | Per-side container with three line-number arrays — `cosmetic`, `inPlaceModify`, `trueDeleteAdd` — that together cover every changed line on that side without duplicates. Source of truth for both the per-file count fields (server-derived) and for line-level UI rendering. |
-| **`cosmetic`** | Line-numbers list within `LineGroups` — lines whose presence/absence does not change behavior (whitespace, comments, log strings, license headers, brace style flips). Effort weight 0. |
-| **`inPlaceModify`** | Line-numbers list within `LineGroups` — paired delete/add lines where the same intent survives in a different form (renamed local, swapped operand). Each pair has one entry on each side; counts must match across `added.inPlaceModify` and `deleted.inPlaceModify`. Each pair collapses from 2 effort lines to 1. |
-| **`trueDeleteAdd`** | Line-numbers list within `LineGroups` — lines that represent genuine work (real removal, real new logic, real delete+add of different intent). Full weight. |
-| **`cosmeticLines` / `inPlaceModifyLines` / `trueDeleteAddLines`** | Server-derived count fields on `FileDiffClassification` — tallied by the server from the per-side `LineGroups` arrays during validation. Persisted alongside the arrays for fast aggregation. |
-| **`effectiveLineFactor`** | Per-file scaling factor applied to every block's `driverScore` and `effort` after the LLM classification: `(inPlaceModifyLines/2 + trueDeleteAddLines) / (linesAdded + linesDeleted)`. `1.0` means no reduction; `0.0` means the file's entire change was cosmetic. |
-| **`linesChangedRaw` / `linesChangedAdjusted`** | Volume-score mirror counters that record the line totals before/after diff-classification reduction. Both `0` when no classification was applied. |
-| **`cosmeticLinesDropped` / `inPlaceLinesCollapsed`** | Volume-score mirror counters that summarize how the reduction shifted lines: total lines treated as 0-effort, and number of pairs collapsed from 2 lines to 1. |
+| **Diff classification** | LLM-provided per-line reclassification of changed lines. The LLM returns six arrays per eligible file — `cosmeticAdded`, `cosmeticDeleted`, `inPlaceModifyPairs`, `trueModifyPairs`, `pureAdd`, `pureDelete` — that together cover every effective changed line. Compensates for git's lack of a "modified" line concept. Lives on `effortBreakdown.diffClassification` of the LLM scoring response. |
+| **`LinePair`** | Tuple `{deleted: int, added: int}` representing one paired modification — an old-file line removed and a new-file line added that together count as one logical edit. Replaces the previous shape of two parallel arrays for paired modifications; the tuple makes pair balance structurally impossible to violate. |
+| **`cosmeticAdded` / `cosmeticDeleted`** | Flat line-number arrays — `cosmeticAdded` uses new-file numbers, `cosmeticDeleted` uses old-file numbers. Lines whose presence/absence does not change behavior (whitespace, comments, log strings, license headers, brace style flips). Effort weight 0. No pairing requirement. |
+| **`inPlaceModifyPairs`** | List of `LinePair` tuples — paired delete+add where the **same intent survives** in a different form (renamed local, swapped operand, tweaked expression). 1 effort per pair. |
+| **`trueModifyPairs`** | List of `LinePair` tuples — paired delete+add where the line slot now holds a **different intent**. Same 1 effort per pair as `inPlaceModifyPairs`; the bucket exists for human reviewers to distinguish refactors from rewrites, not for the math. |
+| **`pureAdd` / `pureDelete`** | Flat line-number arrays for added / deleted lines with **no counterpart on the other side** (real new logic, real removal). Full weight, 1 effort each. |
+| **`cosmeticLines` / `pairsCollapsed` / `pureAddDeleteLines`** | Server-derived count fields on `FileDiffClassification` — tallied by the server from the six arrays during validation. Persisted alongside the arrays for fast aggregation. `pairsCollapsed = len(inPlaceModifyPairs) + len(trueModifyPairs)`. |
+| **`effectiveLineFactor`** | Per-file scaling factor applied to every block's `driverScore` and `effort` after the LLM classification: `(pairsCollapsed + pureAddDeleteLines) / (linesAdded + linesDeleted)`. `1.0` means no reduction; `0.0` means the file's entire change was cosmetic. |
+| **`linesChangedRaw` / `linesChangedAdjusted`** | Volume-score mirror counters that record the line totals before/after diff-classification reduction. Both `0` when no classification was applied. Invariant when applied: `linesChangedAdjusted ≤ linesChangedRaw` (by construction — validated files only contribute `effectiveLines ≤ rawLines` to the accumulators). |
+| **`cosmeticLinesDropped` / `inPlaceLinesCollapsed`** | Volume-score mirror counters that summarize how the reduction shifted lines: total cosmetic lines treated as 0-effort, and number of pairs collapsed from 2 raw lines to 1 effective line. `inPlaceLinesCollapsed` field name is preserved for schema stability — both in-place *and* true-modify pairs contribute to it. |
 | **`InvocationModel` / `method_calls`** | Per-call-site record. One `InvocationModel` per direct method invocation inside a code block, persisted as one `codiqo.method_calls` row joined to an interned `codiqo.method_targets` row. Carries owner/name/descriptor of the resolved target plus two source locations (`location.*` for the full expression, `nameStart*` for the method-name token). Drives the diff viewer's per-line invocation badges; not used by the driver-score formula (which uses the per-block `directInvocationCount` count instead). |
 | **`location.startLine` (on `InvocationModel`)** | Line of the leftmost token of the whole invocation expression. For a chained call, this is the line of the chain's first qualifier — same value across every chained `.method()` call sharing the chain. Persisted as `method_calls.loc_start_line`. Not the right bucket key for per-line counts. |
 | **`nameStartLine` / `nameStartColumn`** | Source line/column of the method-name IDENTIFIER token of an invocation (the `tag` in `.tag(...)`, the type-name in `new Foo(...)`, the keyword in `this(...)`/`super(...)`, the trailing identifier in `Foo::bar`, the constant name in an enum-constant constructor). Persisted as `method_calls.name_start_line` / `name_start_column`. **The correct bucket key for the diff viewer's per-line invocation badges** — using `loc_start_line` instead would collapse all chained calls onto one line. |

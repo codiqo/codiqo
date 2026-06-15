@@ -17,7 +17,9 @@ import com.google.common.collect.Lists;
 import io.codiqo.client.model.AnalysisResultModel;
 import io.codiqo.client.model.BlastRadiusAnalysisModel;
 import io.codiqo.client.model.BugModel;
+import io.codiqo.client.model.ChangeMagnitudeModel;
 import io.codiqo.client.model.LlmAnalysisModel;
+import io.codiqo.client.model.ModifyImpactEstimateModel;
 import io.codiqo.client.model.RiskAssessmentModel;
 import io.codiqo.client.model.SignatureChangesModel;
 import io.codiqo.client.model.StaticAnalysisFindingModel;
@@ -66,6 +68,53 @@ class LlmResponseMapperTest {
         assertNull(result.getAssessment().getEffortBreakdown());
         assertNull(result.getAssessment().getQualityMultiplier());
         assertNull(result.getAssessment().getBlastRadiusAnalysis());
+        assertTrue(result.getModifyImpactEstimates().isEmpty(), "absent estimates map to an empty list, never null");
+    }
+
+    @Test
+    void modifyImpactEstimateMapsAllEnumsAndFields() {
+        LlmScoringResponse response = new LlmScoringResponse();
+        response.setModifyImpactEstimates(Lists.newArrayList(
+                LlmScoringResponse.ModifyImpactEstimate.builder()
+                        .signature("com.example.Foo.bar()")
+                        .file("Foo.java")
+                        .coverageDirection(LlmScoringResponse.CoverageDirection.IMPROVED)
+                        .coverageMagnitude(LlmScoringResponse.ChangeMagnitude.MODERATE)
+                        .duplicationDirection(LlmScoringResponse.DuplicationDirection.REDUCED)
+                        .duplicationMagnitude(LlmScoringResponse.ChangeMagnitude.SLIGHT)
+                        .confidence(Confidence.HIGH)
+                        .rationale("added tests and extracted a duplicated block")
+                        .build()));
+        AnalysisResultModel result = new AnalysisResultModel();
+
+        mapper.mapToAnalysisResult(response, result);
+
+        ModifyImpactEstimateModel mapped = result.getModifyImpactEstimates().get(0);
+        assertEquals("com.example.Foo.bar()", mapped.getSignature());
+        assertEquals("Foo.java", mapped.getFile());
+        assertEquals(ModifyImpactEstimateModel.CoverageDirectionEnum.IMPROVED, mapped.getCoverageDirection());
+        assertEquals(ChangeMagnitudeModel.MODERATE, mapped.getCoverageMagnitude());
+        assertEquals(ModifyImpactEstimateModel.DuplicationDirectionEnum.REDUCED, mapped.getDuplicationDirection());
+        assertEquals(ChangeMagnitudeModel.SLIGHT, mapped.getDuplicationMagnitude());
+        assertEquals(ModifyImpactEstimateModel.ConfidenceEnum.HIGH, mapped.getConfidence());
+        assertEquals("added tests and extracted a duplicated block", mapped.getRationale());
+    }
+
+    @Test
+    void modifyImpactEstimateDefaultsApplyWhenEnumsOmitted() {
+        LlmScoringResponse response = new LlmScoringResponse();
+        response.setModifyImpactEstimates(Lists.newArrayList(
+                LlmScoringResponse.ModifyImpactEstimate.builder().signature("com.example.Foo.bar()").build()));
+        AnalysisResultModel result = new AnalysisResultModel();
+
+        mapper.mapToAnalysisResult(response, result);
+
+        ModifyImpactEstimateModel mapped = result.getModifyImpactEstimates().get(0);
+        assertEquals(ModifyImpactEstimateModel.CoverageDirectionEnum.UNKNOWN, mapped.getCoverageDirection());
+        assertEquals(ChangeMagnitudeModel.NONE, mapped.getCoverageMagnitude());
+        assertEquals(ModifyImpactEstimateModel.DuplicationDirectionEnum.UNKNOWN, mapped.getDuplicationDirection());
+        assertEquals(ChangeMagnitudeModel.NONE, mapped.getDuplicationMagnitude());
+        assertEquals(ModifyImpactEstimateModel.ConfidenceEnum.LOW, mapped.getConfidence());
     }
 
     @Test

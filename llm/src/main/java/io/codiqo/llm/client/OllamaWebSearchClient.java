@@ -3,6 +3,7 @@ package io.codiqo.llm.client;
 import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
@@ -16,6 +17,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import okhttp3.Dispatcher;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -31,13 +33,14 @@ public class OllamaWebSearchClient implements WebSearchClient {
     private final String apiKey;
     private final PromptBuilder promptBuilder;
 
-    public OllamaWebSearchClient(RunArgs args, PromptBuilder promptBuilder) {
+    public OllamaWebSearchClient(RunArgs args, PromptBuilder promptBuilder, ExecutorService executor) {
         this.promptBuilder = Objects.requireNonNull(promptBuilder);
         this.apiKey = args.getLlmApiKey();
         this.objectMapper = new ObjectMapper();
         this.httpClient = new OkHttpClient.Builder()
+                .dispatcher(new Dispatcher(Objects.requireNonNull(executor)))
                 .connectTimeout(args.getConnectTimeout().toMillis(), TimeUnit.MILLISECONDS)
-                .readTimeout(args.getReadTimeout().toMillis(), TimeUnit.MILLISECONDS)
+                .readTimeout(args.getLlmReadTimeout().toMillis(), TimeUnit.MILLISECONDS)
                 .build();
     }
     @Override
@@ -85,7 +88,6 @@ public class OllamaWebSearchClient implements WebSearchClient {
     }
     @Override
     public void close() {
-        httpClient.dispatcher().executorService().shutdown();
         httpClient.connectionPool().evictAll();
     }
 

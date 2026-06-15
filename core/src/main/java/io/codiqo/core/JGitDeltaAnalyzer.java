@@ -23,6 +23,7 @@ import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.DiffFormatter;
 import org.eclipse.jgit.diff.Edit;
+import org.eclipse.jgit.diff.RawTextComparator;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectLoader;
@@ -44,6 +45,7 @@ import io.codiqo.api.DeltaAnalyzer;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.diff.FileAnalysis;
+import io.codiqo.api.diff.LanguageCapabilities;
 import io.codiqo.api.diff.FileRevisionInfo;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
@@ -140,6 +142,11 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         }
 
         return Optional.empty();
+    }
+    private static void applyWhitespacePolicy(DiffFormatter formatter, String path) {
+        formatter.setDiffComparator(LanguageCapabilities.whitespaceInsensitive(path)
+                ? RawTextComparator.WS_IGNORE_LEADING
+                : RawTextComparator.DEFAULT);
     }
     @Override
     public CommitAnalysis analyzeCommit(RevCommit commit) throws Exception {
@@ -370,6 +377,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
                     formatter.setRepository(args.getGit());
                     formatter.setContext(args.getDiffContextLines());
                     formatter.setPathFilter(PathFilter.create(filePath));
+                    applyWhitespacePolicy(formatter, filePath);
 
                     FileTreeIterator workingTreeIter = new FileTreeIterator(args.getGit());
                     List<DiffEntry> entries = formatter.scan(new EmptyTreeIterator(), workingTreeIter);
@@ -413,9 +421,11 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
     }
     @Override
     public Optional<FileAnalysis> analyzeFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit parent, RevCommit current) throws Exception {
+        String path = JGit.effectivePath(diff);
+        applyWhitespacePolicy(formatter, path);
+
         FileHeader fileHeader = formatter.toFileHeader(diff);
         if (fileHeader.getPatchType() == FileHeader.PatchType.UNIFIED) {
-            String path = JGit.effectivePath(diff);
             File destination = args.getGit().getWorkTree().toPath().resolve(path).toFile();
             GitFileAnalysis toReturn = new GitFileAnalysis();
 
@@ -439,6 +449,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
                 try (DiffFormatter printer = new DiffFormatter(output)) {
                     printer.setRepository(args.getGit());
                     printer.setContext(args.getDiffContextLines());
+                    applyWhitespacePolicy(printer, path);
                     printer.format(diff);
                     output.flush();
                     toReturn.setDiffText(output.toString(StandardCharsets.UTF_8.name()));

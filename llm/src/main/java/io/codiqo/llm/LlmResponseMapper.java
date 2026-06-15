@@ -17,6 +17,7 @@ import io.codiqo.client.model.AssessmentModel;
 import io.codiqo.client.model.BlastRadiusAnalysisModel;
 import io.codiqo.client.model.BugModel;
 import io.codiqo.client.model.BugsModel;
+import io.codiqo.client.model.ChangeMagnitudeModel;
 import io.codiqo.client.model.ComplexityMultiplierModel;
 import io.codiqo.client.model.CoverageAnalysisModel;
 import io.codiqo.client.model.CpdAnalysisModel;
@@ -24,7 +25,8 @@ import io.codiqo.client.model.DiffClassificationModel;
 import io.codiqo.client.model.DimensionScoreModel;
 import io.codiqo.client.model.EffortBreakdownModel;
 import io.codiqo.client.model.FileDiffClassificationModel;
-import io.codiqo.client.model.LineGroupsModel;
+import io.codiqo.client.model.LinePairModel;
+import io.codiqo.client.model.ModifyImpactEstimateModel;
 import io.codiqo.client.model.QualityGateAnalysisModel;
 import io.codiqo.client.model.QualityMultiplierModel;
 import io.codiqo.client.model.ReviewTagsModel;
@@ -34,6 +36,7 @@ import io.codiqo.client.model.SignatureChangesModel;
 import io.codiqo.client.model.StaticAnalysisFindingModel;
 import io.codiqo.client.model.StaticAnalysisImpactModel;
 import io.codiqo.client.model.StaticAnalysisReviewModel;
+import io.codiqo.client.model.TaskTypeModel;
 import io.codiqo.client.model.TokenUsageModel;
 import io.codiqo.client.model.ToolUsageModel;
 import io.codiqo.client.model.VolumeScoreModel;
@@ -45,6 +48,10 @@ public class LlmResponseMapper {
         result.setChangeClassification(Optional.ofNullable(llmResponse.getChangeClassification())
                 .map(LlmResponseMapper::mapChangeClassification)
                 .orElse(AnalysisResultModel.ChangeClassificationEnum.MEDIUM));
+        result.setTaskTypes(Optional.ofNullable(llmResponse.getTaskTypes())
+                .map(LlmResponseMapper::mapTaskTypes).orElse(Collections.emptyList()));
+        result.setTaskComplexity(llmResponse.getTaskComplexity());
+        result.setTaskComplexityRationale(llmResponse.getTaskComplexityRationale());
         if (Objects.nonNull(llmResponse.getRiskAssessment())) {
             result.setRiskAssessment(mapRiskAssessment(llmResponse.getRiskAssessment()));
         }
@@ -56,6 +63,8 @@ public class LlmResponseMapper {
         if (Objects.nonNull(llmResponse.getTags())) {
             result.setTags(mapTags(llmResponse.getTags()));
         }
+        result.setModifyImpactEstimates(Optional.ofNullable(llmResponse.getModifyImpactEstimates())
+                .map(LlmResponseMapper::mapModifyImpactEstimates).orElse(Collections.emptyList()));
         result.setAssessment(mapAssessment(llmResponse));
         result.setScore(llmResponse.getScore());
         result.setScoreCalculation(llmResponse.getScoreCalculation());
@@ -95,6 +104,41 @@ public class LlmResponseMapper {
                 return AnalysisResultModel.ChangeClassificationEnum.HUGE;
             default:
                 throw new IllegalArgumentException("Unknown change classification: " + classification);
+        }
+    }
+    private static List<TaskTypeModel> mapTaskTypes(List<LlmScoringResponse.TaskType> taskTypes) {
+        return taskTypes.stream().map(LlmResponseMapper::mapTaskType).collect(Collectors.toList());
+    }
+    private static TaskTypeModel mapTaskType(LlmScoringResponse.TaskType taskType) {
+        switch (taskType) {
+            case FEATURE:
+                return TaskTypeModel.FEATURE;
+            case BUG_FIX:
+                return TaskTypeModel.BUG_FIX;
+            case REFACTOR:
+                return TaskTypeModel.REFACTOR;
+            case TEST:
+                return TaskTypeModel.TEST;
+            case DOCS:
+                return TaskTypeModel.DOCS;
+            case CHORE:
+                return TaskTypeModel.CHORE;
+            case INFRA:
+                return TaskTypeModel.INFRA;
+            case DEP_UPDATE:
+                return TaskTypeModel.DEP_UPDATE;
+            case SECURITY_PATCH:
+                return TaskTypeModel.SECURITY_PATCH;
+            case PERFORMANCE:
+                return TaskTypeModel.PERFORMANCE;
+            case DEDUPLICATION:
+                return TaskTypeModel.DEDUPLICATION;
+            case STYLE:
+                return TaskTypeModel.STYLE;
+            case DATA_MIGRATION:
+                return TaskTypeModel.DATA_MIGRATION;
+            default:
+                throw new IllegalArgumentException("unknown task type: " + taskType);
         }
     }
     private static RiskAssessmentModel mapRiskAssessment(LlmScoringResponse.RiskAssessment riskAssessment) {
@@ -206,6 +250,82 @@ public class LlmResponseMapper {
         toReturn.setFunctional(Optional.ofNullable(tags.getFunctional()).orElse(Collections.emptyList()));
         return toReturn;
     }
+    private static List<ModifyImpactEstimateModel> mapModifyImpactEstimates(List<LlmScoringResponse.ModifyImpactEstimate> estimates) {
+        return estimates.stream()
+                .map(LlmResponseMapper::mapModifyImpactEstimate)
+                .collect(Collectors.toList());
+    }
+    private static ModifyImpactEstimateModel mapModifyImpactEstimate(LlmScoringResponse.ModifyImpactEstimate estimate) {
+        ModifyImpactEstimateModel toReturn = new ModifyImpactEstimateModel();
+        toReturn.setSignature(estimate.getSignature());
+        toReturn.setFile(estimate.getFile());
+        toReturn.setCoverageDirection(Optional.ofNullable(estimate.getCoverageDirection())
+                .map(LlmResponseMapper::mapCoverageDirection).orElse(ModifyImpactEstimateModel.CoverageDirectionEnum.UNKNOWN));
+        toReturn.setCoverageMagnitude(Optional.ofNullable(estimate.getCoverageMagnitude())
+                .map(LlmResponseMapper::mapChangeMagnitude).orElse(ChangeMagnitudeModel.NONE));
+        toReturn.setDuplicationDirection(Optional.ofNullable(estimate.getDuplicationDirection())
+                .map(LlmResponseMapper::mapDuplicationDirection).orElse(ModifyImpactEstimateModel.DuplicationDirectionEnum.UNKNOWN));
+        toReturn.setDuplicationMagnitude(Optional.ofNullable(estimate.getDuplicationMagnitude())
+                .map(LlmResponseMapper::mapChangeMagnitude).orElse(ChangeMagnitudeModel.NONE));
+        toReturn.setConfidence(Optional.ofNullable(estimate.getConfidence())
+                .map(LlmResponseMapper::mapEstimateConfidence).orElse(ModifyImpactEstimateModel.ConfidenceEnum.LOW));
+        toReturn.setRationale(estimate.getRationale());
+        return toReturn;
+    }
+    private static ModifyImpactEstimateModel.CoverageDirectionEnum mapCoverageDirection(LlmScoringResponse.CoverageDirection direction) {
+        switch (direction) {
+            case IMPROVED:
+                return ModifyImpactEstimateModel.CoverageDirectionEnum.IMPROVED;
+            case UNCHANGED:
+                return ModifyImpactEstimateModel.CoverageDirectionEnum.UNCHANGED;
+            case REGRESSED:
+                return ModifyImpactEstimateModel.CoverageDirectionEnum.REGRESSED;
+            case UNKNOWN:
+                return ModifyImpactEstimateModel.CoverageDirectionEnum.UNKNOWN;
+            default:
+                throw new IllegalArgumentException("Unknown coverage direction: " + direction);
+        }
+    }
+    private static ModifyImpactEstimateModel.DuplicationDirectionEnum mapDuplicationDirection(LlmScoringResponse.DuplicationDirection direction) {
+        switch (direction) {
+            case REDUCED:
+                return ModifyImpactEstimateModel.DuplicationDirectionEnum.REDUCED;
+            case UNCHANGED:
+                return ModifyImpactEstimateModel.DuplicationDirectionEnum.UNCHANGED;
+            case INCREASED:
+                return ModifyImpactEstimateModel.DuplicationDirectionEnum.INCREASED;
+            case UNKNOWN:
+                return ModifyImpactEstimateModel.DuplicationDirectionEnum.UNKNOWN;
+            default:
+                throw new IllegalArgumentException("Unknown duplication direction: " + direction);
+        }
+    }
+    private static ChangeMagnitudeModel mapChangeMagnitude(LlmScoringResponse.ChangeMagnitude magnitude) {
+        switch (magnitude) {
+            case NONE:
+                return ChangeMagnitudeModel.NONE;
+            case SLIGHT:
+                return ChangeMagnitudeModel.SLIGHT;
+            case MODERATE:
+                return ChangeMagnitudeModel.MODERATE;
+            case SIGNIFICANT:
+                return ChangeMagnitudeModel.SIGNIFICANT;
+            default:
+                throw new IllegalArgumentException("Unknown change magnitude: " + magnitude);
+        }
+    }
+    private static ModifyImpactEstimateModel.ConfidenceEnum mapEstimateConfidence(LlmScoringResponse.Confidence confidence) {
+        switch (confidence) {
+            case HIGH:
+                return ModifyImpactEstimateModel.ConfidenceEnum.HIGH;
+            case MEDIUM:
+                return ModifyImpactEstimateModel.ConfidenceEnum.MEDIUM;
+            case LOW:
+                return ModifyImpactEstimateModel.ConfidenceEnum.LOW;
+            default:
+                throw new IllegalArgumentException("Unknown confidence: " + confidence);
+        }
+    }
     private static AssessmentModel mapAssessment(LlmScoringResponse llmResponse) {
         AssessmentModel toReturn = new AssessmentModel();
         toReturn.setThinking(llmResponse.getThinking());
@@ -268,8 +388,8 @@ public class LlmResponseMapper {
         toReturn.setTotalLinesAddedRaw(source.getTotalLinesAddedRaw());
         toReturn.setTotalLinesDeletedRaw(source.getTotalLinesDeletedRaw());
         toReturn.setCosmeticLines(source.getCosmeticLines());
-        toReturn.setInPlaceModifyLines(source.getInPlaceModifyLines());
-        toReturn.setTrueDeleteAddLines(source.getTrueDeleteAddLines());
+        toReturn.setPairsCollapsed(source.getPairsCollapsed());
+        toReturn.setPureAddDeleteLines(source.getPureAddDeleteLines());
         toReturn.setRationale(source.getRationale());
         toReturn.setPerFile(Optional.ofNullable(source.getPerFile()).orElse(Collections.emptyList()).stream()
                 .map(LlmResponseMapper::mapFileDiffClassification)
@@ -280,21 +400,25 @@ public class LlmResponseMapper {
         FileDiffClassificationModel toReturn = new FileDiffClassificationModel();
         toReturn.setFile(source.getFile());
         toReturn.setCosmeticLines(source.getCosmeticLines());
-        toReturn.setInPlaceModifyLines(source.getInPlaceModifyLines());
-        toReturn.setTrueDeleteAddLines(source.getTrueDeleteAddLines());
-        if (Objects.nonNull(source.getAdded())) {
-            toReturn.setAdded(mapLineGroups(source.getAdded()));
-        }
-        if (Objects.nonNull(source.getDeleted())) {
-            toReturn.setDeleted(mapLineGroups(source.getDeleted()));
-        }
+        toReturn.setPairsCollapsed(source.getPairsCollapsed());
+        toReturn.setPureAddDeleteLines(source.getPureAddDeleteLines());
+        toReturn.setCosmeticAdded(Optional.ofNullable(source.getCosmeticAdded()).orElse(Collections.emptyList()));
+        toReturn.setCosmeticDeleted(Optional.ofNullable(source.getCosmeticDeleted()).orElse(Collections.emptyList()));
+        toReturn.setInPlaceModifyPairs(mapPairs(source.getInPlaceModifyPairs()));
+        toReturn.setTrueModifyPairs(mapPairs(source.getTrueModifyPairs()));
+        toReturn.setPureAdd(Optional.ofNullable(source.getPureAdd()).orElse(Collections.emptyList()));
+        toReturn.setPureDelete(Optional.ofNullable(source.getPureDelete()).orElse(Collections.emptyList()));
         return toReturn;
     }
-    private static LineGroupsModel mapLineGroups(LlmScoringResponse.LineGroups source) {
-        LineGroupsModel toReturn = new LineGroupsModel();
-        toReturn.setCosmetic(Optional.ofNullable(source.getCosmetic()).orElse(Collections.emptyList()));
-        toReturn.setInPlaceModify(Optional.ofNullable(source.getInPlaceModify()).orElse(Collections.emptyList()));
-        toReturn.setTrueDeleteAdd(Optional.ofNullable(source.getTrueDeleteAdd()).orElse(Collections.emptyList()));
+    private static List<LinePairModel> mapPairs(List<LlmScoringResponse.LinePair> source) {
+        return Optional.ofNullable(source).orElse(Collections.emptyList()).stream()
+                .map(LlmResponseMapper::mapPair)
+                .collect(Collectors.toList());
+    }
+    private static LinePairModel mapPair(LlmScoringResponse.LinePair source) {
+        LinePairModel toReturn = new LinePairModel();
+        toReturn.setDeleted(source.getDeleted());
+        toReturn.setAdded(source.getAdded());
         return toReturn;
     }
     private static ComplexityMultiplierModel mapComplexityMultiplier(LlmScoringResponse.ComplexityMultiplier complexityMultiplier) {

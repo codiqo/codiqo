@@ -40,6 +40,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private static final String TEMPLATE_USER_PROMPT = "user-message";
     private static final String TEMPLATE_WEB_SEARCH_RESULTS = "web-search-results";
     private static final String TEMPLATE_PRE_COMPUTED_SCORES = "pre-computed-scores";
+    private static final String TEMPLATE_VALIDATION_FEEDBACK = "validation-feedback";
     private static final TemplateEngine TEMPLATE_ENGINE;
     private static final ObjectMapper MAPPER;
     private static final Encoding TOKEN_ENCODER = Encodings.newLazyEncodingRegistry().getEncoding(EncodingType.O200K_BASE);
@@ -83,7 +84,9 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         ctx.setVariable("request", request);
 
         Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> savedSlices = stripSourceSlices(request);
+        Map<LlmScoringRequest.FileChange, String> savedDiffs = annotateDiffs(request);
         String requestJson = MAPPER.writeValueAsString(request);
+        restoreDiffs(savedDiffs);
         restoreSourceSlices(savedSlices);
 
         ctx.setVariable("requestJson", requestJson);
@@ -137,6 +140,12 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         ctx.setVariable("results", Optional.ofNullable(results).orElse(Collections.emptyList()));
         return TEMPLATE_ENGINE.process(TEMPLATE_WEB_SEARCH_RESULTS, ctx);
     }
+    @Override
+    public String buildValidationFeedback(FinalScoreCalculator.ValidationReport report) {
+        Context ctx = new Context(Locale.ENGLISH);
+        ctx.setVariable("failures", report.getFailures());
+        return TEMPLATE_ENGINE.process(TEMPLATE_VALIDATION_FEEDBACK, ctx);
+    }
     public static int estimateTokens(String text) {
         return TOKEN_ENCODER.countTokensOrdinary(text);
     }
@@ -158,6 +167,24 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     }
     private static void restoreSourceSlices(Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> saved) {
         saved.forEach(LlmScoringRequest.DuplicationInfo.CloneLocation::setSourceSlice);
+    }
+    // the LLM copies the embedded -<old>|B<n>| / +<new>|B<n>| coordinates and block ids instead of
+    // counting hunk lines; only the serialized prompt sees the annotation — originals are restored
+    // right after
+    private static Map<LlmScoringRequest.FileChange, String> annotateDiffs(LlmScoringRequest request) {
+        Map<LlmScoringRequest.FileChange, String> saved = Maps.newIdentityHashMap();
+        if (CollectionUtils.isNotEmpty(request.getFileChanges())) {
+            for (LlmScoringRequest.FileChange fc : request.getFileChanges()) {
+                if (Objects.nonNull(fc.getDiff())) {
+                    saved.put(fc, fc.getDiff());
+                    fc.setDiff(UnifiedDiffLines.parse(fc.getDiff(), fc.isLinesJustificationRequired()).getAnnotated());
+                }
+            }
+        }
+        return saved;
+    }
+    private static void restoreDiffs(Map<LlmScoringRequest.FileChange, String> saved) {
+        saved.forEach(LlmScoringRequest.FileChange::setDiff);
     }
     private static String buildPreComputedScoresSection(PreComputedScores scores) {
         Context ctx = new Context(Locale.ENGLISH);

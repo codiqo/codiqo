@@ -89,13 +89,8 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         for (FileAnalysis fileAnalysis : ctx.getAnalysis()) {
             FileChangeModel fileChangeModel = new FileChangeModel();
             fileChangeModel.setDiff(fileAnalysis.getDiffText());
-            if (ctx.getArgs().isHideSourceCode()) {
-                fileChangeModel.setContentBefore(null);
-                fileChangeModel.setContentAfter(null);
-            } else {
-                fileChangeModel.setContentBefore(fileAnalysis.getContentBefore());
-                fileChangeModel.setContentAfter(fileAnalysis.getContentAfter());
-            }
+            fileChangeModel.setContentBefore(fileAnalysis.getContentBefore());
+            fileChangeModel.setContentAfter(fileAnalysis.getContentAfter());
             fileChangeModel.setChangeType(FileChangeModel.ChangeTypeEnum.fromValue(fileAnalysis.getChangeType().name().toLowerCase()));
             fileChangeModel.setPreviousPath(fileAnalysis.getOldPath());
             fileChangeModel.setPath(JGit.effectivePath(fileAnalysis.getChangeType(), fileAnalysis.getOldPath(), fileAnalysis.getNewPath()));
@@ -196,7 +191,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             }
         }
 
-        if (!ctx.getArgs().isHideSourceCode() && Objects.nonNull(fileAnalysis.getContentAfter())) {
+        if (Objects.nonNull(fileAnalysis.getContentAfter())) {
             fileContentCache.putIfAbsent(fileAnalysis.getFile().getAbsolutePath(), fileAnalysis.getContentAfter());
         }
 
@@ -221,7 +216,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
                     }
                     callerModel.setPath(workTreeRealPath.relativize(callerPath.toRealPath()).toString());
 
-                    if (!ctx.getArgs().isHideSourceCode() && Objects.nonNull(from.getRange())) {
+                    if (Objects.nonNull(from.getRange())) {
                         String callerFilePath = callerPath.toAbsolutePath().toString();
                         String fileContent = fileContentCache.get(callerFilePath);
                         if (Objects.isNull(fileContent)) {
