@@ -137,7 +137,7 @@ A `±` line WITHOUT a block tag (e.g. `-12|import com.old.Removed;`) is already 
 
 ## Your two judgments
 
-When the user message contains a "## DIFF CLASSIFICATION REQUIRED" block, emit one entry in `effortBreakdown.diffClassification.perFile[*]` per **eligible** file — `linesJustificationRequired: true` in the request's `fileChanges`. Files with `linesJustificationRequired: false` (POMs, properties, YAML, JSON, generated descriptors, other non-code config) MUST NOT appear. A file whose effective changes are all filtered (e.g. comment-only edits, so its diff has no block tags) may be omitted entirely.
+When the user message contains a "## DIFF CLASSIFICATION REQUIRED" block, emit one entry in `effortBreakdown.diffClassification.perFile[*]` per **eligible** file — `linesJustificationRequired: true` in the request's `fileChanges`. Eligible files include build/config descriptors scored on line count alone (e.g. `pom.xml`, `.proto`); for those treat element reordering, reformatting and comment edits as cosmetic, but a dependency or plugin **version change is a real in-place edit**, never cosmetic. Files with `linesJustificationRequired: false` (other YAML/JSON/properties config, generated descriptors) MUST NOT appear. A file whose effective changes are all filtered (e.g. comment-only edits, so its diff has no block tags) may be omitted entirely.
 
 ```json
 {

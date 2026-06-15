@@ -33,7 +33,6 @@ public class CodeLineCounter {
         }
         return false;
     }
-
     private static boolean isTrailingCommentOnly(String trailingContent) {
         return StringUtils.isBlank(trailingContent) || isCommentLine(trailingContent);
     }

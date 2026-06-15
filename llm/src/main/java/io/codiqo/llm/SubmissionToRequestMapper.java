@@ -29,9 +29,8 @@ import com.google.common.collect.Sets;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.EffectiveLineParser;
 import io.codiqo.api.diff.EffectiveLineParser.LineKind;
-import io.codiqo.api.diff.JavaLineFilters;
+import io.codiqo.api.diff.IneffectiveLineProfile;
 import io.codiqo.api.diff.NestedBlockRanges;
-import io.codiqo.api.metrics.CodeLineCounter;
 import io.codiqo.api.metrics.DriverScaler;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CallerModel;
@@ -69,7 +68,6 @@ import lombok.experimental.Accessors;
 @RequiredArgsConstructor
 public class SubmissionToRequestMapper implements Function<AnalysisSubmissionModel, LlmScoringRequest> {
     private static final String DEV_NULL = "/dev/null";
-    private static final String IMPORT_LINE_PATTERN = "import ";
     private static final EnumSet<SymbolKindModel> METHOD_OR_CONSTRUCTOR = EnumSet.of(SymbolKindModel.METHOD, SymbolKindModel.CONSTRUCTOR);
     private static final int MAX_UNCOVERED_CHANGED_LINES = 20;
     private static final EnumSet<LineCoverageModel.StatusEnum> COVERED_LINE_STATUSES =
@@ -373,17 +371,19 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         return files.stream().map(SubmissionToRequestMapper::mapFileChange).collect(Collectors.toList());
     }
     private static FileChange mapFileChange(FileChangeModel file) {
-        boolean requiresLineFiltering = LanguageCapabilities.requiresLineFiltering(file);
-        DiffStats stats = DiffStats.fromPatch(file.getDiff(), requiresLineFiltering);
+        IneffectiveLineProfile profile = LanguageCapabilities.profileFor(file);
+        DiffStats stats = DiffStats.fromPatch(file.getDiff(), profile);
         return FileChange.builder()
                 .path(resolveEffectivePath(file))
                 .changeType(mapFileChangeType(file.getChangeType()))
                 .diff(file.getDiff())
                 .isTest(Boolean.TRUE.equals(file.getIsTest()))
+                .isConfig(LanguageCapabilities.isLineCountScored(file))
                 .language(mapLanguage(file))
                 .linesAdded(stats.effectiveAdded())
                 .linesDeleted(stats.effectiveDeleted())
-                .linesJustificationRequired(requiresLineFiltering)
+                .lineProfile(profile)
+                .linesJustificationRequired(LanguageCapabilities.requiresDiffClassification(file))
                 .build();
     }
     private static List<CodeBlockChange> mapCodeBlockChanges(List<FileChangeModel> files, FileContext fileContext) {
@@ -392,7 +392,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
             if (CollectionUtils.isEmpty(file.getCodeUnits())) {
                 continue;
             }
-            DiffStats stats = DiffStats.fromPatch(file.getDiff(), LanguageCapabilities.requiresLineFiltering(file));
+            DiffStats stats = DiffStats.fromPatch(file.getDiff(), LanguageCapabilities.profileFor(file));
             if (!stats.effectiveChanges()) {
                 continue;
             }
@@ -548,18 +548,31 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         Set<String> packagesAffected = Sets.newHashSet();
         for (FileChangeModel file : files) {
             boolean isTest = Boolean.TRUE.equals(file.getIsTest());
-            DiffStats stats = DiffStats.fromPatch(file.getDiff(), LanguageCapabilities.requiresLineFiltering(file));
+            DiffStats stats = DiffStats.fromPatch(file.getDiff(), LanguageCapabilities.profileFor(file));
             if (!stats.effectiveChanges()) {
                 continue;
             }
 
-            // Files without code units (config, resources) always count their lines
+            /**
+             * files without code units (config, resources) always count their lines
+             */
             if (CollectionUtils.isEmpty(file.getCodeUnits())) {
                 linesAdded += stats.effectiveAdded();
                 linesDeleted += stats.effectiveDeleted();
+
+                /**
+                 * line-count-scored files (pom.xml, proto) contribute scored effort, so they count as changed files
+                 */
+                boolean lineCountScored = LanguageCapabilities.isLineCountScored(file);
+                if (lineCountScored) {
+                    filesWithChanges++;
+                }
                 if (isTest) {
                     testLinesAdded += stats.effectiveAdded();
                     testLinesDeleted += stats.effectiveDeleted();
+                    if (lineCountScored) {
+                        testFilesWithChanges++;
+                    }
                 }
                 continue;
             }
@@ -604,7 +617,6 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
             }
         }
 
-        // count from the filtered block list so the summary agrees with codeBlockChanges
         for (CodeBlockChange block : codeBlocks) {
             if (block.isNew()) {
                 codeBlocksAdded++;
@@ -657,9 +669,9 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 blockRangesByFile.put(path, blockRanges);
             }
             if (Objects.nonNull(file.getDiff())) {
-                boolean requiresLineFiltering = LanguageCapabilities.requiresLineFiltering(file);
-                Predicate<String> addedIneffective = requiresLineFiltering ? JavaLineFilters.COMMENT : JavaLineFilters.NONE;
-                Predicate<String> deletedIneffective = requiresLineFiltering ? JavaLineFilters.COMMENT_OR_IMPORT : JavaLineFilters.NONE;
+                IneffectiveLineProfile profile = LanguageCapabilities.profileFor(file);
+                Predicate<String> addedIneffective = profile.commentFilter();
+                Predicate<String> deletedIneffective = profile.commentOrImportFilter();
 
                 Set<Integer> addedLines = EffectiveLineParser.parseAddedLines(file.getDiff());
                 if (CollectionUtils.isNotEmpty(addedLines)) {
@@ -751,20 +763,14 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         if (Objects.isNull(severity)) {
             return null;
         }
-        switch (severity) {
-            case ERROR:
-                return LlmScoringRequest.DiagnosticSeverity.ERROR;
-            case WARNING:
-                return LlmScoringRequest.DiagnosticSeverity.WARNING;
-            case INFO:
-                return LlmScoringRequest.DiagnosticSeverity.INFO;
-            case NOTE:
-                return LlmScoringRequest.DiagnosticSeverity.NOTE;
-            case NONE:
-                return LlmScoringRequest.DiagnosticSeverity.NONE;
-            default:
-                throw new IllegalArgumentException("Unknown diagnostic severity: " + severity);
-        }
+        return switch (severity) {
+            case ERROR -> LlmScoringRequest.DiagnosticSeverity.ERROR;
+            case WARNING -> LlmScoringRequest.DiagnosticSeverity.WARNING;
+            case INFO -> LlmScoringRequest.DiagnosticSeverity.INFO;
+            case NOTE -> LlmScoringRequest.DiagnosticSeverity.NOTE;
+            case NONE -> LlmScoringRequest.DiagnosticSeverity.NONE;
+            default -> throw new IllegalArgumentException("Unknown diagnostic severity: " + severity);
+        };
     }
     private static void mapMetrics(MetricsModel metrics, CodeBlockChange.CodeBlockChangeBuilder builder) {
         builder.nonCommentCodeStatements(Optional.ofNullable(metrics.getNonCommentCodeStatements())
@@ -828,16 +834,12 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         };
     }
     private static LlmScoringRequest.Operation mapOperation(OperationEnum operation) {
-        switch (operation) {
-            case NEW:
-                return LlmScoringRequest.Operation.NEW;
-            case MODIFY:
-                return LlmScoringRequest.Operation.MODIFY;
-            case DELETE:
-                return LlmScoringRequest.Operation.DELETE;
-            default:
-                throw new IllegalArgumentException("Unknown operation: " + operation);
-        }
+        return switch (operation) {
+            case NEW -> LlmScoringRequest.Operation.NEW;
+            case MODIFY -> LlmScoringRequest.Operation.MODIFY;
+            case DELETE -> LlmScoringRequest.Operation.DELETE;
+            default -> throw new IllegalArgumentException("Unknown operation: " + operation);
+        };
     }
 
     @Getter
@@ -862,7 +864,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         private boolean effectiveChanges() {
             return BooleanUtils.or(new boolean[] { effectiveAdded() > 0, effectiveDeleted() > 0 });
         }
-        private static DiffStats fromPatch(String diff, boolean requiresLineFiltering) {
+        private static DiffStats fromPatch(String diff, IneffectiveLineProfile profile) {
             Patch patch = EffectiveLineParser.parsePatch(diff);
             List<FormatError> errors = patch.getErrors().stream()
                     .filter(err -> err.getSeverity() == FormatError.Severity.ERROR)
@@ -883,10 +885,10 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
             EffectiveLineParser.walk(patch, (kind, newLine, content) -> {
                 if (kind == LineKind.ADDED) {
                     added.increment();
-                    categorize(content.trim(), requiresLineFiltering, blankAdded, commentAdded, importAdded);
+                    categorize(content.trim(), profile, blankAdded, commentAdded, importAdded);
                 } else if (kind == LineKind.DELETED) {
                     deleted.increment();
-                    categorize(content.trim(), requiresLineFiltering, blankDeleted, commentDeleted, importDeleted);
+                    categorize(content.trim(), profile, blankDeleted, commentDeleted, importDeleted);
                 }
             });
 
@@ -900,12 +902,12 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                     blankAdded.intValue(),
                     blankDeleted.intValue());
         }
-        private static void categorize(String trimmed, boolean requiresLineFiltering, MutableInt blank, MutableInt comment, MutableInt imports) {
+        private static void categorize(String trimmed, IneffectiveLineProfile profile, MutableInt blank, MutableInt comment, MutableInt imports) {
             if (trimmed.isEmpty()) {
                 blank.increment();
-            } else if (BooleanUtils.and(new boolean[] { requiresLineFiltering, CodeLineCounter.isCommentLine(trimmed) })) {
+            } else if (profile.isComment(trimmed)) {
                 comment.increment();
-            } else if (trimmed.startsWith(IMPORT_LINE_PATTERN)) {
+            } else if (profile.isImport(trimmed)) {
                 imports.increment();
             }
         }

@@ -34,22 +34,22 @@ class EffectiveLineParserTest {
     }
     @Test
     void parseEffectiveAddedLinesFiltersBlanksAndComments() {
-        Set<Integer> effective = EffectiveLineParser.parseEffectiveAddedLines(DIFF, JavaLineFilters.COMMENT);
+        Set<Integer> effective = EffectiveLineParser.parseEffectiveAddedLines(DIFF, IneffectiveLineProfile.C_STYLE.commentFilter());
         assertEquals(ImmutableSet.of(2, 5), effective);
     }
     @Test
     void parseEffectiveAddedLinesWithNoneKeepsNonBlankLines() {
-        Set<Integer> effective = EffectiveLineParser.parseEffectiveAddedLines(DIFF, JavaLineFilters.NONE);
+        Set<Integer> effective = EffectiveLineParser.parseEffectiveAddedLines(DIFF, IneffectiveLineProfile.NONE.commentFilter());
         assertEquals(ImmutableSet.of(2, 3, 5), effective);
     }
     @Test
     void parseEffectiveDeletedLineContentsKeepsTrimmedNonImportNonCommentLines() {
-        Map<Integer, List<String>> deleted = EffectiveLineParser.parseEffectiveDeletedLineContents(DIFF, JavaLineFilters.COMMENT_OR_IMPORT);
+        Map<Integer, List<String>> deleted = EffectiveLineParser.parseEffectiveDeletedLineContents(DIFF, IneffectiveLineProfile.C_STYLE.commentOrImportFilter());
         assertEquals(ImmutableMap.of(6, List.of("int removed = 2;")), deleted);
     }
     @Test
     void parseEffectiveDeletionAnchorsCountsByNewSideAnchor() {
-        Map<Integer, Integer> anchors = EffectiveLineParser.parseEffectiveDeletionAnchors(DIFF, JavaLineFilters.COMMENT_OR_IMPORT);
+        Map<Integer, Integer> anchors = EffectiveLineParser.parseEffectiveDeletionAnchors(DIFF, IneffectiveLineProfile.C_STYLE.commentOrImportFilter());
         assertEquals(ImmutableMap.of(6, 1), anchors);
     }
     @Test

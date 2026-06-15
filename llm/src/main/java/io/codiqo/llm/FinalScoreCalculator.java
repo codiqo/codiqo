@@ -405,7 +405,7 @@ public class FinalScoreCalculator {
                 continue;
             }
 
-            UnifiedDiffLines diffLines = UnifiedDiffLines.parse(fc.getDiff(), fc.isLinesJustificationRequired());
+            UnifiedDiffLines diffLines = UnifiedDiffLines.parse(fc.getDiff(), fc.getLineProfile());
 
             Set<String> validBlockIds = Sets.newLinkedHashSet();
             for (UnifiedDiffLines.ChangeBlock block : diffLines.getBlocks()) {

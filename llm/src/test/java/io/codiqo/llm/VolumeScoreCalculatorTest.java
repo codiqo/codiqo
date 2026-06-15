@@ -18,6 +18,7 @@ import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringRequest.ChangeSummary;
 import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
+import io.codiqo.llm.schema.LlmScoringRequest.FileChange;
 import io.codiqo.llm.schema.LlmScoringRequest.Operation;
 
 class VolumeScoreCalculatorTest {
@@ -300,6 +301,63 @@ class VolumeScoreCalculatorTest {
 
         assertEquals(prodEffort * args.getTestCodeScoreMultiplier(), testEffort, 0.01,
                 "test block effort must equal prod effort × testCodeScoreMultiplier");
+    }
+    @Test
+    void configFileEffortIsDiscountedByConfigFileScoreMultiplier() {
+        RunArgs args = neutralMultiplierArgs();
+        FileChange pom = FileChange.builder().path("pom.xml").isConfig(true).linesAdded(10).linesDeleted(4).build();
+
+        PreComputedScores scores = calculateConfigOnly(args, pom);
+
+        CodeBlockEffort config = scores.getCodeBlockEfforts().stream()
+                .filter(CodeBlockEffort::isConfig).findFirst().orElseThrow();
+        assertEquals(14.0, config.getDriverScore(), 0.001, "driverScore = linesAdded + linesDeleted (the diff factor collapses pairs)");
+        assertEquals(14.0 * args.getConfigFileScoreMultiplier(), config.getEffort(), 0.001,
+                "config effort = rawLines × modifyMult × configFileScoreMultiplier");
+    }
+    @Test
+    void configFileBucketBaselineDoesNotLoosenGlobalCap() {
+        RunArgs args = neutralMultiplierArgs();
+        DriverScaler scaler = uniformScaler(1, 100);
+        CodeBlockChange code = newMethodBlock(50, 50, 50, false);
+
+        LlmScoringRequest withoutConfig = codeRequest(scaler, code, /*files*/ 1, null);
+        LlmScoringRequest withConfig = codeRequest(scaler, code, /*files*/ 2,
+                FileChange.builder().path("pom.xml").isConfig(true).linesAdded(500).linesDeleted(0).build());
+
+        PreComputedScores a = new VolumeScoreCalculator(args).calculate(withoutConfig, 1000, 100, 5, 0, 0, 0);
+        PreComputedScores b = new VolumeScoreCalculator(args).calculate(withConfig, 1000, 100, 5, 0, 0, 0);
+
+        assertEquals(a.getTotalBaseline(), b.getTotalBaseline(), 0.001,
+                "a huge config edit must not inflate the global-cap baseline");
+        assertEquals(a.getGlobalCap(), b.getGlobalCap(), 0.001);
+    }
+    @Test
+    void configFileDriverScoreExcludedFromEffectiveStatements() {
+        RunArgs args = neutralMultiplierArgs();
+        FileChange pom = FileChange.builder().path("pom.xml").isConfig(true).linesAdded(40).linesDeleted(0).build();
+
+        PreComputedScores scores = calculateConfigOnly(args, pom);
+
+        assertEquals(0, scores.getTotalEffectiveStatements(),
+                "config lines are not statements and must not inflate effective statements");
+    }
+    private static PreComputedScores calculateConfigOnly(RunArgs args, FileChange config) {
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder().totalFilesChanged(1).build())
+                .codeBlockChanges(List.of())
+                .fileChanges(List.of(config))
+                .build();
+        return new VolumeScoreCalculator(args).calculate(request, 1000, 100, 0, 0, 0, 0);
+    }
+    private static LlmScoringRequest codeRequest(DriverScaler scaler, CodeBlockChange block, int filesChanged, FileChange config) {
+        return LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder().totalFilesChanged(filesChanged).build())
+                .codeBlockChanges(List.of(block))
+                .fileChanges(config == null ? List.of() : List.of(config))
+                .methodScalerProd(scaler).methodScalerTest(scaler)
+                .constructorScalerProd(scaler).constructorScalerTest(scaler)
+                .build();
     }
     @Test
     void sizeFactorPushesModifyMultiplierUpAsProjectGrows() {

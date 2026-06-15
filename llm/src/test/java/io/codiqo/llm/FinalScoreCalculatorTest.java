@@ -15,10 +15,12 @@ import com.google.common.collect.Maps;
 import org.junit.jupiter.api.Test;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.diff.IneffectiveLineProfile;
 import io.codiqo.llm.VolumeScoreCalculator.CodeBlockEffort;
 import io.codiqo.llm.VolumeScoreCalculator.FileEffort;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
 import io.codiqo.llm.schema.LlmScoringRequest;
+import io.codiqo.llm.schema.LlmScoringRequest.ChangeSummary;
 import io.codiqo.llm.schema.LlmScoringRequest.FileChange;
 import io.codiqo.llm.schema.LlmScoringRequest.Operation;
 import io.codiqo.llm.schema.LlmScoringResponse;
@@ -177,6 +179,37 @@ class FinalScoreCalculatorTest {
         assertEquals(4, vs.getLinesChangedAdjusted(), "4 pairs of effort each");
         assertEquals(0, vs.getCosmeticLinesDropped());
         assertEquals(4, vs.getInPlaceLinesCollapsed(), "4 pairs collapsed");
+    }
+    @Test
+    void configFileInPlaceVersionBumpCollapsesAndStaysDiscounted() {
+        RunArgs args = new RunArgs();
+        FileChange pom = FileChange.builder()
+                .path("pom.xml").isConfig(true).linesJustificationRequired(true)
+                .lineProfile(IneffectiveLineProfile.XML).linesAdded(4).linesDeleted(4).build();
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder().totalFilesChanged(1).build())
+                .codeBlockChanges(List.of())
+                .fileChanges(List.of(pom))
+                .build();
+        PreComputedScores preComputed = new VolumeScoreCalculator(args).calculate(request, 1000, 100, 0, 0, 0, 0);
+
+        // 4 in-place pairs: a <version> bump reads as 1 delete + 1 add but is one logical change
+        LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder()
+                .file("pom.xml")
+                .inPlaceModifyPairs(pairs(p(1, 11), p(2, 12), p(3, 13), p(4, 14)))
+                .build());
+
+        new FinalScoreCalculator(args).apply(response, preComputed, request);
+
+        // 4 in-place pairs = 4 logical changed lines, each discounted by configFileScoreMultiplier.
+        // The delete+add collapse must happen exactly once (not twice → would be 2 logical lines).
+        double expectedFourLogicalLines = 4 * preComputed.getModifyMult() * args.getConfigFileScoreMultiplier();
+        LlmScoringResponse.VolumeScore vs = response.getEffortBreakdown().getVolumeScore();
+        assertEquals(expectedFourLogicalLines, vs.getBlockEffortSum(), 0.01,
+                "4 in-place pairs must score as 4 logical lines, not 2 — no double collapse");
+        assertEquals(8, vs.getLinesChangedRaw());
+        assertEquals(4, vs.getLinesChangedAdjusted());
+        assertEquals(4, vs.getInPlaceLinesCollapsed());
     }
     @Test
     void trueModifyPairsCostSameAsInPlacePairs() {
@@ -686,7 +719,7 @@ class FinalScoreCalculatorTest {
                 /*effort*/ blockEffort, /*bucketBaseline*/ 1000.0, /*isTest*/ false,
                 /*deviationNcss*/ 0.0, /*deviationInvocations*/ 0.0, /*ratioOutlier*/ false,
                 /*effortShare*/ 1.0, /*globalCapDriver*/ false,
-                bodyStart, bodyEnd, bodyCodeLines);
+                bodyStart, bodyEnd, bodyCodeLines, /*isConfig*/ false);
         FileEffort fileEffort = new FileEffort(file, blockEffort, false, List.of(cbe), 0, 0, 0.0, 0.0, false);
 
         double volumeExponent = 1.0;
@@ -714,7 +747,7 @@ class FinalScoreCalculatorTest {
                 /*effort*/ 50.0, /*bucketBaseline*/ 1000.0, /*isTest*/ false,
                 /*deviationNcss*/ 0.0, /*deviationInvocations*/ 0.0, /*ratioOutlier*/ false,
                 /*effortShare*/ 0.5, /*globalCapDriver*/ false,
-                bodyStart, bodyEnd, bodyCodeLines);
+                bodyStart, bodyEnd, bodyCodeLines, /*isConfig*/ false);
     }
     // single hunk: deleted old-file lines {11, 13}, added new-file line {11}
     private static final String VALIDATION_DIFF = String.join("\n",

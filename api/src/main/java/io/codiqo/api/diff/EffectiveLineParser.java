@@ -21,7 +21,15 @@ import lombok.experimental.UtilityClass;
 
 @UtilityClass
 public class EffectiveLineParser {
-    public enum LineKind { CONTEXT, ADDED, DELETED }
+    private static final byte ADDED_PREFIX = '+';
+    private static final byte DELETED_PREFIX = '-';
+    private static final byte LF = '\n';
+
+    public enum LineKind {
+        CONTEXT,
+        ADDED,
+        DELETED
+    }
 
     @FunctionalInterface
     public interface DiffLineVisitor {
@@ -87,7 +95,6 @@ public class EffectiveLineParser {
         patch.parse(diffBytes, 0, diffBytes.length);
         return patch;
     }
-
     private static void walkHunk(HunkHeader hunk, DiffLineVisitor visitor) {
         byte[] buf = hunk.getBuffer();
         int end = hunk.getEndOffset();
@@ -99,14 +106,14 @@ public class EffectiveLineParser {
             byte type = buf[ptr];
             int contentStart = ptr + 1;
             int contentEnd = lineEnd;
-            if (contentEnd > contentStart && buf[contentEnd - 1] == '\n') {
+            if (contentEnd > contentStart && buf[contentEnd - 1] == LF) {
                 contentEnd--;
             }
 
-            if (type == '+') {
+            if (type == ADDED_PREFIX) {
                 visitor.visit(LineKind.ADDED, newLine, RawParseUtils.decode(StandardCharsets.UTF_8, buf, contentStart, contentEnd));
                 newLine++;
-            } else if (type == '-') {
+            } else if (type == DELETED_PREFIX) {
                 visitor.visit(LineKind.DELETED, newLine, RawParseUtils.decode(StandardCharsets.UTF_8, buf, contentStart, contentEnd));
             } else if (type == ' ') {
                 visitor.visit(LineKind.CONTEXT, newLine, RawParseUtils.decode(StandardCharsets.UTF_8, buf, contentStart, contentEnd));

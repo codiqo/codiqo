@@ -5,10 +5,13 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.BooleanUtils;
+
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
-import io.codiqo.api.metrics.CodeLineCounter;
+import io.codiqo.api.diff.IneffectiveLineProfile;
 import lombok.Getter;
 import lombok.Value;
 
@@ -34,7 +37,12 @@ import lombok.Value;
 @Getter
 public final class UnifiedDiffLines {
     private static final Pattern HUNK_HEADER = Pattern.compile("^@@ -(\\d+)(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@");
-    private static final String IMPORT_PREFIX = "import ";
+    private static final String LF = "\n";
+    private static final String ADDED_PREFIX = "+";
+    private static final String DELETED_PREFIX = "-";
+    private static final String NO_NEWLINE_MARKER = "\\";
+    private static final String BLOCK_ID_PREFIX = "B";
+    private static final char FIELD_SEPARATOR = '|';
 
     private final Set<Integer> addedLines = Sets.newTreeSet();
     private final Set<Integer> deletedLines = Sets.newTreeSet();
@@ -43,7 +51,7 @@ public final class UnifiedDiffLines {
     private final List<ChangeBlock> blocks = Lists.newArrayList();
     private final String annotated;
 
-    private UnifiedDiffLines(String diff, boolean requiresLineFiltering) {
+    private UnifiedDiffLines(String diff, IneffectiveLineProfile profile) {
         StringBuilder out = new StringBuilder(diff.length() + 256);
         int oldLine = 0;
         int newLine = 0;
@@ -51,11 +59,11 @@ public final class UnifiedDiffLines {
         List<Integer> runDeleted = Lists.newArrayList();
         List<Integer> runAdded = Lists.newArrayList();
         // -1 limit keeps trailing empty strings so the annotated text round-trips exactly
-        String[] lines = diff.split("\n", -1);
+        String[] lines = diff.split(LF, -1);
         for (int i = 0; i < lines.length; i++) {
             String raw = lines[i];
             if (i > 0) {
-                out.append('\n');
+                out.append(LF);
             }
 
             Matcher hunk = HUNK_HEADER.matcher(raw);
@@ -67,31 +75,34 @@ public final class UnifiedDiffLines {
                 out.append(raw);
                 continue;
             }
-            // file headers before the first @@ and "\ No newline at end of file" markers are
-            // metadata: they advance neither counter. A "\" marker can sit between the deleted
-            // and added halves of one logical block, so it must not close the run either.
-            if (!inHunk || raw.startsWith("\\")) {
+
+            /**
+             * file headers before the first @@ and "\ No newline at end of file" markers are
+             * metadata: they advance neither counter. A "\" marker can sit between the deleted
+             * and added halves of one logical block, so it must not close the run either.
+             */
+            if (BooleanUtils.or(new boolean[] { BooleanUtils.negate(inHunk), raw.startsWith(NO_NEWLINE_MARKER) })) {
                 out.append(raw);
                 continue;
             }
-            if (raw.startsWith("-")) {
+            if (raw.startsWith(DELETED_PREFIX)) {
                 deletedLines.add(oldLine);
-                if (isCandidate(raw.substring(1), requiresLineFiltering)) {
+                if (isCandidate(raw.substring(1), profile)) {
                     candidateDeletedLines.add(oldLine);
                     runDeleted.add(oldLine);
-                    out.append('-').append(oldLine).append("|B").append(currentBlockId()).append('|').append(raw, 1, raw.length());
+                    out.append(DELETED_PREFIX).append(oldLine).append(FIELD_SEPARATOR).append(BLOCK_ID_PREFIX).append(currentBlockId()).append(FIELD_SEPARATOR).append(raw, 1, raw.length());
                 } else {
-                    out.append('-').append(oldLine).append('|').append(raw, 1, raw.length());
+                    out.append(DELETED_PREFIX).append(oldLine).append(FIELD_SEPARATOR).append(raw, 1, raw.length());
                 }
                 oldLine++;
-            } else if (raw.startsWith("+")) {
+            } else if (raw.startsWith(ADDED_PREFIX)) {
                 addedLines.add(newLine);
-                if (isCandidate(raw.substring(1), requiresLineFiltering)) {
+                if (isCandidate(raw.substring(1), profile)) {
                     candidateAddedLines.add(newLine);
                     runAdded.add(newLine);
-                    out.append('+').append(newLine).append("|B").append(currentBlockId()).append('|').append(raw, 1, raw.length());
+                    out.append(ADDED_PREFIX).append(newLine).append(FIELD_SEPARATOR).append(BLOCK_ID_PREFIX).append(currentBlockId()).append(FIELD_SEPARATOR).append(raw, 1, raw.length());
                 } else {
-                    out.append('+').append(newLine).append('|').append(raw, 1, raw.length());
+                    out.append(ADDED_PREFIX).append(newLine).append(FIELD_SEPARATOR).append(raw, 1, raw.length());
                 }
                 newLine++;
             } else {
@@ -104,40 +115,39 @@ public final class UnifiedDiffLines {
         closeRun(runDeleted, runAdded);
         annotated = out.toString();
     }
-    // the open run is always the next block to be closed; blocks only grow at run boundaries
     private int currentBlockId() {
         return blocks.size() + 1;
     }
     private void closeRun(List<Integer> runDeleted, List<Integer> runAdded) {
-        if (runDeleted.isEmpty() && runAdded.isEmpty()) {
-            return;
+        if (BooleanUtils.or(new boolean[] { CollectionUtils.isNotEmpty(runDeleted), CollectionUtils.isNotEmpty(runAdded) })) {
+            blocks.add(new ChangeBlock(BLOCK_ID_PREFIX + (blocks.size() + 1), List.copyOf(runDeleted), List.copyOf(runAdded)));
+            runDeleted.clear();
+            runAdded.clear();
         }
-        blocks.add(new ChangeBlock("B" + (blocks.size() + 1), List.copyOf(runDeleted), List.copyOf(runAdded)));
-        runDeleted.clear();
-        runAdded.clear();
+    }
+    public static UnifiedDiffLines parse(String diff, IneffectiveLineProfile profile) {
+        return new UnifiedDiffLines(diff, profile);
     }
     /**
      * Mirrors {@code SubmissionToRequestMapper.DiffStats.categorize} exactly — the per-file
-     * {@code linesAdded}/{@code linesDeleted} targets subtract blank, comment (JVM languages
-     * only), and import lines, so candidate enumeration must apply the identical rules or block
-     * sums drift from the targets.
+     * {@code linesAdded}/{@code linesDeleted} targets subtract blank, comment, and import lines per
+     * the file's {@link IneffectiveLineProfile}, so candidate enumeration must apply the identical
+     * rules or block sums drift from the targets.
      */
-    private static boolean isCandidate(String content, boolean requiresLineFiltering) {
+    private static boolean isCandidate(String content, IneffectiveLineProfile profile) {
         String trimmed = content.trim();
         if (trimmed.isEmpty()) {
             return false;
         }
-        if (requiresLineFiltering && CodeLineCounter.isCommentLine(trimmed)) {
+        if (profile.isComment(trimmed)) {
             return false;
         }
-        return !trimmed.startsWith(IMPORT_PREFIX);
+        if (profile.isImport(trimmed)) {
+            return false;
+        }
+        return true;
     }
 
-    public static UnifiedDiffLines parse(String diff, boolean requiresLineFiltering) {
-        return new UnifiedDiffLines(diff, requiresLineFiltering);
-    }
-
-    /** One maximal run of {@code ±} lines between context lines, holding effective lines only. */
     @Value
     public static class ChangeBlock {
         String id;
