@@ -615,7 +615,7 @@ public final class GitRefs {
 }
 ```
 
-Apply this to every existing and new utility class. Examples already in the codebase: [CommitRevertDetector](api/src/main/java/io/codiqo/util/CommitRevertDetector.java), [DriverScore](api/src/main/java/io/codiqo/api/metrics/DriverScore.java), [JavaLineFilters](api/src/main/java/io/codiqo/api/diff/JavaLineFilters.java).
+Apply this to every existing and new utility class. Examples already in the codebase: [CommitRevertDetector](api/src/main/java/io/codiqo/util/CommitRevertDetector.java), [DriverScore](api/src/main/java/io/codiqo/api/metrics/DriverScore.java), [CodeLineCounter](api/src/main/java/io/codiqo/api/metrics/CodeLineCounter.java).
 
 ### Lombok @Builder with Collections
 

@@ -48,9 +48,9 @@ class PromptTemplateSmokeTest {
                 .diff("dummy")
                 .build();
         FileChange ineligible = FileChange.builder()
-                .path("pom.xml")
+                .path("src/main/resources/application.yaml")
                 .changeType(FileChangeType.MODIFIED)
-                .language("xml")
+                .language("yaml")
                 .linesAdded(3)
                 .linesDeleted(1)
                 .linesJustificationRequired(false)
@@ -76,7 +76,7 @@ class PromptTemplateSmokeTest {
 
         assertTrue(rendered.contains("Eligible files"), "table header missing");
         assertTrue(rendered.contains("| src/main/java/Foo.java | 15 | 11 |"), "eligible file row missing");
-        assertFalse(rendered.contains("| pom.xml | 3 | 1 |"), "ineligible file leaked into the table");
+        assertFalse(rendered.contains("| src/main/resources/application.yaml | 3 | 1 |"), "ineligible file leaked into the table");
     }
     @Test
     void systemPromptRendersFilteringRule() {

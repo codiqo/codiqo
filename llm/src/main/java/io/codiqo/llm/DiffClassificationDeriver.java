@@ -1,5 +1,6 @@
 package io.codiqo.llm;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -8,6 +9,7 @@ import java.util.Set;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import com.google.common.collect.Lists;
@@ -45,7 +47,9 @@ public class DiffClassificationDeriver {
         if (Objects.isNull(request) || CollectionUtils.isEmpty(request.getFileChanges())) {
             return;
         }
-        List<FileChange> eligible = request.getFileChanges().stream()
+        List<FileChange> eligible = request
+                .getFileChanges()
+                .stream()
                 .filter(FileChange::isLinesJustificationRequired)
                 .filter(fc -> StringUtils.isNotBlank(fc.getDiff()))
                 .toList();
@@ -63,7 +67,7 @@ public class DiffClassificationDeriver {
         int totalAdded = 0;
         int totalDeleted = 0;
         for (FileChange fc : eligible) {
-            UnifiedDiffLines diffLines = UnifiedDiffLines.parse(fc.getDiff(), fc.isLinesJustificationRequired());
+            UnifiedDiffLines diffLines = UnifiedDiffLines.parse(fc.getDiff(), fc.getLineProfile());
             derived.add(deriveFile(fc, diffLines, llmByFile.get(fc.getPath())));
             totalAdded += fc.getLinesAdded();
             totalDeleted += fc.getLinesDeleted();
@@ -74,9 +78,11 @@ public class DiffClassificationDeriver {
     }
     private static FileDiffClassification deriveFile(FileChange fc, UnifiedDiffLines diffLines, FileDiffClassification llm) {
         Set<Integer> cosmeticAdded = sanitizeCosmetic(
-                Objects.nonNull(llm) ? llm.getCosmeticAdded() : null, diffLines.getCandidateAddedLines(), fc.getPath(), "cosmeticAdded");
+                CollectionUtils.emptyIfNull(Objects.nonNull(llm) ? llm.getCosmeticAdded() : null),
+                diffLines.getCandidateAddedLines(), fc.getPath(), "cosmeticAdded");
         Set<Integer> cosmeticDeleted = sanitizeCosmetic(
-                Objects.nonNull(llm) ? llm.getCosmeticDeleted() : null, diffLines.getCandidateDeletedLines(), fc.getPath(), "cosmeticDeleted");
+                CollectionUtils.emptyIfNull(Objects.nonNull(llm) ? llm.getCosmeticDeleted() : null),
+                diffLines.getCandidateDeletedLines(), fc.getPath(), "cosmeticDeleted");
 
         List<LinePair> inPlacePairs = Lists.newArrayList();
         List<LinePair> trueModifyPairs = Lists.newArrayList();
@@ -112,6 +118,7 @@ public class DiffClassificationDeriver {
             breakdown = EffortBreakdown.builder().build();
             response.setEffortBreakdown(breakdown);
         }
+
         DiffClassification classification = breakdown.getDiffClassification();
         if (Objects.isNull(classification)) {
             classification = DiffClassification.builder().build();
@@ -124,9 +131,9 @@ public class DiffClassificationDeriver {
      * finite — whatever still points outside the candidate set after the last attempt is dropped
      * here so persisted coordinates stay correct.
      */
-    private static Set<Integer> sanitizeCosmetic(List<Integer> cited, Set<Integer> candidates, String file, String bucket) {
+    private static Set<Integer> sanitizeCosmetic(Collection<Integer> cited, Set<Integer> candidates, String file, String bucket) {
         Set<Integer> toReturn = Sets.newTreeSet();
-        for (Integer line : CollectionUtils.emptyIfNull(cited)) {
+        for (Integer line : cited) {
             if (Objects.nonNull(line) && candidates.contains(line)) {
                 toReturn.add(line);
             } else {
@@ -144,12 +151,14 @@ public class DiffClassificationDeriver {
             return false;
         }
         String normalized = kind.toLowerCase(Locale.ROOT).replaceAll("[^a-z]", "");
-        if (KIND_IN_PLACE.equals(normalized) || KIND_IN_PLACE_MODIFY.equals(normalized)) {
+        if (BooleanUtils.or(new boolean[] { KIND_IN_PLACE.equals(normalized), KIND_IN_PLACE_MODIFY.equals(normalized) })) {
             return true;
         }
-        if (!KIND_TRUE_MODIFY.equals(normalized)) {
-            log.warn("diffClassification.unknownBlockKind file='{}' block={} kind='{}' — defaulting to trueModify", file, blockId, kind);
+        if (KIND_TRUE_MODIFY.equals(normalized)) {
+            return false;
         }
+
+        log.warn("diffClassification.unknownBlockKind file='{}' block={} kind='{}' — defaulting to trueModify", file, blockId, kind);
         return false;
     }
 }

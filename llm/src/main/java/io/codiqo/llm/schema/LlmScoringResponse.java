@@ -227,8 +227,7 @@ public class LlmScoringResponse {
         private int cosmeticLines;
         private int pairsCollapsed;
         private int pureAddDeleteLines;
-        // LLM input: change-block id → "inPlace" | "trueModify". The pair/pure arrays below are
-        // server-derived from the diff's change blocks; the LLM no longer emits them.
+
         @Builder.Default
         private Map<String, String> blockKinds = Maps.newHashMap();
         @Builder.Default

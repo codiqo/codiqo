@@ -46,7 +46,7 @@ Every effective `-` / `+` line in `fileChanges[*].diff` is annotated `-<old-file
 [# th:each="fc : ${request.fileChanges}"][# th:if="${fc.linesJustificationRequired}"]| [(${fc.path})] | [(${fc.linesAdded})] | [(${fc.linesDeleted})] |
 [/][/]
 
-Counts are informational (effective lines after server-side filtering). Files in `fileChanges` with `linesJustificationRequired: false` (POMs, build descriptors, YAML/JSON/properties, generated artefacts, other config) MUST NOT appear in `perFile`. Do NOT emit `inPlaceModifyPairs` / `trueModifyPairs` / `pureAdd` / `pureDelete` and leave the counter fields at `0` — the server derives all of them.
+Counts are informational (effective lines after server-side filtering). Build/config descriptors scored on line count (`pom.xml`, `.proto`) ARE eligible and appear in the table above. Files in `fileChanges` with `linesJustificationRequired: false` (generic YAML/JSON/properties config, generated artefacts) MUST NOT appear in `perFile`. Do NOT emit `inPlaceModifyPairs` / `trueModifyPairs` / `pureAdd` / `pureDelete` and leave the counter fields at `0` — the server derives all of them.
 
 [/]
 ---

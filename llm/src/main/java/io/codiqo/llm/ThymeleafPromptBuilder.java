@@ -168,16 +168,13 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private static void restoreSourceSlices(Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> saved) {
         saved.forEach(LlmScoringRequest.DuplicationInfo.CloneLocation::setSourceSlice);
     }
-    // the LLM copies the embedded -<old>|B<n>| / +<new>|B<n>| coordinates and block ids instead of
-    // counting hunk lines; only the serialized prompt sees the annotation — originals are restored
-    // right after
     private static Map<LlmScoringRequest.FileChange, String> annotateDiffs(LlmScoringRequest request) {
         Map<LlmScoringRequest.FileChange, String> saved = Maps.newIdentityHashMap();
         if (CollectionUtils.isNotEmpty(request.getFileChanges())) {
             for (LlmScoringRequest.FileChange fc : request.getFileChanges()) {
                 if (Objects.nonNull(fc.getDiff())) {
                     saved.put(fc, fc.getDiff());
-                    fc.setDiff(UnifiedDiffLines.parse(fc.getDiff(), fc.isLinesJustificationRequired()).getAnnotated());
+                    fc.setDiff(UnifiedDiffLines.parse(fc.getDiff(), fc.getLineProfile()).getAnnotated());
                 }
             }
         }

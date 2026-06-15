@@ -23,6 +23,7 @@ import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
 import io.codiqo.llm.schema.LlmScoringRequest.DiagnosticInfo;
 import io.codiqo.llm.schema.LlmScoringRequest.DuplicationInfo;
 import io.codiqo.llm.schema.LlmScoringRequest.DuplicationInfo.CloneDetail;
+import io.codiqo.llm.schema.LlmScoringRequest.FileChange;
 import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.Value;
@@ -56,6 +57,7 @@ public class VolumeScoreCalculator {
                 methodCapQuantileProd, methodCapQuantileTest,
                 constructorCapQuantileProd, constructorCapQuantileTest,
                 addMult, modifyMult, testMult, maxDeviation);
+        initialEfforts.addAll(calculateConfigFileEfforts(request.getFileChanges(), modifyMult, args.getConfigFileScoreMultiplier()));
 
         double totalEffortRaw = initialEfforts.stream().mapToDouble(CodeBlockEffort::getEffort).sum();
         double totalBaseline = initialEfforts.stream().mapToDouble(CodeBlockEffort::getBucketBaseline).sum();
@@ -78,7 +80,9 @@ public class VolumeScoreCalculator {
         double totalVolumeScore = volumeScore * filesScopeMultiplier;
         double baseEffort = totalVolumeScore;
 
-        int totalEffectiveStatements = (int) Math.round(codeBlockEfforts.stream().mapToDouble(CodeBlockEffort::getDriverScore).sum());
+        int totalEffectiveStatements = (int) Math.round(codeBlockEfforts.stream()
+                .filter(cbe -> !cbe.isConfig())
+                .mapToDouble(CodeBlockEffort::getDriverScore).sum());
 
         CpdPreComputed cpd = calculateCpdPenalty(request);
         StaticAnalysisPreComputed sa = calculateStaticAnalysisPenalty(request);
@@ -148,7 +152,7 @@ public class VolumeScoreCalculator {
                     scaledDriverScore, cbe.getCappedStatements(), scaledEffort, cbe.getBucketBaseline(), cbe.isTest(),
                     cbe.getBlockRatioDeviationNcss(), cbe.getBlockRatioDeviationInvocations(), cbe.isBlockRatioOutlier(),
                     0.0, false,
-                    cbe.getBodyStartLine(), cbe.getBodyEndLine(), cbe.getBodyCodeLines()));
+                    cbe.getBodyStartLine(), cbe.getBodyEndLine(), cbe.getBodyCodeLines(), cbe.isConfig()));
         }
 
         double totalEffortRaw = rescaled.stream().mapToDouble(CodeBlockEffort::getEffort).sum();
@@ -165,7 +169,9 @@ public class VolumeScoreCalculator {
         double totalVolumeScore = volumeScore * original.getFilesScopeMultiplier();
         double baseEffort = totalVolumeScore;
 
-        int totalEffectiveStatements = (int) Math.round(codeBlockEfforts.stream().mapToDouble(CodeBlockEffort::getDriverScore).sum());
+        int totalEffectiveStatements = (int) Math.round(codeBlockEfforts.stream()
+                .filter(cbe -> !cbe.isConfig())
+                .mapToDouble(CodeBlockEffort::getDriverScore).sum());
 
         return original.toBuilder()
                 .blockEffortSum(Precision.round(blockEffortSum, ROUNDING_PRECISION))
@@ -329,7 +335,42 @@ public class VolumeScoreCalculator {
                     Precision.round(deviationNcss, ROUNDING_PRECISION),
                     Precision.round(deviationInvocations, ROUNDING_PRECISION),
                     ratioOutlier, 0.0, false,
-                    block.getBodyStartLine(), block.getBodyEndLine(), block.getBodyCodeLines()));
+                    block.getBodyStartLine(), block.getBodyEndLine(), block.getBodyCodeLines(), false));
+        }
+        return toReturn;
+    }
+    // non-code text files (pom.xml, proto) have no code blocks, so their effort is computed from line
+    // count alone: one synthetic block per file weighted by the config multiplier. The LLM diff
+    // classification later rescales these in recompute, collapsing cosmetic and in-place churn.
+    static List<CodeBlockEffort> calculateConfigFileEfforts(List<FileChange> fileChanges, double modifyMult, double configMult) {
+        if (CollectionUtils.isEmpty(fileChanges)) {
+            return Lists.newArrayList();
+        }
+
+        List<CodeBlockEffort> toReturn = Lists.newArrayList();
+        for (FileChange fc : fileChanges) {
+            if (!fc.isConfig()) {
+                continue;
+            }
+            // seed from added + deleted (like a Java block's totalLinesChanged) so the diff
+            // classification factor effectiveLines/(added+deleted) collapses each delete+add pair
+            // exactly once in recompute — seeding with max() would collapse the pair a second time
+            int rawLines = fc.getLinesAdded() + fc.getLinesDeleted();
+            if (rawLines <= 0) {
+                continue;
+            }
+
+            double driverScore = rawLines;
+            double effort = driverScore * modifyMult * configMult;
+            // bucketBaseline 0 keeps config out of the global-cap baseline; isConfig excludes it from
+            // the effective-statements metric
+            toReturn.add(new CodeBlockEffort(fc.getPath(), fc.getPath(), null,
+                    LlmScoringRequest.Operation.MODIFY, 0, 0,
+                    0, 0, 0, rawLines, 0.0,
+                    0.0, 0.0, 0.0,
+                    driverScore, (int) Math.round(driverScore), effort, 0.0, false,
+                    0.0, 0.0, false, 0.0, false,
+                    0, 0, 0, true));
         }
         return toReturn;
     }
@@ -349,7 +390,7 @@ public class VolumeScoreCalculator {
                     cbe.getDriverScore(), cbe.getCappedStatements(), cbe.getEffort(), cbe.getBucketBaseline(), cbe.isTest(),
                     cbe.getBlockRatioDeviationNcss(), cbe.getBlockRatioDeviationInvocations(), cbe.isBlockRatioOutlier(),
                     effortShare, globalCapDriver,
-                    cbe.getBodyStartLine(), cbe.getBodyEndLine(), cbe.getBodyCodeLines()));
+                    cbe.getBodyStartLine(), cbe.getBodyEndLine(), cbe.getBodyCodeLines(), cbe.isConfig()));
         }
         return toReturn;
     }
@@ -538,6 +579,7 @@ public class VolumeScoreCalculator {
         int bodyStartLine;
         int bodyEndLine;
         int bodyCodeLines;
+        boolean isConfig;
     }
 
     @Value

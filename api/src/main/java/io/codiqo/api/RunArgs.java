@@ -233,6 +233,8 @@ public class RunArgs {
     @Nullable
     private double testCodePenaltyWeight = 0.3;
     @Nullable
+    private double configFileScoreMultiplier = 0.3;
+    @Nullable
     private int scoreThresholdHuge = 150;
     @Nullable
     private int scoreThresholdLarge = 90;

@@ -10,12 +10,14 @@ import java.util.Set;
 import java.util.function.Predicate;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.StringUtils;
 
 import com.google.common.collect.Lists;
 
 import io.codiqo.api.diff.EffectiveLineParser;
+import io.codiqo.api.diff.IneffectiveLineProfile;
 import io.codiqo.api.diff.JavaInvocationCounter;
-import io.codiqo.api.diff.JavaLineFilters;
 import io.codiqo.api.diff.NestedBlockRanges;
 import io.codiqo.client.model.CodeUnitModel;
 import io.codiqo.client.model.CodeUnitModel.OperationEnum;
@@ -32,42 +34,43 @@ public class EffectiveChangePopulator implements SubmissionPopulator {
     public void accept(SubmissionContext ctx) {
         for (FileChangeModel file : ctx.getSubmissionModel().getFiles()) {
             String diff = file.getDiff();
-            if (Objects.isNull(diff) || diff.isEmpty()) {
+            if (StringUtils.isEmpty(diff)) {
                 continue;
             }
-            boolean requiresLineFiltering = LanguageCapabilities.requiresLineFiltering(file);
-            Predicate<String> addedIneffective = requiresLineFiltering ? JavaLineFilters.COMMENT : JavaLineFilters.NONE;
-            Predicate<String> deletedIneffective = requiresLineFiltering ? JavaLineFilters.COMMENT_OR_IMPORT : JavaLineFilters.NONE;
+            IneffectiveLineProfile profile = LanguageCapabilities.profileFor(file);
+            Predicate<String> addedIneffective = profile.commentFilter();
+            Predicate<String> deletedIneffective = profile.commentOrImportFilter();
             Set<Integer> effectiveAddedLines = EffectiveLineParser.parseEffectiveAddedLines(diff, addedIneffective);
-            Map<Integer, List<String>> effectiveDeletedContents = requiresLineFiltering ? EffectiveLineParser.parseEffectiveDeletedLineContents(diff, deletedIneffective) : Collections.emptyMap();
+            Map<Integer, List<String>> effectiveDeletedContents = profile != IneffectiveLineProfile.NONE
+                    ? EffectiveLineParser.parseEffectiveDeletedLineContents(diff, deletedIneffective)
+                    : Collections.emptyMap();
 
             List<int[]> blockRanges = collectBlockRanges(file.getCodeUnits());
 
             for (CodeUnitModel codeUnit : CollectionUtils.emptyIfNull(file.getCodeUnits())) {
-                if (codeUnit.getOperation() != OperationEnum.MODIFY) {
-                    continue;
-                }
-                LocationModel location = codeUnit.getLocation();
-                if (Objects.isNull(location) || Objects.isNull(location.getStartLine()) || Objects.isNull(location.getEndLine())) {
-                    continue;
-                }
-                int startLine = location.getStartLine();
-                int endLine = location.getEndLine();
-                if (startLine <= 0 || endLine < startLine) {
-                    continue;
-                }
+                if (codeUnit.getOperation() == OperationEnum.MODIFY) {
+                    LocationModel location = codeUnit.getLocation();
+                    if (Objects.isNull(location) || Objects.isNull(location.getStartLine()) || Objects.isNull(location.getEndLine())) {
+                        continue;
+                    }
+                    int startLine = location.getStartLine();
+                    int endLine = location.getEndLine();
+                    if (BooleanUtils.or(new boolean[] { startLine <= 0, endLine < startLine })) {
+                        continue;
+                    }
 
-                List<int[]> nestedRanges = NestedBlockRanges.nestedWithin(startLine, endLine, blockRanges);
-                codeUnit.setEffectiveLinesChanged(countInRange(effectiveAddedLines, startLine, endLine, nestedRanges));
+                    List<int[]> nestedRanges = NestedBlockRanges.nestedWithin(startLine, endLine, blockRanges);
+                    codeUnit.setEffectiveLinesChanged(countInRange(effectiveAddedLines, startLine, endLine, nestedRanges));
 
-                List<Integer> invocationLines = Collections.emptyList();
-                MetricsModel metrics = codeUnit.getMetrics();
-                if (Objects.nonNull(metrics) && CollectionUtils.isNotEmpty(metrics.getDirectInvocationLines())) {
-                    invocationLines = metrics.getDirectInvocationLines();
+                    List<Integer> invocationLines = Collections.emptyList();
+                    MetricsModel metrics = codeUnit.getMetrics();
+                    if (Objects.nonNull(metrics) && CollectionUtils.isNotEmpty(metrics.getDirectInvocationLines())) {
+                        invocationLines = metrics.getDirectInvocationLines();
+                    }
+                    int addedInvocations = countInvocationsInChangedRange(invocationLines, effectiveAddedLines, startLine, endLine, nestedRanges);
+                    int deletedInvocations = countDeletedInvocationsInRange(effectiveDeletedContents, startLine, endLine, nestedRanges);
+                    codeUnit.setEffectiveInvocationsChanged(addedInvocations + deletedInvocations);
                 }
-                int addedInvocations = countInvocationsInChangedRange(invocationLines, effectiveAddedLines, startLine, endLine, nestedRanges);
-                int deletedInvocations = countDeletedInvocationsInRange(effectiveDeletedContents, startLine, endLine, nestedRanges);
-                codeUnit.setEffectiveInvocationsChanged(addedInvocations + deletedInvocations);
             }
         }
     }
@@ -89,7 +92,7 @@ public class EffectiveChangePopulator implements SubmissionPopulator {
     private static int countInRange(Set<Integer> lines, int startLine, int endLine, List<int[]> nestedRanges) {
         int count = 0;
         for (int line = startLine; line <= endLine; line++) {
-            if (lines.contains(line) && !NestedBlockRanges.coversLine(nestedRanges, line)) {
+            if (BooleanUtils.and(new boolean[] { lines.contains(line), BooleanUtils.negate(NestedBlockRanges.coversLine(nestedRanges, line)) })) {
                 count++;
             }
         }
@@ -101,7 +104,7 @@ public class EffectiveChangePopulator implements SubmissionPopulator {
             if (Objects.isNull(line) || line < startLine || line > endLine) {
                 continue;
             }
-            if (changedLines.contains(line) && !NestedBlockRanges.coversLine(nestedRanges, line)) {
+            if (BooleanUtils.and(new boolean[] { changedLines.contains(line), BooleanUtils.negate(NestedBlockRanges.coversLine(nestedRanges, line)) })) {
                 count++;
             }
         }
@@ -111,7 +114,7 @@ public class EffectiveChangePopulator implements SubmissionPopulator {
         int count = 0;
         for (Entry<Integer, List<String>> entry : deletedContents.entrySet()) {
             int anchor = entry.getKey();
-            if (anchor < startLine || anchor > endLine + 1 || NestedBlockRanges.coversAnchor(nestedRanges, anchor)) {
+            if (BooleanUtils.or(new boolean[] { anchor < startLine, anchor > endLine + 1, NestedBlockRanges.coversAnchor(nestedRanges, anchor) })) {
                 continue;
             }
             for (String content : entry.getValue()) {

@@ -16,6 +16,7 @@ import org.junit.jupiter.params.provider.EnumSource;
 import com.google.common.collect.Lists;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.diff.IneffectiveLineProfile;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CloneLocationModel;
 import io.codiqo.client.model.CloneModel;
@@ -244,6 +245,83 @@ class SubmissionToRequestMapperTest {
         assertEquals(0, fileChange.getLinesAdded());
         assertEquals(1, fileChange.getLinesDeleted(),
                 "of 4 deleted lines (import, comment, blank, code), only 'int removed = 1;' counts");
+    }
+
+    @Test
+    void pomFileIsConfigEligibleWithXmlProfileAndCommentFiltering() {
+        AnalysisSubmissionModel submission = baseSubmission();
+        FileChangeModel file = submission.getFiles().get(0);
+        file.setPath("pom.xml");
+        file.setLanguage(null);
+        file.setCodeUnits(Lists.newArrayList());
+        file.setDiff(
+                """
+                    --- a/pom.xml
+                    +++ b/pom.xml
+                    @@ -1,3 +1,5 @@
+                     <project>
+                    -    <version>1.0.0</version>
+                    +    <version>1.1.0</version>
+                    +    <!-- bump for security patch -->
+                    +    <name>app</name>
+                     </project>
+                    """);
+
+        FileChange fileChange = mapper.apply(submission).getFileChanges().get(0);
+
+        assertTrue(fileChange.isConfig(), "pom.xml is line-count scored");
+        assertTrue(fileChange.isLinesJustificationRequired(), "pom.xml participates in diff classification");
+        assertEquals(IneffectiveLineProfile.XML, fileChange.getLineProfile());
+        assertEquals(2, fileChange.getLinesAdded(), "the <!-- --> comment line is filtered; version + name remain");
+        assertEquals(1, fileChange.getLinesDeleted());
+    }
+    @Test
+    void protoFileIsConfigEligibleWithCStyleProfileAndImportFiltering() {
+        AnalysisSubmissionModel submission = baseSubmission();
+        FileChangeModel file = submission.getFiles().get(0);
+        file.setPath("api/v1/user.proto");
+        file.setLanguage(null);
+        file.setCodeUnits(Lists.newArrayList());
+        file.setDiff(
+                """
+                    --- a/api/v1/user.proto
+                    +++ b/api/v1/user.proto
+                    @@ -1,2 +1,3 @@
+                     message User {
+                    -  import "old.proto";
+                    +  import "new.proto";
+                    +  string name = 2;
+                    """);
+
+        FileChange fileChange = mapper.apply(submission).getFileChanges().get(0);
+
+        assertTrue(fileChange.isConfig());
+        assertEquals(IneffectiveLineProfile.C_STYLE, fileChange.getLineProfile());
+        assertEquals(1, fileChange.getLinesAdded(), "the proto import is filtered like a Java import; the field line remains");
+        assertEquals(0, fileChange.getLinesDeleted(), "the deleted import is filtered");
+    }
+    @Test
+    void configOnlyCommitCountsTheConfigFileAsChanged() {
+        AnalysisSubmissionModel submission = baseSubmission();
+        FileChangeModel file = submission.getFiles().get(0);
+        file.setPath("pom.xml");
+        file.setLanguage(null);
+        file.setCodeUnits(Lists.newArrayList());
+        file.setDiff(
+                """
+                    --- a/pom.xml
+                    +++ b/pom.xml
+                    @@ -1,3 +1,3 @@
+                     <project>
+                    -    <version>1.0.0</version>
+                    +    <version>1.1.0</version>
+                     </project>
+                    """);
+
+        LlmScoringRequest request = mapper.apply(submission);
+
+        assertEquals(1, request.getChangeSummary().getTotalFilesChanged(),
+                "a pom-only commit is one changed file, not zero");
     }
 
     @Test
