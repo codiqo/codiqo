@@ -1,0 +1,9 @@
+[#-- Thymeleaf TEXT mode template for the validation retry feedback message. --]
+[#-- Rendered by ThymeleafPromptBuilder.buildValidationFeedback and appended as a fresh user message --]
+[#-- when the LLM's prior diff-classification response cited block ids or cosmetic line numbers that --]
+[#-- do not exist in the annotated diff. Variable `failures` is a non-empty List<FinalScoreCalculator.ValidationFailure>. --]
+Your previous diff classification was rejected by the server because it references annotations that do not exist in the diff. Re-emit the **entire response** (do not drop other fields), but fix the classification for these file(s) specifically. Copy block ids and line numbers from the `-N|B<n>|` / `+N|B<n>|` tags verbatim — do not count lines or derive anything from hunk headers.
+
+[# th:each="f : ${failures}"]
+- `[(${f.filePath})]`: [# th:if="${f.reason.name() == 'UNKNOWN_BLOCK'}"]`blockKinds` cites block id(s) [(${#strings.listJoin(f.offending, ', ')})] that do not exist in this file's diff. The valid block ids are: [(${#strings.listJoin(f.valid, ', ')})].[/][# th:if="${f.reason.name() == 'UNKNOWN_ADDED_LINE'}"]`cosmeticAdded` cites new-file line number(s) [(${#strings.listJoin(f.offending, ', ')})] that are not block-tagged `+` lines — they point at unchanged context, filtered lines, or do not exist. The valid added-side numbers (from `+N|B<n>|` tags) are: [(${#strings.listJoin(f.valid, ', ')})].[/][# th:if="${f.reason.name() == 'UNKNOWN_DELETED_LINE'}"]`cosmeticDeleted` cites old-file line number(s) [(${#strings.listJoin(f.offending, ', ')})] that are not block-tagged `-` lines — they point at unchanged context, filtered lines, or do not exist. The valid deleted-side numbers (from `-N|B<n>|` tags) are: [(${#strings.listJoin(f.valid, ', ')})].[/]
+[/]

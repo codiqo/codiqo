@@ -6,6 +6,8 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
+import java.security.KeyStore;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -21,6 +23,10 @@ import javax.annotation.PreDestroy;
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.inject.Singleton;
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManagerFactory;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.maven.artifact.repository.metadata.SnapshotVersion;
@@ -31,10 +37,12 @@ import org.eclipse.sisu.Priority;
 import org.zeroturnaround.exec.ProcessExecutor;
 import org.zeroturnaround.exec.ProcessResult;
 
-import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
+import com.google.api.client.googleapis.mtls.MtlsProvider;
+import com.google.api.client.googleapis.mtls.MtlsUtils;
 import com.google.api.client.http.HttpRequest;
 import com.google.api.client.http.HttpRequestInitializer;
 import com.google.api.client.http.HttpTransport;
+import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.artifactregistry.v1.ArtifactRegistry;
 import com.google.api.services.artifactregistry.v1.model.GoogleDevtoolsArtifactregistryV1File;
@@ -88,7 +96,13 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
         GsonFactory jsonFactory = GsonFactory.getDefaultInstance();
         GcloudAwareRequestInitializer httpRequestInitializer = new GcloudAwareRequestInitializer();
 
-        transport = GoogleNetHttpTransport.newTrustedTransport();
+        MtlsProvider mtlsProvider = MtlsUtils.getDefaultMtlsProvider();
+        NetHttpTransport.Builder transportBuilder = new NetHttpTransport.Builder();
+        if (mtlsProvider.useMtlsClientCertificate()) {
+            transportBuilder.setSslSocketFactory(mtlsSocketFactory(mtlsProvider));
+        }
+        transport = transportBuilder.build();
+
         artifactRegistry = new ArtifactRegistry.Builder(transport, jsonFactory, httpRequestInitializer).setApplicationName(APPLICATION_NAME).build();
     }
     GoogleArtifactRegistryConnector(ArtifactRegistry artifactRegistry) {
@@ -142,6 +156,18 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
                 .setPageSize(PAGE_SIZE)
                 .setPageToken(pageToken)
                 .execute();
+    }
+    private static SSLSocketFactory mtlsSocketFactory(MtlsProvider mtlsProvider) throws GeneralSecurityException, IOException {
+        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        tmf.init((KeyStore) null);
+
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(mtlsProvider.getKeyStore(), mtlsProvider.getKeyStorePassword().toCharArray());
+
+        SSLContext sslContext = SSLContext.getInstance("TLS");
+        sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
+
+        return sslContext.getSocketFactory();
     }
     private static String snapshotFolderResourcePrefix(GoogleArtifactRegistryLocation location, Artifact artifact) {
         return RESOURCE_JOINER.join(

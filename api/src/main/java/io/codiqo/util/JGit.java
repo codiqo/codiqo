@@ -11,6 +11,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.eclipse.jgit.api.Git;
@@ -24,6 +25,7 @@ import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
@@ -33,6 +35,9 @@ import lombok.experimental.UtilityClass;
 @UtilityClass
 public class JGit {
     private static final Pattern REVERT_PATTERN = Pattern.compile("This reverts commit ([a-f0-9]{40})\\.");
+    private static final Pattern AUTO_GENERATED_BRANCH_PATTERN = Pattern.compile("^[^/]+/[^/]+(?:-[^/]+){2,}-\\d{12,}$");
+    private static final Set<String> NOISY_BRANCH_EXACT = ImmutableSet.of(Constants.HEAD, "tmp", "tmp-skip");
+    private static final Set<String> NOISY_BRANCH_PREFIXES = ImmutableSet.of("bot/", "copilot/", "dependabot/", "renovate/");
 
     public static Repository openRepository(File baseDirectory) throws IOException {
         return new FileRepositoryBuilder()
@@ -150,17 +155,23 @@ public class JGit {
     private static String logicalBranchName(Ref ref) {
         String name = ref.getName();
         if (name.startsWith(Constants.R_HEADS)) {
-            return name.substring(Constants.R_HEADS.length());
+            return filterNoisyBranchName(name.substring(Constants.R_HEADS.length()));
         }
         if (name.startsWith(Constants.R_REMOTES)) {
             String remoteTracking = name.substring(Constants.R_REMOTES.length());
             int slash = remoteTracking.indexOf('/');
-            if (slash > 0) {
-                String shortName = remoteTracking.substring(slash + 1);
-                return Constants.HEAD.equals(shortName) ? null : shortName;
-            }
-            return remoteTracking;
+            String shortName = slash > 0 ? remoteTracking.substring(slash + 1) : remoteTracking;
+            return filterNoisyBranchName(shortName);
         }
-        return name;
+        return filterNoisyBranchName(name);
+    }
+    private static String filterNoisyBranchName(String shortName) {
+        return isNoisyBranchName(shortName) ? null : shortName;
+    }
+    private static boolean isNoisyBranchName(String shortName) {
+        return BooleanUtils.or(new boolean[]{
+                NOISY_BRANCH_EXACT.contains(shortName),
+                AUTO_GENERATED_BRANCH_PATTERN.matcher(shortName).matches(),
+                NOISY_BRANCH_PREFIXES.stream().anyMatch(shortName::startsWith)});
     }
 }

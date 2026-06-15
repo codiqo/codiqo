@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
@@ -52,6 +53,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class LlmScoringPopulator implements SubmissionPopulator {
     private final Log log;
+    private final ExecutorService executor;
 
     @Override
     public void accept(SubmissionContext ctx) {
@@ -59,7 +61,7 @@ public class LlmScoringPopulator implements SubmissionPopulator {
         AnalysisSubmissionModel submission = ctx.getSubmissionModel();
         StopWatch stopWatch = StopWatch.createStarted();
 
-        try (LlmScoringClient client = new LlmScoringClient(args, new MavenMessageReporter(log))) {
+        try (LlmScoringClient client = new LlmScoringClient(args, executor, new MavenMessageReporter(log))) {
             SubmissionToRequestMapper mapper = new SubmissionToRequestMapper(args);
             LlmScoringRequest request = mapper.apply(submission);
             PromptContext promptContext = buildPromptContext(submission, args);

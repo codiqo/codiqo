@@ -1,6 +1,7 @@
 package io.codiqo.llm;
 
 import java.math.BigDecimal;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
@@ -29,6 +30,7 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.EffectiveLineParser;
 import io.codiqo.api.diff.EffectiveLineParser.LineKind;
 import io.codiqo.api.diff.JavaLineFilters;
+import io.codiqo.api.diff.NestedBlockRanges;
 import io.codiqo.api.metrics.CodeLineCounter;
 import io.codiqo.api.metrics.DriverScaler;
 import io.codiqo.client.model.AnalysisSubmissionModel;
@@ -46,6 +48,8 @@ import io.codiqo.client.model.DuplicationReportModel;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.FullProjectCoverageModel;
 import io.codiqo.client.model.JavaInfoModel;
+import io.codiqo.client.model.LineCoverageModel;
+import io.codiqo.client.model.LocationModel;
 import io.codiqo.client.model.MetricsModel;
 import io.codiqo.client.model.SymbolKindModel;
 import io.codiqo.llm.lang.LanguageCapabilities;
@@ -67,6 +71,13 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     private static final String DEV_NULL = "/dev/null";
     private static final String IMPORT_LINE_PATTERN = "import ";
     private static final EnumSet<SymbolKindModel> METHOD_OR_CONSTRUCTOR = EnumSet.of(SymbolKindModel.METHOD, SymbolKindModel.CONSTRUCTOR);
+    private static final int MAX_UNCOVERED_CHANGED_LINES = 20;
+    private static final EnumSet<LineCoverageModel.StatusEnum> COVERED_LINE_STATUSES =
+            EnumSet.of(LineCoverageModel.StatusEnum.COVERED, LineCoverageModel.StatusEnum.FULLY_COVERED);
+    private static final EnumSet<LineCoverageModel.StatusEnum> PARTIAL_LINE_STATUSES =
+            EnumSet.of(LineCoverageModel.StatusEnum.PARTIAL, LineCoverageModel.StatusEnum.PARTIALLY_COVERED);
+    private static final EnumSet<LineCoverageModel.StatusEnum> MISSED_LINE_STATUSES =
+            EnumSet.of(LineCoverageModel.StatusEnum.MISSED, LineCoverageModel.StatusEnum.NOT_COVERED);
 
     private final RunArgs args;
 
@@ -75,18 +86,21 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         List<FileChangeModel> files = submission.getFiles();
         FileContext fileContext = buildFileContext(files);
         DriverScalers scalers = extractScalers(submission);
+        List<String> branches = submission.getCommit().getBranches();
+        List<CodeBlockChange> codeBlockChanges = mapCodeBlockChanges(files, fileContext);
+
         return LlmScoringRequest.builder()
                 .commitHash(submission.getCommit().getSha())
                 .commitMessage(submission.getCommit().getMessage())
                 .author(submission.getCommit().getAuthor())
                 .timestamp(submission.getCommit().getTimestamp().toString())
-                .branch(submission.getCommit().getBranches().get(0))
+                .branch(CollectionUtils.isNotEmpty(branches) ? branches.iterator().next() : null)
                 .revertCommit(Boolean.TRUE.equals(submission.getCommit().getIsRevert()))
                 .revertedCommitId(submission.getCommit().getRevertedCommitId())
                 .repository(submission.getProject().getCode())
-                .changeSummary(mapChangeSummary(files))
+                .changeSummary(mapChangeSummary(files, codeBlockChanges))
                 .fileChanges(mapFileChanges(files))
-                .codeBlockChanges(mapCodeBlockChanges(files, fileContext))
+                .codeBlockChanges(codeBlockChanges)
                 .coverage(mapCoverage(submission))
                 .complexity(mapComplexityMetrics(files))
                 .duplication(mapDuplication(submission.getDuplication(), fileContext))
@@ -387,7 +401,12 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                     if (Boolean.TRUE.equals(codeUnit.getIsTrivial())) {
                         continue;
                     }
-                    toReturn.add(mapCodeBlockChange(file, codeUnit, fileContext));
+                    CodeBlockChange block = mapCodeBlockChange(file, codeUnit, fileContext);
+                    // a modify block whose only changed lines belong to nested blocks carries no effective change of its own
+                    if (BooleanUtils.and(new boolean[] { block.isModify(), block.getTotalLinesChanged() == 0, block.getEffectiveInvocationsChanged() == 0 })) {
+                        continue;
+                    }
+                    toReturn.add(block);
                 }
             }
         }
@@ -438,24 +457,60 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
 
         int rangeStart = bodyStartLine > 0 ? bodyStartLine : startLine;
         int rangeEnd = bodyEndLine >= bodyStartLine && bodyEndLine > 0 ? bodyEndLine : endLine;
+        List<int[]> nestedRanges = NestedBlockRanges.nestedWithin(rangeStart, rangeEnd,
+                fileContext.blockRangesByFile().getOrDefault(filePath, Collections.emptyList()));
 
         int effectiveLinesChanged = Optional.ofNullable(codeUnit.getEffectiveLinesChanged()).orElse(0);
         if (effectiveLinesChanged <= 0) {
             Set<Integer> effectiveAdded = fileContext.effectiveAddedLinesByFile().get(filePath);
             if (Objects.nonNull(effectiveAdded) && rangeStart > 0 && rangeEnd >= rangeStart) {
-                effectiveLinesChanged = countEffectiveAddedInRange(effectiveAdded, rangeStart, rangeEnd);
+                effectiveLinesChanged = countEffectiveAddedInRange(effectiveAdded, rangeStart, rangeEnd, nestedRanges);
             }
         }
 
         int effectiveLinesDeleted = 0;
         Map<Integer, Integer> deletionAnchors = fileContext.effectiveDeletionAnchorsByFile().get(filePath);
         if (Objects.nonNull(deletionAnchors) && rangeStart > 0 && rangeEnd >= rangeStart) {
-            effectiveLinesDeleted = countEffectiveDeletionsInRange(deletionAnchors, rangeStart, rangeEnd);
+            effectiveLinesDeleted = countEffectiveDeletionsInRange(deletionAnchors, rangeStart, rangeEnd, nestedRanges);
         }
 
         builder.linesAdded(effectiveLinesChanged);
         builder.totalLinesChanged(effectiveLinesChanged + effectiveLinesDeleted);
         builder.effectiveInvocationsChanged(Optional.ofNullable(codeUnit.getEffectiveInvocationsChanged()).orElse(0));
+
+        mapChangedLineCoverage(codeUnit, filePath, fileContext, builder);
+    }
+    private static void mapChangedLineCoverage(CodeUnitModel codeUnit, String filePath,
+            FileContext fileContext, CodeBlockChange.CodeBlockChangeBuilder builder) {
+        CoverageModel coverage = codeUnit.getCoverage();
+        Set<Integer> changedLines = fileContext.addedLinesByFile().get(filePath);
+        boolean hasCoverageLines = Objects.nonNull(coverage) && CollectionUtils.isNotEmpty(coverage.getLines());
+        if (BooleanUtils.and(new boolean[] { hasCoverageLines, CollectionUtils.isNotEmpty(changedLines) })) {
+            int covered = 0;
+            int missed = 0;
+            int partial = 0;
+            List<Integer> uncoveredChangedLines = Lists.newArrayList();
+            for (LineCoverageModel line : coverage.getLines()) {
+                if (changedLines.contains(line.getLine())) {
+                    LineCoverageModel.StatusEnum status = line.getStatus();
+                    if (COVERED_LINE_STATUSES.contains(status)) {
+                        covered++;
+                    } else if (PARTIAL_LINE_STATUSES.contains(status)) {
+                        partial++;
+                    } else if (MISSED_LINE_STATUSES.contains(status)) {
+                        missed++;
+                        if (uncoveredChangedLines.size() < MAX_UNCOVERED_CHANGED_LINES) {
+                            uncoveredChangedLines.add(line.getLine());
+                        }
+                    }
+                }
+            }
+
+            builder.changedLinesCovered(covered);
+            builder.changedLinesMissed(missed);
+            builder.changedLinesPartiallyCovered(partial);
+            builder.uncoveredChangedLines(uncoveredChangedLines);
+        }
     }
     private static void mapCallers(List<CallerModel> callers, CodeBlockChange.CodeBlockChangeBuilder builder) {
         builder.callers(callers.stream().map(SubmissionToRequestMapper::mapCaller).collect(Collectors.toList()));
@@ -474,7 +529,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .callerBody(caller.getCallerBody())
                 .build();
     }
-    private static ChangeSummary mapChangeSummary(List<FileChangeModel> files) {
+    private static ChangeSummary mapChangeSummary(List<FileChangeModel> files, List<CodeBlockChange> codeBlocks) {
         int linesAdded = 0;
         int linesDeleted = 0;
         int testLinesAdded = 0;
@@ -519,19 +574,6 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                         continue;
                     }
                     fileHasCodeBlockChange = true;
-                    if (operation == OperationEnum.NEW) {
-                        codeBlocksAdded++;
-                        if (isTest) {
-                            testCodeBlocksAdded++;
-                        }
-                    } else if (operation == OperationEnum.MODIFY) {
-                        codeBlocksModified++;
-                        if (isTest) {
-                            testCodeBlocksModified++;
-                        }
-                    } else if (operation == OperationEnum.DELETE) {
-                        codeBlocksDeleted++;
-                    }
                 } else if (kind == SymbolKindModel.propertyClass) {
                     if (operation == OperationEnum.NEW) {
                         fileHasClassChange = true;
@@ -561,6 +603,24 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 }
             }
         }
+
+        // count from the filtered block list so the summary agrees with codeBlockChanges
+        for (CodeBlockChange block : codeBlocks) {
+            if (block.isNew()) {
+                codeBlocksAdded++;
+                if (block.isTest()) {
+                    testCodeBlocksAdded++;
+                }
+            } else if (block.isModify()) {
+                codeBlocksModified++;
+                if (block.isTest()) {
+                    testCodeBlocksModified++;
+                }
+            } else if (block.isDelete()) {
+                codeBlocksDeleted++;
+            }
+        }
+
         return ChangeSummary.builder()
                 .totalFilesChanged(filesWithChanges)
                 .totalLinesChanged(linesAdded + linesDeleted)
@@ -585,10 +645,16 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         Map<String, Set<Integer>> addedByFile = Maps.newHashMap();
         Map<String, Set<Integer>> effectiveAddedByFile = Maps.newHashMap();
         Map<String, Map<Integer, Integer>> effectiveDeletionAnchorsByFile = Maps.newHashMap();
+        Map<String, List<int[]>> blockRangesByFile = Maps.newHashMap();
         for (FileChangeModel file : files) {
             String path = file.getPath();
             if (Boolean.TRUE.equals(file.getIsTest())) {
                 testFiles.add(path);
+            }
+
+            List<int[]> blockRanges = collectBlockRanges(file.getCodeUnits());
+            if (CollectionUtils.isNotEmpty(blockRanges)) {
+                blockRangesByFile.put(path, blockRanges);
             }
             if (Objects.nonNull(file.getDiff())) {
                 boolean requiresLineFiltering = LanguageCapabilities.requiresLineFiltering(file);
@@ -611,22 +677,37 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 }
             }
         }
-        return new FileContext(testFiles, addedByFile, effectiveAddedByFile, effectiveDeletionAnchorsByFile);
+        return new FileContext(testFiles, addedByFile, effectiveAddedByFile, effectiveDeletionAnchorsByFile, blockRangesByFile);
     }
-    private static int countEffectiveAddedInRange(Set<Integer> effectiveAdded, int startLine, int endLine) {
+    private static List<int[]> collectBlockRanges(List<CodeUnitModel> codeUnits) {
+        List<int[]> toReturn = Lists.newArrayList();
+        for (CodeUnitModel codeUnit : CollectionUtils.emptyIfNull(codeUnits)) {
+            if (Boolean.TRUE.equals(codeUnit.getIsTrivial())) {
+                continue;
+            }
+            if (isMethodOrConstructor(codeUnit.getKind())) {
+                LocationModel location = codeUnit.getLocation();
+                if (Objects.nonNull(location) && Objects.nonNull(location.getStartLine()) && Objects.nonNull(location.getEndLine())) {
+                    toReturn.add(new int[] { location.getStartLine(), location.getEndLine() });
+                }
+            }
+        }
+        return toReturn;
+    }
+    private static int countEffectiveAddedInRange(Set<Integer> effectiveAdded, int startLine, int endLine, List<int[]> nestedRanges) {
         int count = 0;
         for (int line = startLine; line <= endLine; line++) {
-            if (effectiveAdded.contains(line)) {
+            if (effectiveAdded.contains(line) && !NestedBlockRanges.coversLine(nestedRanges, line)) {
                 count++;
             }
         }
         return count;
     }
-    private static int countEffectiveDeletionsInRange(Map<Integer, Integer> anchors, int startLine, int endLine) {
+    private static int countEffectiveDeletionsInRange(Map<Integer, Integer> anchors, int startLine, int endLine, List<int[]> nestedRanges) {
         int count = 0;
         for (Map.Entry<Integer, Integer> entry : anchors.entrySet()) {
             int anchor = entry.getKey();
-            if (anchor >= startLine && anchor <= endLine + 1) {
+            if (anchor >= startLine && anchor <= endLine + 1 && !NestedBlockRanges.coversAnchor(nestedRanges, anchor)) {
                 count += entry.getValue();
             }
         }
@@ -838,5 +919,6 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         private final Map<String, Set<Integer>> addedLinesByFile;
         private final Map<String, Set<Integer>> effectiveAddedLinesByFile;
         private final Map<String, Map<Integer, Integer>> effectiveDeletionAnchorsByFile;
+        private final Map<String, List<int[]>> blockRangesByFile;
     }
 }

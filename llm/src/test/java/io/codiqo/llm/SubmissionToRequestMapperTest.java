@@ -3,6 +3,7 @@ package io.codiqo.llm;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.OffsetDateTime;
@@ -29,6 +30,7 @@ import io.codiqo.client.model.DuplicationReportModel;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.FullProjectCoverageModel;
 import io.codiqo.client.model.JavaInfoModel;
+import io.codiqo.client.model.LineCoverageModel;
 import io.codiqo.client.model.LocationModel;
 import io.codiqo.client.model.MetricsModel;
 import io.codiqo.client.model.ProjectMetricsModel;
@@ -68,6 +70,16 @@ class SubmissionToRequestMapperTest {
         assertEquals("main", request.getBranch());
         assertEquals("proj-1", request.getRepository());
         assertFalse(request.isRevertCommit());
+    }
+
+    @Test
+    void emptyBranchesListMapsToNullBranch() {
+        AnalysisSubmissionModel submission = baseSubmission();
+        submission.getCommit().setBranches(Lists.newArrayList());
+
+        LlmScoringRequest request = mapper.apply(submission);
+
+        assertNull(request.getBranch(), "commit reachable only from noisy branches → branch is null, not IOOBE");
     }
 
     @Test
@@ -343,6 +355,44 @@ class SubmissionToRequestMapperTest {
     }
 
     @Test
+    void changedLineCoverageCountsOnlyChangedLinesForModify() {
+        AnalysisSubmissionModel submission = baseSubmission();
+        FileChangeModel file = submission.getFiles().get(0);
+        file.setDiff(
+                """
+                    --- a/Foo.java
+                    +++ b/Foo.java
+                    @@ -1,3 +1,6 @@
+                     package com.example;
+                     class Foo {
+                    +  int a = compute();
+                    +  int b = compute();
+                    +  int c = compute();
+                     }
+                    """);
+        CodeUnitModel method = file.getCodeUnits().get(0);
+        method.setOperation(CodeUnitModel.OperationEnum.MODIFY);
+        method.setLocation(location(2, 6));
+
+        CoverageModel coverage = new CoverageModel();
+        coverage.setLines(Lists.newArrayList(
+                lineCoverage(3, LineCoverageModel.StatusEnum.COVERED),
+                lineCoverage(4, LineCoverageModel.StatusEnum.MISSED),
+                lineCoverage(5, LineCoverageModel.StatusEnum.PARTIAL),
+                lineCoverage(99, LineCoverageModel.StatusEnum.COVERED)));
+        method.setCoverage(coverage);
+
+        LlmScoringRequest request = mapper.apply(submission);
+
+        var block = request.getCodeBlockChanges().get(0);
+        assertEquals(1, block.getChangedLinesCovered());
+        assertEquals(1, block.getChangedLinesMissed());
+        assertEquals(1, block.getChangedLinesPartiallyCovered());
+        assertEquals(Lists.newArrayList(4), block.getUncoveredChangedLines(),
+                "only the missed changed line is listed; line 99 sits outside the diff and is ignored");
+    }
+
+    @Test
     void highComplexityNewMethodIncrementsNewHighComplexityCount() {
         AnalysisSubmissionModel submission = baseSubmission();
         CodeUnitModel method = submission.getFiles().get(0).getCodeUnits().get(0);
@@ -410,6 +460,35 @@ class SubmissionToRequestMapperTest {
     }
 
     @Test
+    void enclosingBlockWhoseOnlyChangesBelongToNestedBlockIsDropped() {
+        CodeUnitModel outer = modifyMethod("outer", "com.example.Foo.outer()", 33, 53);
+        CodeUnitModel inner = modifyMethod("createInstance", "com.example.Foo$1.createInstance()", 38, 43);
+
+        AnalysisSubmissionModel submission = baseSubmission();
+        FileChangeModel file = submission.getFiles().get(0);
+        file.setDiff(
+                """
+                    --- a/Foo.java
+                    +++ b/Foo.java
+                    @@ -38,2 +38,2 @@
+                     protected Object createInstance() {
+                    -    container.start();
+                    +    container.restart();
+                    """);
+        file.setCodeUnits(Lists.newArrayList(outer, inner));
+
+        LlmScoringRequest request = mapper.apply(submission);
+
+        assertEquals(1, request.getCodeBlockChanges().size(),
+                "the outer method's only changed line lives in the nested block — outer must not survive as a modified block");
+        assertEquals("createInstance", request.getCodeBlockChanges().get(0).getName());
+        assertEquals(2, request.getCodeBlockChanges().get(0).getTotalLinesChanged(),
+                "inner block owns the added and the deleted line exactly once");
+        assertEquals(1, request.getChangeSummary().getCodeBlocksModified(),
+                "change summary must agree with the filtered block list");
+    }
+
+    @Test
     void filesWithOnlyImportAndBlankAdditionsProduceNoCodeBlockChanges() {
         AnalysisSubmissionModel submission = baseSubmission();
         submission.getFiles().get(0).setDiff(
@@ -470,6 +549,19 @@ class SubmissionToRequestMapperTest {
         return submission;
     }
 
+    private static CodeUnitModel modifyMethod(String name, String signature, int startLine, int endLine) {
+        CodeUnitModel toReturn = new CodeUnitModel();
+        toReturn.setName(name);
+        toReturn.setSignature(signature);
+        toReturn.setKind(SymbolKindModel.METHOD);
+        toReturn.setOperation(CodeUnitModel.OperationEnum.MODIFY);
+        toReturn.setLocation(location(startLine, endLine));
+        toReturn.setMetrics(baseMetrics());
+        toReturn.setCallers(Lists.newArrayList());
+        toReturn.setDiagnostics(Lists.newArrayList());
+        return toReturn;
+    }
+
     private static MetricsModel baseMetrics() {
         MetricsModel metrics = new MetricsModel();
         metrics.setCyclomaticComplexity(3);
@@ -490,6 +582,13 @@ class SubmissionToRequestMapperTest {
         loc.setStartLine(startLine);
         loc.setEndLine(endLine);
         return loc;
+    }
+
+    private static LineCoverageModel lineCoverage(int line, LineCoverageModel.StatusEnum status) {
+        LineCoverageModel toReturn = new LineCoverageModel();
+        toReturn.setLine(line);
+        toReturn.setStatus(status);
+        return toReturn;
     }
 
     private static DriverScalerModel driverScaler(int population, int min, int max) {

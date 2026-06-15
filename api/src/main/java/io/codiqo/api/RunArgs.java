@@ -112,13 +112,13 @@ public class RunArgs {
     @Nullable
     private Duration connectTimeout = Duration.ofSeconds(30);
     @Nullable
-    private Duration readTimeout = Duration.ofMinutes(5);
+    private Duration readTimeout = Duration.ofMinutes(1);
     @Nullable
-    private int maxRequests = Short.MAX_VALUE;
+    private int maxRequests = 256;
     @Nullable
-    private int maxRequestsPerHost = Byte.MAX_VALUE;
+    private int maxRequestsPerHost = 128;
     @Nullable
-    private int cpdMinimumTileSize = Byte.MAX_VALUE / 2;
+    private int cpdMinimumTileSize = 64;
     @Nullable
     private int diffContextLines = 10;
     /**
@@ -153,9 +153,13 @@ public class RunArgs {
     @Nullable
     private Short llmMaxRetries = 3;
     @Nullable
+    private Short llmValidationMaxRetries = 1;
+    @Nullable
     private Integer llmNumCtx;
     @Nullable
     private boolean llmEnableWebSearchTool = false;
+    @Nullable
+    private Duration llmReadTimeout = Duration.ofMinutes(10);
     @Nullable
     private transient File outputDirectory;
     @Nullable
@@ -351,8 +355,6 @@ public class RunArgs {
     @Nullable
     private int npathComplexThreshold = 200;
     @Nullable
-    private boolean hideSourceCode = false;
-    @Nullable
     private boolean jdtUseSharedIndex = true;
     @Nullable
     private boolean jdtIncludeDecompiledSources = false;
@@ -379,13 +381,14 @@ public class RunArgs {
     public void validate() {
         this.statsQuantile = Math.max(0.85, this.statsQuantile);
         this.llmMaxRetries = (short) Math.max(1, this.llmMaxRetries);
+        this.llmValidationMaxRetries = (short) Math.max(0, this.llmValidationMaxRetries);
     }
     public static Options options() {
         Options toReturn = new Options();
         Field[] fields = RunArgs.class.getDeclaredFields();
         for (Field field : fields) {
             field.setAccessible(true);
-            if (Modifier.isTransient(field.getModifiers())) {
+            if (Modifier.isTransient(field.getModifiers()) || Modifier.isStatic(field.getModifiers())) {
                 continue;
             }
             String camel = field.getName();
@@ -406,7 +409,7 @@ public class RunArgs {
         Field[] fields = RunArgs.class.getDeclaredFields();
         for (Field field : fields) {
             field.setAccessible(true);
-            if (Modifier.isTransient(field.getModifiers())) {
+            if (Modifier.isTransient(field.getModifiers()) || Modifier.isStatic(field.getModifiers())) {
                 continue;
             }
             String camel = field.getName();
@@ -419,10 +422,12 @@ public class RunArgs {
                 String value = cmd.getOptionValue(kebab);
                 if (field.getType().equals(String.class)) {
                     field.set(toReturn, value);
-                } else if (field.getType().equals(int.class)) {
+                } else if (field.getType().equals(int.class) || field.getType().equals(Integer.class)) {
                     field.set(toReturn, Integer.parseInt(value));
-                } else if (field.getType().equals(double.class)) {
+                } else if (field.getType().equals(double.class) || field.getType().equals(Double.class)) {
                     field.set(toReturn, Double.parseDouble(value));
+                } else if (field.getType().equals(Short.class)) {
+                    field.set(toReturn, Short.parseShort(value));
                 } else if (field.getType().equals(Duration.class)) {
                     field.set(toReturn, Duration.parse(value));
                 } else if (field.getType().equals(File.class)) {

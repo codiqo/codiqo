@@ -15,6 +15,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.regex.Pattern;
@@ -88,6 +89,7 @@ import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.core.ClassGraphWrapper;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
+import io.codiqo.llm.client.DaemonExecutors;
 import io.codiqo.maven.logging.MavenLogFactory;
 import io.codiqo.maven.populator.CommitModelPopulator;
 import io.codiqo.maven.populator.DuplicationReportPopulator;
@@ -112,12 +114,13 @@ import lombok.RequiredArgsConstructor;
 abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Artifact, Collection<File>> {
     private static final Set<String> NON_CODE_PACKAGINGS = Set.of("pom", "bom");
     private static final String JAR_EXTENSION = "jar";
+
     private static final String LOMBOK_GROUP_ID = "org.projectlombok";
     private static final String LOMBOK_ARTIFACT_ID = "lombok";
+
     private static final String CODIQO_GROUP_ID = "io.codiqo";
     private static final String TIME_MACHINE_ARTIFACT_ID = "codiqo-maven-time-machine";
-    // Jar name prefixes excluded from maven.ext.class.path. slf4j-api: Maven Core already provides 1.7.x,
-    // and a transitive 2.x copy on the extension classpath silences every log call in the extension.
+
     private static final Set<String> TIME_MACHINE_EXTENSION_JAR_BLACKLIST = Set.of("slf4j-api-");
 
     private Collection<File> timeMachineExtensionJars;
@@ -164,7 +167,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.connectTimeoutSeconds", defaultValue = "30")
     protected long connectTimeoutSeconds;
 
-    @Parameter(property = "codiqo.readTimeoutSeconds", defaultValue = "300")
+    @Parameter(property = "codiqo.readTimeoutSeconds", defaultValue = "60")
     protected long readTimeoutSeconds;
 
     @Parameter(property = "codiqo.maxRequests", defaultValue = "256")
@@ -206,13 +209,13 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.skipOnBuildFailure", defaultValue = "true")
     protected boolean skipOnBuildFailure;
 
-    @Parameter(property = "codiqo.pmdMinPriority", defaultValue = "medium_high")
+    @Parameter(property = "codiqo.pmdMinPriority", defaultValue = "high")
     protected String pmdMinPriority;
 
     @Parameter(property = "codiqo.pmdRules")
     protected String pmdRules;
 
-    @Parameter(property = "codiqo.spotbugsPriorityThreshold", defaultValue = "2")
+    @Parameter(property = "codiqo.spotbugsPriorityThreshold", defaultValue = "1")
     protected int spotbugsPriorityThreshold;
 
     @Parameter(property = "codiqo.spotbugsOmitVisitors")
@@ -239,6 +242,12 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.llm.enableWebSearchTool", defaultValue = "false")
     protected boolean llmEnableWebSearchTool;
 
+    @Parameter(property = "codiqo.llm.validationMaxRetries", defaultValue = "1")
+    protected short llmValidationMaxRetries;
+
+    @Parameter(property = "codiqo.llm.readTimeoutSeconds", defaultValue = "600")
+    protected long llmReadTimeoutSeconds;
+
     @Parameter(property = "codiqo.outputDirectory")
     protected File outputDirectory;
 
@@ -247,9 +256,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
     @Parameter(property = "codiqo.includeAuthorEmails")
     protected String includeAuthorEmails;
-
-    @Parameter(property = "codiqo.hideSourceCode", defaultValue = "false")
-    protected boolean hideSourceCode;
 
     @Parameter(property = "codiqo.jdtUseSharedIndex", defaultValue = "true")
     protected boolean jdtUseSharedIndex;
@@ -330,10 +336,11 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setLlmMaxTokens(llmMaxTokens);
         args.setLlmNumCtx(llmNumCtx);
         args.setLlmEnableWebSearchTool(llmEnableWebSearchTool);
+        args.setLlmValidationMaxRetries(llmValidationMaxRetries);
+        args.setLlmReadTimeout(Duration.ofSeconds(llmReadTimeoutSeconds));
         Optional.ofNullable(outputDirectory).ifPresent(args::setOutputDirectory);
         Optional.ofNullable(includeBranches).ifPresent(args::setIncludeBranches);
         Optional.ofNullable(includeAuthorEmails).ifPresent(args::setIncludeAuthorEmails);
-        args.setHideSourceCode(hideSourceCode);
         args.setJdtUseSharedIndex(jdtUseSharedIndex);
         args.setJdtIncludeDecompiledSources(jdtIncludeDecompiledSources);
         args.setJdtDebugPort(jdtDebugPort);
@@ -517,9 +524,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     "-Dmdep.analyze.skip=true",
                     "-Dsurefire.timeout=" + surefireTimeout,
                     "-Dsurefire.forkedProcessExitTimeoutInSeconds=" + surefireExitTimeout));
-
-            request.setTimeoutInSeconds((int) args.getBuildTimeout().getSeconds());
         }
+        request.setTimeoutInSeconds((int) args.getBuildTimeout().getSeconds());
         request.setBatchMode(true);
         request.setThreads(String.valueOf(mavenSession.getRequest().getDegreeOfConcurrency()));
         if (Objects.nonNull(javaHome)) {
@@ -742,7 +748,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         return Optional.empty();
     }
     protected void doLlmScoring(SubmissionContext ctx) throws Exception {
-        new LlmScoringPopulator(getLog()).accept(ctx);
+        try (ExecutorService executor = DaemonExecutors.newCachedDaemonPool("codiqo-openai")) {
+            new LlmScoringPopulator(getLog(), executor).accept(ctx);
+        }
     }
     protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category) throws Exception {
         getLog().debug(String.format("no exclusion handler, commit %s would be excluded with reason: %s (category: %s)", commitSha, reason, category));

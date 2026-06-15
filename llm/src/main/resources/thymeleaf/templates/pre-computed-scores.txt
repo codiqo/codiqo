@@ -65,4 +65,5 @@ Base Effort (= Volume Score; LLM will multiply by its chosen complexityMultiplie
 1. Use the pre-computed CPD and static analysis impacts (above)
 2. Assess coverage impact based on coverage data
 3. Assess architecture penalty/quality factor based on diff analysis
-4. Compute: `Final Score = Base Effort × Quality Multiplier + Architecture Bonus`
+
+Do NOT compute the final score — the server computes it after your diff classification re-scales the volume. The Base Effort above is pre-scaling; any score derived from it would be wrong.

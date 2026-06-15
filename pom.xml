@@ -49,45 +49,45 @@
         <!-- -->
         <!-- CORE -->
         <!-- -->
-        <slf4j.version>2.0.7</slf4j.version>
-        <logback.version>1.5.32</logback.version>
-        <asm.version>9.10</asm.version>
+        <slf4j.version>2.0.18</slf4j.version>
+        <logback.version>1.5.34</logback.version>
+        <asm.version>9.10.1</asm.version>
         <javax.inject.version>1</javax.inject.version>
         <jakarta.annotation-api.version>3.0.0</jakarta.annotation-api.version>
         <jakarta.validation-api.version>3.1.1</jakarta.validation-api.version>
-        <jakarta.ws.rs-api.version>3.1.0</jakarta.ws.rs-api.version>
+        <jakarta.ws.rs-api.version>4.0.0</jakarta.ws.rs-api.version>
         <lombok.version>1.18.46</lombok.version>
         <gson.version>2.14.0</gson.version>
-        <google-auth.version>1.47.0</google-auth.version>
+        <google-auth.version>1.48.0</google-auth.version>
         <google-api-client.version>2.9.0</google-api-client.version>
         <google-http-client.version>2.1.0</google-http-client.version>
-        <google-api-services-artifactregistry.version>v1-rev20260320-2.0.0</google-api-services-artifactregistry.version>
+        <google-api-services-artifactregistry.version>v1-rev20260522-2.0.0</google-api-services-artifactregistry.version>
         <artifactregistry-auth-common.version>2.2.5</artifactregistry-auth-common.version>
-        <jackson.version>2.21.3</jackson.version>
+        <jackson.version>2.22.0</jackson.version>
         <snakeyaml.version>2.6</snakeyaml.version>
         <okio.version>3.17.0</okio.version>
-        <okhttp.version>5.3.2</okhttp.version>
+        <okhttp.version>5.4.0</okhttp.version>
         <guava.version>33.6.0-jre</guava.version>
-        <vavr.version>0.10.7</vavr.version>
-        <jgit.version>7.6.0.202603022253-r</jgit.version>
+        <vavr.version>1.0.0</vavr.version>
+        <jgit.version>7.7.0.202606012155-r</jgit.version>
         <listenablefuture.version>9999.0-empty-to-avoid-conflict-with-guava</listenablefuture.version>
-        <reactor.version>2025.0.5</reactor.version>
+        <reactor.version>2025.0.6</reactor.version>
         <ztzip.version>1.17</ztzip.version>
         <ztkill.version>1.11</ztkill.version>
         <ztexec.version>1.12</ztexec.version>
         <jarchivelib.version>1.2.0</jarchivelib.version>
-        <ecj.version>3.45.0</ecj.version>
+        <ecj.version>3.46.0</ecj.version>
         <lsp4j.version>1.0.0</lsp4j.version>
-        <openrewrite.version>8.82.1</openrewrite.version>
-        <openrewrite.recipe.version>2.34.1</openrewrite.recipe.version>
-        <pmd.version>7.24.0</pmd.version>
-        <spotbugs.version>4.9.8</spotbugs.version>
+        <openrewrite.version>8.84.9</openrewrite.version>
+        <openrewrite.recipe.version>2.36.0</openrewrite.recipe.version>
+        <pmd.version>7.25.0</pmd.version>
+        <spotbugs.version>4.10.2</spotbugs.version>
         <findbugs.sec.version>1.14.0</findbugs.sec.version>
         <findbugs.contrib.version>7.7.4</findbugs.contrib.version>
-        <jacoco.version>0.8.14</jacoco.version>
+        <jacoco.version>0.8.15</jacoco.version>
         <classgraph.version>4.8.184</classgraph.version>
-        <oshi.version>7.1.0</oshi.version>
-        <openapi.version>4.36.0</openapi.version>
+        <oshi.version>7.3.1</oshi.version>
+        <openapi.version>4.39.1</openapi.version>
         <jtokkit.version>1.1.0</jtokkit.version>
         <thymeleaf.version>3.1.5.RELEASE</thymeleaf.version>
         <commons-lang3.version>3.20.0</commons-lang3.version>
@@ -103,7 +103,7 @@
         <antlr4.version>4.13.2</antlr4.version>
         <aether.version>2.0.18</aether.version>
         <maven.plugin-annotations.version>3.15.2</maven.plugin-annotations.version>
-        <maven.version>3.9.15</maven.version>
+        <maven.version>3.9.16</maven.version>
         <maven.invoker.version>3.3.0</maven.invoker.version>
         <scala.binary.version>2.13</scala.binary.version>
         <scala.version>${scala.binary.version}.18</scala.version>
@@ -111,7 +111,7 @@
         <!-- TESTING -->
         <!-- -->
         <surefire.tree-report.version>1.5.1</surefire.tree-report.version>
-        <junit.version>5.14.4</junit.version>
+        <junit.version>6.1.0</junit.version>
         <mockito.version>5.23.0</mockito.version>
         <testcontainers.version>2.0.5</testcontainers.version>
         <!-- -->
@@ -122,9 +122,9 @@
         <version.source.plugin>3.4.0</version.source.plugin>
         <version.clean.plugin>3.5.0</version.clean.plugin>
         <version.resources.plugin>3.5.0</version.resources.plugin>
-        <version.surefire.plugin>3.5.5</version.surefire.plugin>
+        <version.surefire.plugin>3.5.6</version.surefire.plugin>
         <version.jar.plugin>3.5.0</version.jar.plugin>
-        <version.dependency.plugin>3.10.0</version.dependency.plugin>
+        <version.dependency.plugin>3.11.0</version.dependency.plugin>
         <version.versions.plugin>2.21.0</version.versions.plugin>
         <version.install.plugin>3.1.4</version.install.plugin>
         <version.javadoc.plugin>3.12.0</version.javadoc.plugin>
@@ -134,7 +134,7 @@
         <version.gpg.plugin>3.2.8</version.gpg.plugin>
         <version.license.plugin>2.7.1</version.license.plugin>
         <version.pmd.plugin>3.28.0</version.pmd.plugin>
-        <version.openapi.plugin>7.22.0</version.openapi.plugin>
+        <version.openapi.plugin>7.23.0</version.openapi.plugin>
         <version.buildhelper.plugin>3.6.1</version.buildhelper.plugin>
         <version.os.plugin>1.7.1</version.os.plugin>
         <version.plugin.plugin>3.15.2</version.plugin.plugin>
@@ -1097,7 +1097,7 @@
                 <plugin>
                     <groupId>com.github.spotbugs</groupId>
                     <artifactId>spotbugs-maven-plugin</artifactId>
-                    <version>${spotbugs.version}.2</version>
+                    <version>${spotbugs.version}.0</version>
                     <dependencies>
                         <dependency>
                             <groupId>com.github.spotbugs</groupId>

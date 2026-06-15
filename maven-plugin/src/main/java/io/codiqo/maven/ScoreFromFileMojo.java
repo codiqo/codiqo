@@ -10,6 +10,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.Collections;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
@@ -39,6 +40,7 @@ import io.codiqo.llm.PromptBuilder.PromptContext;
 import io.codiqo.llm.ReportBuilder.ReportContext;
 import io.codiqo.llm.SubmissionToRequestMapper;
 import io.codiqo.llm.VolumeScoreCalculator;
+import io.codiqo.llm.client.DaemonExecutors;
 import io.codiqo.llm.client.LlmScoringClient;
 import io.codiqo.llm.client.ScoringClient;
 import io.codiqo.llm.client.ScoringClient.ScoringResult;
@@ -127,25 +129,27 @@ public class ScoreFromFileMojo extends AbstractMojo {
 
             StopWatch stopWatch = StopWatch.createStarted();
             ScoringResult result;
-            try (LlmScoringClient client = new LlmScoringClient(args, new MavenMessageReporter(getLog()))) {
-                ScoringClient.Params params = ScoringClient.Params.builder()
-                        .request(request)
-                        .context(promptContext)
-                        .handler(new ScoringClient.StreamingHandler() {
-                            @Override
-                            public void onContent(String delta) {
-                                if (Objects.nonNull(delta)) {
-                                    if (delta.length() > 0) {
-                                        getLog().info("LLM responding... (" + delta.length() + " chars)");
+            try (ExecutorService executor = DaemonExecutors.newCachedDaemonPool("codiqo-openai")) {
+                try (LlmScoringClient client = new LlmScoringClient(args, executor, new MavenMessageReporter(getLog()))) {
+                    ScoringClient.Params params = ScoringClient.Params.builder()
+                            .request(request)
+                            .context(promptContext)
+                            .handler(new ScoringClient.StreamingHandler() {
+                                @Override
+                                public void onContent(String delta) {
+                                    if (Objects.nonNull(delta)) {
+                                        if (delta.length() > 0) {
+                                            getLog().info("LLM responding... (" + delta.length() + " chars)");
+                                        }
                                     }
                                 }
-                            }
-                            @Override
-                            public void onToolCall(String toolName) {
-                                getLog().info("tool call: " + toolName);
-                            }
-                        }).build();
-                result = client.score(params);
+                                @Override
+                                public void onToolCall(String toolName) {
+                                    getLog().info("tool call: " + toolName);
+                                }
+                            }).build();
+                    result = client.score(params);
+                }
             }
             stopWatch.stop();
 

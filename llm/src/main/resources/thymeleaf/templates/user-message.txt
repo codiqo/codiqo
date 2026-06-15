@@ -35,18 +35,18 @@
 
 ## DIFF CLASSIFICATION REQUIRED
 
-This commit has [(${request.changeSummary.linesAdded})] added line(s) and [(${request.changeSummary.linesDeleted})] deleted line(s). Git reports an in-place edit as 1 deletion + 1 addition (double counting), and pure-addition cosmetic content (new javadoc, log statements, formatting) inflates volume even when there are no deletions. Per STEP 1a in the system prompt, you MUST populate `effortBreakdown.diffClassification.perFile[*]` with the `added` / `deleted` line-number groups, each containing three arrays (`cosmetic`, `inPlaceModify`, `trueDeleteAdd`). Use new-file line numbers in `added.*` and old-file line numbers in `deleted.*`. Every changed line goes in exactly one of the three arrays on its side.
+This commit has [(${request.changeSummary.linesAdded})] added line(s) and [(${request.changeSummary.linesDeleted})] deleted line(s). The server has already filtered out blank / import / comment-only lines, grouped the remaining effective lines into change blocks, and will pair each block mechanically (`min(D, A)` pairs in diff order; the excess becomes pure additions / deletions). Per STEP 1a in the system prompt, you provide ONLY the semantic labels: per-block `blockKinds` (`"inPlace"` vs `"trueModify"`) and the `cosmeticAdded` / `cosmeticDeleted` exception lists.
 
-```
-len(added.cosmetic)   + len(added.inPlaceModify)   + len(added.trueDeleteAdd)   == linesAdded   (per file)
-len(deleted.cosmetic) + len(deleted.inPlaceModify) + len(deleted.trueDeleteAdd) == linesDeleted (per file)
-len(added.inPlaceModify) == len(deleted.inPlaceModify)
-no line number repeats across the three arrays on the same side
-```
+Every effective `-` / `+` line in `fileChanges[*].diff` is annotated `-<old-file line>|B<n>|content` / `+<new-file line>|B<n>|content` — its authoritative line number and change-block id. **Copy block ids and line numbers from these tags exactly** — never count lines or derive anything from hunk headers. A `±` line without a `B<n>` tag is already excluded; unchanged context lines carry no annotation. The server rejects any cited block id or cosmetic line number that does not exist as a tag in that file's diff.
 
-`cosmetic` covers BOTH paired delete/add cosmetic edits AND pure-addition (or pure-deletion) cosmetic content. Be conservative — when uncertain, place the line in `trueDeleteAdd`. Leave the per-file aggregate counters and top-level totals at `0`; the server derives them from your line-number arrays. The server uses these arrays to deterministically scale the volume score down; it will NOT overwrite your `totalVolumeScore`.
+### Eligible files (only these may appear in `perFile`)
 
-**SCOPE — eligibility filter.** Classify ONLY files in `fileChanges` whose `linesJustificationRequired` flag is `true`. Files where it is `false` (POMs, build descriptors, YAML/JSON/properties, generated artefacts, other config) are EXCLUDED — do NOT include them in `perFile`. The server's per-file invariant is checked against the eligible-file subset only.
+| File | linesAdded | linesDeleted |
+|------|-----------:|-------------:|
+[# th:each="fc : ${request.fileChanges}"][# th:if="${fc.linesJustificationRequired}"]| [(${fc.path})] | [(${fc.linesAdded})] | [(${fc.linesDeleted})] |
+[/][/]
+
+Counts are informational (effective lines after server-side filtering). Files in `fileChanges` with `linesJustificationRequired: false` (POMs, build descriptors, YAML/JSON/properties, generated artefacts, other config) MUST NOT appear in `perFile`. Do NOT emit `inPlaceModifyPairs` / `trueModifyPairs` / `pureAdd` / `pureDelete` and leave the counter fields at `0` — the server derives all of them.
 
 [/]
 ---

@@ -202,6 +202,18 @@ public class LlmScoringRequest {
         @Builder.Default
         private List<DiagnosticInfo> diagnostics = Lists.newArrayList();
 
+        /**
+         * For MODIFY: coverage of the lines this block changed — post-change JaCoCo per-line status
+         * intersected with the diff's added lines. Lets the LLM estimate whether the change improved
+         * coverage of the touched code. All zero / empty for NEW and DELETE.
+         */
+        private int changedLinesCovered;
+        private int changedLinesMissed;
+        private int changedLinesPartiallyCovered;
+
+        @Builder.Default
+        private List<Integer> uncoveredChangedLines = Lists.newArrayList();
+
         public boolean isNew() {
             return operation == Operation.NEW;
         }

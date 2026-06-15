@@ -2,9 +2,16 @@ package io.codiqo.llm.client;
 
 import java.io.File;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
@@ -64,20 +71,30 @@ public class LlmScoringClient implements ScoringClient {
     private final Integer maxTokens;
     private final Integer numCtx;
     private final int maxRetries;
+    private final int validationMaxRetries;
     private final boolean enableWebSearch;
 
-    public LlmScoringClient(RunArgs args, Log log) {
+    public LlmScoringClient(RunArgs args, ExecutorService executor, Log log) {
+        this(args, executor, log, Collections.emptyMap());
+    }
+    public LlmScoringClient(RunArgs args, ExecutorService executor, Log log, Map<String, String> additionalHeaders) {
         this.log = Objects.requireNonNull(log);
 
-        log.info("configuring LLM client with timeout " + args.getReadTimeout());
+        log.info("configuring LLM client with timeout " + args.getLlmReadTimeout());
+
         OpenAIOkHttpClient.Builder builder = OpenAIOkHttpClient.builder();
-        builder.timeout(args.getReadTimeout());
+        builder.timeout(args.getLlmReadTimeout());
+        builder.dispatcherExecutorService(executor);
+        builder.streamHandlerExecutor(executor);
 
         if (StringUtils.isNotEmpty(args.getLlmApiKey())) {
             builder = builder.apiKey(args.getLlmApiKey());
         }
         if (StringUtils.isNotEmpty(args.getLlmBaseUrl())) {
             builder = builder.baseUrl(args.getLlmBaseUrl());
+        }
+        for (Map.Entry<String, String> header : additionalHeaders.entrySet()) {
+            builder.putHeader(header.getKey(), header.getValue());
         }
         this.client = builder.build();
         this.wrapper = new OpenAIClientWrapper(client);
@@ -89,10 +106,11 @@ public class LlmScoringClient implements ScoringClient {
         this.maxTokens = args.getLlmMaxTokens();
         this.numCtx = args.getLlmNumCtx();
         this.maxRetries = args.getLlmMaxRetries();
+        this.validationMaxRetries = Optional.ofNullable(args.getLlmValidationMaxRetries()).map(Short::intValue).orElse(0);
         this.enableWebSearch = args.isLlmEnableWebSearchTool();
-        this.webSearchClient = enableWebSearch ? new OllamaWebSearchClient(args, promptBuilder) : null;
+        this.webSearchClient = enableWebSearch ? new OllamaWebSearchClient(args, promptBuilder, executor) : null;
 
-        Preconditions.checkArgument(this.maxRetries >= 1, "llmMaxRetries must be >= 1 (was %s)", this.maxRetries);
+        Preconditions.checkArgument(maxRetries >= BigDecimal.ONE.intValue(), "llmMaxRetries must be >= 1 (was %s)", maxRetries);
 
         if (Objects.nonNull(numCtx)) {
             log.info(String.format("configuring LLM client num_ctx=%d", numCtx));
@@ -230,7 +248,42 @@ public class LlmScoringClient implements ScoringClient {
                 throw lastError;
             }
 
+            for (int validationAttempt = 0; validationAttempt < validationMaxRetries; validationAttempt++) {
+                FinalScoreCalculator.ValidationReport report = FinalScoreCalculator.validate(scoringResponse, request);
+                if (!report.hasFailures()) {
+                    break;
+                }
+                log.warn(String.format("diffClassification validation failed (%d unrecoverable file(s)); validation retry %d/%d",
+                        report.getFailures().size(),
+                        validationAttempt + 1,
+                        validationMaxRetries));
+
+                // the feedback critiques the prior response, so it must be in the conversation
+                paramsBuilder.addMessage(ChatCompletionAssistantMessageParam.builder()
+                        .content(rawContent)
+                        .build());
+                paramsBuilder.addUserMessage(promptBuilder.buildValidationFeedback(report));
+
+                StreamingResult retryStream = streamWithRetry(paramsBuilder.build(), bridgeHandler);
+                totalPromptTokens += retryStream.getPromptTokens();
+                totalCompletionTokens += retryStream.getCompletionTokens();
+
+                if (!FINISH_REASON_STOP.equals(retryStream.getFinishReason())) {
+                    log.warn("validation retry produced non-stop finish: " + retryStream.getFinishReason() + "; keeping prior response");
+                    break;
+                }
+                try {
+                    String retryContent = retryStream.getContent().toString();
+                    scoringResponse = deserializeResponse(retryContent);
+                    rawContent = retryContent;
+                } catch (Exception err) {
+                    log.warn("validation retry response failed to parse: " + err.getMessage() + "; keeping prior response");
+                    break;
+                }
+            }
+
             finalScoreCalculator.apply(scoringResponse, preComputedScores, request);
+            removeTestCodeEstimates(scoringResponse, request);
 
             ScoringResult result = ScoringResult.builder()
                     .response(scoringResponse)
@@ -286,6 +339,17 @@ public class LlmScoringClient implements ScoringClient {
             }
         }
         return trimmed;
+    }
+    static void removeTestCodeEstimates(LlmScoringResponse response, LlmScoringRequest request) {
+        List<LlmScoringResponse.ModifyImpactEstimate> estimates = response.getModifyImpactEstimates();
+        if (CollectionUtils.isNotEmpty(estimates)) {
+            Set<String> testCodeSignatures = request.getCodeBlockChanges().stream()
+                    .filter(LlmScoringRequest.CodeBlockChange::isTest)
+                    .map(LlmScoringRequest.CodeBlockChange::getSignature)
+                    .collect(Collectors.toSet());
+
+            estimates.removeIf(estimate -> testCodeSignatures.contains(estimate.getSignature()));
+        }
     }
     private StreamingResult streamWithRetry(ChatCompletionCreateParams params, OpenAIClientWrapper.StreamingHandler handler) {
         RuntimeException lastException = null;
