@@ -1,5 +1,6 @@
 package io.codiqo.maven.timemachine;
 
+import java.io.File;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -7,6 +8,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -26,13 +29,17 @@ import org.eclipse.sisu.Priority;
 import io.codiqo.maven.timemachine.repo.RepoClient;
 import lombok.extern.slf4j.Slf4j;
 
-@Named("codiqo-time-machine")
-@Singleton
-@Priority(TimeMachineVersionResolver.RESOLVER_PRIORITY)
 @Slf4j
+@Singleton
+@Named("codiqo-time-machine")
+@Priority(TimeMachineVersionResolver.RESOLVER_PRIORITY)
 public class TimeMachineVersionResolver implements VersionResolver {
-    // must outrank Maven's default VersionResolver (priority 0) so Sisu picks us up first
-    static final int RESOLVER_PRIORITY = 20;
+    public static final int RESOLVER_PRIORITY = Byte.MAX_VALUE;
+
+    /**
+     * trailing build number of a unique snapshot version, e.g. "1.0-20240105.143000-6"
+     */
+    private static final Pattern BUILD_NUMBER_PATTERN = Pattern.compile("-(\\d+)$");
 
     private final VersionResolver delegate;
     private final RepoClient repoClient;
@@ -61,6 +68,9 @@ public class TimeMachineVersionResolver implements VersionResolver {
             return delegate.resolveVersion(session, request);
         }
         logResult(artifact, target, pick);
+        if (isExternalArtifact(session, artifact)) {
+            TimeMachineConfig.metaDir().ifPresent(metaDir -> writeMetadata(artifact, target, pick, metaDir));
+        }
 
         VersionResult result = new VersionResult(request);
         result.setVersion(pick.getVersion());
@@ -82,6 +92,10 @@ public class TimeMachineVersionResolver implements VersionResolver {
     private static boolean resolvedByWorkspace(RepositorySystemSession session, Artifact artifact) {
         WorkspaceReader workspace = session.getWorkspaceReader();
         return Objects.nonNull(workspace) && workspace.findVersions(artifact).contains(artifact.getVersion());
+    }
+    private static boolean isExternalArtifact(RepositorySystemSession session, Artifact artifact) {
+        WorkspaceReader workspace = session.getWorkspaceReader();
+        return Objects.isNull(workspace) || workspace.findVersions(artifact).isEmpty();
     }
     private static boolean isSnapshotEnabled(RemoteRepository repo) {
         RepositoryPolicy policy = repo.getPolicy(true);
@@ -110,5 +124,24 @@ public class TimeMachineVersionResolver implements VersionResolver {
                     pick.getDeployedAt(),
                     pick.getRepository().getId());
         }
+    }
+    private static void writeMetadata(Artifact artifact, Instant target, SnapshotWithMetadata pick, File metaDir) {
+        RemoteRepository repo = pick.getRepository();
+        var resolution = SnapshotMetadataStore.SnapshotResolution
+                .builder()
+                .resolvedVersion(pick.getVersion())
+                .deployedAt(pick.getDeployedAt())
+                .buildNumber(parseBuildNumber(pick.getVersion()))
+                .repositoryId(repo.getId())
+                .repositoryUrl(repo.getUrl())
+                .targetTimestamp(target)
+                .staleSeconds(Duration.between(pick.getDeployedAt(), target).getSeconds())
+                .build();
+
+        SnapshotMetadataStore.write(metaDir, artifact.getGroupId(), artifact.getArtifactId(), artifact.getBaseVersion(), resolution);
+    }
+    private static Integer parseBuildNumber(String version) {
+        Matcher matcher = BUILD_NUMBER_PATTERN.matcher(version);
+        return matcher.find() ? Integer.valueOf(matcher.group(1)) : null;
     }
 }

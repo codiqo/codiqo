@@ -983,6 +983,8 @@ components:
         snapshot:
           type: boolean
           default: false
+        snapshotMetadata:
+          $ref: '#/components/schemas/SnapshotMetadataModel'
         release:
           type: boolean
           default: false
@@ -1010,6 +1012,35 @@ components:
           $ref: '#/components/schemas/GoDependencyModel'
         cargoInfo:
           $ref: '#/components/schemas/CargoDependencyModel'
+
+    SnapshotMetadataModel:
+      type: object
+      description: |
+        Resolution details for a snapshot pinned by the time-machine (closest deploy at-or-before the
+        commit timestamp). Captured for sanity checking: which exact build was resolved, when it was
+        deployed, and how stale it was relative to the commit.
+      properties:
+        resolvedVersion:
+          type: string
+          description: Resolved unique snapshot version, e.g. "1.0-20240105.143000-6"
+        deployedAt:
+          type: string
+          format: date-time
+        buildNumber:
+          type: integer
+        repositoryId:
+          type: string
+        repositoryUrl:
+          type: string
+          format: uri
+        targetTimestamp:
+          type: string
+          format: date-time
+          description: Commit instant the snapshot was pinned against
+        staleSeconds:
+          type: integer
+          format: int64
+          description: Seconds between the snapshot's deploy time and the commit timestamp
 
     MavenDependencyModel:
       type: object
