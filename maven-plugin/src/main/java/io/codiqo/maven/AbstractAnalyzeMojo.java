@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -103,6 +104,7 @@ import io.codiqo.maven.populator.OutputSerializer;
 import io.codiqo.maven.populator.ProjectModelPopulator;
 import io.codiqo.maven.populator.SubmissionContext;
 import io.codiqo.maven.populator.SubmissionSummaryPrinter;
+import io.codiqo.maven.timemachine.TimeMachineConfig;
 import io.codiqo.util.Env;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
@@ -359,8 +361,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             }) {
                 args.getAgents().addAll(apply(agent));
             }
-            timeMachineExtensionJars = apply(new DefaultArtifact(
-                    CODIQO_GROUP_ID, TIME_MACHINE_ARTIFACT_ID, JAR_EXTENSION, versions.get("codiqo.version").toString()));
+            timeMachineExtensionJars = apply(new DefaultArtifact(CODIQO_GROUP_ID, TIME_MACHINE_ARTIFACT_ID, JAR_EXTENSION, versions.get("codiqo.version").toString()));
         } catch (IOException err) {
             throw new MojoExecutionException(err);
         }
@@ -378,6 +379,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     getLog().warn("failed to close project: " + project.getName(), e);
                 }
             });
+            FileUtils.deleteQuietly(args.getTimeMachineMetaDir());
         }
     }
     protected ClassGraphSpec scanProjects(RunArgs args, Collection<MavenProject> projects) {
@@ -543,12 +545,16 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     .map(File::getAbsolutePath)
                     .toList();
 
+            File metaDir = Files.createTempDirectory("codiqo-tm-").toFile();
+            args.setTimeMachineMetaDir(metaDir);
+
             Properties props = Optional.ofNullable(request.getProperties()).orElseGet(Properties::new);
-            props.setProperty("maven.ext.class.path", Joiner.on(File.pathSeparator).join(extensionClasspath));
-            props.setProperty("codiqo.commit.timestamp", DateTimeFormatter.ISO_INSTANT.format(ts));
+            props.setProperty(TimeMachineConfig.MAVEN_EXT_CLASS_PATH, Joiner.on(File.pathSeparator).join(extensionClasspath));
+            props.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, DateTimeFormatter.ISO_INSTANT.format(ts));
+            props.setProperty(TimeMachineConfig.PROP_META_DIR, metaDir.getAbsolutePath());
             request.setProperties(props);
 
-            getLog().info(String.format("time-machine enabled for commit %s (timestamp=%s)", args.getCommitId(), ts));
+            getLog().info(String.format("time-machine enabled for commit %s (timestamp: %s, metaDir: %s)", args.getCommitId(), ts, metaDir.getAbsolutePath()));
         }
         return request;
     }

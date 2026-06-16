@@ -9,9 +9,12 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.io.File;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 import org.eclipse.aether.RepositorySystemSession;
@@ -26,6 +29,7 @@ import org.eclipse.aether.resolution.VersionResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import io.codiqo.maven.timemachine.repo.RepoClient;
 
@@ -35,6 +39,9 @@ class TimeMachineVersionResolverTest {
     private RemoteRepository repo;
     private TimeMachineVersionResolver resolver;
     private RepositorySystemSession session;
+
+    @TempDir
+    Path metaDir;
 
     @BeforeEach
     void setUp() {
@@ -48,6 +55,7 @@ class TimeMachineVersionResolverTest {
     @AfterEach
     void tearDown() {
         System.clearProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP);
+        System.clearProperty(TimeMachineConfig.PROP_META_DIR);
     }
 
     @Test
@@ -120,6 +128,40 @@ class TimeMachineVersionResolverTest {
         verify(delegate, times(1)).resolveVersion(session, request);
     }
 
+    @Test
+    void skipsMetadataForReactorArtifactAtDifferentVersion() throws VersionResolutionException {
+        System.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, "2024-01-10T00:00:00Z");
+        System.setProperty(TimeMachineConfig.PROP_META_DIR, metaDir.toString());
+        VersionRequest request = snapshotRequest("1.0-SNAPSHOT");
+        WorkspaceReader workspace = mock(WorkspaceReader.class);
+        when(session.getWorkspaceReader()).thenReturn(workspace);
+        when(workspace.findVersions(any())).thenReturn(Collections.singletonList("2.0-SNAPSHOT"));
+        Instant deployedAt = Instant.parse("2024-01-05T14:30:00Z");
+        when(client.closestSnapshotBefore(any(), any(), any(), any()))
+                .thenReturn(Optional.of(new SnapshotWithMetadata("1.0-20240105.143000-6", deployedAt, repo)));
+
+        VersionResult result = resolver.resolveVersion(session, request);
+
+        assertEquals("1.0-20240105.143000-6", result.getVersion());
+        verify(delegate, never()).resolveVersion(any(), any());
+        assertEquals(0, metadataFileCount(metaDir));
+    }
+
+    @Test
+    void writesMetadataForExternalArtifact() throws VersionResolutionException {
+        System.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, "2024-01-10T00:00:00Z");
+        System.setProperty(TimeMachineConfig.PROP_META_DIR, metaDir.toString());
+        VersionRequest request = snapshotRequest("1.0-SNAPSHOT");
+        Instant deployedAt = Instant.parse("2024-01-05T14:30:00Z");
+        when(client.closestSnapshotBefore(any(), any(), any(), any()))
+                .thenReturn(Optional.of(new SnapshotWithMetadata("1.0-20240105.143000-6", deployedAt, repo)));
+
+        VersionResult result = resolver.resolveVersion(session, request);
+
+        assertEquals("1.0-20240105.143000-6", result.getVersion());
+        assertEquals(1, metadataFileCount(metaDir));
+    }
+
     private VersionRequest snapshotRequest(String version) {
         return requestFor(new DefaultArtifact("com.example:dep:" + version));
     }
@@ -129,5 +171,10 @@ class TimeMachineVersionResolverTest {
         request.setArtifact(artifact);
         request.setRepositories(List.of(repo));
         return request;
+    }
+
+    private static int metadataFileCount(Path metaDir) {
+        File[] files = metaDir.toFile().listFiles((dir, name) -> name.endsWith(".properties"));
+        return Objects.isNull(files) ? 0 : files.length;
     }
 }

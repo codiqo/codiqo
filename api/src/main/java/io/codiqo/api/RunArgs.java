@@ -163,6 +163,8 @@ public class RunArgs {
     @Nullable
     private transient File outputDirectory;
     @Nullable
+    private transient File timeMachineMetaDir;
+    @Nullable
     private String includeBranches;
     @Nullable
     private String includeAuthorEmails;
