@@ -174,7 +174,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
             for (LlmScoringRequest.FileChange fc : request.getFileChanges()) {
                 if (Objects.nonNull(fc.getDiff())) {
                     saved.put(fc, fc.getDiff());
-                    fc.setDiff(UnifiedDiffLines.parse(fc.getDiff(), fc.getLineProfile()).getAnnotated());
+                    fc.setDiff(UnifiedDiffLines.parse(fc.getDiff(), fc.getLineFilter()).getAnnotated());
                 }
             }
         }

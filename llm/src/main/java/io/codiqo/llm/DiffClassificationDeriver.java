@@ -67,7 +67,7 @@ public class DiffClassificationDeriver {
         int totalAdded = 0;
         int totalDeleted = 0;
         for (FileChange fc : eligible) {
-            UnifiedDiffLines diffLines = UnifiedDiffLines.parse(fc.getDiff(), fc.getLineProfile());
+            UnifiedDiffLines diffLines = UnifiedDiffLines.parse(fc.getDiff(), fc.getLineFilter());
             derived.add(deriveFile(fc, diffLines, llmByFile.get(fc.getPath())));
             totalAdded += fc.getLinesAdded();
             totalDeleted += fc.getLinesDeleted();

@@ -6,7 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
-import io.codiqo.api.diff.IneffectiveLineProfile;
+import io.codiqo.api.diff.CommentSyntax;
+import io.codiqo.api.diff.IneffectiveLineFilter;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.FileChangeModel.LanguageEnum;
 
@@ -31,11 +32,14 @@ class LanguageCapabilitiesTest {
         assertFalse(LanguageCapabilities.isLineCountScored(java));
     }
     @Test
-    void profileForSelectsByLanguageAndPath() {
-        assertEquals(IneffectiveLineProfile.C_STYLE, LanguageCapabilities.profileFor(file("Foo.java", LanguageEnum.JAVA)));
-        assertEquals(IneffectiveLineProfile.C_STYLE, LanguageCapabilities.profileFor(file("user.proto", null)));
-        assertEquals(IneffectiveLineProfile.XML, LanguageCapabilities.profileFor(file("pom.xml", null)));
-        assertEquals(IneffectiveLineProfile.NONE, LanguageCapabilities.profileFor(file("application.yaml", null)));
+    void filterForSelectsByLanguageAndPath() {
+        IneffectiveLineFilter cStyle = new IneffectiveLineFilter(CommentSyntax.C_STYLE, IneffectiveLineFilter.IMPORT_PREFIX);
+        IneffectiveLineFilter xml = new IneffectiveLineFilter(CommentSyntax.XML, null);
+
+        assertEquals(cStyle, LanguageCapabilities.filterFor(file("Foo.java", LanguageEnum.JAVA)));
+        assertEquals(cStyle, LanguageCapabilities.filterFor(file("user.proto", null)));
+        assertEquals(xml, LanguageCapabilities.filterFor(file("pom.xml", null)));
+        assertEquals(IneffectiveLineFilter.NONE, LanguageCapabilities.filterFor(file("application.yaml", null)));
     }
     private static FileChangeModel file(String path, LanguageEnum language) {
         FileChangeModel toReturn = new FileChangeModel();

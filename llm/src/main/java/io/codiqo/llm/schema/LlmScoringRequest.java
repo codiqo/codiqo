@@ -10,7 +10,7 @@ import org.apache.commons.collections4.CollectionUtils;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
-import io.codiqo.api.diff.IneffectiveLineProfile;
+import io.codiqo.api.diff.IneffectiveLineFilter;
 import io.codiqo.api.metrics.DriverScaler;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -120,7 +120,7 @@ public class LlmScoringRequest {
         private boolean linesJustificationRequired;
 
         @Builder.Default
-        private IneffectiveLineProfile lineProfile = IneffectiveLineProfile.NONE;
+        private IneffectiveLineFilter lineFilter = IneffectiveLineFilter.NONE;
     }
 
     public enum FileChangeType {

@@ -16,7 +16,8 @@ import org.junit.jupiter.params.provider.EnumSource;
 import com.google.common.collect.Lists;
 
 import io.codiqo.api.RunArgs;
-import io.codiqo.api.diff.IneffectiveLineProfile;
+import io.codiqo.api.diff.CommentSyntax;
+import io.codiqo.api.diff.IneffectiveLineFilter;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CloneLocationModel;
 import io.codiqo.client.model.CloneModel;
@@ -271,7 +272,7 @@ class SubmissionToRequestMapperTest {
 
         assertTrue(fileChange.isConfig(), "pom.xml is line-count scored");
         assertTrue(fileChange.isLinesJustificationRequired(), "pom.xml participates in diff classification");
-        assertEquals(IneffectiveLineProfile.XML, fileChange.getLineProfile());
+        assertEquals(new IneffectiveLineFilter(CommentSyntax.XML, null), fileChange.getLineFilter());
         assertEquals(2, fileChange.getLinesAdded(), "the <!-- --> comment line is filtered; version + name remain");
         assertEquals(1, fileChange.getLinesDeleted());
     }
@@ -296,7 +297,7 @@ class SubmissionToRequestMapperTest {
         FileChange fileChange = mapper.apply(submission).getFileChanges().get(0);
 
         assertTrue(fileChange.isConfig());
-        assertEquals(IneffectiveLineProfile.C_STYLE, fileChange.getLineProfile());
+        assertEquals(new IneffectiveLineFilter(CommentSyntax.C_STYLE, IneffectiveLineFilter.IMPORT_PREFIX), fileChange.getLineFilter());
         assertEquals(1, fileChange.getLinesAdded(), "the proto import is filtered like a Java import; the field line remains");
         assertEquals(0, fileChange.getLinesDeleted(), "the deleted import is filtered");
     }

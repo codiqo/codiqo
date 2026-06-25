@@ -15,7 +15,8 @@ import com.google.common.collect.Maps;
 import org.junit.jupiter.api.Test;
 
 import io.codiqo.api.RunArgs;
-import io.codiqo.api.diff.IneffectiveLineProfile;
+import io.codiqo.api.diff.CommentSyntax;
+import io.codiqo.api.diff.IneffectiveLineFilter;
 import io.codiqo.llm.VolumeScoreCalculator.CodeBlockEffort;
 import io.codiqo.llm.VolumeScoreCalculator.FileEffort;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
@@ -212,7 +213,7 @@ class FinalScoreCalculatorTest {
         RunArgs args = new RunArgs();
         FileChange pom = FileChange.builder()
                 .path("pom.xml").isConfig(true).linesJustificationRequired(true)
-                .lineProfile(IneffectiveLineProfile.XML).linesAdded(4).linesDeleted(4).build();
+                .lineFilter(new IneffectiveLineFilter(CommentSyntax.XML, null)).linesAdded(4).linesDeleted(4).build();
         LlmScoringRequest request = LlmScoringRequest.builder()
                 .changeSummary(ChangeSummary.builder().totalFilesChanged(1).build())
                 .codeBlockChanges(List.of())

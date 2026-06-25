@@ -2,6 +2,7 @@ package io.codiqo.llm;
 
 import java.util.List;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -11,7 +12,7 @@ import org.apache.commons.lang3.BooleanUtils;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
-import io.codiqo.api.diff.IneffectiveLineProfile;
+import io.codiqo.api.diff.IneffectiveLineFilter;
 import lombok.Getter;
 import lombok.Value;
 
@@ -51,7 +52,9 @@ public final class UnifiedDiffLines {
     private final List<ChangeBlock> blocks = Lists.newArrayList();
     private final String annotated;
 
-    private UnifiedDiffLines(String diff, IneffectiveLineProfile profile) {
+    private UnifiedDiffLines(String diff, IneffectiveLineFilter filter) {
+        Predicate<String> ineffective = filter.commentOrImportFilter();
+
         StringBuilder out = new StringBuilder(diff.length() + 256);
         int oldLine = 0;
         int newLine = 0;
@@ -87,7 +90,7 @@ public final class UnifiedDiffLines {
             }
             if (raw.startsWith(DELETED_PREFIX)) {
                 deletedLines.add(oldLine);
-                if (isCandidate(raw.substring(1), profile)) {
+                if (isCandidate(raw.substring(1), ineffective)) {
                     candidateDeletedLines.add(oldLine);
                     runDeleted.add(oldLine);
                     out.append(DELETED_PREFIX).append(oldLine).append(FIELD_SEPARATOR).append(BLOCK_ID_PREFIX).append(currentBlockId()).append(FIELD_SEPARATOR).append(raw, 1, raw.length());
@@ -97,7 +100,7 @@ public final class UnifiedDiffLines {
                 oldLine++;
             } else if (raw.startsWith(ADDED_PREFIX)) {
                 addedLines.add(newLine);
-                if (isCandidate(raw.substring(1), profile)) {
+                if (isCandidate(raw.substring(1), ineffective)) {
                     candidateAddedLines.add(newLine);
                     runAdded.add(newLine);
                     out.append(ADDED_PREFIX).append(newLine).append(FIELD_SEPARATOR).append(BLOCK_ID_PREFIX).append(currentBlockId()).append(FIELD_SEPARATOR).append(raw, 1, raw.length());
@@ -125,27 +128,19 @@ public final class UnifiedDiffLines {
             runAdded.clear();
         }
     }
-    public static UnifiedDiffLines parse(String diff, IneffectiveLineProfile profile) {
-        return new UnifiedDiffLines(diff, profile);
+    public static UnifiedDiffLines parse(String diff, IneffectiveLineFilter filter) {
+        return new UnifiedDiffLines(diff, filter);
     }
     /**
-     * Mirrors {@code SubmissionToRequestMapper.DiffStats.categorize} exactly — the per-file
+     * Mirrors {@code SubmissionToRequestMapper.DiffStats} exactly — the per-file
      * {@code linesAdded}/{@code linesDeleted} targets subtract blank, comment, and import lines per
-     * the file's {@link IneffectiveLineProfile}, so candidate enumeration must apply the identical
+     * the file's {@link IneffectiveLineFilter}, so candidate enumeration must apply the identical
      * rules or block sums drift from the targets.
      */
-    private static boolean isCandidate(String content, IneffectiveLineProfile profile) {
+    private static boolean isCandidate(String content, Predicate<String> ineffective) {
         String trimmed = content.trim();
-        if (trimmed.isEmpty()) {
-            return false;
-        }
-        if (profile.isComment(trimmed)) {
-            return false;
-        }
-        if (profile.isImport(trimmed)) {
-            return false;
-        }
-        return true;
+        boolean skip = BooleanUtils.or(new boolean[] { trimmed.isEmpty(), ineffective.test(trimmed) });
+        return BooleanUtils.negate(skip);
     }
 
     @Value

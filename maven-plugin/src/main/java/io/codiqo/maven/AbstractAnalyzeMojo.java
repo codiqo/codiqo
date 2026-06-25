@@ -90,6 +90,7 @@ import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.core.ClassGraphWrapper;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
+import io.codiqo.lang.config.ConfigFiles;
 import io.codiqo.llm.client.DaemonExecutors;
 import io.codiqo.maven.logging.MavenLogFactory;
 import io.codiqo.maven.populator.CommitModelPopulator;
@@ -696,14 +697,18 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 CommitAnalysis analysis = analyzer.analyze();
                 List<String> changedFiles = Lists.newArrayList();
                 analysis.forEach(diff -> {
-                    changedFiles.add(diff.getFile().getName());
-                    if (FilenameUtils.isExtension(diff.getFile().getName(), registry.extensions())) {
+                    String name = diff.getFile().getName();
+                    changedFiles.add(name);
+                    if (BooleanUtils.or(new boolean[] {
+                            FilenameUtils.isExtension(name, registry.extensions()),
+                            ConfigFiles.isConfigFile(name)
+                    })) {
                         toApply.setTrue();
                     }
                 });
                 String skipReason = null;
                 if (toApply.isFalse()) {
-                    skipReason = String.format("no diff files match registered languages %s — changed files: %s", registry.extensions(), changedFiles);
+                    skipReason = String.format("no diff files match registered languages %s or supported config files (pom.xml, .proto) — changed files: %s", registry.extensions(), changedFiles);
                     getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), skipReason));
                 }
 
