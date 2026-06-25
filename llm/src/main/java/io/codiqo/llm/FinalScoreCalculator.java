@@ -23,6 +23,8 @@ import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringRequest.FileChange;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import io.codiqo.llm.schema.LlmScoringResponse.ArchitectureEffortBonus;
+import io.codiqo.llm.schema.LlmScoringResponse.CodeBlockCategory;
+import io.codiqo.llm.schema.LlmScoringResponse.CodeBlockCategoryView;
 import io.codiqo.llm.schema.LlmScoringResponse.CodeBlockEffortView;
 import io.codiqo.llm.schema.LlmScoringResponse.DiffClassification;
 import io.codiqo.llm.schema.LlmScoringResponse.FileDiffClassification;
@@ -56,12 +58,6 @@ public class FinalScoreCalculator {
         Map<String, FileDiffClassification> classificationByFile = buildClassificationByFile(response);
 
         double baseEffort = effective.getBaseEffort();
-        if (Objects.nonNull(response.getEffortBreakdown()) && Objects.nonNull(response.getEffortBreakdown().getComplexityMultiplier())) {
-            double llmComplexity = response.getEffortBreakdown().getComplexityMultiplier().getCombinedMultiplier();
-            if (llmComplexity > 0) {
-                baseEffort = effective.getVolumeScore() * llmComplexity;
-            }
-        }
         if (Objects.nonNull(response.getEffortBreakdown())) {
             response.getEffortBreakdown().setBaseEffortScore(Precision.round(baseEffort, ROUNDING_PRECISION));
             response.getEffortBreakdown().setVolumeScore(toVolumeScore(effective, adjustment));
@@ -131,16 +127,46 @@ public class FinalScoreCalculator {
         response.setScoreCalculation(scoreCalculation);
     }
     private DiffAdjustment computeDiffAdjustment(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
-        if (Objects.isNull(response.getEffortBreakdown()) || Objects.isNull(response.getEffortBreakdown().getDiffClassification())) {
+        PerFileResult perFile = computePerFileFactors(response, request);
+        Map<String, Double> perBlockCoeff = buildPerBlockCoeff(response);
+
+        if (perFile.getFactors().isEmpty() && perBlockCoeff.isEmpty()) {
             return DiffAdjustment.unchanged(preComputed);
         }
+
+        PreComputedScores adjusted = volumeScoreCalculator.recompute(preComputed, perFile.getFactors(), perBlockCoeff);
+        return DiffAdjustment.applied(adjusted, perFile.getBookkeeping());
+    }
+    private Map<String, Double> buildPerBlockCoeff(LlmScoringResponse response) {
+        Map<String, Double> toReturn = Maps.newHashMap();
+        for (CodeBlockCategoryView view : CollectionUtils.emptyIfNull(response.getBlockCategories())) {
+            if (Objects.isNull(view.getCategory()) || StringUtils.isBlank(view.getSignature())) {
+                continue;
+            }
+            toReturn.put(VolumeScoreCalculator.blockKey(view.getFile(), view.getSignature()), categoryCoeff(view.getCategory()));
+        }
+        return toReturn;
+    }
+    private double categoryCoeff(CodeBlockCategory category) {
+        return switch (category) {
+            case MECHANICAL -> args.getCategoryMechanicalCoeff();
+            case ROUTINE -> args.getCategoryRoutineCoeff();
+            case SUBSTANTIVE -> args.getCategorySubstantiveCoeff();
+            case INTRICATE -> args.getCategoryIntricateCoeff();
+            default -> throw new IllegalArgumentException("Unknown code block category: " + category);
+        };
+    }
+    private static PerFileResult computePerFileFactors(LlmScoringResponse response, LlmScoringRequest request) {
+        if (Objects.isNull(response.getEffortBreakdown()) || Objects.isNull(response.getEffortBreakdown().getDiffClassification())) {
+            return PerFileResult.empty();
+        }
         if (Objects.isNull(request) || CollectionUtils.isEmpty(request.getFileChanges())) {
-            return DiffAdjustment.unchanged(preComputed);
+            return PerFileResult.empty();
         }
 
         DiffClassification classification = response.getEffortBreakdown().getDiffClassification();
         if (CollectionUtils.isEmpty(classification.getPerFile())) {
-            return DiffAdjustment.unchanged(preComputed);
+            return PerFileResult.empty();
         }
 
         Map<String, FileChange> fileChangesByPath = Maps.newHashMapWithExpectedSize(request.getFileChanges().size());
@@ -176,9 +202,11 @@ public class FinalScoreCalculator {
             int addedTotal = cosmeticAddedSize + inPlacePairs + trueModifyPairs + pureAddSize;
             int deletedTotal = cosmeticDeletedSize + inPlacePairs + trueModifyPairs + pureDeleteSize;
 
-            // entries are server-derived from the diff (DiffClassificationDeriver), so totals match
-            // the effective targets by construction — a mismatch means candidate filtering drifted
-            // from DiffStats.categorize and the file's factor can't be trusted
+            /**
+             * entries are server-derived from the diff (DiffClassificationDeriver), so totals match
+             * the effective targets by construction — a mismatch means candidate filtering drifted
+             * from DiffStats.categorize and the file's factor can't be trusted
+             */
             if (addedTotal != fc.getLinesAdded()) {
                 log.warn("diffClassification.skipReason=addedTotalMismatch file='{}' addedTotal={} linesAdded={}",
                         entry.getFile(),
@@ -211,14 +239,11 @@ public class FinalScoreCalculator {
         }
 
         if (perFileFactor.isEmpty()) {
-            return DiffAdjustment.unchanged(preComputed);
+            return PerFileResult.empty();
         }
 
-        populatePerFileScalars(classification);
-
-        PreComputedScores adjusted = volumeScoreCalculator.recompute(preComputed, perFileFactor);
         DiffBookkeeping bookkeeping = new DiffBookkeeping(totalRawLines, totalAdjustedLines, totalCosmetic, totalPairsCollapsed);
-        return DiffAdjustment.applied(adjusted, bookkeeping);
+        return new PerFileResult(perFileFactor, bookkeeping);
     }
     private static void populatePerFileScalars(DiffClassification classification) {
         for (FileDiffClassification entry : classification.getPerFile()) {
@@ -473,6 +498,16 @@ public class FinalScoreCalculator {
 
         public boolean hasFailures() {
             return CollectionUtils.isNotEmpty(failures);
+        }
+    }
+
+    @Value
+    private static class PerFileResult {
+        Map<String, Double> factors;
+        DiffBookkeeping bookkeeping;
+
+        static PerFileResult empty() {
+            return new PerFileResult(Maps.newHashMap(), DiffBookkeeping.zero());
         }
     }
 

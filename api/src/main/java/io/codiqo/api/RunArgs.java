@@ -38,6 +38,8 @@ import okhttp3.HttpUrl;
 @Data
 public class RunArgs {
     public static final String DEFAULT_API_URL = "https://api.codiqo.io";
+    public static final int DEFAULT_NUM_CTX = 256 * 1024;
+    public static final int DEFAULT_SEED = 42;
     public static final Map<String, String> JDTLS_CONFIG = ImmutableMap.of(
             "osx-x86_64", "config_mac",
             "osx-aarch_64", "config_mac_arm",
@@ -145,7 +147,7 @@ public class RunArgs {
     @Nullable
     private String llmBaseUrl = System.getProperty("ollama.url", "https://ollama.com/v1");
     @Nullable
-    private Double llmTemperature = 0.3;
+    private Double llmTemperature = 0.0;
     @Nullable
     private Double llmTopP = 0.8;
     @Nullable
@@ -156,6 +158,8 @@ public class RunArgs {
     private Short llmValidationMaxRetries = 1;
     @Nullable
     private Integer llmNumCtx;
+    @Nullable
+    private Integer llmSeed = DEFAULT_SEED;
     @Nullable
     private boolean llmEnableWebSearchTool = false;
     @Nullable
@@ -236,6 +240,14 @@ public class RunArgs {
     private double testCodePenaltyWeight = 0.3;
     @Nullable
     private double configFileScoreMultiplier = 0.3;
+    @Nullable
+    private double categoryMechanicalCoeff = 0.7;
+    @Nullable
+    private double categoryRoutineCoeff = 1.0;
+    @Nullable
+    private double categorySubstantiveCoeff = 1.2;
+    @Nullable
+    private double categoryIntricateCoeff = 1.4;
     @Nullable
     private int scoreThresholdHuge = 150;
     @Nullable

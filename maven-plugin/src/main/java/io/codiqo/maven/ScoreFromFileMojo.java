@@ -67,7 +67,7 @@ public class ScoreFromFileMojo extends AbstractMojo {
     @Parameter(property = "codiqo.llm.baseUrl", defaultValue = "https://ollama.com/v1")
     private String llmBaseUrl;
 
-    @Parameter(property = "codiqo.llm.temperature", defaultValue = "0.3")
+    @Parameter(property = "codiqo.llm.temperature", defaultValue = "0.0")
     private double llmTemperature;
 
     @Parameter(property = "codiqo.llm.maxTokens", defaultValue = "32767")
@@ -75,6 +75,9 @@ public class ScoreFromFileMojo extends AbstractMojo {
 
     @Parameter(property = "codiqo.llm.numCtx")
     private Integer llmNumCtx;
+
+    @Parameter(property = "codiqo.llm.seed", defaultValue = "42")
+    private Integer llmSeed;
 
     @Parameter(property = "codiqo.llm.enableWebSearchTool", defaultValue = "false")
     private boolean llmEnableWebSearchTool;
@@ -193,6 +196,7 @@ public class ScoreFromFileMojo extends AbstractMojo {
         toReturn.setLlmTemperature(llmTemperature);
         toReturn.setLlmMaxTokens(llmMaxTokens);
         toReturn.setLlmNumCtx(llmNumCtx);
+        toReturn.setLlmSeed(llmSeed);
         toReturn.setLlmEnableWebSearchTool(llmEnableWebSearchTool);
         toReturn.setReadTimeout(Duration.ofSeconds(readTimeoutSeconds));
         toReturn.setDumpAnalysis(dumpAnalysis);

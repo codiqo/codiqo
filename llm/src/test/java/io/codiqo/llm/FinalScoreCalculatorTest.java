@@ -25,6 +25,8 @@ import io.codiqo.llm.schema.LlmScoringRequest.FileChange;
 import io.codiqo.llm.schema.LlmScoringRequest.Operation;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import io.codiqo.llm.schema.LlmScoringResponse.ArchitectureEffortBonus;
+import io.codiqo.llm.schema.LlmScoringResponse.CodeBlockCategory;
+import io.codiqo.llm.schema.LlmScoringResponse.CodeBlockCategoryView;
 import io.codiqo.llm.schema.LlmScoringResponse.ComplexityMultiplier;
 import io.codiqo.llm.schema.LlmScoringResponse.DiffClassification;
 import io.codiqo.llm.schema.LlmScoringResponse.EffortBreakdown;
@@ -136,6 +138,31 @@ class FinalScoreCalculatorTest {
 
         assertEquals(0.0, response.getArchitectureEffortBonus().getBonusPoints(), 0.001,
                 "negative impact score must be clamped to 0 → zero bonus");
+    }
+
+    @Test
+    void perBlockCategoryWeightsEffortIndependentOfVolume() {
+        RunArgs args = new RunArgs();
+
+        double intricateScore = scoreWithCategory(args, CodeBlockCategory.INTRICATE);
+        double mechanicalScore = scoreWithCategory(args, CodeBlockCategory.MECHANICAL);
+
+        assertTrue(intricateScore > mechanicalScore,
+                "an INTRICATE block must earn more effort than the same block labelled MECHANICAL");
+
+        double expectedIntricate = Math.round(
+                Math.pow(100.0 * args.getCategoryIntricateCoeff(), args.getVolumeExponent()));
+        assertEquals(expectedIntricate, intricateScore, 0.001,
+                "category coefficient multiplies per-block effort before the volume power-law");
+    }
+    private static double scoreWithCategory(RunArgs args, CodeBlockCategory category) {
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        LlmScoringResponse response = new LlmScoringResponse();
+        response.setBlockCategories(List.of(CodeBlockCategoryView.builder()
+                .file("Foo.java").signature("doStuff()").category(category).build()));
+
+        calculator.apply(response, scoresWithFileEffort("Foo.java", 100.0), null);
+        return response.getScore();
     }
 
     @Test

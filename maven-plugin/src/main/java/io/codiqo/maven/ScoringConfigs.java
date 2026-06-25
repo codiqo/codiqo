@@ -50,6 +50,7 @@ public class ScoringConfigs {
         toReturn.setLlmMaxRetries(Optional.ofNullable(args.getLlmMaxRetries()).map(Short::intValue).orElse(null));
         toReturn.setLlmValidationMaxRetries(Optional.ofNullable(args.getLlmValidationMaxRetries()).map(Short::intValue).orElse(null));
         toReturn.setLlmNumCtx(args.getLlmNumCtx());
+        toReturn.setLlmSeed(args.getLlmSeed());
         toReturn.setLlmEnableWebSearchTool(args.isLlmEnableWebSearchTool());
         toReturn.setLlmReadTimeout(Optional.ofNullable(args.getLlmReadTimeout()).map(Duration::toString).orElse(null));
 

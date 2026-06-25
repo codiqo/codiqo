@@ -451,7 +451,7 @@ class VolumeScoreCalculatorTest {
 
         assertEquals(scores.getVolumeScore(), scores.getBaseEffort(), 0.001,
                 "with the complexity-multiplier group removed, baseEffort == volumeScore pre-LLM. "
-                        + "FinalScoreCalculator later multiplies by the LLM's chosen complexityMultiplier.");
+                        + "FinalScoreCalculator later re-weights per-block efforts by the LLM's difficulty categories.");
     }
 
     @Test

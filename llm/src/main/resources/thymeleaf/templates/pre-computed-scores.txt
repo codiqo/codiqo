@@ -10,7 +10,7 @@ Project Normalization:
   modifyMult: [(${#numbers.formatDecimal(scores.modifyMult, 1, 2)})]
   addMult: [(${#numbers.formatDecimal(scores.addMult, 1, 2)})]
 
-Code Block Efforts (per-block: driverScore × operationMult × testWeight; no per-block cap):
+Code Block Efforts (per-block: driverScore × operationMult × testWeight × categoryCoeff; categoryCoeff comes from the difficulty category you assign in blockCategories and is applied server-side; no per-block cap):
   driverScore = weighted average of three dimensions projected onto lines-equivalent units:
     - L = non-comment code lines
     - S = NCSS (logical statements)
@@ -38,7 +38,7 @@ Volume Score (blockEffortSum^[(${#numbers.formatDecimal(scores.volumeExponent, 1
   filesScopeMultiplier: [(${#numbers.formatDecimal(scores.filesScopeMultiplier, 1, 2)})]
 
 TOTAL Volume Score: [(${#numbers.formatDecimal(scores.volumeScore, 1, 2)})]
-Base Effort (= Volume Score; LLM will multiply by its chosen complexityMultiplier): [(${#numbers.formatDecimal(scores.baseEffort, 1, 2)})]
+Base Effort (= Volume Score; this is pre-scaling — the server re-weights per-block efforts by the difficulty categories you assign in blockCategories): [(${#numbers.formatDecimal(scores.baseEffort, 1, 2)})]
 
 ## CPD PRE-COMPUTED (MANDATORY - USE THESE EXACT VALUES):
   totalClones: [(${scores.cpdTotalClones})]

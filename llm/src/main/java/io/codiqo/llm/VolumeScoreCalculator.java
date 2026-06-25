@@ -136,14 +136,19 @@ public class VolumeScoreCalculator {
                 .fileEfforts(fileEfforts)
                 .build();
     }
-    public PreComputedScores recompute(PreComputedScores original, Map<String, Double> perFileEffectiveLineFactor) {
+    public PreComputedScores recompute(PreComputedScores original, Map<String, Double> perFileEffectiveLineFactor, Map<String, Double> perBlockCoeff) {
         double maxDeviation = args.getDriverFactorMaxDeviation();
 
         List<CodeBlockEffort> rescaled = Lists.newArrayListWithCapacity(original.getCodeBlockEfforts().size());
         for (CodeBlockEffort cbe : original.getCodeBlockEfforts()) {
             double factor = perFileEffectiveLineFactor.getOrDefault(cbe.getFile(), 1.0);
-            double scaledEffort = cbe.getEffort() * factor;
+            /**
+             * the per-block difficulty category weights effort only, never the driver score: volume stays
+             * a pure measure so category remains independent of the volume axis
+             */
+            double categoryCoeff = perBlockCoeff.getOrDefault(blockKey(cbe.getFile(), cbe.getSignature()), 1.0);
             double scaledDriverScore = cbe.getDriverScore() * factor;
+            double scaledEffort = cbe.getEffort() * factor * categoryCoeff;
             rescaled.add(new CodeBlockEffort(cbe.getFile(), cbe.getName(), cbe.getSignature(),
                     cbe.getOperation(), cbe.getNonCommentCodeStatements(), cbe.getDirectInvocationCount(),
                     cbe.getEffectiveInvocationsChanged(), cbe.getNonCommentCodeLines(), cbe.getCommentLines(),
@@ -441,6 +446,9 @@ public class VolumeScoreCalculator {
         }
         double ratio = (double) block.getTotalLinesChanged() / block.getBodyCodeLines();
         return Math.min(ratio, 1.0);
+    }
+    public static String blockKey(String file, String signature) {
+        return file + " " + signature;
     }
     static List<FileEffort> groupByFile(List<CodeBlockEffort> blockEfforts, double maxDeviation) {
         if (CollectionUtils.isEmpty(blockEfforts)) {
