@@ -1283,6 +1283,7 @@
         <module>api</module>
         <module>core</module>
         <module>lang-java</module>
+        <module>lang-config</module>
         <module>maven-time-machine</module>
         <module>maven-plugin</module>
         <module>openapi</module>

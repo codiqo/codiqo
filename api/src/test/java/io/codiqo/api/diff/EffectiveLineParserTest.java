@@ -28,28 +28,30 @@ class EffectiveLineParserTest {
             " int kept = 3;",
             "") + "\n";
 
+    private static final IneffectiveLineFilter C_STYLE = new IneffectiveLineFilter(CommentSyntax.C_STYLE, IneffectiveLineFilter.IMPORT_PREFIX);
+
     @Test
     void parseAddedLinesReturnsAllAddedLineNumbers() {
         assertEquals(ImmutableSet.of(2, 3, 4, 5), EffectiveLineParser.parseAddedLines(DIFF));
     }
     @Test
     void parseEffectiveAddedLinesFiltersBlanksAndComments() {
-        Set<Integer> effective = EffectiveLineParser.parseEffectiveAddedLines(DIFF, IneffectiveLineProfile.C_STYLE.commentFilter());
+        Set<Integer> effective = EffectiveLineParser.parseEffectiveAddedLines(DIFF, C_STYLE.commentFilter());
         assertEquals(ImmutableSet.of(2, 5), effective);
     }
     @Test
     void parseEffectiveAddedLinesWithNoneKeepsNonBlankLines() {
-        Set<Integer> effective = EffectiveLineParser.parseEffectiveAddedLines(DIFF, IneffectiveLineProfile.NONE.commentFilter());
+        Set<Integer> effective = EffectiveLineParser.parseEffectiveAddedLines(DIFF, IneffectiveLineFilter.NONE.commentFilter());
         assertEquals(ImmutableSet.of(2, 3, 5), effective);
     }
     @Test
     void parseEffectiveDeletedLineContentsKeepsTrimmedNonImportNonCommentLines() {
-        Map<Integer, List<String>> deleted = EffectiveLineParser.parseEffectiveDeletedLineContents(DIFF, IneffectiveLineProfile.C_STYLE.commentOrImportFilter());
+        Map<Integer, List<String>> deleted = EffectiveLineParser.parseEffectiveDeletedLineContents(DIFF, C_STYLE.commentOrImportFilter());
         assertEquals(ImmutableMap.of(6, List.of("int removed = 2;")), deleted);
     }
     @Test
     void parseEffectiveDeletionAnchorsCountsByNewSideAnchor() {
-        Map<Integer, Integer> anchors = EffectiveLineParser.parseEffectiveDeletionAnchors(DIFF, IneffectiveLineProfile.C_STYLE.commentOrImportFilter());
+        Map<Integer, Integer> anchors = EffectiveLineParser.parseEffectiveDeletionAnchors(DIFF, C_STYLE.commentOrImportFilter());
         assertEquals(ImmutableMap.of(6, 1), anchors);
     }
     @Test

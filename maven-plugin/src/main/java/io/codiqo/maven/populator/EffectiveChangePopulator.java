@@ -16,7 +16,7 @@ import org.apache.commons.lang3.StringUtils;
 import com.google.common.collect.Lists;
 
 import io.codiqo.api.diff.EffectiveLineParser;
-import io.codiqo.api.diff.IneffectiveLineProfile;
+import io.codiqo.api.diff.IneffectiveLineFilter;
 import io.codiqo.api.diff.JavaInvocationCounter;
 import io.codiqo.api.diff.NestedBlockRanges;
 import io.codiqo.client.model.CodeUnitModel;
@@ -37,13 +37,13 @@ public class EffectiveChangePopulator implements SubmissionPopulator {
             if (StringUtils.isEmpty(diff)) {
                 continue;
             }
-            IneffectiveLineProfile profile = LanguageCapabilities.profileFor(file);
-            Predicate<String> addedIneffective = profile.commentFilter();
-            Predicate<String> deletedIneffective = profile.commentOrImportFilter();
+            IneffectiveLineFilter filter = LanguageCapabilities.filterFor(file);
+            Predicate<String> addedIneffective = filter.commentFilter();
+            Predicate<String> deletedIneffective = filter.commentOrImportFilter();
             Set<Integer> effectiveAddedLines = EffectiveLineParser.parseEffectiveAddedLines(diff, addedIneffective);
-            Map<Integer, List<String>> effectiveDeletedContents = profile != IneffectiveLineProfile.NONE
-                    ? EffectiveLineParser.parseEffectiveDeletedLineContents(diff, deletedIneffective)
-                    : Collections.emptyMap();
+            Map<Integer, List<String>> effectiveDeletedContents = filter.isNone()
+                    ? Collections.emptyMap()
+                    : EffectiveLineParser.parseEffectiveDeletedLineContents(diff, deletedIneffective);
 
             List<int[]> blockRanges = collectBlockRanges(file.getCodeUnits());
 

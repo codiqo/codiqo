@@ -10,10 +10,13 @@ import org.junit.jupiter.api.Test;
 
 import com.google.common.collect.Sets;
 
-import io.codiqo.api.diff.IneffectiveLineProfile;
+import io.codiqo.api.diff.CommentSyntax;
+import io.codiqo.api.diff.IneffectiveLineFilter;
 import io.codiqo.llm.UnifiedDiffLines.ChangeBlock;
 
 class UnifiedDiffLinesTest {
+    private static final IneffectiveLineFilter C_STYLE = new IneffectiveLineFilter(CommentSyntax.C_STYLE, IneffectiveLineFilter.IMPORT_PREFIX);
+
     // shape of the real a95206ac bootstrapper regression: two hunks, old/new numbering drifting
     // apart because the new file is shorter than the old one
     private static final String TWO_HUNK_DIFF = String.join("\n",
@@ -41,7 +44,7 @@ class UnifiedDiffLinesTest {
 
     @Test
     void parseTracksOldAndNewCountersAcrossHunks() {
-        UnifiedDiffLines lines = UnifiedDiffLines.parse(TWO_HUNK_DIFF, IneffectiveLineProfile.C_STYLE);
+        UnifiedDiffLines lines = UnifiedDiffLines.parse(TWO_HUNK_DIFF, C_STYLE);
 
         assertEquals(Sets.newTreeSet(Set.of(6, 8, 281, 283, 284)), lines.getDeletedLines(),
                 "deleted lines carry old-file numbers");
@@ -50,7 +53,7 @@ class UnifiedDiffLinesTest {
     }
     @Test
     void candidatesExcludeImportsBlanksAndComments() {
-        UnifiedDiffLines lines = UnifiedDiffLines.parse(TWO_HUNK_DIFF, IneffectiveLineProfile.C_STYLE);
+        UnifiedDiffLines lines = UnifiedDiffLines.parse(TWO_HUNK_DIFF, C_STYLE);
 
         assertEquals(Sets.newTreeSet(Set.of(281, 283, 284)), lines.getCandidateDeletedLines(),
                 "all hunk-1 deletions are imports → filtered out of the candidate set");
@@ -59,7 +62,7 @@ class UnifiedDiffLinesTest {
     }
     @Test
     void blocksGroupContiguousCandidateRuns() {
-        List<ChangeBlock> blocks = UnifiedDiffLines.parse(TWO_HUNK_DIFF, IneffectiveLineProfile.C_STYLE).getBlocks();
+        List<ChangeBlock> blocks = UnifiedDiffLines.parse(TWO_HUNK_DIFF, C_STYLE).getBlocks();
 
         assertEquals(2, blocks.size(), "import-only run produces no block; two code runs remain");
         assertEquals("B1", blocks.get(0).getId());
@@ -71,7 +74,7 @@ class UnifiedDiffLinesTest {
     }
     @Test
     void annotateTagsOnlyCandidateLines() {
-        String annotated = UnifiedDiffLines.parse(TWO_HUNK_DIFF, IneffectiveLineProfile.C_STYLE).getAnnotated();
+        String annotated = UnifiedDiffLines.parse(TWO_HUNK_DIFF, C_STYLE).getAnnotated();
 
         assertTrue(annotated.contains("\n-6|import java.util.Arrays;"),
                 "filtered deletion keeps its number but gets no block tag");
@@ -94,7 +97,7 @@ class UnifiedDiffLinesTest {
     }
     @Test
     void noneProfileKeepsImportsAndComments() {
-        UnifiedDiffLines lines = UnifiedDiffLines.parse(TWO_HUNK_DIFF, IneffectiveLineProfile.NONE);
+        UnifiedDiffLines lines = UnifiedDiffLines.parse(TWO_HUNK_DIFF, IneffectiveLineFilter.NONE);
 
         assertEquals(Sets.newTreeSet(Set.of(6, 8, 281, 283, 284)), lines.getCandidateDeletedLines(),
                 "NONE filters only blanks; import/comment filtering lives in the C_STYLE/XML profiles");
@@ -102,7 +105,7 @@ class UnifiedDiffLinesTest {
     }
     @Test
     void metadataAndMissingHunksProduceNoLines() {
-        UnifiedDiffLines lines = UnifiedDiffLines.parse("just some text\n+not a real diff line", IneffectiveLineProfile.C_STYLE);
+        UnifiedDiffLines lines = UnifiedDiffLines.parse("just some text\n+not a real diff line", C_STYLE);
 
         assertTrue(lines.getAddedLines().isEmpty(), "lines before any hunk header are metadata");
         assertTrue(lines.getDeletedLines().isEmpty());

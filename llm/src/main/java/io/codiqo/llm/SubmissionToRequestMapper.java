@@ -29,7 +29,7 @@ import com.google.common.collect.Sets;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.EffectiveLineParser;
 import io.codiqo.api.diff.EffectiveLineParser.LineKind;
-import io.codiqo.api.diff.IneffectiveLineProfile;
+import io.codiqo.api.diff.IneffectiveLineFilter;
 import io.codiqo.api.diff.NestedBlockRanges;
 import io.codiqo.api.metrics.DriverScaler;
 import io.codiqo.client.model.AnalysisSubmissionModel;
@@ -371,8 +371,8 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         return files.stream().map(SubmissionToRequestMapper::mapFileChange).collect(Collectors.toList());
     }
     private static FileChange mapFileChange(FileChangeModel file) {
-        IneffectiveLineProfile profile = LanguageCapabilities.profileFor(file);
-        DiffStats stats = DiffStats.fromPatch(file.getDiff(), profile);
+        IneffectiveLineFilter filter = LanguageCapabilities.filterFor(file);
+        DiffStats stats = DiffStats.fromPatch(file.getDiff(), filter);
         return FileChange.builder()
                 .path(resolveEffectivePath(file))
                 .changeType(mapFileChangeType(file.getChangeType()))
@@ -382,7 +382,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .language(mapLanguage(file))
                 .linesAdded(stats.effectiveAdded())
                 .linesDeleted(stats.effectiveDeleted())
-                .lineProfile(profile)
+                .lineFilter(filter)
                 .linesJustificationRequired(LanguageCapabilities.requiresDiffClassification(file))
                 .build();
     }
@@ -392,7 +392,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
             if (CollectionUtils.isEmpty(file.getCodeUnits())) {
                 continue;
             }
-            DiffStats stats = DiffStats.fromPatch(file.getDiff(), LanguageCapabilities.profileFor(file));
+            DiffStats stats = DiffStats.fromPatch(file.getDiff(), LanguageCapabilities.filterFor(file));
             if (!stats.effectiveChanges()) {
                 continue;
             }
@@ -548,7 +548,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         Set<String> packagesAffected = Sets.newHashSet();
         for (FileChangeModel file : files) {
             boolean isTest = Boolean.TRUE.equals(file.getIsTest());
-            DiffStats stats = DiffStats.fromPatch(file.getDiff(), LanguageCapabilities.profileFor(file));
+            DiffStats stats = DiffStats.fromPatch(file.getDiff(), LanguageCapabilities.filterFor(file));
             if (!stats.effectiveChanges()) {
                 continue;
             }
@@ -669,9 +669,9 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 blockRangesByFile.put(path, blockRanges);
             }
             if (Objects.nonNull(file.getDiff())) {
-                IneffectiveLineProfile profile = LanguageCapabilities.profileFor(file);
-                Predicate<String> addedIneffective = profile.commentFilter();
-                Predicate<String> deletedIneffective = profile.commentOrImportFilter();
+                IneffectiveLineFilter filter = LanguageCapabilities.filterFor(file);
+                Predicate<String> addedIneffective = filter.commentFilter();
+                Predicate<String> deletedIneffective = filter.commentOrImportFilter();
 
                 Set<Integer> addedLines = EffectiveLineParser.parseAddedLines(file.getDiff());
                 if (CollectionUtils.isNotEmpty(addedLines)) {
@@ -846,25 +846,13 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     @Accessors(fluent = true)
     @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
     private static final class DiffStats {
-        private final int added;
-        private final int deleted;
-        private final int importAdded;
-        private final int importDeleted;
-        private final int commentAdded;
-        private final int commentDeleted;
-        private final int blankAdded;
-        private final int blankDeleted;
+        private final int effectiveAdded;
+        private final int effectiveDeleted;
 
-        private int effectiveAdded() {
-            return added - importAdded - commentAdded - blankAdded;
-        }
-        private int effectiveDeleted() {
-            return deleted - importDeleted - commentDeleted - blankDeleted;
-        }
         private boolean effectiveChanges() {
-            return BooleanUtils.or(new boolean[] { effectiveAdded() > 0, effectiveDeleted() > 0 });
+            return BooleanUtils.or(new boolean[] { effectiveAdded > 0, effectiveDeleted > 0 });
         }
-        private static DiffStats fromPatch(String diff, IneffectiveLineProfile profile) {
+        private static DiffStats fromPatch(String diff, IneffectiveLineFilter filter) {
             Patch patch = EffectiveLineParser.parsePatch(diff);
             List<FormatError> errors = patch.getErrors().stream()
                     .filter(err -> err.getSeverity() == FormatError.Severity.ERROR)
@@ -873,43 +861,23 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 throw new IllegalArgumentException("failed to parse diff: " + errors);
             }
 
-            MutableInt added = new MutableInt();
-            MutableInt deleted = new MutableInt();
-            MutableInt blankAdded = new MutableInt();
-            MutableInt commentAdded = new MutableInt();
-            MutableInt importAdded = new MutableInt();
-            MutableInt blankDeleted = new MutableInt();
-            MutableInt commentDeleted = new MutableInt();
-            MutableInt importDeleted = new MutableInt();
+            Predicate<String> ineffective = filter.commentOrImportFilter();
+            MutableInt effectiveAdded = new MutableInt();
+            MutableInt effectiveDeleted = new MutableInt();
 
             EffectiveLineParser.walk(patch, (kind, newLine, content) -> {
+                String trimmed = content.trim();
+                if (BooleanUtils.or(new boolean[] { trimmed.isEmpty(), ineffective.test(trimmed) })) {
+                    return;
+                }
                 if (kind == LineKind.ADDED) {
-                    added.increment();
-                    categorize(content.trim(), profile, blankAdded, commentAdded, importAdded);
+                    effectiveAdded.increment();
                 } else if (kind == LineKind.DELETED) {
-                    deleted.increment();
-                    categorize(content.trim(), profile, blankDeleted, commentDeleted, importDeleted);
+                    effectiveDeleted.increment();
                 }
             });
 
-            return new DiffStats(
-                    added.intValue(),
-                    deleted.intValue(),
-                    importAdded.intValue(),
-                    importDeleted.intValue(),
-                    commentAdded.intValue(),
-                    commentDeleted.intValue(),
-                    blankAdded.intValue(),
-                    blankDeleted.intValue());
-        }
-        private static void categorize(String trimmed, IneffectiveLineProfile profile, MutableInt blank, MutableInt comment, MutableInt imports) {
-            if (trimmed.isEmpty()) {
-                blank.increment();
-            } else if (profile.isComment(trimmed)) {
-                comment.increment();
-            } else if (profile.isImport(trimmed)) {
-                imports.increment();
-            }
+            return new DiffStats(effectiveAdded.intValue(), effectiveDeleted.intValue());
         }
     }
 
