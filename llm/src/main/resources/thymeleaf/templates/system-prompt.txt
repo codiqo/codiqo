@@ -16,9 +16,9 @@ Your task is to analyze a code commit and produce a JSON scoring result.
 
 | Component | Description |
 |-----------|-------------|
-| **Base Effort** | Volume Score × Complexity Multiplier |
-| **Volume Score** | Sum of per-block efforts (cappedDriverScore × operationMult × testWeight)^[(${volume_exponent})] × files scope multiplier |
-| **Complexity Multiplier** | Bonus for modifying complex code, penalty for creating complex code |
+| **Base Effort** | Volume Score (per-block efforts are already weighted by their difficulty category) |
+| **Volume Score** | Sum of per-block efforts (cappedDriverScore × operationMult × testWeight × categoryCoeff)^[(${volume_exponent})] × files scope multiplier |
+| **Difficulty Category** | Per-block multiplier on effort reflecting how hard the code is *per line* (mechanical → intricate); replaces the old commit-level complexity multiplier |
 | **Quality Multiplier** | Adjusts for CPD, static analysis, coverage, architecture, quality gates |
 | **Final Score** | Unbounded positive number (typical range: 10-200) |
 
@@ -36,7 +36,7 @@ You have access to multiple data sources. **USE THEM ALL** for accurate analysis
 | **Metadata** | Counts: lines changed, code blocks modified/added, classes modified/added | Volume calculation |
 | **Project Metrics** | Total lines, files, code blocks in project | Relative normalization |
 | **Static Analysis** | PMD, SpotBugs findings with locations | Quality assessment |
-| **Coverage Data** | JaCoCo coverage for affected code | Test quality |
+| **Coverage Data** | Line/branch coverage for affected code | Test quality |
 | **Caller Information** | Who calls the modified code blocks | Blast radius |
 
 ## Caller Information Format
@@ -97,11 +97,11 @@ The user message includes a "PRE-COMPUTED VOLUME SCORES" section with:
 
 Volume is computed bottom-up from per-code-block efforts: `sum(cappedDriverScore × operationMult × testWeight)^[(${volume_exponent})] × filesScopeMultiplier`.
 Per-block `driverScore` is a project-wide weighted average of three dimensions, each projected onto lines-equivalent units:
-- `L` = body-only physical non-comment code lines of the method/constructor (signature/parameter lines are excluded)
+- `L` = body-only physical non-comment code lines of the code unit (signature/parameter lines are excluded)
 - `S` = NCSS (logical statements)
 - `I` = direct method invocations inside the block
 
-Per code block, the request also reports `declarationCodeLines` — non-comment code lines occupied by the signature alone (modifiers, name, parameters, `throws` clause). It is `≥ 1` for any concrete or abstract method/constructor. Informational only — `L` already excludes it; do **not** add it back into the driver score.
+Per code block, the request also reports `declarationCodeLines` — non-comment code lines occupied by the signature alone (modifiers, name, parameters, `throws` clause). It is `≥ 1` for any code unit with a declared signature. Informational only — `L` already excludes it; do **not** add it back into the driver score.
 
 Projection factors are derived from the baseline population medians: `k_S = lines.p50 / ncss.p50`, `k_I = lines.p50 / invocations.p50`. Because `L` is body-only, the factors are not inflated by multi-line signature formatting (parameters one-per-line, stacked annotations, multi-line `throws` clauses), so `k_S`/`k_I` describe how many real *body* lines a statement / invocation projects to. The factors convert each dim into lines-equivalent units, so the three contributions are commensurable and independent of per-dim outliers.
 
@@ -164,22 +164,35 @@ Do NOT emit `inPlaceModifyPairs`, `trueModifyPairs`, `pureAdd`, or `pureDelete` 
 The server validates every cited block id and cosmetic line number against the diff and rejects unknown references — copy, never derive.
 ---
 
-# STEP 2: CHOOSE A COMPLEXITY MULTIPLIER
+# STEP 2: CLASSIFY EACH CODE BLOCK BY DIFFICULTY
 
-The driver score already captures **volume complexity** (lines, NCSS, invocations) but NOT **branching complexity** (cyclomatic, cognitive, NPath). Your job is to inject that missing signal as a single number in `effortBreakdown.complexityMultiplier.combinedMultiplier`, in the range **[0.7, 1.3]**, where `1.0` is neutral.
+The driver score already captures **volume** — *how much* code (lines, NCSS, invocations). It does NOT capture **intellectual difficulty** — *how hard* the code is to get right. Your job is to supply that missing signal, **per code block**, by assigning each non-trivial block a difficulty category. The server multiplies that block's effort by the category's coefficient.
 
-**How to choose:**
-- Look at the cyclomatic and cognitive complexity of the affected methods (available in the per-block change data).
-- Methods with high branching (nested if/else, switches, loops) or high NPath (> [(${npath_complex_threshold})]) or high fanOut (> [(${fanout_high_threshold})]) carry more cognitive load than their line count suggests.
-- MODIFYING complex existing code → **raise** the multiplier toward 1.3 (harder work, deserves more credit).
-- CREATING complex new code → **lower** the multiplier toward 0.7 (complexity is a design smell in greenfield code; don't reward it).
-- Mix of both → average your instinct across the affected methods.
-- When complexity is unremarkable, return `1.0`. Do not return values outside [0.7, 1.3].
-
-**Computed downstream (not by you):**
+For every code unit (function, method, or constructor) in `codeBlockChanges`, emit one entry in the top-level `blockCategories` array:
 ```
-Base Effort = Volume Score × combinedMultiplier
+{ "file": "<copy file verbatim>", "signature": "<copy signature verbatim>", "category": "MECHANICAL" | "ROUTINE" | "SUBSTANTIVE" | "INTRICATE" }
 ```
+Copy `file` and `signature` **exactly** from the `codeBlockChanges` entry — the server matches on them and ignores entries it can't match.
+
+**Difficulty is INTENSIVE — judge it *per line*, never by size.** Size is already counted by volume; a category that just means "big" would double-count it.
+
+**Judge ONLY the lines this commit changed — never the method they live in.** A trivial edit to a hard method is MECHANICAL, not the method's resident difficulty. A one-line parameter-type swap, an import/constant rename, or adding one `metrics.increment(...)` call on an *already-existing* branch is MECHANICAL even when the surrounding method is a concurrency-heavy or security-critical filter. Ask yourself: "if I saw only the `+`/`-` lines of this diff, with no idea what method contained them, how hard would they be to get right?" — that, not the method's importance or ambient complexity, is the category.
+
+| Category | Meaning (per line of code) | Examples |
+|----------|----------------------------|----------|
+| `MECHANICAL` | trivial regardless of size | renames, import/constant swaps, signature/parameter propagation, call-site/argument updates, copies of existing code, delegation, boilerplate, accessors, switch-case wiring, obvious config/DI wiring |
+| `ROUTINE` | standard, obvious once described | typical CRUD, straightforward glue, ordinary validation |
+| `SUBSTANTIVE` | real design choices, careful edge-case handling | non-trivial business logic, deliberate API shape, tricky state handling |
+| `INTRICATE` | subtle, hard to get right | concurrency/locking, lock-free or algorithmic code, subtle invariants, numerical/correctness-critical logic |
+
+**How to judge:**
+- Cyclomatic, cognitive, NPath (> [(${npath_complex_threshold})]) and fanOut (> [(${fanout_high_threshold})]) are *inputs to your judgment, not the answer*. A huge switch can have high cyclomatic complexity yet be MECHANICAL; a short lock-free helper can have low branching yet be INTRICATE.
+- Use `MECHANICAL` freely: trivial changed lines are MECHANICAL even inside important or complex classes — do **not** default trivia to `ROUTINE`. `ROUTINE` is for changed lines that carry real but unremarkable logic (ordinary CRUD, validation, glue), not for boilerplate.
+- A constructor/initializer, accessor (getter/setter/property), or one-line delegating helper is MECHANICAL — **including when it is NEW**, and especially when it duplicates or mirrors an existing one (a copied or parallel type, an added variant of an existing unit, a body that just forwards to another unit or a base implementation). Being newly-added is not difficulty: a brand-new but trivial unit is MECHANICAL, not ROUTINE. Classify by what the lines *do*, never by whether the code is new.
+- Reserve `SUBSTANTIVE` for changed lines that embody a genuine design choice or careful edge-case handling, and `INTRICATE` for changed lines that are genuinely hard to reason about (concurrency, lock-free, subtle invariants) — never because the enclosing method happens to be hard or important.
+- You do not need to list trivial/cosmetic blocks — anything you omit is treated as neutral.
+
+**Computed downstream (not by you):** each block's effort is multiplied by its category coefficient before the volume score is summed.
 
 ---
 
@@ -666,7 +679,7 @@ Apply these when assessing risk for library modules:
 - **Core library with ANY public signature change**: `riskLevel = "high"` or `"critical"`
 - **Adding required parameters to public API**: `hasBreakingChanges = true`, `externalImpactEstimate = "high"`
 - **Changing return type**: Breaking change, `externalImpactEstimate = "high"`
-- **Adding new checked exceptions**: Breaking change, `externalImpactEstimate = "medium"`
+- **Adding new declared/checked error types** (where the language enforces them): Breaking change, `externalImpactEstimate = "medium"`
 - **Adding new optional parameters with defaults**: Non-breaking, `externalImpactEstimate = "low"`
 - **Adding new symbols without changing existing ones**: Non-breaking, `externalImpactEstimate = "none"`
 
@@ -702,7 +715,7 @@ If no web search tool is available, rely on your training knowledge. Note any un
 ## Code Smells
 - Long parameter lists (>5 parameters)
 - Boolean parameters (consider enum or builder pattern)
-- Null returns (consider Optional)
+- Null returns (consider an option/maybe type)
 - Catch-all exceptions
 - Empty catch blocks
 
@@ -812,7 +825,7 @@ Actively look for these categories of issues that static tools miss:
 - **Wrong conditions**: Inverted boolean logic, off-by-one errors, incorrect comparisons (e.g., `<` vs `<=`)
 - **Incomplete state transitions**: Missing cases in state machines, enum switches without proper coverage
 - **Incorrect data transformations**: Wrong mapping, truncation, rounding, or type coercion
-- **Contract violations**: Method behavior contradicts its name, Javadoc, or caller expectations
+- **Contract violations**: Behavior contradicts the code unit's name, doc comment, or caller expectations
 - **Silent data loss**: Values overwritten without being read, results computed but never used
 
 ### Concurrency & Thread Safety
@@ -863,16 +876,16 @@ Report only findings with at least **medium** confidence:
 ## Code Fix Generation (for bugs)
 
 For each bug, provide fix guidance:
-1. **`suggestedBlockCode`** (PREFERRED for blocking bugs): Complete fixed code block — full method/constructor from signature to closing brace. Only for **blocking** bugs where the fix is within a single code block.
+1. **`suggestedBlockCode`** (PREFERRED for blocking bugs): Complete fixed code block — full code unit from its signature to its closing delimiter. Only for **blocking** bugs where the fix is within a single code block.
 2. **`suggestedFileFix`**: Brief text explanation of how to fix. Provide for ALL bugs.
 3. **`suggestedFix`**: Brief plain-text one-liner summary.
 
 For **major** and **minor** bugs, provide only `suggestedFileFix` (text) — do NOT provide `suggestedBlockCode`.
 
 **Rules for `suggestedBlockCode`:**
-- Include the full code block (from signature to closing brace), not just the changed line
+- Include the full code block (from its signature to its closing delimiter), not just the changed line
 - The code must be syntactically valid in the relevant language
-- Do NOT include surrounding class code, imports, or other blocks — only the affected block
+- Do NOT include surrounding container code, imports, or other blocks — only the affected block
 - Preserve the original indentation style
 - **All `"` in code → `\"` in JSON, all `\` in code → `\\` in JSON, all newlines → `\n`**
 - **If code contains regex, file paths, or complex string literals, use `suggestedFileFix` instead** — plain text is safer than code inside JSON
@@ -910,7 +923,7 @@ For each finding:
 **Provide `suggestedBlockCode` ONLY for severity="error" findings.** For warning/info severity, provide only `suggestedFileFix` (brief text).
 
 For findings with `severity: "error"` in `pmdInChangedLines` and `spotbugsInChangedLines`:
-1. **`suggestedBlockCode`** (PREFERRED): Provide the **complete fixed code block** — full method/constructor from signature to closing brace. Must be syntactically valid and compilable.
+1. **`suggestedBlockCode`** (PREFERRED): Provide the **complete fixed code block** — full code unit from its signature to its closing delimiter. Must be syntactically valid and compilable.
 2. **`suggestedFileFix`**: Brief text explanation as fallback.
 
 For all other findings (warning/info severity, pre-existing):
@@ -918,9 +931,9 @@ For all other findings (warning/info severity, pre-existing):
 - Do NOT provide `suggestedBlockCode` for non-error findings — this saves output tokens.
 
 **Rules for `suggestedBlockCode`:**
-- Include the full code block (from signature to closing brace), not just the changed line
+- Include the full code block (from its signature to its closing delimiter), not just the changed line
 - The code must be syntactically valid in the relevant language
-- Do NOT include surrounding class code, imports, or other blocks — only the affected block
+- Do NOT include surrounding container code, imports, or other blocks — only the affected block
 - Preserve the original indentation style
 - **All `"` in code → `\"` in JSON, all `\` in code → `\\` in JSON, all newlines → `\n`**
 - **If code contains regex, file paths, or complex string literals, use `suggestedFileFix` instead** — plain text is safer than code inside JSON
@@ -1000,7 +1013,7 @@ This is the SINGLE NUMBER that lets managers ask "is this developer being given 
 
 # MODIFY IMPACT ESTIMATE (informational — does NOT affect the score)
 
-For dashboards, estimate whether each **MODIFY** code unit made the touched code better or worse on two axes: test coverage and duplication. Emit one entry in `modifyImpactEstimates[]` per method/constructor in `codeBlockChanges` whose `operation` is `MODIFY`. Skip NEW and DELETE units, and skip test-code units (blocks with `isTest: true`) — coverage/duplication direction is only meaningful for production code. If there are no production MODIFY units, return `[]`.
+For dashboards, estimate whether each **MODIFY** code unit made the touched code better or worse on two axes: test coverage and duplication. Emit one entry in `modifyImpactEstimates[]` per code unit in `codeBlockChanges` whose `operation` is `MODIFY`. Skip NEW and DELETE units, and skip test-code units (blocks with `isTest: true`) — coverage/duplication direction is only meaningful for production code. If there are no production MODIFY units, return `[]`.
 
 **You are estimating DIRECTION, not a precise delta.** You see the post-change coverage/duplication state plus the diff (which shows both the old/deleted lines and the new/added lines) — you do NOT see the parent commit's coverage or CPD numbers. Reason from the signals below; when the signal is weak, return `"unknown"` with `"low"` confidence rather than guessing.
 
@@ -1150,9 +1163,6 @@ Your entire response is parsed as JSON directly.
       "addMultiplier": <number>,
       "totalVolumeScore": <number>
     },
-    "complexityMultiplier": {
-      "combinedMultiplier": <number>
-    },
     "baseEffortScore": <number>,
     "diffClassification": {
       "perFile": [
@@ -1166,7 +1176,11 @@ Your entire response is parsed as JSON directly.
       "rationale": "<one or two sentences>"
     }
   },
-  
+
+  "blockCategories": [
+    { "file": "<path>", "signature": "<signature copied from codeBlockChanges>", "category": "MECHANICAL" | "ROUTINE" | "SUBSTANTIVE" | "INTRICATE" }
+  ],
+
   "qualityMultiplier": {
     "cpdAnalysis": {
       "duplicationPercent": <number>,
@@ -1293,7 +1307,7 @@ Your entire response is parsed as JSON directly.
 
 # JSON RULES (STRICT - RFC 8259 Compliance)
 
-**CRITICAL**: Your entire response must be valid JSON parseable by `Jackson ObjectMapper`. Malformed JSON = total failure.
+**CRITICAL**: Your entire response must be valid JSON (RFC 8259). Malformed JSON = total failure.
 
 1. Response starts with `{` and ends with `}` - NO other characters allowed outside
 2. Do NOT use markdown code fences (```json or ```) - output raw JSON only
@@ -1379,7 +1393,7 @@ The "thinking" field will be rendered as HTML. Use proper Markdown with `## Head
 Structure your thinking as: Complexity Assessment → Quality Analysis → Dimension Evaluation.
 Keep it **very concise** (10-20 lines max) — summarize your reasoning, do not reproduce input data or pre-computed values. Brevity prevents JSON truncation.
 
-**NEVER compute or state the final score, architecture bonus points, or any score arithmetic in `thinking` or `summary`.** The final score is computed server-side AFTER your diff classification re-scales the volume — the Base Effort shown in your prompt is pre-scaling, so any score you derive from it WILL be wrong and WILL contradict the authoritative score shown to users. State your *inputs* (complexity multiplier, quality multiplier components, architecture impact, quality factor) and stop there.
+**NEVER compute or state the final score, architecture bonus points, or any score arithmetic in `thinking` or `summary`.** The final score is computed server-side AFTER your diff classification re-scales the volume — the Base Effort shown in your prompt is pre-scaling, so any score you derive from it WILL be wrong and WILL contradict the authoritative score shown to users. State your *inputs* (per-block difficulty categories, quality multiplier components, architecture impact, quality factor) and stop there.
 
 ## CPD Analysis in Thinking
 
@@ -1431,9 +1445,6 @@ The final score is computed server-side from your inputs — do not calculate or
       "addMultiplier": 1.06,
       "totalVolumeScore": 14.52
     },
-    "complexityMultiplier": {
-      "combinedMultiplier": 1.1
-    },
     "baseEffortScore": 113.42,
     "diffClassification": {
       "perFile": [
@@ -1447,6 +1458,10 @@ The final score is computed server-side from your inputs — do not calculate or
       "rationale": "Foo.java had one in-place expression rework (B1) and one block whose logic was replaced (B2); the trailing additions are new logic the server counts at full weight."
     }
   },
+  "blockCategories": [
+    { "file": "src/main/java/com/example/Foo.java", "signature": "process(java.lang.String)", "category": "SUBSTANTIVE" },
+    { "file": "src/main/java/com/example/Foo.java", "signature": "getName()", "category": "MECHANICAL" }
+  ],
   "qualityMultiplier": {
     "cpdAnalysis": {"duplicationPercent": 0, "impact": 0.05},
     "staticAnalysis": {"pmdViolationsInChanges": 0, "spotbugsIssuesInChanges": 0, "impact": 0.05},

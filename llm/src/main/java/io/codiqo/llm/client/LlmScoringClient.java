@@ -14,6 +14,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
 
@@ -23,8 +24,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.core.JsonValue;
@@ -56,6 +57,8 @@ public class LlmScoringClient implements ScoringClient {
     private static final String FINISH_REASON_STOP = "stop";
     private static final String FINISH_REASON_LENGTH = "length";
     private static final String MARKDOWN_FENCE = "```";
+    private static final long RESPONSE_RETRY_BACKOFF_BASE_MS = 1_000L;
+    private static final long RESPONSE_RETRY_BACKOFF_MAX_MS = 30_000L;
 
     private final Log log;
     private final OpenAIClient client;
@@ -70,6 +73,7 @@ public class LlmScoringClient implements ScoringClient {
     private final Double topP;
     private final Integer maxTokens;
     private final Integer numCtx;
+    private final Integer seed;
     private final int maxRetries;
     private final int validationMaxRetries;
     private final boolean enableWebSearch;
@@ -104,7 +108,8 @@ public class LlmScoringClient implements ScoringClient {
         this.temperature = args.getLlmTemperature();
         this.topP = args.getLlmTopP();
         this.maxTokens = args.getLlmMaxTokens();
-        this.numCtx = args.getLlmNumCtx();
+        this.numCtx = normalizeNumCtx(args.getLlmNumCtx());
+        this.seed = args.getLlmSeed();
         this.maxRetries = args.getLlmMaxRetries();
         this.validationMaxRetries = Optional.ofNullable(args.getLlmValidationMaxRetries()).map(Short::intValue).orElse(0);
         this.enableWebSearch = args.isLlmEnableWebSearchTool();
@@ -112,9 +117,17 @@ public class LlmScoringClient implements ScoringClient {
 
         Preconditions.checkArgument(maxRetries >= BigDecimal.ONE.intValue(), "llmMaxRetries must be >= 1 (was %s)", maxRetries);
 
-        if (Objects.nonNull(numCtx)) {
-            log.info(String.format("configuring LLM client num_ctx=%d", numCtx));
-        }
+        log.info(String.format(
+                "LLM config model: %s temperature: %s topP: %s maxCompletionTokens: %s numCtx: %s seed: %s maxRetries: %d validationMaxRetries: %d webSearch: %b",
+                model,
+                temperature,
+                topP,
+                maxTokens,
+                numCtx,
+                seed,
+                maxRetries,
+                validationMaxRetries,
+                enableWebSearch));
 
         this.objectMapper = JsonMapper.builder()
                 .propertyNamingStrategy(PropertyNamingStrategies.LOWER_CAMEL_CASE)
@@ -158,8 +171,27 @@ public class LlmScoringClient implements ScoringClient {
         if (Objects.nonNull(maxTokens)) {
             paramsBuilder.maxCompletionTokens(maxTokens.longValue());
         }
+        /**
+         * Ollama applies sampling through its native `options` object — num_ctx only takes effect there,
+         * and the merge precedence between a raw `options` body and the OpenAI-derived parameters is undocumented.
+         * Send every sampling knob through `options` so temperature/seed are honored together with num_ctx and scoring is reproducible
+         * (top-level temperature/topP above stay for portability to non-Ollama providers).
+         */
+        Map<String, Object> options = Maps.newLinkedHashMap();
         if (Objects.nonNull(numCtx)) {
-            paramsBuilder.putAdditionalBodyProperty("options", JsonValue.from(ImmutableMap.of("num_ctx", numCtx)));
+            options.put("num_ctx", numCtx);
+        }
+        if (Objects.nonNull(seed)) {
+            options.put("seed", seed);
+        }
+        if (Objects.nonNull(temperature)) {
+            options.put("temperature", temperature);
+        }
+        if (Objects.nonNull(topP)) {
+            options.put("top_p", topP);
+        }
+        if (MapUtils.isNotEmpty(options)) {
+            paramsBuilder.putAdditionalBodyProperty("options", JsonValue.from(options));
         }
         paramsBuilder.responseFormat(ResponseFormatJsonObject.builder().build());
         if (enableWebSearch) {
@@ -237,7 +269,17 @@ public class LlmScoringClient implements ScoringClient {
                 }
 
                 if (responseAttempt < maxRetries) {
-                    log.warn("retrying due to malformed LLM response (" + responseAttempt + "/" + maxRetries + ")");
+                    /**
+                     * an empty body with finishReason=stop is the signature of provider throttling/overload (the
+                     * server sheds load rather than generating) — retrying immediately just hammers it, so back off
+                     */
+                    boolean emptyResponse = StringUtils.isBlank(rawContent);
+                    long backoffMs = Math.min(RESPONSE_RETRY_BACKOFF_MAX_MS, RESPONSE_RETRY_BACKOFF_BASE_MS << responseAttempt - 1);
+                    log.warn(String.format("retrying due to %s LLM response (%d/%d), backing off %dms",
+                            emptyResponse ? "empty (likely provider throttling/overload)" : "malformed",
+                            responseAttempt, maxRetries, backoffMs));
+                    Thread.sleep(backoffMs);
+
                     streamResult = streamWithRetry(paramsBuilder.build(), bridgeHandler);
                     totalPromptTokens += streamResult.getPromptTokens();
                     totalCompletionTokens += streamResult.getCompletionTokens();
@@ -259,9 +301,7 @@ public class LlmScoringClient implements ScoringClient {
                         validationMaxRetries));
 
                 // the feedback critiques the prior response, so it must be in the conversation
-                paramsBuilder.addMessage(ChatCompletionAssistantMessageParam.builder()
-                        .content(rawContent)
-                        .build());
+                paramsBuilder.addMessage(ChatCompletionAssistantMessageParam.builder().content(rawContent).build());
                 paramsBuilder.addUserMessage(promptBuilder.buildValidationFeedback(report));
 
                 StreamingResult retryStream = streamWithRetry(paramsBuilder.build(), bridgeHandler);
@@ -329,28 +369,6 @@ public class LlmScoringClient implements ScoringClient {
         }
         throw new IllegalArgumentException("unknown tool: " + name);
     }
-    private static String stripMarkdownFences(String raw) {
-        String trimmed = raw.strip();
-        int jsonStart = trimmed.indexOf('{');
-        int jsonEnd = trimmed.lastIndexOf('}');
-        if (trimmed.startsWith(MARKDOWN_FENCE) && trimmed.endsWith(MARKDOWN_FENCE)) {
-            if (jsonStart > 0 && jsonEnd > jsonStart) {
-                trimmed = trimmed.substring(jsonStart, jsonEnd + 1);
-            }
-        }
-        return trimmed;
-    }
-    static void removeTestCodeEstimates(LlmScoringResponse response, LlmScoringRequest request) {
-        List<LlmScoringResponse.ModifyImpactEstimate> estimates = response.getModifyImpactEstimates();
-        if (CollectionUtils.isNotEmpty(estimates)) {
-            Set<String> testCodeSignatures = request.getCodeBlockChanges().stream()
-                    .filter(LlmScoringRequest.CodeBlockChange::isTest)
-                    .map(LlmScoringRequest.CodeBlockChange::getSignature)
-                    .collect(Collectors.toSet());
-
-            estimates.removeIf(estimate -> testCodeSignatures.contains(estimate.getSignature()));
-        }
-    }
     private StreamingResult streamWithRetry(ChatCompletionCreateParams params, OpenAIClientWrapper.StreamingHandler handler) {
         RuntimeException lastException = null;
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
@@ -369,10 +387,38 @@ public class LlmScoringClient implements ScoringClient {
         }
         throw lastException;
     }
+    public static void removeTestCodeEstimates(LlmScoringResponse response, LlmScoringRequest request) {
+        List<LlmScoringResponse.ModifyImpactEstimate> estimates = response.getModifyImpactEstimates();
+        if (CollectionUtils.isNotEmpty(estimates)) {
+            Set<String> testCodeSignatures = request.getCodeBlockChanges().stream()
+                    .filter(LlmScoringRequest.CodeBlockChange::isTest)
+                    .map(LlmScoringRequest.CodeBlockChange::getSignature)
+                    .collect(Collectors.toSet());
+
+            estimates.removeIf(estimate -> testCodeSignatures.contains(estimate.getSignature()));
+        }
+    }
     public static boolean isNonRetryableClientError(OpenAIServiceException err) {
         if (err instanceof RateLimitException) {
             return false;
         }
         return Family.familyOf(err.statusCode()) == Family.CLIENT_ERROR;
+    }
+    private static String stripMarkdownFences(String raw) {
+        String trimmed = raw.strip();
+        int jsonStart = trimmed.indexOf('{');
+        int jsonEnd = trimmed.lastIndexOf('}');
+        if (trimmed.startsWith(MARKDOWN_FENCE) && trimmed.endsWith(MARKDOWN_FENCE)) {
+            if (jsonStart > 0 && jsonEnd > jsonStart) {
+                trimmed = trimmed.substring(jsonStart, jsonEnd + 1);
+            }
+        }
+        return trimmed;
+    }
+    private static Integer normalizeNumCtx(Integer numCtx) {
+        if (Objects.nonNull(numCtx) && numCtx <= 0) {
+            return RunArgs.DEFAULT_NUM_CTX;
+        }
+        return numCtx;
     }
 }

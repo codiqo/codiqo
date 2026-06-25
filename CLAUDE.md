@@ -797,6 +797,25 @@ private static final int THRESHOLD = 10;
 public void process() { ... }
 ```
 
+**Use Javadoc-style block comments (`/** ... */`) for multiline comments** — including implementation comments inside method bodies. Each continuation line is aligned with a leading `*`. Single-line comments stay as `//`:
+
+```java
+// Good - multiline comment uses a Javadoc-style block
+/**
+ * entries are server-derived from the diff (DiffClassificationDeriver), so totals match
+ * the effective targets by construction — a mismatch means candidate filtering drifted
+ */
+if (addedTotal != fc.getLinesAdded()) { ... }
+
+// Good - single-line comment stays as //
+// explicit "perFile": null from the LLM bypasses the @Builder.Default empty list
+
+// Bad - stacked single-line comments for one multiline note
+// entries are server-derived from the diff (DiffClassificationDeriver), so totals match
+// the effective targets by construction — a mismatch means candidate filtering drifted
+if (addedTotal != fc.getLinesAdded()) { ... }
+```
+
 ## Boolean Checks
 
 Use `Boolean.TRUE.equals()` for nullable Boolean fields:

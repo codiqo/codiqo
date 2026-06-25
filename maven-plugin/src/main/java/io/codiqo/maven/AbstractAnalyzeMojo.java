@@ -232,7 +232,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.llm.baseUrl", defaultValue = "https://ollama.com/v1")
     protected String llmBaseUrl;
 
-    @Parameter(property = "codiqo.llm.temperature", defaultValue = "0.3")
+    @Parameter(property = "codiqo.llm.temperature", defaultValue = "0.0")
     protected double llmTemperature;
 
     @Parameter(property = "codiqo.llm.maxTokens", defaultValue = "32767")
@@ -240,6 +240,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
     @Parameter(property = "codiqo.llm.numCtx")
     protected Integer llmNumCtx;
+
+    @Parameter(property = "codiqo.llm.seed", defaultValue = "42")
+    protected Integer llmSeed;
 
     @Parameter(property = "codiqo.llm.enableWebSearchTool", defaultValue = "false")
     protected boolean llmEnableWebSearchTool;
@@ -337,6 +340,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setLlmTemperature(llmTemperature);
         args.setLlmMaxTokens(llmMaxTokens);
         args.setLlmNumCtx(llmNumCtx);
+        args.setLlmSeed(llmSeed);
         args.setLlmEnableWebSearchTool(llmEnableWebSearchTool);
         args.setLlmValidationMaxRetries(llmValidationMaxRetries);
         args.setLlmReadTimeout(Duration.ofSeconds(llmReadTimeoutSeconds));

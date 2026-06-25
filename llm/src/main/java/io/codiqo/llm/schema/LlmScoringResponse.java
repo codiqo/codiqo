@@ -52,6 +52,9 @@ public class LlmScoringResponse {
     @Builder.Default
     private List<ModifyImpactEstimate> modifyImpactEstimates = Lists.newArrayList();
 
+    @Builder.Default
+    private List<CodeBlockCategoryView> blockCategories = Lists.newArrayList();
+
     public boolean hasBlockingBugs() {
         return Objects.nonNull(bugs) && CollectionUtils.isNotEmpty(bugs.getBlocking());
     }
@@ -259,6 +262,23 @@ public class LlmScoringResponse {
     @AllArgsConstructor
     public static class ComplexityMultiplier {
         private double combinedMultiplier;
+    }
+
+    public enum CodeBlockCategory {
+        MECHANICAL,
+        ROUTINE,
+        SUBSTANTIVE,
+        INTRICATE
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class CodeBlockCategoryView {
+        private String file;
+        private String signature;
+        private CodeBlockCategory category;
     }
 
     @Data

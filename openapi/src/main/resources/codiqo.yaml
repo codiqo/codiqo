@@ -1636,6 +1636,14 @@ components:
           type: integer
           minimum: 0
           description: For MODIFY code units — direct invocations that fall on effectively-changed lines (precise intersection of metrics.directInvocationLines with the unit's changed-line subset). 0 for NEW/DELETE
+        category:
+          type: string
+          enum: [MECHANICAL, ROUTINE, SUBSTANTIVE, INTRICATE]
+          nullable: true
+          description: |
+            LLM-assigned difficulty of this code unit, judged per line of code (intensive — not by size).
+            Drives the per-block effort coefficient that replaces the old commit-level complexity multiplier.
+            Null when the LLM did not classify this unit.
 
     SignatureFormatModel:
       type: string
@@ -3289,6 +3297,9 @@ components:
         llmNumCtx:
           type: integer
           description: Ollama context window size sent as options.num_ctx; null means do not send
+        llmSeed:
+          type: integer
+          description: Ollama sampling seed sent as options.seed for reproducible scoring; null means do not send
         llmEnableWebSearchTool:
           type: boolean
         llmReadTimeout:

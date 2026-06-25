@@ -46,11 +46,13 @@
         <!-- -->
         <maven.compiler.target>17</maven.compiler.target>
         <maven.compiler.source>17</maven.compiler.source>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <!-- -->
         <!-- CORE -->
         <!-- -->
         <slf4j.version>2.0.18</slf4j.version>
-        <logback.version>1.5.34</logback.version>
+        <logback.version>1.5.35</logback.version>
         <asm.version>9.10.1</asm.version>
         <javax.inject.version>1</javax.inject.version>
         <jakarta.annotation-api.version>3.0.0</jakarta.annotation-api.version>
@@ -78,8 +80,8 @@
         <jarchivelib.version>1.2.0</jarchivelib.version>
         <ecj.version>3.46.0</ecj.version>
         <lsp4j.version>1.0.0</lsp4j.version>
-        <openrewrite.version>8.84.9</openrewrite.version>
-        <openrewrite.recipe.version>2.36.0</openrewrite.recipe.version>
+        <openrewrite.version>8.85.5</openrewrite.version>
+        <openrewrite.recipe.version>2.37.0</openrewrite.recipe.version>
         <pmd.version>7.25.0</pmd.version>
         <spotbugs.version>4.10.2</spotbugs.version>
         <findbugs.sec.version>1.14.0</findbugs.sec.version>
@@ -87,7 +89,7 @@
         <jacoco.version>0.8.15</jacoco.version>
         <classgraph.version>4.8.184</classgraph.version>
         <oshi.version>7.3.1</oshi.version>
-        <openapi.version>4.39.1</openapi.version>
+        <openapi.version>4.41.0</openapi.version>
         <jtokkit.version>1.1.0</jtokkit.version>
         <thymeleaf.version>3.1.5.RELEASE</thymeleaf.version>
         <commons-lang3.version>3.20.0</commons-lang3.version>
@@ -128,6 +130,7 @@
         <version.versions.plugin>2.21.0</version.versions.plugin>
         <version.install.plugin>3.1.4</version.install.plugin>
         <version.javadoc.plugin>3.12.0</version.javadoc.plugin>
+        <version.lombok.plugin>1.18.20.0</version.lombok.plugin>
         <version.release.plugin>3.3.1</version.release.plugin>
         <version.deploy.plugin>3.1.4</version.deploy.plugin>
         <version.site.plugin>4.0.0-M16</version.site.plugin>
@@ -138,7 +141,7 @@
         <version.buildhelper.plugin>3.6.1</version.buildhelper.plugin>
         <version.os.plugin>1.7.1</version.os.plugin>
         <version.plugin.plugin>3.15.2</version.plugin.plugin>
-        <version.central-publishing.plugin>0.10.0</version.central-publishing.plugin>
+        <version.central-publishing.plugin>0.11.0</version.central-publishing.plugin>
     </properties>
     <distributionManagement>
         <snapshotRepository>
@@ -996,6 +999,8 @@
                     <configuration>
                         <failOnWarnings>false</failOnWarnings>
                         <failOnError>false</failOnError>
+                        <doclint>none</doclint>
+                        <quiet>true</quiet>
                     </configuration>
                     <executions>
                         <execution>

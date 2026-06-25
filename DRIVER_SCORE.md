@@ -206,7 +206,7 @@ The outlier's excess (800 - 60 = 740 above its bucket baseline) absorbs all the 
 
 Git diff exposes only ADDED and DELETED lines. There is no native concept of MODIFIED. So a one-line in-place edit (`log.info("foo")` → `log.info("bar")`) shows as 1 deletion + 1 addition = 2 lines, double-counting effort. Pure-addition cosmetic content (new javadoc, log statements, formatting, license headers) similarly inflates volume even when nothing was deleted.
 
-To compensate, the LLM is asked to classify EVERY changed line in the commit. For each eligible file (those flagged `linesJustificationRequired: true` in the request — production code, NOT POMs / config / generated artefacts) the LLM returns six arrays on `effortBreakdown.diffClassification.perFile[*]`:
+To compensate, the LLM is asked to classify EVERY changed line in the commit. For each eligible file (those flagged `linesJustificationRequired: true` in the request — Java source plus the line-count-scored config files `pom.xml` / `.proto`; NOT other resources or generated artefacts) the LLM returns six arrays on `effortBreakdown.diffClassification.perFile[*]`:
 
 - **`cosmeticAdded: List<Integer>`** — new-file line numbers for cosmetic *additions* (new javadoc, blank lines, log strings, formatting normalizations). 0 effort.
 - **`cosmeticDeleted: List<Integer>`** — old-file line numbers for cosmetic *deletions* (removed comments, whitespace). 0 effort.
@@ -254,7 +254,39 @@ Because validated files only contribute `effectiveLines ≤ rawLines` lines to t
 
 The skipped file is still persisted in `file_diff_classifications` with its arrays (for UI display), but its factor is absent from the `perFileFactor` map — so the math behaves as if the LLM never classified it. There is no per-file `applied` flag on the schema; the only signal that a file was skipped is the analysis-level bookkeeping showing `linesChangedAdjusted < linesChangedRaw` by less than expected, or all-zeros in the rare case that every file failed.
 
-**Pipeline position.** This step runs in `FinalScoreCalculator` *after* the LLM call returns and *before* the `complexityMultiplier` step. So the LLM's `combinedMultiplier` operates on the already-reduced `volumeScore`. The four mirror counters on `effortBreakdown.volumeScore` (`linesChangedRaw`, `linesChangedAdjusted`, `cosmeticLinesDropped`, `inPlaceLinesCollapsed`) record the before/after so reviewers can see exactly how much was reclassified.
+**Pipeline position.** This runs in `FinalScoreCalculator` *after* the LLM call returns. The diff-classification reduction and the [per-block difficulty category](#per-block-difficulty-category) coefficient are applied together in a single `VolumeScoreCalculator.recompute` pass — the per-file factor scales each block's `driverScore` and `effort`, the category coefficient scales `effort` only — producing the post-reduction `baseEffortScore`. The clamped quality multiplier and the architecture bonus are then layered on top of that base effort to yield the final commit score (`finalScore = baseEffortScore × clampedQualityMultiplier + architectureBonus`). The four mirror counters on `effortBreakdown.volumeScore` (`linesChangedRaw`, `linesChangedAdjusted`, `cosmeticLinesDropped`, `inPlaceLinesCollapsed`) record the before/after so reviewers can see exactly how much was reclassified.
+
+### Per-block difficulty category
+
+The diff-classification reduction above measures *how much* changed. A second LLM signal measures *how hard* each change was: every changed code block is assigned a **difficulty category**, which maps to an effort coefficient.
+
+| Category | Coefficient | Typical change |
+|---|---|---|
+| `MECHANICAL` | `0.7` | rename / import swap / signature propagation / copied or mirrored unit / accessor / one-line delegating helper |
+| `ROUTINE` | `1.0` | ordinary feature wiring — the neutral default |
+| `SUBSTANTIVE` | `1.2` | genuine new logic, a non-trivial branch, real algorithmic or concurrency work |
+| `INTRICATE` | `1.4` | dense, correctness-critical, or algorithmically intricate code |
+
+The spread is deliberately narrow (`0.7`–`1.4` around the `1.0` neutral anchor): the hosted LLM is not perfectly reproducible even at `temperature=0` + fixed `seed`, so borderline blocks occasionally flip one tier between identical runs. A compressed spread caps how much a single tier flip can move the final score.
+
+This **replaces the former commit-level `complexityMultiplier`** — a single `[0.7, 1.3]` number applied to the whole commit. Difficulty is now resolved per block, so a commit that mixes a mechanical mass-rename with one intricate algorithm no longer averages the two into a middling multiplier.
+
+**Applied to effort only, never the driver score.** In `VolumeScoreCalculator.recompute` each block is rescaled as:
+
+```
+scaledDriverScore = driverScore × effectiveLineFactor                 # category NOT applied
+scaledEffort      = effort      × effectiveLineFactor × categoryCoeff  # category applied here
+```
+
+The driver score stays a pure size measure (volume remains an honest line-count magnitude), and difficulty rides on a separate axis layered onto effort: a 200-line mechanical migration and a 200-line intricate rewrite carry the same volume but different effort. Blocks the LLM did not categorize default to `ROUTINE` (`1.0`, neutral). The global cap is re-tested on the category-scaled efforts in the same pass.
+
+The category is supplied on `response.blockCategories[*]` as `{file, signature, category}` (`CodeBlockCategoryView`) and matched to a block by `(file, signature)`. **The label itself is not persisted as a column** — only its effect lands in `code_block_efforts.effort`. To recover it per block:
+
+```
+categoryCoeff = effort / (driverScore × operationMult × testWeight)
+```
+
+The persisted `driverScore` already carries `effectiveLineFactor`, so it cancels, and the result lands cleanly on one of `{0.7, 1.0, 1.2, 1.4}`.
 
 ### Dry-run mode (`driverScoreCapDryRun`)
 
@@ -270,6 +302,33 @@ A few rules that follow from the design:
 - `globalCapApplied` retains its meaning: "the cap *would* clip if enforced". Combined with `globalCapDryRun`, downstream can distinguish "cap was enforced and clipped" from "cap was audited only" — both are computable from the persisted booleans.
 - `globalCapDriver` still fires under dry-run (because `globalCapApplied` still reflects "would clip"). Without that, the dry-run mode would lose its principal abuse signal.
 - The `blockEffortSum == totalEffortRaw` invariant under dry-run is the only behavioural difference from enforced mode. Replay must honor the persisted `driverScoreCapDryRun` flag verbatim, otherwise the volume score will diverge from the offline value.
+
+---
+
+## Config-file efforts (pom.xml, `.proto`)
+
+Some changed files carry real work but have **no code blocks** to drive — `pom.xml` and `.proto` files. Rather than ignore them, Codiqo scores them from **line count alone**: `VolumeScoreCalculator.calculateConfigFileEfforts` emits **one synthetic block per changed config file**, which then sits alongside the method/constructor blocks in the same `totalEffortRaw` / cap / volume accumulators.
+
+A file is line-count-scored when `LanguageCapabilities.isLineCountScored` is true — currently `pom.xml` (matched by name) or any `*.proto` (matched by extension). The synthetic block is built as:
+
+```
+rawLines    = fileChange.linesAdded + fileChange.linesDeleted    # skip the file if 0
+driverScore = rawLines                                           # the line count IS the driver score
+effort      = rawLines × modifyMult × configFileScoreMultiplier  # default configMult = 0.3
+```
+
+There is no NCSS / invocation projection and no scaler — config files have no bodies, statements, or call sites. The block is always `operation = MODIFY`, `signature = null`, `isConfig = true`.
+
+**The `0.3` `configFileScoreMultiplier` is a deliberate discount.** A 200-line dependency bump or generated-proto edit is real work but cheaper per line than 200 lines of hand-written logic, so config lines enter `totalEffortRaw` at ~⅓ weight.
+
+**Two structural exclusions keep config files from distorting the rest of the metric:**
+
+- **`bucketBaseline = 0`** — config blocks contribute nothing to `totalBaseline`, so they never inflate the global-cap budget, and on a config-only commit the cap cannot bind at all (`globalCapApplied` requires `totalBaseline > 0`).
+- **`isConfig = true`** — excludes the block from `totalEffectiveStatements` (which sums driver scores over non-config blocks only) and from the driver-score abuse signals.
+
+**`linesAdded` / `linesDeleted` are already effective counts.** They come from `DiffStats` filtered by the file's `IneffectiveLineProfile` before they ever reach the config-effort math: `C_STYLE` (`.proto`, like Java) drops `//`-style comments and `import` declarations; `XML` (`pom.xml`) drops `<!-- … -->` comment lines; `NONE` drops only blanks. So a commit that merely re-licenses a header or reorders imports in a `.proto` scores ~0 config effort.
+
+**Diff classification still applies, and the seeding is deliberate.** Config files set `linesJustificationRequired = true` (via `requiresDiffClassification`), so the LLM classifies their changed lines just like code, and in `recompute` the per-file effective-line factor rescales the synthetic block's `driverScore` and `effort` — collapsing cosmetic and in-place churn (a re-indented XML stanza, a moved `<dependency>`). The block is seeded from `added + deleted` (not `max(added, deleted)`) precisely so the factor `effectiveLines / (added + deleted)` collapses each delete+add pair exactly once; seeding with `max` would collapse the pair a second time. The per-block [difficulty category](#per-block-difficulty-category) does **not** apply — a null signature means config blocks always take the neutral `categoryCoeff = 1.0`.
 
 ---
 
@@ -353,7 +412,7 @@ The HTML report shows one row per changed code block with the full pipeline; the
 | **pI** | HTML + Maven | Lines-equivalent contribution of the I dimension (= `I · k_I`) |
 | **Driver** | HTML + Maven | Final driver score: `(pL + pS + pI) / 3` for NEW, `(pL + pI) / 2` for MODIFY |
 | **Ratio** | HTML only | `changeRatio` for MODIFY blocks, `1.00` for NEW |
-| **Effort** | HTML only | `Driver × operationMult × testWeight` — what the block contributes to `totalEffortRaw` |
+| **Effort** | HTML only | `Driver × operationMult × testWeight × categoryCoeff` — what the block contributes to `totalEffortRaw`. The HTML report is post-LLM, so `Driver` already carries the per-file effective-line factor and `categoryCoeff` is the per-block [difficulty-category](#per-block-difficulty-category) coefficient (`1.0` if uncategorized) |
 
 **Interpretation tip:** scan the `pL / pS / pI` columns first. They're all in the same lines-equivalent unit, so you can compare them directly. If one of them is much larger than the others, that block is "big in one way only" — usually a builder (high pI), a Lombok-generated getter spray (high pL), or an algorithmic density method (high pS). If all three are balanced, the block is uniformly large.
 
@@ -387,6 +446,8 @@ Tunable knobs that affect the driver score and the global cap. All are persisted
 | `driverScoreCapDryRun` | `false` | When `true`, the global cap is computed and abuse signals (`globalCapApplied`, `globalCapDriver`, `effortShare`, file-level rollups) are populated, but `blockEffortSum` is **not** clipped to `globalCap` — the score uses the uncapped `totalEffortRaw`. Lets you compare uncapped vs. capped scoring while still surfacing abuse signals. |
 | `volumeExponent` | `0.98` | Applied after `totalEffort` is computed; gentle compression (small/medium commits retain ~95%, large commits 500+ reduced ~25%) |
 | `testCodeScoreMultiplier` | `0.4` | Multiplier applied to test-block effort (and to the test-block contribution to `totalBaseline`) |
+| `categoryMechanicalCoeff`, `categoryRoutineCoeff`, `categorySubstantiveCoeff`, `categoryIntricateCoeff` | `0.7`, `1.0`, `1.2`, `1.4` | Per-block difficulty-category effort coefficients (LLM-assigned category → coefficient). Multiply **effort only**, never the driver score. Spread deliberately narrow to limit score swing when the LLM flips a borderline block one tier between runs. Replace the former commit-level `complexityMultiplier` |
+| `configFileScoreMultiplier` | `0.3` | Discount applied to [config-file efforts](#config-file-efforts-pomxml-proto) (`pom.xml` / `.proto` synthetic blocks, scored by line count). `effort = rawLines × modifyMult × configFileScoreMultiplier` |
 | `addMultiplierScale`, `modifyMultiplierScale`, `modifyMultiplierCap`, `sizeFactorDivisor` | various | Together compute `addMult` and `modifyMult` based on project size — see `VolumeScoreCalculator.calculate` |
 
 ---
@@ -532,7 +593,7 @@ Driver-score math is deterministic given the scalers + per-block raw counts + se
 | `scaledNcss` (= `pS`) | NEW: `S · k_S`; MODIFY: `0` | Lines-equivalent contribution of the S dimension. Field name retained for schema stability; the value is lines-equivalent, not a `[0, 1]` ratio |
 | `scaledInvocations` (= `pI`) | NEW: `I · k_I`; MODIFY: `effectiveInvocationsChanged · k_I` | Lines-equivalent contribution of the I dimension |
 | `cappedStatements` | `round(driverScore)` | No longer carries a per-block cap; equals the rounded raw driver score. Field name retained for schema stability |
-| `effort` | `driverScore · operationMult · testWeight` | Per-block contribution to `totalEffortRaw`. Not individually clipped; the global cap binds on the sum |
+| `effort` | `driverScore · operationMult · testWeight · categoryCoeff` | Per-block contribution to `totalEffortRaw`. Post-LLM, `driverScore` carries the per-file effective-line factor and `categoryCoeff` is the per-block [difficulty-category](#per-block-difficulty-category) coefficient (`1.0` if uncategorized). Not individually clipped; the global cap binds on the sum |
 | `bucketBaseline` | `bucketP95(block) · operationMult · testWeight` | Per-block contribution to `totalBaseline` |
 | `blockRatioDeviationNcss` | NEW: `|block.S/block.L − bucket.ncss.p50/bucket.lines.p50| / (bucket.ncss.p50/bucket.lines.p50)`<br>MODIFY: `0.0` (NCSS dropped from MODIFY score) | **For backend:** computed during server-side replay; persisted on the response payload. Per-developer abuse signal candidate. |
 | `blockRatioDeviationInvocations` | NEW: same shape using invocations dimension.<br>MODIFY: `0.0` (per-line ratios on a small diff are diff-shape artifacts, not block structure). | Same persistence semantics as above. |
@@ -568,6 +629,8 @@ The reduction itself (the per-file factor that scaled each block's `driverScore`
 **For backend (replay):** treat `effortBreakdown.diffClassification` and the four `volumeScore.*` mirror counters as **derived outputs of the LLM scoring step**, not inputs. The replay path of the offline plugin doesn't need them — the offline plugin doesn't run the LLM. They appear only on the LLM response. Persist them through to the DB exactly as received so the UI can render them and so analytics can aggregate "how often the LLM reclassifies this team's commits as cosmetic". When server-side replay re-runs the LLM, the new response will produce its own classification — accept whatever the model returns provided it satisfies the per-file invariant; the post-LLM score (`baseEffortScore`, final `score`) is the source of truth.
 
 **For UI:** see the rendering notes in section [What the UI can render from the submission payload](#what-the-ui-can-render-from-the-submission-payload).
+
+**5b. Per-block difficulty category** — the LLM returns `blockCategories[*]` = `{file, signature, category}` on the response (`CodeBlockCategoryView`; `category` ∈ `MECHANICAL | ROUTINE | SUBSTANTIVE | INTRICATE`). Like the diff-classification fields this is an **output of the LLM scoring step**, not a replay input — its only scoring effect is the `categoryCoeff` already folded into each block's persisted `effort` (see [Per-block difficulty category](#per-block-difficulty-category)). The label is not stored as a dedicated column; persist the array through for audit/UI, or recover the per-block coefficient as `effort / (driverScore × operationMult × testWeight)`. On server-side replay the re-run LLM produces its own categories; the post-LLM `effort` / `baseEffortScore` are the source of truth.
 
 **6. Per-file abuse-signal fields** — aggregations of the per-block fields above, also persisted on the response payload (one record per file in `EffortBreakdown.fileEfforts[*]`):
 
@@ -700,6 +763,9 @@ The calibration panel should **also** render the new factor diagnostics from eac
 | **`effortShare`** | A code block's fraction of the commit's total raw effort: `block.effort / totalEffortRaw`. Always populated; used for cap-driver attribution and stacked visualizations. |
 | **`globalCapDriver`** | A code block flagged when `globalCapApplied == true` AND its `effortShare` exceeds `driverFactorMaxDeviation`. Identifies the principal cause of a cap event, attributable to a specific block (and author). |
 | **`fileFlaggedAsAbusive`** | A file where strict majority (`outliers × 2 > total`) of its blocks are ratio outliers. File-level rollup of the per-block abuse signal. |
+| **Difficulty category** | LLM-assigned per-block effort coefficient — `MECHANICAL` (`0.7`), `ROUTINE` (`1.0`, the neutral default), `SUBSTANTIVE` (`1.2`), `INTRICATE` (`1.4`). Multiplies the block's `effort` only — never its driver score — in `recompute`. Replaces the former commit-level `complexityMultiplier`. Supplied on `response.blockCategories[*]` as `{file, signature, category}`; not persisted as its own column — recoverable as `effort / (driverScore × operationMult × testWeight)`. |
+| **Config-file effort** | The synthetic effort of a line-count-scored file (`pom.xml`, `.proto`) that has no code blocks. One block per file with `isConfig = true`, `signature = null`, `driverScore = linesAdded + linesDeleted` (effective), `effort = driverScore × modifyMult × configFileScoreMultiplier` (default `0.3`). `bucketBaseline = 0` so it stays out of the global-cap budget and the effective-statements metric. Still subject to diff-classification reduction; not subject to a difficulty category. |
+| **`isConfig`** | Per-block flag marking a synthetic [config-file effort](#config-file-efforts-pomxml-proto) block. Excludes the block from `totalEffectiveStatements` and the driver-score abuse signals; such blocks carry a null signature and a zero `bucketBaseline`. |
 | **Diff classification** | LLM-provided per-line reclassification of changed lines. The LLM returns six arrays per eligible file — `cosmeticAdded`, `cosmeticDeleted`, `inPlaceModifyPairs`, `trueModifyPairs`, `pureAdd`, `pureDelete` — that together cover every effective changed line. Compensates for git's lack of a "modified" line concept. Lives on `effortBreakdown.diffClassification` of the LLM scoring response. |
 | **`LinePair`** | Tuple `{deleted: int, added: int}` representing one paired modification — an old-file line removed and a new-file line added that together count as one logical edit. Replaces the previous shape of two parallel arrays for paired modifications; the tuple makes pair balance structurally impossible to violate. |
 | **`cosmeticAdded` / `cosmeticDeleted`** | Flat line-number arrays — `cosmeticAdded` uses new-file numbers, `cosmeticDeleted` uses old-file numbers. Lines whose presence/absence does not change behavior (whitespace, comments, log strings, license headers, brace style flips). Effort weight 0. No pairing requirement. |
