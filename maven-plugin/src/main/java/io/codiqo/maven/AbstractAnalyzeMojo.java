@@ -188,6 +188,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.jdtlsVersion", defaultValue = "1.58.0")
     protected String jdtlsVersion;
 
+    @Parameter(property = "codiqo.jdtlsUseSnapshot", defaultValue = "true")
+    protected boolean jdtlsUseSnapshot;
+
     @Parameter(property = "codiqo.dumpAnalysis", defaultValue = "true")
     protected boolean dumpAnalysis;
 
@@ -322,6 +325,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setCpdMinimumTileSize(cpdMinimumTileSize);
         args.setDiffContextLines(diffContextLines);
         args.setJdtlsVersion(jdtlsVersion);
+        args.setJdtlsUseSnapshot(jdtlsUseSnapshot);
         args.setDumpAnalysis(dumpAnalysis);
         args.setIgnoreCoverage(ignoreCoverage);
         args.setIgnoreCpd(ignoreCpd);
@@ -812,7 +816,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             if (purged.get() > 0) {
                 getLog().info("purged " + purged.get() + " non-Java source JARs from local repository");
 
-                File sharedIndex = RunArgs.JDT_SHARED_INDEX.resolve(args.getJdtlsVersion()).toFile();
+                File sharedIndex = RunArgs.JDT_SHARED_INDEX.resolve(args.effectiveJdtlsVersion()).toFile();
                 if (sharedIndex.exists()) {
                     FileUtils.deleteDirectory(sharedIndex);
                     getLog().info("invalidated JDT shared index cache: " + sharedIndex.getAbsolutePath());
