@@ -455,6 +455,9 @@ When a commit performs a major framework/library version migration (visible in P
 - The quality factor should reflect the migration execution quality (test coverage, clean adaptation, no regressions)
 - Mechanical changes (import renames, API adaptations) in a migration context represent significant coordination effort — do not undervalue them
 
+**No code change = no bonus:**
+A commit that modifies only build/config descriptors (e.g. `pom.xml`, `.proto`) with NO accompanying source-code changes is not architecture work — set `architectureImpactScore` to 0. The framework-migration 9-10 above applies only when the version bump cascades into actual source-code changes (import renames, API adaptations, config wiring); a bare dependency or project version bump on its own (e.g. a maven-release-plugin commit) scores 0.
+
 ## 3.6 Quality Gate Failures
 
 When a quality dimension score exceeds its threshold but the quality gate is NOT met, apply a penalty:

@@ -140,6 +140,26 @@ class FinalScoreCalculatorTest {
         assertEquals(0.0, response.getArchitectureEffortBonus().getBonusPoints(), 0.001,
                 "negative impact score must be clamped to 0 → zero bonus");
     }
+    @Test
+    void configOnlyCommitEarnsNoArchitectureBonus() {
+        RunArgs args = new RunArgs();
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .fileChanges(List.of(FileChange.builder().path("pom.xml").isConfig(true).build()))
+                .codeBlockChanges(List.of())
+                .build();
+        LlmScoringResponse response = new LlmScoringResponse();
+        response.setArchitectureEffortBonus(ArchitectureEffortBonus.builder()
+                .architectureImpactScore(7)
+                .qualityFactor(1.0)
+                .build());
+
+        new FinalScoreCalculator(args).apply(response, baseScores(100.0), request);
+
+        assertEquals(0.0, response.getArchitectureEffortBonus().getBonusPoints(), 0.001,
+                "a commit with no code blocks (pom-only) must not earn an architecture bonus");
+        assertEquals(0, response.getArchitectureEffortBonus().getArchitectureImpactScore(),
+                "stored impact score must match the zeroed bonus, not the LLM's original 7");
+    }
 
     @Test
     void perBlockCategoryWeightsEffortIndependentOfVolume() {
