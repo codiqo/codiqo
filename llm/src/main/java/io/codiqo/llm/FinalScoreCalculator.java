@@ -81,9 +81,18 @@ public class FinalScoreCalculator {
             response.getQualityMultiplier().setFinalMultiplier(clampedQualityMultiplier);
         }
 
+        /**
+         * the architecture bonus rewards effort on actual code — a commit that touches only
+         * build/config descriptors (e.g. pom.xml, .proto) produces no code blocks and must not
+         * earn it. language-agnostic: any structured language contributes codeBlockChanges, so a
+         * mechanical pom-only version bump scores zero here regardless of what the LLM returned.
+         * a null request (test-only overload) preserves legacy behaviour
+         */
+        boolean hasCodeChanges = Objects.isNull(request) || CollectionUtils.isNotEmpty(request.getCodeBlockChanges());
+
         int architectureImpactScore = 0;
         double qualityFactor = 1.0;
-        if (Objects.nonNull(response.getArchitectureEffortBonus())) {
+        if (hasCodeChanges && Objects.nonNull(response.getArchitectureEffortBonus())) {
             architectureImpactScore = Math.max(0, Math.min(MAX_ARCHITECTURE_IMPACT, response.getArchitectureEffortBonus().getArchitectureImpactScore()));
             qualityFactor = response.getArchitectureEffortBonus().getQualityFactor();
             qualityFactor = Math.max(0.0, Math.min(1.0, qualityFactor));
@@ -109,6 +118,7 @@ public class FinalScoreCalculator {
                     .build());
         } else {
             ArchitectureEffortBonus bonus = response.getArchitectureEffortBonus();
+            bonus.setArchitectureImpactScore(architectureImpactScore);
             bonus.setQualityFactor(qualityFactor);
             bonus.setBaseEffort(Precision.round(baseEffort, ROUNDING_PRECISION));
             bonus.setBonusCalculation(bonusCalculation);
