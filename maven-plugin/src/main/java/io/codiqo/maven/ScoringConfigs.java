@@ -13,7 +13,7 @@ public class ScoringConfigs {
         ScoringConfigModel toReturn = new ScoringConfigModel();
 
         toReturn.setCommitId(args.getCommitId());
-        toReturn.setJdtlsVersion(args.getJdtlsVersion());
+        toReturn.setJdtlsVersion(args.effectiveJdtlsVersion());
         toReturn.setPmdMinPriority(args.getPmdMinPriority());
         toReturn.setPmdRules(args.getPmdRules());
         toReturn.setSpotbugsPriorityThreshold(args.getSpotbugsPriorityThreshold());

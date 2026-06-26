@@ -2,8 +2,10 @@ package io.codiqo.api;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,13 +15,16 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Option.Builder;
 import org.apache.commons.cli.Options;
+import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.eclipse.jgit.annotations.Nullable;
 import org.eclipse.jgit.lib.Repository;
 
@@ -46,8 +51,8 @@ public class RunArgs {
             "linux-x86_64", "config_linux",
             "linux-aarch_64", "config_linux_arm",
             "windows-x86_64", "config_win");
-    public static final Supplier<HttpUrl.Builder> JDTLS_BASE_URL = () -> new HttpUrl.Builder().scheme("https").host("download.eclipse.org").addPathSegment("jdtls").addPathSegment("milestones");
     public static final Path JDT_SHARED_INDEX = FileSystems.getDefault().getPath(System.getProperty("user.home"), ".cache", "jdtls");
+    private static final Pattern JDTLS_ARCHIVE_VERSION = Pattern.compile("jdt-language-server-(\\d+\\.\\d+\\.\\d+)-");
     static {
         try {
             Files.createDirectories(JDT_SHARED_INDEX);
@@ -60,6 +65,10 @@ public class RunArgs {
     private String commitId;
     @Nullable
     private String jdtlsVersion = "1.58.0";
+    @Nullable
+    private boolean jdtlsUseSnapshot = true;
+    @Nullable
+    private transient String jdtlsArchiveName;
     @Nullable
     private String pmdMinPriority = RulePriority.HIGH.name();
     @Nullable
@@ -377,6 +386,33 @@ public class RunArgs {
     @Nullable
     private transient Integer jdtDebugPort;
 
+    public HttpUrl.Builder jdtlsBaseUrl() {
+        HttpUrl.Builder toReturn = new HttpUrl.Builder().scheme("https").host("download.eclipse.org").addPathSegment("jdtls");
+        if (jdtlsUseSnapshot) {
+            return toReturn.addPathSegment("snapshots");
+        }
+        return toReturn.addPathSegment("milestones").addPathSegment(jdtlsVersion);
+    }
+    public String resolveJdtlsArchiveName() {
+        if (StringUtils.isNotBlank(jdtlsArchiveName)) {
+            return jdtlsArchiveName;
+        }
+        for (;;) {
+            try (InputStream io = jdtlsBaseUrl().addPathSegment("latest.txt").build().url().openStream()) {
+                jdtlsArchiveName = StringUtils.trim(IOUtils.toString(io, StandardCharsets.UTF_8));
+                return jdtlsArchiveName;
+            } catch (Exception err) {
+                ExceptionUtils.wrapAndThrow(err);
+            }
+        }
+    }
+    public String effectiveJdtlsVersion() {
+        Matcher matcher = JDTLS_ARCHIVE_VERSION.matcher(resolveJdtlsArchiveName());
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        return jdtlsVersion;
+    }
     public Optional<ProjectSpec> owner(File filePath) {
         return projects.stream().filter(proj -> proj.contains(filePath)).findAny();
     }

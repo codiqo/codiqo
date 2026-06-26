@@ -5,7 +5,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -14,7 +13,6 @@ import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
-import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.SystemUtils;
 import org.apache.commons.lang3.time.StopWatch;
@@ -52,146 +50,138 @@ class JdtLspProcess implements Closeable {
         OSDetector detector = new OSDetector(logFactory);
         detector.detect(lookup, ImmutableList.of());
 
-        try (InputStream io = RunArgs.JDTLS_BASE_URL
-                .get()
-                .addPathSegment(args.getJdtlsVersion())
-                .addPathSegment("latest.txt")
-                .build()
-                .url()
-                .openStream()) {
-            String os = RunArgs.JDTLS_CONFIG.get(lookup.getProperty("os.detected.classifier"));
-            String latest = StringUtils.trim(IOUtils.toString(io, StandardCharsets.UTF_8));
-            Path path = fetch.download(logFactory, RunArgs.JDTLS_BASE_URL.get().addPathSegment(args.getJdtlsVersion()).addPathSegment(latest).build().url());
-            Archiver archiver = ArchiverFactory.createArchiver(FileType.get(path.toFile()));
-            Path tempDir = Files.createTempDirectory("jdtls");
-            tempDir.toFile().deleteOnExit();
+        String os = RunArgs.JDTLS_CONFIG.get(lookup.getProperty("os.detected.classifier"));
+        String latest = args.resolveJdtlsArchiveName();
+        Path path = fetch.download(logFactory, args.jdtlsBaseUrl().addPathSegment(latest).build().url());
+        Archiver archiver = ArchiverFactory.createArchiver(FileType.get(path.toFile()));
+        Path tempDir = Files.createTempDirectory("jdtls");
+        tempDir.toFile().deleteOnExit();
 
-            archiver.extract(path.toFile(), tempDir.toFile());
+        archiver.extract(path.toFile(), tempDir.toFile());
 
-            Path launcherJar;
-            Path config = tempDir.resolve(os);
-            Path data = Files.createTempDirectory("data-" + args.getJdtlsVersion());
-            data.toFile().deleteOnExit();
+        Path launcherJar;
+        Path config = tempDir.resolve(os);
+        Path data = Files.createTempDirectory("data-" + args.effectiveJdtlsVersion());
+        data.toFile().deleteOnExit();
 
-            //
-            // ~ well there must be only one equinox launcher jar
-            //
-            try (Stream<Path> files = Files.list(tempDir.resolve("plugins"))) {
-                launcherJar = files
-                        .filter(p -> p.getFileName().toString().startsWith("org.eclipse.equinox.launcher_"))
-                        .filter(p -> p.toString().endsWith(".jar"))
-                        .findFirst()
-                        .orElseThrow(() -> new IllegalStateException("could not find 'equinox' launcher jar"));
-            }
-
-            String java = SystemUtils.IS_OS_WINDOWS ? "java.exe" : "java";
-            if (Objects.nonNull(args.getJavaHome())) {
-                java = args.getJavaHome().toPath().normalize().resolve("bin").resolve(java).toFile().getAbsolutePath();
-            }
-
-            List<String> cmd = Lists.newArrayList();
-            cmd.add(java);
-            cmd.addAll(ImmutableList.of("-server", "-Xlog:disable"));
-            if (Objects.nonNull(args.getJdtDebugPort())) {
-                cmd.add("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=*:" + args.getJdtDebugPort());
-            }
-            cmd.addAll(ImmutableList.of("-XX:+UnlockExperimentalVMOptions", "-XX:+UnlockDiagnosticVMOptions", "-XX:+UseStringDeduplication"));
-            cmd.addAll(
-                    ImmutableList.of(
-                            "-Declipse.application=org.eclipse.jdt.ls.core.id1",
-                            "-Dosgi.bundles.defaultStartLevel=4",
-                            "-Declipse.product=org.eclipse.jdt.ls.core.product",
-                            "-Djava.import.generatesMetadataFilesAtProjectRoot=false",
-                            "-Dlog.level=ALL",
-                            "-Djdk.xml.maxGeneralEntitySizeLimit=0",
-                            "-Djdk.xml.totalEntitySizeLimit=0",
-                            "-Dsun.net.inetaddr.ttl=0",
-                            "-Dsun.zip.disableMemoryMapping=true",
-                            "-Dio.netty.tryReflectionSetAccessible=true",
-                            "-Djava.lsp.joinOnCompletion=true",
-                            "-Djava.net.preferIPv4Stack=true",
-                            "-Djava.awt.headless=true",
-                            "-Dfile.encoding=UTF-8"));
-
-            cmd.add("--enable-native-access=ALL-UNNAMED");
-            for (String pkg : new String[] {
-                    "api",
-                    "file",
-                    "main",
-                    "model",
-                    "parser",
-                    "processing",
-                    "tree",
-                    "util" }) {
-                cmd.add("--add-exports=jdk.compiler/com.sun.tools.javac." + pkg + "=ALL-UNNAMED");
-            }
-
-            for (String pkg : new String[] {
-                    "lang",
-                    "lang.invoke",
-                    "lang.reflect",
-                    "io",
-                    "net",
-                    "nio",
-                    "util",
-                    "util.concurrent",
-                    "util.concurrent.atomic" }) {
-                cmd.add("--add-opens=java.base/java." + pkg + "=ALL-UNNAMED");
-            }
-            cmd.addAll(
-                    ImmutableList.of(
-                            "--add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED",
-                            "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
-                            "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
-                            "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
-                            "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
-                            "--add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED"));
-
-            for (File file : args.getAgents()) {
-                cmd.add("-javaagent:" + file.getAbsolutePath());
-            }
-
-            if (args.isJdtUseSharedIndex()) {
-                cmd.add("-Djdt.core.sharedIndexLocation=" + RunArgs.JDT_SHARED_INDEX.resolve(args.getJdtlsVersion()).toFile().getAbsolutePath());
-            }
-
-            cmd.addAll(JvmOptionsFilter.keepMemory(System.getenv("MAVEN_OPTS")));
-
-            cmd.addAll(ImmutableList.of("-jar", launcherJar.toString()));
-            cmd.addAll(ImmutableList.of("-configuration", config.toString()));
-            cmd.addAll(ImmutableList.of("-data", data.toString()));
-
-            //
-            // ~ advance JVM options matched to the spawned JDK, not the current JVM
-            //
-            Runtime.Version spawnedJavaVersion = detectSpawnedJavaVersion(args.getJavaHome());
-            cmd.add(spawnedJavaVersion.feature() >= MIN_JDK_ZGC ? "-XX:+UseZGC" : "-XX:+UseParallelGC");
-            if (spawnedJavaVersion.feature() >= MIN_JDK_NATIVE_ACCESS) {
-                cmd.add("--enable-native-access=ALL-UNNAMED");
-            }
-            if (spawnedJavaVersion.feature() >= MIN_JDK_SUN_MISC_UNSAFE_FLAG) {
-                cmd.add("--sun-misc-unsafe-memory-access=allow");
-            }
-
-            log.info("starting JDTLS cmd: " + cmd);
-
-            StopWatch stopWatch = StopWatch.createStarted();
-            ProcessBuilder builder = new ProcessBuilder(cmd).directory(tempDir.toFile()).inheritIO();
-            builder.environment().put("CLIENT_HOST", "localhost");
-            builder.environment().put("CLIENT_PORT", String.valueOf(port));
-            Process fork = builder.start();
-            this.process = Processes.newJavaProcess(fork);
-
-            fork.onExit().thenAccept(p -> {
-                EmitResult result = processor.tryEmitNext(p.exitValue());
-                if (result.isSuccess()) {
-
-                }
-            });
-            stopWatch.stop();
-
-            log.info("JDTLS process started in %s data: %s, port: %d", stopWatch, data.toUri().toURL().toExternalForm(), port);
+        //
+        // ~ well there must be only one equinox launcher jar
+        //
+        try (Stream<Path> files = Files.list(tempDir.resolve("plugins"))) {
+            launcherJar = files
+                    .filter(p -> p.getFileName().toString().startsWith("org.eclipse.equinox.launcher_"))
+                    .filter(p -> p.toString().endsWith(".jar"))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException("could not find 'equinox' launcher jar"));
         }
+
+        String java = SystemUtils.IS_OS_WINDOWS ? "java.exe" : "java";
+        if (Objects.nonNull(args.getJavaHome())) {
+            java = args.getJavaHome().toPath().normalize().resolve("bin").resolve(java).toFile().getAbsolutePath();
+        }
+
+        List<String> cmd = Lists.newArrayList();
+        cmd.add(java);
+        cmd.addAll(ImmutableList.of("-server", "-Xlog:disable"));
+        if (Objects.nonNull(args.getJdtDebugPort())) {
+            cmd.add("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=*:" + args.getJdtDebugPort());
+        }
+        cmd.addAll(ImmutableList.of("-XX:+UnlockExperimentalVMOptions", "-XX:+UnlockDiagnosticVMOptions", "-XX:+UseStringDeduplication"));
+        cmd.addAll(
+                ImmutableList.of(
+                        "-Declipse.application=org.eclipse.jdt.ls.core.id1",
+                        "-Dosgi.bundles.defaultStartLevel=4",
+                        "-Declipse.product=org.eclipse.jdt.ls.core.product",
+                        "-Djava.import.generatesMetadataFilesAtProjectRoot=false",
+                        "-Dlog.level=ALL",
+                        "-Djdk.xml.maxGeneralEntitySizeLimit=0",
+                        "-Djdk.xml.totalEntitySizeLimit=0",
+                        "-Dsun.net.inetaddr.ttl=0",
+                        "-Dsun.zip.disableMemoryMapping=true",
+                        "-Dio.netty.tryReflectionSetAccessible=true",
+                        "-Djava.lsp.joinOnCompletion=true",
+                        "-Djava.net.preferIPv4Stack=true",
+                        "-Djava.awt.headless=true",
+                        "-Dfile.encoding=UTF-8"));
+
+        cmd.add("--enable-native-access=ALL-UNNAMED");
+        for (String pkg : new String[] {
+                "api",
+                "file",
+                "main",
+                "model",
+                "parser",
+                "processing",
+                "tree",
+                "util" }) {
+            cmd.add("--add-exports=jdk.compiler/com.sun.tools.javac." + pkg + "=ALL-UNNAMED");
+        }
+
+        for (String pkg : new String[] {
+                "lang",
+                "lang.invoke",
+                "lang.reflect",
+                "io",
+                "net",
+                "nio",
+                "util",
+                "util.concurrent",
+                "util.concurrent.atomic" }) {
+            cmd.add("--add-opens=java.base/java." + pkg + "=ALL-UNNAMED");
+        }
+        cmd.addAll(
+                ImmutableList.of(
+                        "--add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED",
+                        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+                        "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+                        "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
+                        "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
+                        "--add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED"));
+
+        for (File file : args.getAgents()) {
+            cmd.add("-javaagent:" + file.getAbsolutePath());
+        }
+
+        if (args.isJdtUseSharedIndex()) {
+            cmd.add("-Djdt.core.sharedIndexLocation=" + RunArgs.JDT_SHARED_INDEX.resolve(args.effectiveJdtlsVersion()).toFile().getAbsolutePath());
+        }
+
+        cmd.addAll(JvmOptionsFilter.keepMemory(System.getenv("MAVEN_OPTS")));
+
+        cmd.addAll(ImmutableList.of("-jar", launcherJar.toString()));
+        cmd.addAll(ImmutableList.of("-configuration", config.toString()));
+        cmd.addAll(ImmutableList.of("-data", data.toString()));
+
+        //
+        // ~ advance JVM options matched to the spawned JDK, not the current JVM
+        //
+        Runtime.Version spawnedJavaVersion = detectSpawnedJavaVersion(args.getJavaHome());
+        cmd.add(spawnedJavaVersion.feature() >= MIN_JDK_ZGC ? "-XX:+UseZGC" : "-XX:+UseParallelGC");
+        if (spawnedJavaVersion.feature() >= MIN_JDK_NATIVE_ACCESS) {
+            cmd.add("--enable-native-access=ALL-UNNAMED");
+        }
+        if (spawnedJavaVersion.feature() >= MIN_JDK_SUN_MISC_UNSAFE_FLAG) {
+            cmd.add("--sun-misc-unsafe-memory-access=allow");
+        }
+
+        log.info("starting JDTLS cmd: " + cmd);
+
+        StopWatch stopWatch = StopWatch.createStarted();
+        ProcessBuilder builder = new ProcessBuilder(cmd).directory(tempDir.toFile()).inheritIO();
+        builder.environment().put("CLIENT_HOST", "localhost");
+        builder.environment().put("CLIENT_PORT", String.valueOf(port));
+        Process fork = builder.start();
+        this.process = Processes.newJavaProcess(fork);
+
+        fork.onExit().thenAccept(p -> {
+            EmitResult result = processor.tryEmitNext(p.exitValue());
+            if (result.isSuccess()) {
+
+            }
+        });
+        stopWatch.stop();
+
+        log.info("JDTLS process started in %s data: %s, port: %d", stopWatch, data.toUri().toURL().toExternalForm(), port);
     }
     @Override
     public void close() throws IOException {
