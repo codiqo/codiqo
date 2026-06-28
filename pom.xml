@@ -52,7 +52,7 @@
         <!-- CORE -->
         <!-- -->
         <slf4j.version>2.0.18</slf4j.version>
-        <logback.version>1.5.35</logback.version>
+        <logback.version>1.5.37</logback.version>
         <asm.version>9.10.1</asm.version>
         <javax.inject.version>1</javax.inject.version>
         <jakarta.annotation-api.version>3.0.0</jakarta.annotation-api.version>
@@ -63,7 +63,7 @@
         <google-auth.version>1.48.0</google-auth.version>
         <google-api-client.version>2.9.0</google-api-client.version>
         <google-http-client.version>2.1.0</google-http-client.version>
-        <google-api-services-artifactregistry.version>v1-rev20260522-2.0.0</google-api-services-artifactregistry.version>
+        <google-api-services-artifactregistry.version>v1-rev20260603-2.0.0</google-api-services-artifactregistry.version>
         <artifactregistry-auth-common.version>2.2.5</artifactregistry-auth-common.version>
         <jackson.version>2.22.0</jackson.version>
         <snakeyaml.version>2.6</snakeyaml.version>
@@ -80,7 +80,7 @@
         <jarchivelib.version>1.2.0</jarchivelib.version>
         <ecj.version>3.46.0</ecj.version>
         <lsp4j.version>1.0.0</lsp4j.version>
-        <openrewrite.version>8.85.5</openrewrite.version>
+        <openrewrite.version>8.85.6</openrewrite.version>
         <openrewrite.recipe.version>2.37.0</openrewrite.recipe.version>
         <pmd.version>7.25.0</pmd.version>
         <spotbugs.version>4.10.2</spotbugs.version>
@@ -88,7 +88,7 @@
         <findbugs.contrib.version>7.7.4</findbugs.contrib.version>
         <jacoco.version>0.8.15</jacoco.version>
         <classgraph.version>4.8.184</classgraph.version>
-        <oshi.version>7.3.1</oshi.version>
+        <oshi.version>7.3.2</oshi.version>
         <openapi.version>4.41.0</openapi.version>
         <jtokkit.version>1.1.0</jtokkit.version>
         <thymeleaf.version>3.1.5.RELEASE</thymeleaf.version>
