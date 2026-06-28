@@ -497,7 +497,9 @@ components:
             positive = over-qualified (senior doing junior work),
             zero = match,
             negative = under-qualified (junior doing senior work).
-            Bands: junior=2, middle=5, senior=8, team_lead=8, tech_lead=9, architect=9, cto=9.
+            Bands: junior=2, middle=5, senior=6, team_lead=6, tech_lead=6, architect=6, cto=6
+            (the senior tier is flat — lead/architect/CTO are senior ICs with a management
+            overlay, not expected to ship harder code than a senior).
             Null when developerId or taskComplexity is null.
 
     ModifyImpactEstimateModel:

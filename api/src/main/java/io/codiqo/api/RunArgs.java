@@ -64,9 +64,9 @@ public class RunArgs {
     @Nullable
     private String commitId;
     @Nullable
-    private String jdtlsVersion = "1.58.0";
+    private String jdtlsVersion = "1.60.0";
     @Nullable
-    private boolean jdtlsUseSnapshot = true;
+    private boolean jdtlsUseSnapshot = false;
     @Nullable
     private transient String jdtlsArchiveName;
     @Nullable
