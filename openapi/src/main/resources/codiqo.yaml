@@ -486,7 +486,7 @@ components:
             Null when the author email has not been linked to a user.
         seniorityAtCommit:
           type: string
-          enum: [junior, middle, senior, team_lead, tech_lead, architect, cto]
+          enum: [junior, middle, senior, team_lead, engineering_manager, tech_lead, architect, director_of_engineering, cto, ceo, cpo]
           description: |
             Snapshot of the author's seniority at the time the analysis ran.
             Snapshotted so historical reports remain stable when people get promoted.
