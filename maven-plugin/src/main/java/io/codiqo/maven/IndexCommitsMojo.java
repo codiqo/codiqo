@@ -2,6 +2,7 @@ package io.codiqo.maven;
 
 import java.io.File;
 import java.io.IOException;
+import java.math.BigInteger;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
@@ -30,6 +31,7 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
+import org.eclipse.jgit.diff.PatchIdDiffFormatter;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -254,6 +256,7 @@ public class IndexCommitsMojo extends AbstractMojo {
         }
 
         Map<String, List<String>> branchIndex = JGit.buildBranchIndex(repo);
+        Set<ObjectId> seenPatchIds = Sets.newHashSet();
 
         try (RevWalk walk = new RevWalk(repo)) {
             walk.sort(RevSort.TOPO);
@@ -268,10 +271,30 @@ public class IndexCommitsMojo extends AbstractMojo {
                 })) {
                     continue;
                 }
+
+                /**
+                 * drop duplicate squash-merges: one change re-merged into the branch under two SHAs
+                 * (rebase / re-merge) shares a patch-id — keep the first by topo order. only
+                 * single-parent commits have a patch-id; never dedupe merges or roots.
+                 */
+                if (commit.getParentCount() == BigInteger.ONE.intValue() && Boolean.FALSE.equals(seenPatchIds.add(patchId(repo, commit)))) {
+                    continue;
+                }
                 toReturn.add(toCommitModel(commit, branches));
             }
         }
         return toReturn;
+    }
+    private static ObjectId patchId(Repository repo, RevCommit commit) throws IOException {
+        try (RevWalk walk = new RevWalk(repo); PatchIdDiffFormatter formatter = new PatchIdDiffFormatter()) {
+            RevCommit parsedCommit = walk.parseCommit(commit);
+            RevCommit parent = walk.parseCommit(parsedCommit.getParent(0));
+
+            formatter.setRepository(repo);
+            formatter.format(parent.getTree(), parsedCommit.getTree());
+            formatter.flush();
+            return formatter.getCalulatedPatchId();
+        }
     }
     private static CommitModel toCommitModel(RevCommit commit, List<String> branches) {
         CommitModel toReturn = new CommitModel();
