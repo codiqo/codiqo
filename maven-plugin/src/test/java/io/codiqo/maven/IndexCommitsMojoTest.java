@@ -133,6 +133,48 @@ class IndexCommitsMojoTest {
         assertEquals(fakeRevertedSha, revertCommit.getRevertedCommitId());
     }
     @Test
+    void duplicateSquashMergeCollapsedByPatchId() throws Exception {
+        RevCommit base = commit("a.txt", "base", "base");
+
+        commit("x.txt", "x", "main divergence");
+        RevCommit first = commit("f.txt", "hello", "apply change (main)");
+
+        git.checkout().setCreateBranch(true).setName("other").setStartPoint(base.getName()).call();
+        commit("y.txt", "y", "other divergence");
+        RevCommit second = commit("f.txt", "hello", "apply change (other)");
+
+        git.checkout().setName("main").call();
+        git.merge().include(repository.resolve("other")).setCommit(true).setMessage("merge other").call();
+
+        List<CommitModel> commits = extract(new RunArgs(), "HEAD", EPOCH, "main");
+
+        long dupCount = commits.stream()
+                .filter(c -> first.getName().equals(c.getSha()) || second.getName().equals(c.getSha()))
+                .count();
+        assertEquals(1, dupCount, "duplicate squash-merge (same patch-id) must be counted once");
+    }
+    @Test
+    void distinctChangesOnDivergentBranchesBothSurvive() throws Exception {
+        RevCommit base = commit("a.txt", "base", "base");
+
+        commit("x.txt", "x", "main divergence");
+        RevCommit first = commit("f.txt", "hello", "apply change (main)");
+
+        git.checkout().setCreateBranch(true).setName("other").setStartPoint(base.getName()).call();
+        commit("y.txt", "y", "other divergence");
+        RevCommit second = commit("g.txt", "world", "different change (other)");
+
+        git.checkout().setName("main").call();
+        git.merge().include(repository.resolve("other")).setCommit(true).setMessage("merge other").call();
+
+        List<CommitModel> commits = extract(new RunArgs(), "HEAD", EPOCH, "main");
+
+        long keptCount = commits.stream()
+                .filter(c -> first.getName().equals(c.getSha()) || second.getName().equals(c.getSha()))
+                .count();
+        assertEquals(2, keptCount, "distinct changes (different patch-id) must both be kept in the same topology");
+    }
+    @Test
     void toUriNormalizesScpStyleGitUrls() throws Exception {
         URI uri = IndexCommitsMojo.toUri(BITBUCKET_SCM_URL);
 
