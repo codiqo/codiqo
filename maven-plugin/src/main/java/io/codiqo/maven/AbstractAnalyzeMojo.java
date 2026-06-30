@@ -679,7 +679,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             SubmissionContext ctx = opt.get();
             if (ctx.getAnalysis().isRevertCommit()) {
                 getLog().warn(String.format("commit %s skipped: revert commit (no LLM scoring or submission)", args.getCommitId()));
-                doExcludeAnalysis(args.getCommitId(), "revert commit (no LLM scoring performed)", null);
+                doExcludeAnalysis(args.getCommitId(), "revert commit (no LLM scoring performed)", AnalysisExcludeCategory.REVERT_COMMIT);
             } else {
                 ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
                 doLlmScoring(ctx);
@@ -711,8 +711,10 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     }
                 });
                 String skipReason = null;
+                AnalysisExcludeCategory skipCategory = null;
                 if (toApply.isFalse()) {
                     skipReason = String.format("no diff files match registered languages %s or supported config files (pom.xml, .proto) — changed files: %s", registry.extensions(), changedFiles);
+                    skipCategory = AnalysisExcludeCategory.NO_ANALYZABLE_DIFF;
                     getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), skipReason));
                 }
 
@@ -727,12 +729,13 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                             analysis.getBranches(),
                             authorMatches,
                             analysis.getAuthorEmail());
+                    skipCategory = AnalysisExcludeCategory.FILTERED_BY_RULES;
                     getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), skipReason));
                     toApply.setFalse();
                 }
 
                 if (Objects.nonNull(skipReason)) {
-                    doExcludeAnalysis(args.getCommitId(), skipReason, null);
+                    doExcludeAnalysis(args.getCommitId(), skipReason, skipCategory);
                 }
                 if (toApply.isTrue()) {
                     IndexingSummary index = registry.index(analysis);
