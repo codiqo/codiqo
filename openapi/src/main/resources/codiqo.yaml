@@ -298,16 +298,20 @@ components:
           type: string
           description: Optional human-readable reason for excluding this analysis
         category:
-          description: Optional structured failure category; omitted for non-failure exclusions (revert commit, branch/author filter, no relevant files)
+          description: Structured exclusion category (build/dependency failure, revert commit, branch/author filter, no relevant files, duplicate commit)
           allOf:
             - $ref: '#/components/schemas/AnalysisExcludeCategory'
 
     AnalysisExcludeCategory:
       type: string
-      description: Structured failure category for excluded analyses
+      description: Structured category for excluded analyses
       enum:
         - DEPENDENCY_RESOLUTION_FAILURE
         - BUILD_FAILURE
+        - NO_ANALYZABLE_DIFF
+        - REVERT_COMMIT
+        - FILTERED_BY_RULES
+        - DUPLICATE_COMMIT
 
     AnalysisSubmissionModel:
       type: object
