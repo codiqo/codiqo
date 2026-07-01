@@ -639,7 +639,7 @@ public class JavaLanguageSpec implements LanguageSpec {
                         .splitToList(Optional.ofNullable(args.getSpotbugsOmitVisitors()).orElse(StringUtils.EMPTY)));
 
         StopWatch spotbugsWatch = StopWatch.createStarted();
-        projects.values().parallelStream().forEach(spotbugs -> {
+        projects.values().forEach(spotbugs -> {
             try (StringWriter writer = new StringWriter()) {
                 try (PrintWriter printer = new PrintWriter(writer)) {
                     BugCollectionBugReporter bugReporter = new BugCollectionBugReporter(spotbugs, printer);
