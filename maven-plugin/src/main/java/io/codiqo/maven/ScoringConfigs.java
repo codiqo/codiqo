@@ -78,6 +78,9 @@ public class ScoringConfigs {
         toReturn.setDriverFactorMaxDeviation(args.getDriverFactorMaxDeviation());
         toReturn.setDriverScoreCapDryRun(args.isDriverScoreCapDryRun());
         toReturn.setStatsQuantile(args.getStatsQuantile());
+        toReturn.setMoveDetectionEnabled(args.isMoveDetectionEnabled());
+        toReturn.setMoveSimilarityThreshold(args.getMoveSimilarityThreshold());
+        toReturn.setMovedLineCoefficient(args.getMovedLineCoefficient());
 
         toReturn.setCoverageLowThreshold(args.getCoverageLowThreshold());
         toReturn.setCoverageCriticalThreshold(args.getCoverageCriticalThreshold());

@@ -258,6 +258,17 @@ public class RunArgs {
     @Nullable
     private double categoryIntricateCoeff = 1.4;
     @Nullable
+    private boolean moveDetectionEnabled = true;
+    /**
+     * threshold on multiset containment |tokens(A)∩tokens(B)| / min(|A|,|B|) — NOT Dice/Jaccard.
+     * Relocation typically only adds tokens (e.g. re-qualified receivers: props.X → channel.props.X),
+     * so genuine moves score 1.0 under containment while symmetric metrics drop below 0.95
+     */
+    @Nullable
+    private double moveSimilarityThreshold = 0.95;
+    @Nullable
+    private double movedLineCoefficient = 0.25;
+    @Nullable
     private int scoreThresholdHuge = 150;
     @Nullable
     private int scoreThresholdLarge = 90;

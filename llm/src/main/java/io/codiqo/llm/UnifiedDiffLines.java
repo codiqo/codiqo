@@ -1,6 +1,7 @@
 package io.codiqo.llm;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
@@ -10,6 +11,7 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 
 import io.codiqo.api.diff.IneffectiveLineFilter;
@@ -27,6 +29,9 @@ import lombok.Value;
  * <li>{@link #getAddedLines()} / {@link #getDeletedLines()} — every raw {@code ±} line,</li>
  * <li>{@link #getCandidateAddedLines()} / {@link #getCandidateDeletedLines()} — effective lines
  * only (the classifiable subset),</li>
+ * <li>{@link #getCandidateAddedContent()} / {@link #getCandidateDeletedContent()} — the same
+ * effective lines keyed to their raw content, so relocation matching
+ * ({@code MovedLineDetector}) reuses this parse instead of re-walking the diff,</li>
  * <li>{@link #getBlocks()} — change blocks with server-assigned ids ({@code B1}, {@code B2}, …)
  * in diff order; a run with no effective line gets no block,</li>
  * <li>{@link #getAnnotated()} — the diff with each candidate line prefixed
@@ -49,6 +54,14 @@ public final class UnifiedDiffLines {
     private final Set<Integer> deletedLines = Sets.newTreeSet();
     private final Set<Integer> candidateAddedLines = Sets.newTreeSet();
     private final Set<Integer> candidateDeletedLines = Sets.newTreeSet();
+    private final Map<Integer, String> candidateAddedContent = Maps.newTreeMap();
+    private final Map<Integer, String> candidateDeletedContent = Maps.newTreeMap();
+    /**
+     * old-file line -> new-file anchor (the next surviving line, i.e. the newLine counter which
+     * does not advance on deletions) — the same coordinate EffectiveLineParser anchors deleted
+     * lines to when billing them to a code unit's new-file span
+     */
+    private final Map<Integer, Integer> candidateDeletedAnchor = Maps.newTreeMap();
     private final List<ChangeBlock> blocks = Lists.newArrayList();
     private final String annotated;
 
@@ -92,6 +105,8 @@ public final class UnifiedDiffLines {
                 deletedLines.add(oldLine);
                 if (isCandidate(raw.substring(1), ineffective)) {
                     candidateDeletedLines.add(oldLine);
+                    candidateDeletedContent.put(oldLine, raw.substring(1));
+                    candidateDeletedAnchor.put(oldLine, newLine);
                     runDeleted.add(oldLine);
                     out.append(DELETED_PREFIX).append(oldLine).append(FIELD_SEPARATOR).append(BLOCK_ID_PREFIX).append(currentBlockId()).append(FIELD_SEPARATOR).append(raw, 1, raw.length());
                 } else {
@@ -102,6 +117,7 @@ public final class UnifiedDiffLines {
                 addedLines.add(newLine);
                 if (isCandidate(raw.substring(1), ineffective)) {
                     candidateAddedLines.add(newLine);
+                    candidateAddedContent.put(newLine, raw.substring(1));
                     runAdded.add(newLine);
                     out.append(ADDED_PREFIX).append(newLine).append(FIELD_SEPARATOR).append(BLOCK_ID_PREFIX).append(currentBlockId()).append(FIELD_SEPARATOR).append(raw, 1, raw.length());
                 } else {

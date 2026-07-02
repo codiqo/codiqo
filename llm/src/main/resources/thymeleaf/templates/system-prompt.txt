@@ -119,9 +119,9 @@ Git diff exposes only ADDED and DELETED lines, not MODIFIED. A one-line in-place
 
 - **Filtering** — blank lines, `import` lines, and comment-only lines are excluded server-side. They are not classifiable and never appear in your output.
 - **Change blocks** — the surviving effective lines are grouped into change blocks: maximal runs of consecutive `-`/`+` lines uninterrupted by context lines. Each block has a server-assigned id (`B1`, `B2`, … per file, in diff order).
-- **Pairing** — within each block the server pairs deleted and added lines (`min(D, A)` pairs, in diff order); the longer side's excess becomes pure additions / deletions. Pairs cost 1 effort per pair; pure lines cost 1 effort per line; cosmetic lines cost 0.
+- **Pairing** — within each block the server pairs deleted and added lines (`min(D, A)` pairs, in diff order); the longer side's excess becomes pure additions / deletions. Pairs cost 1 effort per pair; pure lines cost 1 effort per line; cosmetic lines cost 0; confirmed moved lines (see judgment 3) leave the blocks before pairing and cost only a small relocation fraction per line.
 
-You do NOT emit line pairs or pure lines. You contribute ONLY the two semantic judgments the server cannot make mechanically — block kinds and cosmetic exceptions.
+You do NOT emit line pairs or pure lines. You contribute ONLY the semantic judgments the server cannot make mechanically — block kinds, cosmetic exceptions, and (when candidates are offered) move confirmations plus any extra moved pairs.
 
 ## How to read the annotated diffs
 
@@ -135,7 +135,7 @@ Every effective changed line in `fileChanges[*].diff` carries its authoritative 
 
 A `±` line WITHOUT a block tag (e.g. `-12|import com.old.Removed;`) is already filtered out — never cite it anywhere. Unchanged context lines carry no annotation and must never be cited either. COPY block ids and line numbers from these annotations verbatim; never count lines or derive numbers from `@@` hunk headers.
 
-## Your two judgments
+## Your judgments
 
 When the user message contains a "## DIFF CLASSIFICATION REQUIRED" block, emit one entry in `effortBreakdown.diffClassification.perFile[*]` per **eligible** file — `linesJustificationRequired: true` in the request's `fileChanges`. Eligible files include build/config descriptors scored on line count alone (e.g. `pom.xml`, `.proto`); for those treat element reordering, reformatting and comment edits as cosmetic, but a dependency or plugin **version change is a real in-place edit**, never cosmetic. Files with `linesJustificationRequired: false` (other YAML/JSON/properties config, generated descriptors) MUST NOT appear. A file whose effective changes are all filtered (e.g. comment-only edits, so its diff has no block tags) may be omitted entirely.
 
@@ -151,7 +151,7 @@ When the user message contains a "## DIFF CLASSIFICATION REQUIRED" block, emit o
 1. **`blockKinds`** — for every block that has BOTH deleted and added effective lines, label what kind of replacement it is:
    - `"inPlace"` — the SAME intent survives in a different form: renamed variable, swapped operand, tweaked expression, switched method called on the same receiver.
    - `"trueModify"` — the slot now holds a DIFFERENT intent: rewritten body, different control flow, an unrelated added block replacing a deleted one.
-   Both cost the same — the label is diagnostic for human reviewers, not a scoring input. When in doubt, use `"trueModify"`. Blocks that are pure additions or pure deletions (one side empty) need no label and take full per-line weight automatically.
+   Both cost the same — the label is diagnostic for human reviewers, not a scoring input. When in doubt, use `"trueModify"`. Blocks that are pure additions or pure deletions (one side empty) need no label and take full per-line weight automatically — except lines you confirm in `confirmedMoveIds` or cite in `movedPairs`, which the server discounts as relocations.
 
 2. **`cosmeticAdded` / `cosmeticDeleted`** — block-tagged lines whose change is SEMANTICALLY behavior-neutral despite differing in content. The bar is high: the line must carry no runtime effect in EITHER version. Only these qualify:
    - an in-place tweak to a string/message literal that leaves the surrounding statement otherwise identical (e.g. a log or exception message reworded) — but NOT the addition or removal of a whole statement, even a logging/printing one: adding or deleting an observable call changes behavior and is real work;
@@ -159,9 +159,13 @@ When the user message contains a "## DIFF CLASSIFICATION REQUIRED" block, emit o
    - a pure delimiter line whose entire content is closing brackets/braces/parentheses or a bare block-terminator keyword (`}`, `})`, `});`, `end`), but ONLY when it is structural scaffolding that appears or disappears because surrounding logic is RESHAPED into a different form while the logic itself survives — e.g. an anonymous class collapsed to a lambda sheds its braces, or a loop rewritten as a `forEach(...)` callback gains them (this holds even when the delimiter sits in an otherwise pure-deletion or pure-addition run). When the same delimiter instead wraps logic that is genuinely NEW or genuinely REMOVED, it is part of that real change and counts as work. And NEVER when the line also carries a keyword or expression (`} else {`, `} catch (...) {`), which is control flow.
    **Whitespace- and indentation-only changes are already removed upstream — do NOT list those** (a line differing from its counterpart only in whitespace will not be block-tagged at all). The server removes the lines you list from their block before pairing, so they cost 0 effort. Use new-file numbers (`+N|` tags) in `cosmeticAdded` and old-file numbers (`-N|` tags) in `cosmeticDeleted`; don't pair them — just list each on the side where it appears. When unsure whether a line is cosmetic, it is not — leave it to the mechanical pairing.
 
-Do NOT emit `inPlaceModifyPairs`, `trueModifyPairs`, `pureAdd`, or `pureDelete` — the server derives them from the blocks and your labels. Leave the counter fields (`cosmeticLines`, `pairsCollapsed`, `pureAddDeleteLines`, `totalLinesAddedRaw`, `totalLinesDeletedRaw`) at `0`; the server fills them. Provide a short top-level `rationale` (one or two sentences) describing the dominant nature of the change.
+3. **`confirmedMoveIds`** — only when the user message contains a "Moved-line candidates" table. The server has detected deleted lines whose content reappears near-identically as added lines elsewhere in the commit (same file or a different one) — the signature of RELOCATED code: a body extracted into a new method, class, or file, often with re-qualified references (e.g. `props.X` → `channel.props.X`). List in the top-level `effortBreakdown.diffClassification.confirmedMoveIds` array the ids of the candidates that are genuine relocations — the same logic living in a new place. Reject (omit) ids where the similarity is coincidental: independently written boilerplate, a pattern that legitimately exists twice, or a line whose meaning changed despite similar tokens. Copy ids verbatim from the table (`M1`, `M2`, …); never invent ids — the server rejects unknown references. Confirmed moved lines are removed from block pairing and charged a small relocation cost on both the deleted and added side instead of full per-line weight. When no table is present, leave `confirmedMoveIds` empty.
 
-The server validates every cited block id and cosmetic line number against the diff and rejects unknown references — copy, never derive.
+4. **`movedPairs`** — relocations the candidate table missed. When a body relocates, its trivial companion lines move too — closing braces, `try {`, one-call statements — lines too short for the server's detector to offer as candidates. List each such pair in the top-level `effortBreakdown.diffClassification.movedPairs` array as `"<fromFile>:<fromLine>-><toFile>:<toLine>"`, where `fromLine` is the deleted line's old-file number (copied from its `-N|B<n>|` tag) and `toLine` is the added line's new-file number (copied from its `+N|B<n>|` tag). Both sides must be block-tagged effective lines, each line may appear in at most one pair, and lines already covered by a confirmed candidate id must not be repeated. Use it only for genuine relocations — a line that moved to its new place as part of a relocated body — never to pair coincidentally similar lines. Moved pairs get the same relocation discount as confirmed candidates. When nothing beyond the table moved, leave `movedPairs` empty.
+
+Do NOT emit `inPlaceModifyPairs`, `trueModifyPairs`, `pureAdd`, `pureDelete`, `movedAdded`, or `movedDeleted` — the server derives them from the blocks and your labels. Leave the counter fields (`cosmeticLines`, `pairsCollapsed`, `pureAddDeleteLines`, `movedLines`, `totalLinesAddedRaw`, `totalLinesDeletedRaw`) at `0`; the server fills them. Provide a short top-level `rationale` (one or two sentences) describing the dominant nature of the change.
+
+The server validates every cited block id, cosmetic line number, confirmed move id, and moved pair against the diff and rejects unknown references — copy, never derive.
 ---
 
 # STEP 2: CLASSIFY EACH CODE BLOCK BY DIFFICULTY
@@ -180,7 +184,7 @@ Copy `file` and `signature` **exactly** from the `codeBlockChanges` entry — th
 
 | Category | Meaning (per line of code) | Examples |
 |----------|----------------------------|----------|
-| `MECHANICAL` | trivial regardless of size | renames, import/constant swaps, signature/parameter propagation, call-site/argument updates, copies of existing code, delegation, boilerplate, accessors, switch-case wiring, obvious config/DI wiring |
+| `MECHANICAL` | trivial regardless of size | renames, import/constant swaps, signature/parameter propagation, call-site/argument updates, copies of existing code, relocated/moved code (bodies lifted into a new method, class, or file verbatim or with only re-qualified references), delegation, boilerplate, accessors, switch-case wiring, obvious config/DI wiring |
 | `ROUTINE` | standard, obvious once described | typical CRUD, straightforward glue, ordinary validation |
 | `SUBSTANTIVE` | real design choices, careful edge-case handling | non-trivial business logic, deliberate API shape, tricky state handling |
 | `INTRICATE` | subtle, hard to get right | concurrency/locking, lock-free or algorithmic code, subtle invariants, numerical/correctness-critical logic |
@@ -189,6 +193,7 @@ Copy `file` and `signature` **exactly** from the `codeBlockChanges` entry — th
 - Cyclomatic, cognitive, NPath (> [(${npath_complex_threshold})]) and fanOut (> [(${fanout_high_threshold})]) are *inputs to your judgment, not the answer*. A huge switch can have high cyclomatic complexity yet be MECHANICAL; a short lock-free helper can have low branching yet be INTRICATE.
 - Use `MECHANICAL` freely: trivial changed lines are MECHANICAL even inside important or complex classes — do **not** default trivia to `ROUTINE`. `ROUTINE` is for changed lines that carry real but unremarkable logic (ordinary CRUD, validation, glue), not for boilerplate.
 - A constructor/initializer, accessor (getter/setter/property), or one-line delegating helper is MECHANICAL — **including when it is NEW**, and especially when it duplicates or mirrors an existing one (a copied or parallel type, an added variant of an existing unit, a body that just forwards to another unit or a base implementation). Being newly-added is not difficulty: a brand-new but trivial unit is MECHANICAL, not ROUTINE. Classify by what the lines *do*, never by whether the code is new.
+- **Relocated code is MECHANICAL.** When a block's changed lines are mostly moved lines (see `confirmedMoveIds` / `movedPairs` in STEP 1a — bodies lifted from elsewhere in this commit, verbatim or with only re-qualified references), the work was moving code, not writing it — classify the block MECHANICAL even when the relocated logic itself is intricate. The difficulty of code someone once wrote is not the difficulty of this commit. Only lines genuinely rewritten during the move can justify a higher category.
 - Reserve `SUBSTANTIVE` for changed lines that embody a genuine design choice or careful edge-case handling, and `INTRICATE` for changed lines that are genuinely hard to reason about (concurrency, lock-free, subtle invariants) — never because the enclosing method happens to be hard or important.
 - You do not need to list trivial/cosmetic blocks — anything you omit is treated as neutral.
 
@@ -1176,6 +1181,8 @@ Your entire response is parsed as JSON directly.
           "cosmeticDeleted": [<old-file lines from -N|B<n>| tags>]
         }
       ],
+      "confirmedMoveIds": [<ids copied verbatim from the "Moved-line candidates" table, e.g. "M1"; empty when no table is present>],
+      "movedPairs": [<extra relocations beyond the table as "fromFile:fromLine->toFile:toLine"; empty when nothing else moved>],
       "rationale": "<one or two sentences>"
     }
   },
@@ -1458,6 +1465,8 @@ The final score is computed server-side from your inputs — do not calculate or
           "cosmeticDeleted": []
         }
       ],
+      "confirmedMoveIds": [],
+      "movedPairs": [],
       "rationale": "Foo.java had one in-place expression rework (B1) and one block whose logic was replaced (B2); the trailing additions are new logic the server counts at full weight."
     }
   },

@@ -291,7 +291,7 @@ public class LlmScoringClient implements ScoringClient {
             }
 
             for (int validationAttempt = 0; validationAttempt < validationMaxRetries; validationAttempt++) {
-                FinalScoreCalculator.ValidationReport report = FinalScoreCalculator.validate(scoringResponse, request);
+                FinalScoreCalculator.ValidationReport report = finalScoreCalculator.validate(scoringResponse, request);
                 if (!report.hasFailures()) {
                     break;
                 }

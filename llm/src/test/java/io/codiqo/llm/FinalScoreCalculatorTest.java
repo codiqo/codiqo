@@ -636,7 +636,7 @@ class FinalScoreCalculatorTest {
         LlmScoringResponse response = responseWithClassification();
         response.getEffortBreakdown().getDiffClassification().setPerFile(null);
 
-        FinalScoreCalculator.ValidationReport report = FinalScoreCalculator.validate(response, request);
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
         assertFalse(report.hasFailures(), "null perFile → nothing to validate");
 
         calculator.apply(response, preComputed, request);
@@ -653,7 +653,7 @@ class FinalScoreCalculatorTest {
                 .cosmeticDeleted(list(13))
                 .build());
 
-        FinalScoreCalculator.ValidationReport report = FinalScoreCalculator.validate(response, request);
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
 
         assertFalse(report.hasFailures(), "block id and cosmetic numbers all exist in the diff");
     }
@@ -665,7 +665,7 @@ class FinalScoreCalculatorTest {
                 .blockKinds(kinds("B7", "inPlace"))
                 .build());
 
-        FinalScoreCalculator.ValidationReport report = FinalScoreCalculator.validate(response, request);
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
 
         assertTrue(report.hasFailures());
         FinalScoreCalculator.ValidationFailure failure = report.getFailures().stream()
@@ -683,7 +683,7 @@ class FinalScoreCalculatorTest {
                 .cosmeticAdded(list(12)) // new-file 12 is a context line, not a + line
                 .build());
 
-        FinalScoreCalculator.ValidationReport report = FinalScoreCalculator.validate(response, request);
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
 
         assertTrue(report.hasFailures());
         FinalScoreCalculator.ValidationFailure failure = report.getFailures().stream()
@@ -700,7 +700,7 @@ class FinalScoreCalculatorTest {
                 .cosmeticDeleted(list(12)) // old-file 12 is a context line, not a - line
                 .build());
 
-        FinalScoreCalculator.ValidationReport report = FinalScoreCalculator.validate(response, request);
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
 
         assertTrue(report.hasFailures());
         FinalScoreCalculator.ValidationFailure failure = report.getFailures().stream()
@@ -708,6 +708,249 @@ class FinalScoreCalculatorTest {
                 .findFirst().orElseThrow();
         assertEquals(List.of("12"), failure.getOffending());
         assertEquals(List.of("11", "13"), failure.getValid());
+    }
+    @Test
+    void movedLinesAreDiscountedInEffectiveLines() {
+        // 3 added (1 pure + 2 moved), 3 deleted (1 pure + 2 moved); rawLines = 6
+        // effectiveLines = 1 + 1 + 4 × 0.25/2 = 2.5 → factor = 2.5/6
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
+        LlmScoringRequest request = requestWithFileChange("Foo.java", 3, 3);
+        LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder()
+                .file("Foo.java")
+                .pureAdd(list(3))
+                .pureDelete(list(13))
+                .movedAdded(list(1, 2))
+                .movedDeleted(list(11, 12))
+                .build());
+
+        calculator.apply(response, preComputed, request);
+
+        LlmScoringResponse.VolumeScore vs = response.getEffortBreakdown().getVolumeScore();
+        assertEquals(6, vs.getLinesChangedRaw());
+        assertEquals(3, vs.getLinesChangedAdjusted(), "round(2.5) — moved lines count at the coefficient, not full weight");
+        assertEquals(4, vs.getMovedLinesDiscounted());
+        assertEquals(100.0 * 2.5 / 6, vs.getBlockEffortSum(), 0.1, "block effort scales by the discounted factor");
+
+        FileDiffClassification entry = response.getEffortBreakdown().getDiffClassification().getPerFile().get(0);
+        assertEquals(4, entry.getMovedLines());
+        assertEquals(4, response.getEffortBreakdown().getDiffClassification().getMovedLines());
+    }
+    @Test
+    void applyDerivesAndDiscountsConfirmedMoves() {
+        // real diff: "registry.register(handler, priority);" deleted at old 11, re-added at new 29
+        String moveDiff = String.join("\n",
+                "--- a/Foo.java",
+                "+++ b/Foo.java",
+                "@@ -10,3 +10,1 @@",
+                " context",
+                "-registry.register(handler, priority);",
+                " context2",
+                "@@ -30,1 +28,3 @@",
+                " context3",
+                "+registry.register(handler, priority);",
+                " context4");
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
+        LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, moveDiff);
+        LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder()
+                .file("Foo.java")
+                .build());
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M1"));
+
+        calculator.apply(response, preComputed, request);
+
+        FileDiffClassification entry = response.getEffortBreakdown().getDiffClassification().getPerFile().get(0);
+        assertEquals(List.of(29), entry.getMovedAdded(), "detector candidate M1 confirmed → derived added side");
+        assertEquals(List.of(11), entry.getMovedDeleted());
+
+        LlmScoringResponse.VolumeScore vs = response.getEffortBreakdown().getVolumeScore();
+        assertEquals(2, vs.getMovedLinesDiscounted());
+        assertEquals(100.0 * 0.25 / 2, vs.getBlockEffortSum(), 0.1,
+                "both raw lines are one moved pair → factor is movedLineCoefficient / 2 per side");
+    }
+    @Test
+    void movedInvocationsDiscountBillingAndDestinationBlocks() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        // deleted line anchors at new-file 11 (inside "billed"), re-added at 29 (inside "destination")
+        CodeBlockEffort billed = invocationBlock("Foo.java", "billed", Operation.MODIFY, /*billedInvocations*/ 4,
+                /*scaledLines*/ 6.0, /*scaledInvocations*/ 8.0, /*bodyStart*/ 1, /*bodyEnd*/ 20, /*bodyCodeLines*/ 20);
+        CodeBlockEffort destination = invocationBlock("Foo.java", "destination", Operation.MODIFY, 2,
+                6.0, 4.0, 25, 35, 11);
+        PreComputedScores preComputed = scoresWithBlocks("Foo.java", billed, destination);
+        LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
+        LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M1"));
+
+        calculator.apply(response, preComputed, request);
+
+        /**
+         * fileFactor = 2 moved lines × 0.25/2 / 2 raw = 0.125. billed: components 6+8=14, the moved
+         * line's 1 call scales by invFactor 8/4=2 → factor (14 − 2×0.875)/14 = 0.875. destination:
+         * components 10, invFactor 4/2=2 → factor (10 − 1.75)/10 = 0.825.
+         * sum = 7×0.125×0.875 + 5×0.125×0.825 = 1.28125
+         */
+        LlmScoringResponse.VolumeScore vs = response.getEffortBreakdown().getVolumeScore();
+        assertEquals(1.28125, vs.getBlockEffortSum(), 0.01,
+                "moved-out anchor discounts the billing block, moved-in addition discounts the destination");
+    }
+    @Test
+    void movedInAdditionDiscountsNewDestinationBlock() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        CodeBlockEffort billed = invocationBlock("Foo.java", "billed", Operation.MODIFY, 4, 6.0, 8.0, 1, 20, 20);
+        // NEW destination is billed via directInvocationCount, driver = (lines + ncss + inv)/3
+        CodeBlockEffort destination = invocationBlock("Foo.java", "destination", Operation.NEW, 2, 6.0, 4.0, 25, 35, 11);
+        PreComputedScores preComputed = scoresWithBlocks("Foo.java", billed, destination);
+        LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
+        LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M1"));
+
+        calculator.apply(response, preComputed, request);
+
+        /**
+         * destination driver = 10/3; its component ratio is the same 0.825 as in the MODIFY case —
+         * the operation weight cancels out of the factor.
+         * sum = 7×0.125×0.875 + (10/3)×0.125×0.825 = 1.109375
+         */
+        LlmScoringResponse.VolumeScore vs = response.getEffortBreakdown().getVolumeScore();
+        assertEquals(1.109375, vs.getBlockEffortSum(), 0.001);
+    }
+    @Test
+    void movedLinesOutsideBlockSpansKeepUniformFileFactorOnly() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        // neither the deleted anchor (11) nor the added line (29) falls inside a block body
+        CodeBlockEffort first = invocationBlock("Foo.java", "first", Operation.MODIFY, 4, 6.0, 8.0, 100, 120, 21);
+        CodeBlockEffort second = invocationBlock("Foo.java", "second", Operation.MODIFY, 2, 6.0, 4.0, 200, 210, 11);
+        PreComputedScores preComputed = scoresWithBlocks("Foo.java", first, second);
+        LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
+        LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M1"));
+
+        calculator.apply(response, preComputed, request);
+
+        LlmScoringResponse.VolumeScore vs = response.getEffortBreakdown().getVolumeScore();
+        assertEquals((7.0 + 5.0) * 0.125, vs.getBlockEffortSum(), 0.001,
+                "unassigned moved lines fall back to the uniform per-file treatment — no per-block factor");
+    }
+    @Test
+    void validateAcceptsConfirmedMoveIdFromCandidates() {
+        String moveDiff = String.join("\n",
+                "--- a/Foo.java",
+                "+++ b/Foo.java",
+                "@@ -10,3 +10,1 @@",
+                " context",
+                "-registry.register(handler, priority);",
+                " context2",
+                "@@ -30,1 +28,3 @@",
+                " context3",
+                "+registry.register(handler, priority);",
+                " context4");
+        LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, moveDiff);
+        LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M1"));
+
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
+
+        assertFalse(report.hasFailures(), "M1 is a server-offered candidate");
+    }
+    @Test
+    void validateReportsUnknownMoveId() {
+        LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 2, VALIDATION_DIFF);
+        LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M7"));
+
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
+
+        assertTrue(report.hasFailures());
+        FinalScoreCalculator.ValidationFailure failure = report.getFailures().stream()
+                .filter(f -> f.getReason() == FinalScoreCalculator.FailureReason.UNKNOWN_MOVE_ID)
+                .findFirst().orElseThrow();
+        assertEquals(List.of("M7"), failure.getOffending(), "the invented id is reported");
+        assertTrue(failure.getValid().isEmpty(), "VALIDATION_DIFF has no relocation candidates");
+    }
+    @Test
+    void moveDetectionDisabledIgnoresMovedPairs() {
+        RunArgs args = new RunArgs();
+        args.setMoveDetectionEnabled(false);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
+        LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
+        LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
+        response.getEffortBreakdown().getDiffClassification().setMovedPairs(Lists.newArrayList("Foo.java:11->Foo.java:29"));
+
+        FinalScoreCalculator.ValidationReport report = calculator.validate(response, request);
+        assertFalse(report.hasFailures(), "disabled feature must not burn retries on cited pairs");
+
+        calculator.apply(response, preComputed, request);
+
+        LlmScoringResponse.VolumeScore vs = response.getEffortBreakdown().getVolumeScore();
+        assertEquals(0, vs.getMovedLinesDiscounted(), "no relocation discount when detection is disabled");
+        assertEquals(100.0, vs.getBlockEffortSum(), 0.001, "both lines stay pure → factor 1.0");
+        assertTrue(response.getEffortBreakdown().getDiffClassification().getMovedPairs().isEmpty(),
+                "cited pairs are stripped, not persisted");
+    }
+    @Test
+    void movedOnlyCommitReportsAtLeastOneAdjustedLine() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
+        LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
+        LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M1"));
+
+        calculator.apply(response, preComputed, request);
+
+        LlmScoringResponse.VolumeScore vs = response.getEffortBreakdown().getVolumeScore();
+        assertEquals(2, vs.getMovedLinesDiscounted());
+        assertEquals(1, vs.getLinesChangedAdjusted(),
+                "one moved pair = 0.25 adjusted — clamps to 1, never 0 for a non-empty change");
+    }
+    @Test
+    void validateAcceptsMovedPairsCitingEffectiveLines() {
+        LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
+        LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
+        response.getEffortBreakdown().getDiffClassification().setMovedPairs(Lists.newArrayList("Foo.java:11->Foo.java:29"));
+
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
+
+        assertFalse(report.hasFailures(), "both sides are block-tagged effective lines");
+    }
+    @Test
+    void validateReportsInvalidMovedPairs() {
+        LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
+        LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
+        // unparseable citation, and a deleted side pointing at a context line
+        response.getEffortBreakdown().getDiffClassification().setMovedPairs(Lists.newArrayList(
+                "garbage", "Foo.java:10->Foo.java:29"));
+
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
+
+        assertTrue(report.hasFailures());
+        FinalScoreCalculator.ValidationFailure failure = report.getFailures().stream()
+                .filter(f -> f.getReason() == FinalScoreCalculator.FailureReason.INVALID_MOVED_PAIR)
+                .findFirst().orElseThrow();
+        assertEquals(List.of("garbage", "Foo.java:10->Foo.java:29"), failure.getOffending());
+    }
+    @Test
+    void validateReportsMovedPairOverlappingConfirmedId() {
+        LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
+        LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M1"));
+        response.getEffortBreakdown().getDiffClassification().setMovedPairs(Lists.newArrayList("Foo.java:11->Foo.java:29"));
+
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
+
+        assertTrue(report.hasFailures());
+        FinalScoreCalculator.ValidationFailure failure = report.getFailures().stream()
+                .filter(f -> f.getReason() == FinalScoreCalculator.FailureReason.INVALID_MOVED_PAIR)
+                .findFirst().orElseThrow();
+        assertEquals(List.of("Foo.java:11->Foo.java:29"), failure.getOffending(),
+                "lines already claimed by a confirmed candidate must not be repeated as a pair");
     }
     @Test
     void validateSkipsFileWhenDiffIsMissing() {
@@ -719,7 +962,7 @@ class FinalScoreCalculatorTest {
                 .cosmeticAdded(list(999))
                 .build());
 
-        FinalScoreCalculator.ValidationReport report = FinalScoreCalculator.validate(response, request);
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
 
         assertFalse(report.hasFailures(), "no diff to check against → file skipped");
     }
@@ -785,6 +1028,39 @@ class FinalScoreCalculatorTest {
                 .fileEfforts(Lists.newArrayList(fileEffort))
                 .build();
     }
+    private static PreComputedScores scoresWithBlocks(String file, CodeBlockEffort... blocks) {
+        double total = 0.0;
+        for (CodeBlockEffort block : blocks) {
+            total += block.getEffort();
+        }
+        FileEffort fileEffort = new FileEffort(file, total, false, List.of(blocks), 0, 0, 0.0, 0.0, false);
+
+        return PreComputedScores.builder()
+                .blockEffortSum(total)
+                .totalEffortRaw(total)
+                .totalBaseline(1000.0)
+                .globalCap(10000.0)
+                .filesScopeMultiplier(1.0)
+                .volumeScore(total)
+                .baseEffort(total)
+                .codeBlockEfforts(Lists.newArrayList(blocks))
+                .fileEfforts(Lists.newArrayList(fileEffort))
+                .build();
+    }
+    private static CodeBlockEffort invocationBlock(String file, String name, Operation operation, int billedInvocations,
+            double scaledLines, double scaledInvocations, int bodyStart, int bodyEnd, int bodyCodeLines) {
+        double divisor = operation == Operation.MODIFY ? 2.0 : 3.0;
+        double driver = (scaledLines + scaledInvocations) / divisor;
+        return new CodeBlockEffort(file, name, name + "()", operation,
+                /*ncss*/ 0, /*directInvocationCount*/ operation == Operation.NEW ? billedInvocations : 5,
+                /*effInvocsChanged*/ operation == Operation.MODIFY ? billedInvocations : 0,
+                /*nonCommentCodeLines*/ 20, /*commentLines*/ 0, /*effLinesChanged*/ 2,
+                /*changeRatio*/ 0.3, scaledLines, /*scaledNcss*/ 0.0, scaledInvocations,
+                driver, (int) driver, /*effort*/ driver, /*bucketBaseline*/ 1000.0, /*isTest*/ false,
+                /*deviationNcss*/ 0.0, /*deviationInvocations*/ 0.0, /*ratioOutlier*/ false,
+                /*effortShare*/ 0.5, /*globalCapDriver*/ false,
+                bodyStart, bodyEnd, bodyCodeLines, /*isConfig*/ false);
+    }
     private static CodeBlockEffort blockEffort(String file, String name, int effLinesChanged, int bodyStart, int bodyEnd, int bodyCodeLines) {
         return new CodeBlockEffort(file, name, name + "()",
                 Operation.MODIFY,
@@ -808,6 +1084,18 @@ class FinalScoreCalculatorTest {
             " context2",
             "-old line B",
             " context3");
+    // detector candidate M1: deleted at old 11 (anchor = new 11), re-added at new 29
+    private static final String MOVE_DIFF = String.join("\n",
+            "--- a/Foo.java",
+            "+++ b/Foo.java",
+            "@@ -10,3 +10,1 @@",
+            " context",
+            "-registry.register(handler, priority);",
+            " context2",
+            "@@ -30,1 +28,3 @@",
+            " context3",
+            "+registry.register(handler, priority);",
+            " context4");
 
     private static LlmScoringRequest requestWithFileChange(String file, int linesAdded, int linesDeleted) {
         return requestWithFileChange(file, linesAdded, linesDeleted, /*linesJustificationRequired*/ true);

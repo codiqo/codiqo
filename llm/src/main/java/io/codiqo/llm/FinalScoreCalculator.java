@@ -1,8 +1,10 @@
 package io.codiqo.llm;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -16,6 +18,8 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.diff.JavaInvocationCounter;
+import io.codiqo.llm.MovedLineDetector.MoveCandidate;
 import io.codiqo.llm.VolumeScoreCalculator.CodeBlockEffort;
 import io.codiqo.llm.VolumeScoreCalculator.FileEffort;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
@@ -39,20 +43,24 @@ import lombok.extern.slf4j.Slf4j;
 public class FinalScoreCalculator {
     private static final int ROUNDING_PRECISION = 2;
     private static final int MAX_ARCHITECTURE_IMPACT = 10;
+    private static final String COMMIT_SCOPE = "(commit)";
 
     private final RunArgs args;
     private final VolumeScoreCalculator volumeScoreCalculator;
+    private final MovedLineDetector movedLineDetector;
 
     public FinalScoreCalculator(RunArgs args) {
         this.args = Objects.requireNonNull(args);
         this.volumeScoreCalculator = new VolumeScoreCalculator(args);
+        this.movedLineDetector = new MovedLineDetector(args);
     }
 
     public void apply(LlmScoringResponse response, PreComputedScores preComputed) {
         apply(response, preComputed, null);
     }
     public void apply(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
-        DiffClassificationDeriver.derive(response, request);
+        dropMovedPairsWhenDetectionDisabled(response);
+        DiffClassificationDeriver.derive(response, request, movedLineDetector.detect(request));
         DiffAdjustment adjustment = computeDiffAdjustment(response, preComputed, request);
         PreComputedScores effective = adjustment.getScores();
         Map<String, FileDiffClassification> classificationByFile = buildClassificationByFile(response);
@@ -136,16 +144,109 @@ public class FinalScoreCalculator {
         response.setScore(finalScore);
         response.setScoreCalculation(scoreCalculation);
     }
+    /**
+     * moveDetectionEnabled=false must be a full off switch for relocation discounts: a disabled
+     * detector offers no candidates (so confirmed ids resolve to nothing), but the LLM knows the
+     * movedPairs contract from the system prompt and may still cite pairs — the deriver sanitizes
+     * pairs only against effective lines, so they must be stripped here before derivation.
+     */
+    private void dropMovedPairsWhenDetectionDisabled(LlmScoringResponse response) {
+        if (args.isMoveDetectionEnabled()) {
+            return;
+        }
+        if (Objects.nonNull(response.getEffortBreakdown()) && Objects.nonNull(response.getEffortBreakdown().getDiffClassification())
+                && CollectionUtils.isNotEmpty(response.getEffortBreakdown().getDiffClassification().getMovedPairs())) {
+            log.warn("diffClassification.droppedMovedPairs count={} — move detection is disabled",
+                    response.getEffortBreakdown().getDiffClassification().getMovedPairs().size());
+            response.getEffortBreakdown().getDiffClassification().setMovedPairs(Lists.newArrayList());
+        }
+    }
     private DiffAdjustment computeDiffAdjustment(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
         PerFileResult perFile = computePerFileFactors(response, request);
         Map<String, Double> perBlockCoeff = buildPerBlockCoeff(response);
+        Map<String, Double> perBlockMovedFactor = buildPerBlockMovedFactor(response, preComputed, request);
 
-        if (perFile.getFactors().isEmpty() && perBlockCoeff.isEmpty()) {
+        if (perFile.getFactors().isEmpty() && perBlockCoeff.isEmpty() && perBlockMovedFactor.isEmpty()) {
             return DiffAdjustment.unchanged(preComputed);
         }
 
-        PreComputedScores adjusted = volumeScoreCalculator.recompute(preComputed, perFile.getFactors(), perBlockCoeff);
+        PreComputedScores adjusted = volumeScoreCalculator.recompute(preComputed, perFile.getFactors(), perBlockCoeff, perBlockMovedFactor);
         return DiffAdjustment.applied(adjusted, perFile.getBookkeeping());
+    }
+    /**
+     * Relocated lines still bill their invocation counts to the block whose new-file span absorbed
+     * them: deleted lines anchor to the next surviving line (so a moved-out body lands on the
+     * surviving block), and moved-in additions sit in the destination body. The line term is
+     * bounded by the bodyCodeLines cap and discounted by the per-file factor, but the invocation
+     * term of the driver score is uncapped — this factor removes each block's moved invocation
+     * share at movedLineCoefficient/2, mirroring the per-line relocation charge.
+     */
+    private Map<String, Double> buildPerBlockMovedFactor(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
+        Map<String, Double> toReturn = Maps.newHashMap();
+        if (Objects.isNull(request) || CollectionUtils.isEmpty(request.getFileChanges()) || CollectionUtils.isEmpty(preComputed.getCodeBlockEfforts())) {
+            return toReturn;
+        }
+        if (Objects.isNull(response.getEffortBreakdown()) || Objects.isNull(response.getEffortBreakdown().getDiffClassification())) {
+            return toReturn;
+        }
+
+        Map<String, List<CodeBlockEffort>> blocksByFile = Maps.newHashMap();
+        for (CodeBlockEffort cbe : preComputed.getCodeBlockEfforts()) {
+            if (!cbe.isConfig()) {
+                blocksByFile.computeIfAbsent(cbe.getFile(), k -> Lists.newArrayList()).add(cbe);
+            }
+        }
+
+        Map<String, FileChange> fileChangesByPath = Maps.newHashMapWithExpectedSize(request.getFileChanges().size());
+        for (FileChange fc : request.getFileChanges()) {
+            fileChangesByPath.put(fc.getPath(), fc);
+        }
+
+        for (FileDiffClassification entry : CollectionUtils.emptyIfNull(response.getEffortBreakdown().getDiffClassification().getPerFile())) {
+            List<CodeBlockEffort> blocks = blocksByFile.get(entry.getFile());
+            FileChange fc = fileChangesByPath.get(entry.getFile());
+            boolean hasMovedLines = CollectionUtils.isNotEmpty(entry.getMovedAdded()) || CollectionUtils.isNotEmpty(entry.getMovedDeleted());
+            if (CollectionUtils.isEmpty(blocks) || Objects.isNull(fc) || StringUtils.isBlank(fc.getDiff()) || !hasMovedLines) {
+                continue;
+            }
+
+            UnifiedDiffLines diffLines = UnifiedDiffLines.parse(fc.getDiff(), fc.getLineFilter());
+
+            int[] movedInvocations = new int[blocks.size()];
+            for (Integer line : CollectionUtils.emptyIfNull(entry.getMovedDeleted())) {
+                Integer anchor = diffLines.getCandidateDeletedAnchor().get(line);
+                String content = diffLines.getCandidateDeletedContent().get(line);
+                /**
+                 * deleted lines are billed only to MODIFY units (EffectiveChangePopulator), with
+                 * the anchor allowed to sit one line past the body end — mirror both rules here
+                 */
+                if (Objects.nonNull(anchor) && Objects.nonNull(content)) {
+                    int idx = innermostBlockForLine(blocks, anchor, 1, true);
+                    if (idx >= 0) {
+                        movedInvocations[idx] += JavaInvocationCounter.countInLine(content);
+                    }
+                }
+            }
+            for (Integer line : CollectionUtils.emptyIfNull(entry.getMovedAdded())) {
+                String content = diffLines.getCandidateAddedContent().get(line);
+                if (Objects.nonNull(content)) {
+                    int idx = innermostBlockForLine(blocks, line, 0, false);
+                    if (idx >= 0) {
+                        movedInvocations[idx] += JavaInvocationCounter.countInLine(content);
+                    }
+                }
+            }
+
+            for (int i = 0; i < blocks.size(); i++) {
+                if (movedInvocations[i] > 0) {
+                    double factor = movedFactor(blocks.get(i), movedInvocations[i], args.getMovedLineCoefficient());
+                    if (factor < 1.0) {
+                        toReturn.put(VolumeScoreCalculator.blockKey(blocks.get(i).getFile(), blocks.get(i).getSignature()), factor);
+                    }
+                }
+            }
+        }
+        return toReturn;
     }
     private Map<String, Double> buildPerBlockCoeff(LlmScoringResponse response) {
         Map<String, Double> toReturn = Maps.newHashMap();
@@ -166,7 +267,7 @@ public class FinalScoreCalculator {
             default -> throw new IllegalArgumentException("Unknown code block category: " + category);
         };
     }
-    private static PerFileResult computePerFileFactors(LlmScoringResponse response, LlmScoringRequest request) {
+    private PerFileResult computePerFileFactors(LlmScoringResponse response, LlmScoringRequest request) {
         if (Objects.isNull(response.getEffortBreakdown()) || Objects.isNull(response.getEffortBreakdown().getDiffClassification())) {
             return PerFileResult.empty();
         }
@@ -189,8 +290,9 @@ public class FinalScoreCalculator {
         Map<String, Double> perFileFactor = Maps.newHashMap();
         int totalCosmetic = 0;
         int totalPairsCollapsed = 0;
+        int totalMovedLines = 0;
         int totalRawLines = 0;
-        int totalAdjustedLines = 0;
+        double totalAdjustedLines = 0.0;
         for (FileDiffClassification entry : classification.getPerFile()) {
             FileChange fc = fileChangesByPath.get(entry.getFile());
             if (Objects.isNull(fc)) {
@@ -208,9 +310,11 @@ public class FinalScoreCalculator {
             int trueModifyPairs = sizeOfPairs(entry.getTrueModifyPairs());
             int pureAddSize = sizeOfInts(entry.getPureAdd());
             int pureDeleteSize = sizeOfInts(entry.getPureDelete());
+            int movedAddedSize = sizeOfInts(entry.getMovedAdded());
+            int movedDeletedSize = sizeOfInts(entry.getMovedDeleted());
 
-            int addedTotal = cosmeticAddedSize + inPlacePairs + trueModifyPairs + pureAddSize;
-            int deletedTotal = cosmeticDeletedSize + inPlacePairs + trueModifyPairs + pureDeleteSize;
+            int addedTotal = cosmeticAddedSize + inPlacePairs + trueModifyPairs + pureAddSize + movedAddedSize;
+            int deletedTotal = cosmeticDeletedSize + inPlacePairs + trueModifyPairs + pureDeleteSize + movedDeletedSize;
 
             /**
              * entries are server-derived from the diff (DiffClassificationDeriver), so totals match
@@ -237,13 +341,20 @@ public class FinalScoreCalculator {
                 continue;
             }
 
+            /**
+             * each side of a moved pair charges movedLineCoefficient/2 to its own file — a
+             * same-file move costs the full coefficient, a cross-file move splits it between the
+             * source and destination files, and the sum over files is pairs × coefficient either way
+             */
             int pairsCount = inPlacePairs + trueModifyPairs;
-            int effectiveLines = pairsCount + pureAddSize + pureDeleteSize;
-            double factor = (double) effectiveLines / rawLines;
+            double effectiveLines = pairsCount + pureAddSize + pureDeleteSize
+                    + (movedAddedSize + movedDeletedSize) * args.getMovedLineCoefficient() / 2.0;
+            double factor = effectiveLines / rawLines;
             perFileFactor.put(entry.getFile(), factor);
 
             totalCosmetic += cosmeticAddedSize + cosmeticDeletedSize;
             totalPairsCollapsed += pairsCount;
+            totalMovedLines += movedAddedSize + movedDeletedSize;
             totalRawLines += rawLines;
             totalAdjustedLines += effectiveLines;
         }
@@ -252,7 +363,22 @@ public class FinalScoreCalculator {
             return PerFileResult.empty();
         }
 
-        DiffBookkeeping bookkeeping = new DiffBookkeeping(totalRawLines, totalAdjustedLines, totalCosmetic, totalPairsCollapsed);
+        /**
+         * a moved-only commit yields a fractional adjusted total below 0.5 (e.g. one pair at the
+         * default coefficient = 0.25) — reporting 0 effective lines for a non-empty change would
+         * mislead API consumers, so clamp any positive fraction to at least 1
+         */
+        int adjustedLines = (int) Math.round(totalAdjustedLines);
+        if (totalAdjustedLines > 0) {
+            adjustedLines = Math.max(1, adjustedLines);
+        }
+
+        DiffBookkeeping bookkeeping = new DiffBookkeeping(
+                totalRawLines,
+                adjustedLines,
+                totalCosmetic,
+                totalPairsCollapsed,
+                totalMovedLines);
         return new PerFileResult(perFileFactor, bookkeeping);
     }
     private static void populatePerFileScalars(DiffClassification classification) {
@@ -260,15 +386,18 @@ public class FinalScoreCalculator {
             int cosmeticForFile = sizeOfInts(entry.getCosmeticAdded()) + sizeOfInts(entry.getCosmeticDeleted());
             int pairsForFile = sizeOfPairs(entry.getInPlaceModifyPairs()) + sizeOfPairs(entry.getTrueModifyPairs());
             int pureAddDeleteForFile = sizeOfInts(entry.getPureAdd()) + sizeOfInts(entry.getPureDelete());
+            int movedForFile = sizeOfInts(entry.getMovedAdded()) + sizeOfInts(entry.getMovedDeleted());
 
             entry.setCosmeticLines(cosmeticForFile);
             entry.setPairsCollapsed(pairsForFile);
             entry.setPureAddDeleteLines(pureAddDeleteForFile);
+            entry.setMovedLines(movedForFile);
         }
 
         classification.setCosmeticLines(classification.getPerFile().stream().mapToInt(FileDiffClassification::getCosmeticLines).sum());
         classification.setPairsCollapsed(classification.getPerFile().stream().mapToInt(FileDiffClassification::getPairsCollapsed).sum());
         classification.setPureAddDeleteLines(classification.getPerFile().stream().mapToInt(FileDiffClassification::getPureAddDeleteLines).sum());
+        classification.setMovedLines(classification.getPerFile().stream().mapToInt(FileDiffClassification::getMovedLines).sum());
     }
     private static Map<String, FileDiffClassification> buildClassificationByFile(LlmScoringResponse response) {
         if (Objects.isNull(response.getEffortBreakdown()) || Objects.isNull(response.getEffortBreakdown().getDiffClassification())) {
@@ -309,6 +438,7 @@ public class FinalScoreCalculator {
         toReturn.setLinesChangedAdjusted(bookkeeping.getLinesChangedAdjusted());
         toReturn.setCosmeticLinesDropped(bookkeeping.getCosmeticLinesDropped());
         toReturn.setInPlaceLinesCollapsed(bookkeeping.getInPlaceLinesCollapsed());
+        toReturn.setMovedLinesDiscounted(bookkeeping.getMovedLinesDiscounted());
         return toReturn;
     }
     private static FileEffortView toFileEffortView(FileEffort fe, Map<String, FileDiffClassification> classificationByFile) {
@@ -399,6 +529,48 @@ public class FinalScoreCalculator {
         return pair.getAdded() >= bodyStartLine && pair.getAdded() <= bodyEndLine
                 && pair.getDeleted() >= bodyStartLine && pair.getDeleted() <= bodyEndLine;
     }
+    private static int innermostBlockForLine(List<CodeBlockEffort> blocks, int line, int endSlack, boolean modifyOnly) {
+        int innermost = -1;
+        for (int i = 0; i < blocks.size(); i++) {
+            CodeBlockEffort block = blocks.get(i);
+            if (modifyOnly && block.getOperation() != LlmScoringRequest.Operation.MODIFY) {
+                continue;
+            }
+            int bodyStartLine = block.getBodyStartLine();
+            int bodyEndLine = block.getBodyEndLine();
+            if (bodyStartLine <= 0 || bodyEndLine < bodyStartLine) {
+                continue;
+            }
+            if (line >= bodyStartLine && line <= bodyEndLine + endSlack) {
+                if (innermost < 0 || blockBodySpan(block) < blockBodySpan(blocks.get(innermost))) {
+                    innermost = i;
+                }
+            }
+        }
+        return innermost;
+    }
+    /**
+     * Expresses the moved-invocation subtraction as a multiplier on the stored driver score. The
+     * driver is the weighted mean of the scaled components (lines [+ ncss] + invocations), so
+     * removing (1 − coeff/2) of the moved invocations' scaled weight from the component sum
+     * scales the driver by exactly this ratio — the operation-specific weight cancels out. The
+     * moved share is recounted by regex ({@link JavaInvocationCounter}) — identical to how the
+     * deleted side was billed, an approximation of the AST count on the added side — and clamped
+     * at the block's whole scaled invocation term.
+     */
+    private static double movedFactor(CodeBlockEffort block, int movedInvocations, double movedLineCoefficient) {
+        int billedInvocations = block.getOperation() == LlmScoringRequest.Operation.MODIFY
+                ? block.getEffectiveInvocationsChanged()
+                : block.getDirectInvocationCount();
+        double driverComponents = block.getScaledLines() + block.getScaledNcss() + block.getScaledInvocations();
+        if (billedInvocations <= 0 || block.getScaledInvocations() <= 0 || driverComponents <= 0) {
+            return 1.0;
+        }
+
+        double invocationsFactor = block.getScaledInvocations() / billedInvocations;
+        double movedInvocationsScaled = Math.min(movedInvocations * invocationsFactor, block.getScaledInvocations());
+        return (driverComponents - movedInvocationsScaled * (1.0 - movedLineCoefficient / 2.0)) / driverComponents;
+    }
     private static int blockBodySpan(CodeBlockEffort block) {
         return block.getBodyEndLine() - block.getBodyStartLine();
     }
@@ -411,21 +583,31 @@ public class FinalScoreCalculator {
 
     /**
      * Validates the LLM's semantic labels against the diff's change blocks: every cited block id
-     * must exist and every cosmetic line number must be an effective changed line. Pairing and
-     * pure buckets are server-derived ({@link DiffClassificationDeriver}), so the old count and
-     * duplicate invariants cannot be violated and are no longer checked.
+     * must exist, every cosmetic line number must be an effective changed line, every confirmed
+     * move id must be a server-offered candidate, and every moved pair must cite effective lines
+     * not already claimed. Pairing and pure buckets are server-derived
+     * ({@link DiffClassificationDeriver}), so the old count and duplicate invariants cannot be
+     * violated and are no longer checked.
      */
-    public static ValidationReport validate(LlmScoringResponse response, LlmScoringRequest request) {
+    public ValidationReport validate(LlmScoringResponse response, LlmScoringRequest request) {
         List<ValidationFailure> failures = Lists.newArrayList();
 
         if (Objects.isNull(response.getEffortBreakdown()) || Objects.isNull(response.getEffortBreakdown().getDiffClassification())) {
             return new ValidationReport(failures);
         }
-        // explicit "perFile": null from the LLM bypasses the @Builder.Default empty list
-        if (CollectionUtils.isEmpty(response.getEffortBreakdown().getDiffClassification().getPerFile())) {
+        if (CollectionUtils.isEmpty(request.getFileChanges())) {
             return new ValidationReport(failures);
         }
-        if (CollectionUtils.isEmpty(request.getFileChanges())) {
+
+        List<MoveCandidate> moveCandidates = movedLineDetector.detect(request);
+        validateConfirmedMoveIds(response.getEffortBreakdown().getDiffClassification(), moveCandidates, failures);
+        // when detection is disabled, apply() strips movedPairs — don't burn retries on them here
+        if (args.isMoveDetectionEnabled()) {
+            validateMovedPairs(response.getEffortBreakdown().getDiffClassification(), request, moveCandidates, failures);
+        }
+
+        // explicit "perFile": null from the LLM bypasses the @Builder.Default empty list
+        if (CollectionUtils.isEmpty(response.getEffortBreakdown().getDiffClassification().getPerFile())) {
             return new ValidationReport(failures);
         }
 
@@ -473,6 +655,80 @@ public class FinalScoreCalculator {
 
         return new ValidationReport(failures);
     }
+    /**
+     * Confirmed move ids are commit-scoped (a candidate can pair lines across two files), so the
+     * failure carries the {@link #COMMIT_SCOPE} sentinel instead of a file path.
+     */
+    private static void validateConfirmedMoveIds(DiffClassification classification, List<MoveCandidate> moveCandidates, List<ValidationFailure> failures) {
+        if (CollectionUtils.isNotEmpty(classification.getConfirmedMoveIds())) {
+            List<String> validIds = moveCandidates.stream().map(MoveCandidate::getId).toList();
+            Set<String> validSet = Sets.newHashSet(validIds);
+
+            List<String> unknownIds = Lists.newArrayList();
+            for (String id : classification.getConfirmedMoveIds()) {
+                if (Objects.isNull(id) || !validSet.contains(id)) {
+                    unknownIds.add(String.valueOf(id));
+                }
+            }
+            if (CollectionUtils.isNotEmpty(unknownIds)) {
+                failures.add(new ValidationFailure(COMMIT_SCOPE, FailureReason.UNKNOWN_MOVE_ID, unknownIds, validIds));
+            }
+        }
+    }
+    /**
+     * Moved pairs are commit-scoped like confirmed move ids. Each pair must parse as
+     * fromFile:fromLine->toFile:toLine, cite block-tagged effective lines of eligible files, use
+     * each line at most once, and not repeat a line already claimed by a confirmed candidate.
+     */
+    private static void validateMovedPairs(DiffClassification classification, LlmScoringRequest request, List<MoveCandidate> moveCandidates, List<ValidationFailure> failures) {
+        if (CollectionUtils.isNotEmpty(classification.getMovedPairs())) {
+            Map<String, UnifiedDiffLines> diffLinesByFile = Maps.newHashMap();
+            for (FileChange fc : request.getFileChanges()) {
+                if (fc.isLinesJustificationRequired() && StringUtils.isNotBlank(fc.getDiff())) {
+                    diffLinesByFile.put(fc.getPath(), UnifiedDiffLines.parse(fc.getDiff(), fc.getLineFilter()));
+                }
+            }
+
+            Map<String, MoveCandidate> candidatesById = Maps.newHashMap();
+            for (MoveCandidate candidate : moveCandidates) {
+                candidatesById.put(candidate.getId(), candidate);
+            }
+            Set<String> claimedDeleted = Sets.newHashSet();
+            Set<String> claimedAdded = Sets.newHashSet();
+            for (String id : CollectionUtils.emptyIfNull(classification.getConfirmedMoveIds())) {
+                MoveCandidate candidate = candidatesById.get(id);
+                if (Objects.nonNull(candidate)) {
+                    claimedDeleted.add(candidate.getFromFile() + ":" + candidate.getFromLine());
+                    claimedAdded.add(candidate.getToFile() + ":" + candidate.getToLine());
+                }
+            }
+
+            List<String> offending = Lists.newArrayList();
+            for (String raw : classification.getMovedPairs()) {
+                Optional<MovedPair> parsed = MovedPair.parse(raw);
+                if (parsed.isEmpty()) {
+                    offending.add(String.valueOf(raw));
+                    continue;
+                }
+
+                MovedPair pair = parsed.get();
+                UnifiedDiffLines fromDiff = diffLinesByFile.get(pair.getFromFile());
+                UnifiedDiffLines toDiff = diffLinesByFile.get(pair.getToFile());
+                if (Objects.isNull(fromDiff) || !fromDiff.getCandidateDeletedLines().contains(pair.getFromLine())
+                        || Objects.isNull(toDiff) || !toDiff.getCandidateAddedLines().contains(pair.getToLine())) {
+                    offending.add(raw);
+                    continue;
+                }
+                if (!claimedDeleted.add(pair.getFromFile() + ":" + pair.getFromLine())
+                        || !claimedAdded.add(pair.getToFile() + ":" + pair.getToLine())) {
+                    offending.add(raw);
+                }
+            }
+            if (CollectionUtils.isNotEmpty(offending)) {
+                failures.add(new ValidationFailure(COMMIT_SCOPE, FailureReason.INVALID_MOVED_PAIR, offending, Collections.emptyList()));
+            }
+        }
+    }
     private static List<String> unknownLines(List<Integer> cited, Set<Integer> valid) {
         List<String> unknown = Lists.newArrayList();
         for (Integer line : CollectionUtils.emptyIfNull(cited)) {
@@ -490,6 +746,8 @@ public class FinalScoreCalculator {
         UNKNOWN_BLOCK,
         UNKNOWN_ADDED_LINE,
         UNKNOWN_DELETED_LINE,
+        UNKNOWN_MOVE_ID,
+        INVALID_MOVED_PAIR,
     }
 
     @Value
@@ -540,9 +798,10 @@ public class FinalScoreCalculator {
         int linesChangedAdjusted;
         int cosmeticLinesDropped;
         int inPlaceLinesCollapsed;
+        int movedLinesDiscounted;
 
         static DiffBookkeeping zero() {
-            return new DiffBookkeeping(0, 0, 0, 0);
+            return new DiffBookkeeping(0, 0, 0, 0, 0);
         }
     }
 }

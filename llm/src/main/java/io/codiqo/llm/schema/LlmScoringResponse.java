@@ -204,6 +204,7 @@ public class LlmScoringResponse {
         private int linesChangedAdjusted;
         private int cosmeticLinesDropped;
         private int inPlaceLinesCollapsed;
+        private int movedLinesDiscounted;
     }
 
     @Data
@@ -216,6 +217,11 @@ public class LlmScoringResponse {
         private int cosmeticLines;
         private int pairsCollapsed;
         private int pureAddDeleteLines;
+        private int movedLines;
+        @Builder.Default
+        private List<String> confirmedMoveIds = Lists.newArrayList();
+        @Builder.Default
+        private List<String> movedPairs = Lists.newArrayList();
         @Builder.Default
         private List<FileDiffClassification> perFile = Lists.newArrayList();
         private String rationale;
@@ -230,6 +236,7 @@ public class LlmScoringResponse {
         private int cosmeticLines;
         private int pairsCollapsed;
         private int pureAddDeleteLines;
+        private int movedLines;
 
         @Builder.Default
         private Map<String, String> blockKinds = Maps.newHashMap();
@@ -245,6 +252,11 @@ public class LlmScoringResponse {
         private List<Integer> pureAdd = Lists.newArrayList();
         @Builder.Default
         private List<Integer> pureDelete = Lists.newArrayList();
+        // server-derived from confirmed move candidates; a cross-file pair splits its sides across two entries
+        @Builder.Default
+        private List<Integer> movedAdded = Lists.newArrayList();
+        @Builder.Default
+        private List<Integer> movedDeleted = Lists.newArrayList();
     }
 
     @Data

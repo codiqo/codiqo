@@ -136,19 +136,24 @@ public class VolumeScoreCalculator {
                 .fileEfforts(fileEfforts)
                 .build();
     }
-    public PreComputedScores recompute(PreComputedScores original, Map<String, Double> perFileEffectiveLineFactor, Map<String, Double> perBlockCoeff) {
+    public PreComputedScores recompute(PreComputedScores original, Map<String, Double> perFileEffectiveLineFactor, Map<String, Double> perBlockCoeff, Map<String, Double> perBlockMovedFactor) {
         double maxDeviation = args.getDriverFactorMaxDeviation();
 
         List<CodeBlockEffort> rescaled = Lists.newArrayListWithCapacity(original.getCodeBlockEfforts().size());
         for (CodeBlockEffort cbe : original.getCodeBlockEfforts()) {
+            String key = blockKey(cbe.getFile(), cbe.getSignature());
             double factor = perFileEffectiveLineFactor.getOrDefault(cbe.getFile(), 1.0);
             /**
              * the per-block difficulty category weights effort only, never the driver score: volume stays
-             * a pure measure so category remains independent of the volume axis
+             * a pure measure so category remains independent of the volume axis. the per-block moved
+             * factor strips the invocation share billed by relocated lines (deleted-line anchors and
+             * moved-in additions) — a volume correction like the per-file factor, so it scales the
+             * driver score as well
              */
-            double categoryCoeff = perBlockCoeff.getOrDefault(blockKey(cbe.getFile(), cbe.getSignature()), 1.0);
-            double scaledDriverScore = cbe.getDriverScore() * factor;
-            double scaledEffort = cbe.getEffort() * factor * categoryCoeff;
+            double categoryCoeff = perBlockCoeff.getOrDefault(key, 1.0);
+            double movedFactor = perBlockMovedFactor.getOrDefault(key, 1.0);
+            double scaledDriverScore = cbe.getDriverScore() * factor * movedFactor;
+            double scaledEffort = cbe.getEffort() * factor * movedFactor * categoryCoeff;
             rescaled.add(new CodeBlockEffort(cbe.getFile(), cbe.getName(), cbe.getSignature(),
                     cbe.getOperation(), cbe.getNonCommentCodeStatements(), cbe.getDirectInvocationCount(),
                     cbe.getEffectiveInvocationsChanged(), cbe.getNonCommentCodeLines(), cbe.getCommentLines(),

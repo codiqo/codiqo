@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
+import io.codiqo.llm.MovedLineDetector.MoveCandidate;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringRequest.FileChange;
 import io.codiqo.llm.schema.LlmScoringResponse;
@@ -112,6 +113,119 @@ class DiffClassificationDeriverTest {
         assertEquals("Foo.java", perFile.get(0).getFile());
     }
     @Test
+    void confirmedMovedLinesAreExcludedFromPairing() {
+        LlmScoringResponse response = responseWith(FileDiffClassification.builder().file("Foo.java").build());
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M1"));
+        LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
+
+        DiffClassificationDeriver.derive(response, request, List.of(candidate("M1", "Foo.java", 14, "Foo.java", 13)));
+
+        FileDiffClassification entry = soleEntry(response);
+        assertEquals(List.of(13), entry.getMovedAdded());
+        assertEquals(List.of(14), entry.getMovedDeleted());
+        assertEquals(List.of(pair(11, 11)), entry.getTrueModifyPairs(), "B1 pairing unaffected by the move");
+        assertEquals(List.of(13), entry.getPureDelete(),
+                "B2: added 13 and deleted 14 left as moved → remaining deleted 13 is pure");
+        assertTrue(entry.getPureAdd().isEmpty());
+        assertEquals(List.of("M1"), response.getEffortBreakdown().getDiffClassification().getConfirmedMoveIds());
+    }
+    @Test
+    void movedBeatsCosmeticCitation() {
+        LlmScoringResponse response = responseWith(FileDiffClassification.builder()
+                .file("Foo.java")
+                .cosmeticAdded(Lists.newArrayList(13))
+                .build());
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M1"));
+        LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
+
+        DiffClassificationDeriver.derive(response, request, List.of(candidate("M1", "Foo.java", 14, "Foo.java", 13)));
+
+        FileDiffClassification entry = soleEntry(response);
+        assertTrue(entry.getCosmeticAdded().isEmpty(), "a confirmed moved line beats its cosmetic citation");
+        assertEquals(List.of(13), entry.getMovedAdded());
+    }
+    @Test
+    void unknownConfirmedMoveIdsAreDropped() {
+        LlmScoringResponse response = responseWith(FileDiffClassification.builder().file("Foo.java").build());
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M9"));
+        LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
+
+        DiffClassificationDeriver.derive(response, request, List.of(candidate("M1", "Foo.java", 14, "Foo.java", 13)));
+
+        FileDiffClassification entry = soleEntry(response);
+        assertTrue(response.getEffortBreakdown().getDiffClassification().getConfirmedMoveIds().isEmpty(),
+                "ids outside the candidate set are sanitized away");
+        assertTrue(entry.getMovedAdded().isEmpty());
+        assertTrue(entry.getMovedDeleted().isEmpty());
+    }
+    @Test
+    void movedPairsMergeIntoMovedSets() {
+        LlmScoringResponse response = responseWith(FileDiffClassification.builder().file("Foo.java").build());
+        response.getEffortBreakdown().getDiffClassification().setMovedPairs(Lists.newArrayList("Foo.java:14->Foo.java:13"));
+        LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
+
+        DiffClassificationDeriver.derive(response, request);
+
+        FileDiffClassification entry = soleEntry(response);
+        assertEquals(List.of(13), entry.getMovedAdded());
+        assertEquals(List.of(14), entry.getMovedDeleted());
+        assertEquals(List.of(pair(11, 11)), entry.getTrueModifyPairs(), "B1 pairing unaffected by the pair");
+        assertEquals(List.of(13), entry.getPureDelete());
+        assertEquals(List.of("Foo.java:14->Foo.java:13"),
+                response.getEffortBreakdown().getDiffClassification().getMovedPairs());
+    }
+    @Test
+    void invalidMovedPairsAreDropped() {
+        LlmScoringResponse response = responseWith(FileDiffClassification.builder().file("Foo.java").build());
+        response.getEffortBreakdown().getDiffClassification().setMovedPairs(Lists.newArrayList(
+                "garbage",
+                "Foo.java:999->Foo.java:13",
+                "Foo.java:14->Foo.java:999"));
+        LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
+
+        DiffClassificationDeriver.derive(response, request);
+
+        FileDiffClassification entry = soleEntry(response);
+        assertTrue(response.getEffortBreakdown().getDiffClassification().getMovedPairs().isEmpty(),
+                "unparseable and non-candidate citations are sanitized away");
+        assertTrue(entry.getMovedAdded().isEmpty());
+        assertTrue(entry.getMovedDeleted().isEmpty());
+        assertEquals(2, entry.getTrueModifyPairs().size(), "pairing unaffected by dropped pairs");
+    }
+    @Test
+    void movedPairOverlappingConfirmedMoveIsDropped() {
+        LlmScoringResponse response = responseWith(FileDiffClassification.builder().file("Foo.java").build());
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M1"));
+        response.getEffortBreakdown().getDiffClassification().setMovedPairs(Lists.newArrayList("Foo.java:14->Foo.java:13"));
+        LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
+
+        DiffClassificationDeriver.derive(response, request, List.of(candidate("M1", "Foo.java", 14, "Foo.java", 13)));
+
+        FileDiffClassification entry = soleEntry(response);
+        assertEquals(List.of(13), entry.getMovedAdded(), "the line is moved exactly once");
+        assertEquals(List.of(14), entry.getMovedDeleted());
+        assertEquals(List.of("Foo.java:14->Foo.java:13"),
+                response.getEffortBreakdown().getDiffClassification().getMovedPairs(),
+                "materialized list carries the confirmed candidate's pair; the duplicate citation is dropped");
+    }
+    @Test
+    void crossFileMoveSplitsSidesAcrossFiles() {
+        LlmScoringResponse response = responseWith(FileDiffClassification.builder().file("A.java").build());
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M1"));
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .fileChanges(Lists.newArrayList(fileChange("A.java", DIFF, true), fileChange("B.java", DIFF, true)))
+                .build();
+
+        DiffClassificationDeriver.derive(response, request, List.of(candidate("M1", "A.java", 14, "B.java", 13)));
+
+        List<FileDiffClassification> perFile = response.getEffortBreakdown().getDiffClassification().getPerFile();
+        assertEquals(2, perFile.size());
+        assertEquals(List.of(14), perFile.get(0).getMovedDeleted(), "A.java carries the deleted side");
+        assertTrue(perFile.get(0).getMovedAdded().isEmpty());
+        assertEquals(List.of(13), perFile.get(1).getMovedAdded(), "B.java carries the added side");
+        assertTrue(perFile.get(1).getMovedDeleted().isEmpty());
+    }
+    @Test
     void totalsReflectEffectiveTargets() {
         LlmScoringResponse response = new LlmScoringResponse();
         FileChange fc = fileChange("Foo.java", DIFF, true);
@@ -159,5 +273,8 @@ class DiffClassificationDeriverTest {
     }
     private static LinePair pair(int deleted, int added) {
         return LinePair.builder().deleted(deleted).added(added).build();
+    }
+    private static MoveCandidate candidate(String id, String fromFile, int fromLine, String toFile, int toLine) {
+        return new MoveCandidate(id, fromFile, fromLine, toFile, toLine, 1.0, "moved content");
     }
 }
