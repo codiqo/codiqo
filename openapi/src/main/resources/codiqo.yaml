@@ -2285,7 +2285,8 @@ components:
         LLM-provided classification of git diff delete/add lines to compensate for git's lack of a "modified"
         line concept. Populated only when the commit has any deleted lines. The server uses the per-file
         line-number arrays to deterministically scale the volume score down — cosmetic lines drop entirely,
-        paired edits (in-place or true-modify) collapse from 2 lines to 1 line of effort, and unpaired
+        paired edits (in-place or true-modify) collapse from 2 lines to 1 line of effort, confirmed moved
+        (relocated) lines are charged a small relocation coefficient per side, and unpaired
         additions/deletions are kept at full weight.
       properties:
         totalLinesAddedRaw:
@@ -2311,6 +2312,27 @@ components:
           description: |
             Total unpaired add/delete lines — sum of `pureAdd.size + pureDelete.size` over every file.
             Each line keeps full effort weight.
+        movedLines:
+          type: integer
+          minimum: 0
+          description: |
+            Total confirmed moved (relocated) lines across both sides — sum of `movedAdded.size + movedDeleted.size`
+            over every file. Each side is charged `movedLineCoefficient / 2` instead of full weight.
+        confirmedMoveIds:
+          type: array
+          description: |
+            Server-sanitized ids of the move candidates the LLM confirmed as genuine relocations
+            (from the server-offered "Moved-line candidates" hint table, ids `M1`, `M2`, …).
+          items:
+            type: string
+        movedPairs:
+          type: array
+          description: |
+            Every confirmed relocation as `fromFile:fromLine->toFile:toLine` (old-file line -> new-file
+            line): the confirmed candidates' pairs first, then server-sanitized extra pairs the LLM
+            cited beyond the hint table (trivial companion lines of a relocated body).
+          items:
+            type: string
         perFile:
           type: array
           items:
@@ -2322,11 +2344,12 @@ components:
     FileDiffClassificationModel:
       type: object
       description: |
-        Per-file breakdown of LLM diff classification. The six line-number arrays (`cosmeticAdded`,
-        `cosmeticDeleted`, `inPlaceModifyPairs`, `trueModifyPairs`, `pureAdd`, `pureDelete`) are the source of
-        truth supplied by the LLM; the count fields (`cosmeticLines`, `pairsCollapsed`, `pureAddDeleteLines`)
-        are derived server-side and persisted for fast aggregation. Pair balance is enforced structurally by
-        the `LinePairModel` tuple type — a pair always carries both `deleted` and `added` line numbers.
+        Per-file breakdown of LLM diff classification. The line-number arrays (`cosmeticAdded`,
+        `cosmeticDeleted`, `inPlaceModifyPairs`, `trueModifyPairs`, `pureAdd`, `pureDelete`, `movedAdded`,
+        `movedDeleted`) are the source of truth; the count fields (`cosmeticLines`, `pairsCollapsed`,
+        `pureAddDeleteLines`, `movedLines`) are derived server-side and persisted for fast aggregation. Pair
+        balance is enforced structurally by the `LinePairModel` tuple type — a pair always carries both
+        `deleted` and `added` line numbers.
       properties:
         file:
           type: string
@@ -2343,6 +2366,10 @@ components:
           type: integer
           minimum: 0
           description: Server-derived count, equals `pureAdd.size + pureDelete.size`.
+        movedLines:
+          type: integer
+          minimum: 0
+          description: Server-derived count, equals `movedAdded.size + movedDeleted.size`.
         cosmeticAdded:
           type: array
           description: New-file line numbers added with no semantic change (whitespace, doc-comments, log strings, brace-only lines). Effort weight 0.
@@ -2379,6 +2406,22 @@ components:
         pureDelete:
           type: array
           description: Old-file line numbers removed with no replacement on the added side (genuine removal, dead-code purge, dropped method body). 1 effort per line.
+          items:
+            type: integer
+            minimum: 1
+        movedAdded:
+          type: array
+          description: |
+            New-file line numbers confirmed as the destination side of relocated code. Charged
+            `movedLineCoefficient / 2` per line — a cross-file move splits its sides across two entries.
+          items:
+            type: integer
+            minimum: 1
+        movedDeleted:
+          type: array
+          description: |
+            Old-file line numbers confirmed as the source side of relocated code. Charged
+            `movedLineCoefficient / 2` per line.
           items:
             type: integer
             minimum: 1
@@ -2670,6 +2713,12 @@ components:
             Number of pairs the server collapsed from 2 raw lines to 1 line of effort each. Equals
             `pairsCollapsed` (sum of `inPlaceModifyPairs.size + trueModifyPairs.size` across files).
             Field name preserved for schema stability — both in-place pairs *and* true-modify pairs contribute.
+        movedLinesDiscounted:
+          type: integer
+          minimum: 0
+          description: |
+            Total confirmed moved (relocated) lines, both sides, discounted to `movedLineCoefficient / 2`
+            of effort per line instead of full weight. Equals `movedLines` on the diff classification.
         testCodeScoreMultiplier:
           type: number
           format: double
@@ -3391,6 +3440,20 @@ components:
         statsQuantile:
           type: number
           format: double
+        moveDetectionEnabled:
+          type: boolean
+          description: When true (default), deleted lines reappearing near-identically as added lines are offered to the LLM as relocation candidates and discounted on confirmation.
+        moveSimilarityThreshold:
+          type: number
+          format: double
+          description: |
+            Threshold on multiset containment `|tokens(A)∩tokens(B)| / min(|A|,|B|)` — NOT Dice/Jaccard.
+            Relocation typically only adds tokens (re-qualified receivers), so genuine moves score 1.0
+            under containment. Default 0.95.
+        movedLineCoefficient:
+          type: number
+          format: double
+          description: Effort of one confirmed moved delete+add pair relative to 1.0 for a normal line. Each side charges half. Default 0.25.
         coverageLowThreshold:
           type: number
           format: double

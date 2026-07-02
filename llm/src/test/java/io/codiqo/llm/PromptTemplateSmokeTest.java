@@ -79,6 +79,47 @@ class PromptTemplateSmokeTest {
         assertFalse(rendered.contains("| src/main/resources/application.yaml | 3 | 1 |"), "ineligible file leaked into the table");
     }
     @Test
+    void userPromptRendersSlimMovedCandidateTable() {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+        String moveDiff = String.join("\n",
+                "--- a/Foo.java",
+                "+++ b/Foo.java",
+                "@@ -10,3 +10,1 @@",
+                " context",
+                "-registry.register(handler, priority);",
+                " context2",
+                "@@ -30,1 +28,3 @@",
+                " context3",
+                "+registry.register(handler, priority);",
+                " context4");
+        FileChange fc = FileChange.builder()
+                .path("Foo.java")
+                .changeType(FileChangeType.MODIFIED)
+                .language("java")
+                .linesAdded(1)
+                .linesDeleted(1)
+                .linesJustificationRequired(true)
+                .diff(moveDiff)
+                .build();
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder()
+                        .linesAdded(1)
+                        .linesDeleted(1)
+                        .totalLinesChanged(2)
+                        .totalFilesChanged(1)
+                        .build())
+                .fileChanges(Lists.newArrayList(fc))
+                .codeBlockChanges(Collections.emptyList())
+                .build();
+
+        String rendered = builder.buildUserMessageWithScores(request, PromptContext.builder().args(new RunArgs()).build()).getMessage();
+
+        assertTrue(rendered.contains("| Id | Deleted (file:line) | Reappears as (file:line) |"), "slim 3-column header missing");
+        assertTrue(rendered.contains("| M1 | Foo.java:11 | Foo.java:29 |"), "candidate row missing");
+        assertFalse(rendered.contains("| M1 | Foo.java:11 | Foo.java:29 | `"), "content column must not be rendered");
+        assertTrue(rendered.contains("movedPairs"), "pointer to movedPairs for extra relocations missing");
+    }
+    @Test
     void systemPromptRendersFilteringRule() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
         String rendered = builder.buildSystemPrompt(PromptContext.builder().args(new RunArgs()).build());
@@ -86,6 +127,7 @@ class PromptTemplateSmokeTest {
         assertTrue(rendered.contains("SEMANTIC LABELS ONLY"), "phase-2 STEP 1a heading missing");
         assertTrue(rendered.contains("blockKinds"), "blockKinds contract missing");
         assertTrue(rendered.contains("|B<n>|"), "annotation format explanation missing");
+        assertTrue(rendered.contains("movedPairs"), "movedPairs judgment missing");
     }
     @Test
     void systemPromptRendersTaskClassificationGuidance() {

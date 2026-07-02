@@ -381,6 +381,7 @@ public class LlmResponseMapper {
         toReturn.setLinesChangedAdjusted(volumeScore.getLinesChangedAdjusted());
         toReturn.setCosmeticLinesDropped(volumeScore.getCosmeticLinesDropped());
         toReturn.setInPlaceLinesCollapsed(volumeScore.getInPlaceLinesCollapsed());
+        toReturn.setMovedLinesDiscounted(volumeScore.getMovedLinesDiscounted());
         return toReturn;
     }
     private static DiffClassificationModel mapDiffClassification(LlmScoringResponse.DiffClassification source) {
@@ -390,6 +391,9 @@ public class LlmResponseMapper {
         toReturn.setCosmeticLines(source.getCosmeticLines());
         toReturn.setPairsCollapsed(source.getPairsCollapsed());
         toReturn.setPureAddDeleteLines(source.getPureAddDeleteLines());
+        toReturn.setMovedLines(source.getMovedLines());
+        toReturn.setConfirmedMoveIds(Optional.ofNullable(source.getConfirmedMoveIds()).orElse(Collections.emptyList()));
+        toReturn.setMovedPairs(Optional.ofNullable(source.getMovedPairs()).orElse(Collections.emptyList()));
         toReturn.setRationale(source.getRationale());
         toReturn.setPerFile(Optional.ofNullable(source.getPerFile()).orElse(Collections.emptyList()).stream()
                 .map(LlmResponseMapper::mapFileDiffClassification)
@@ -408,6 +412,9 @@ public class LlmResponseMapper {
         toReturn.setTrueModifyPairs(mapPairs(source.getTrueModifyPairs()));
         toReturn.setPureAdd(Optional.ofNullable(source.getPureAdd()).orElse(Collections.emptyList()));
         toReturn.setPureDelete(Optional.ofNullable(source.getPureDelete()).orElse(Collections.emptyList()));
+        toReturn.setMovedLines(source.getMovedLines());
+        toReturn.setMovedAdded(Optional.ofNullable(source.getMovedAdded()).orElse(Collections.emptyList()));
+        toReturn.setMovedDeleted(Optional.ofNullable(source.getMovedDeleted()).orElse(Collections.emptyList()));
         return toReturn;
     }
     private static List<LinePairModel> mapPairs(List<LlmScoringResponse.LinePair> source) {

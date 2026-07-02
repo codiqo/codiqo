@@ -288,6 +288,15 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.driverScoreCapDryRun", defaultValue = "false")
     protected boolean driverScoreCapDryRun;
 
+    @Parameter(property = "codiqo.moveDetectionEnabled", defaultValue = "true")
+    protected boolean moveDetectionEnabled;
+
+    @Parameter(property = "codiqo.moveSimilarityThreshold", defaultValue = "0.95")
+    protected double moveSimilarityThreshold;
+
+    @Parameter(property = "codiqo.movedLineCoefficient", defaultValue = "0.25")
+    protected double movedLineCoefficient;
+
     @Override
     @SuppressWarnings("deprecation")
     public final Collection<File> apply(Artifact artifact) {
@@ -359,6 +368,10 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setDriverScoreCapMultiplier(driverScoreCapMultiplier);
         args.setDriverFactorMaxDeviation(driverFactorMaxDeviation);
         args.setDriverScoreCapDryRun(driverScoreCapDryRun);
+
+        args.setMoveDetectionEnabled(moveDetectionEnabled);
+        args.setMoveSimilarityThreshold(moveSimilarityThreshold);
+        args.setMovedLineCoefficient(movedLineCoefficient);
 
         Env.resolveInto(llmApiKey, args::setLlmApiKey);
         args.validate();
@@ -650,7 +663,11 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     collected.add(moduleProject);
                 } else {
                     Optional<BuildOutcome.Skipped> nested = buildAndCollectModules(
-                            moduleProject, new File(baseDir, moduleName), buildingRequest, args, collected);
+                            moduleProject,
+                            new File(baseDir, moduleName),
+                            buildingRequest,
+                            args,
+                            collected);
                     if (nested.isPresent()) {
                         return nested;
                     }
@@ -681,7 +698,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 getLog().warn(String.format("commit %s skipped: revert commit (no LLM scoring or submission)", args.getCommitId()));
                 doExcludeAnalysis(args.getCommitId(), "revert commit (no LLM scoring performed)", AnalysisExcludeCategory.REVERT_COMMIT);
             } else {
-                ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
                 doLlmScoring(ctx);
             }
         }
@@ -762,6 +778,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     duplicationPopulator.accept(ctx);
                     new MetricsAggregator(duplicationPopulator.getTotalDuplicatedLines()).accept(ctx);
                     new SubmissionSummaryPrinter(getLog()).accept(ctx);
+                    // set before the dump so codiqo-submission-<sha> replays carry the effective config
+                    ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
                     new OutputSerializer(preferYaml, getLog()).accept(ctx);
                     return Optional.of(ctx);
                 }

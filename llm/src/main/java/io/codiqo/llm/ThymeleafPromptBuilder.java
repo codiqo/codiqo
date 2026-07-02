@@ -67,10 +67,12 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
 
     private final Log log;
     private final VolumeScoreCalculator volumeCalculator;
+    private final MovedLineDetector movedLineDetector;
 
     public ThymeleafPromptBuilder(RunArgs args, Log log) {
         this.log = log;
         volumeCalculator = new VolumeScoreCalculator(args);
+        movedLineDetector = new MovedLineDetector(args);
     }
     @Override
     public String buildSystemPrompt(PromptContext context) {
@@ -90,6 +92,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         restoreSourceSlices(savedSlices);
 
         ctx.setVariable("requestJson", requestJson);
+        ctx.setVariable("moveCandidates", movedLineDetector.detect(request));
 
         PreComputedScores preComputedScores = volumeCalculator.calculate(
                 request,

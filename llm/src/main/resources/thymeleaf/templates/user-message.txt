@@ -48,6 +48,16 @@ Every effective `-` / `+` line in `fileChanges[*].diff` is annotated `-<old-file
 
 Counts are informational (effective lines after server-side filtering). Build/config descriptors scored on line count (`pom.xml`, `.proto`) ARE eligible and appear in the table above. Files in `fileChanges` with `linesJustificationRequired: false` (generic YAML/JSON/properties config, generated artefacts) MUST NOT appear in `perFile`. Do NOT emit `inPlaceModifyPairs` / `trueModifyPairs` / `pureAdd` / `pureDelete` and leave the counter fields at `0` — the server derives all of them.
 
+[# th:if="${not #lists.isEmpty(moveCandidates)}"]
+### Moved-line candidates (confirm or reject)
+
+The server detected [(${#lists.size(moveCandidates)})] deleted line(s) whose content reappears near-identically as an added line elsewhere in this commit — the signature of RELOCATED code: a body lifted into a new method, class, or file, often with re-qualified references (e.g. `props.X` → `channel.props.X`). Look each candidate's content up in the annotated diff via its `-<line>|B<n>|` / `+<line>|B<n>|` tags and list the ids of the genuine relocations in `effortBreakdown.diffClassification.confirmedMoveIds`. Omit ids whose similarity is coincidental: independently written boilerplate, a pattern that legitimately exists twice, or a line whose meaning changed despite similar tokens. Copy ids verbatim from the table — the server rejects unknown ids. Confirmed moved lines are removed from block pairing and charged a small relocation cost on both sides instead of full per-line weight. Relocated lines the table misses — typically trivial neighbors of confirmed candidates (`}`, `try {`, one-call statements) that moved with the same body — go into `movedPairs` per STEP 1a.
+
+| Id | Deleted (file:line) | Reappears as (file:line) |
+|----|---------------------|--------------------------|
+[# th:each="mc : ${moveCandidates}"]| [(${mc.id})] | [(${mc.fromFile})]:[(${mc.fromLine})] | [(${mc.toFile})]:[(${mc.toLine})] |
+[/]
+[/]
 [/]
 ---
 
