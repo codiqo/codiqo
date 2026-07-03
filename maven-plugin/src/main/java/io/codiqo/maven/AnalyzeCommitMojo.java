@@ -1,6 +1,7 @@
 package io.codiqo.maven;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Collection;
 import java.util.Optional;
@@ -21,6 +22,7 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.StoredConfig;
+import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.RefSpec;
 
@@ -47,6 +49,11 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     }
     @Override
     protected void doExecute(RunArgs args) throws Exception {
+        if (args.isExcludedAuthor(resolveAuthorEmail(args))) {
+            getLog().warn(String.format("commit %s skipped: author excluded by codiqo.excludeAuthorEmails", commitId));
+            return;
+        }
+
         File temp = Files.createTempDirectory("codiqo").toFile();
         temp.deleteOnExit();
 
@@ -153,6 +160,12 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
         } finally {
             clone.close();
             FileUtils.deleteDirectory(temp);
+        }
+    }
+    private static String resolveAuthorEmail(RunArgs args) throws IOException {
+        ObjectId objectId = args.getGit().resolve(args.getCommitId());
+        try (RevWalk walk = new RevWalk(args.getGit())) {
+            return walk.parseCommit(objectId).getAuthorIdent().getEmailAddress();
         }
     }
 }

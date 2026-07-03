@@ -3,6 +3,7 @@ package io.codiqo.api;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.DefaultParser;
@@ -57,5 +58,79 @@ class RunArgsCliTest {
         args.setJdtlsArchiveName("unexpected-name.tar.gz");
 
         assertEquals("1.60.0", args.effectiveJdtlsVersion());
+    }
+    @Test
+    void isExcludedAuthorIsFalseWhenListUnset() {
+        assertFalse(new RunArgs().isExcludedAuthor("bob@example.com"));
+    }
+    @Test
+    void isExcludedAuthorMatchesTrimmedCommaList() {
+        RunArgs args = new RunArgs();
+        args.setExcludeAuthorEmails(" alice@example.com , bob@example.com ");
+
+        assertTrue(args.isExcludedAuthor("bob@example.com"));
+        assertFalse(args.isExcludedAuthor("carol@example.com"));
+    }
+    @Test
+    void excludeWinsOverIncludeForSameAuthor() {
+        RunArgs args = new RunArgs();
+        args.setIncludeAuthorEmails("bob@example.com");
+        args.setExcludeAuthorEmails("bob@example.com");
+
+        assertTrue(args.matchesByAuthor("bob@example.com"));
+        assertTrue(args.isExcludedAuthor("bob@example.com"));
+    }
+    @Test
+    void isExcludedAuthorMatchesWildcardDomain() {
+        RunArgs args = new RunArgs();
+        args.setExcludeAuthorEmails("jenkins@*");
+
+        assertTrue(args.isExcludedAuthor("jenkins@jenkins-slave-medium-abc.europe-west2-a.c.dev-lotto2.internal"));
+        assertTrue(args.isExcludedAuthor("jenkins@b2spin.com"));
+        assertFalse(args.isExcludedAuthor("alice@patrianna.com"));
+    }
+    @Test
+    void isExcludedAuthorIsCaseInsensitive() {
+        RunArgs args = new RunArgs();
+        args.setExcludeAuthorEmails("Bob@Example.com");
+
+        assertTrue(args.isExcludedAuthor("bob@example.com"));
+    }
+    @Test
+    void isExcludedAuthorMixesWildcardAndExactEntries() {
+        RunArgs args = new RunArgs();
+        args.setExcludeAuthorEmails("jenkins@*, ci@jenkins.quizbeat.net");
+
+        assertTrue(args.isExcludedAuthor("jenkins@patrianna-dev-release-xq0xgz.internal"));
+        assertTrue(args.isExcludedAuthor("ci@jenkins.quizbeat.net"));
+        assertFalse(args.isExcludedAuthor("bob@example.com"));
+    }
+    @Test
+    void isAuthorAllowedTrueWhenNoFiltersSet() {
+        assertTrue(new RunArgs().isAuthorAllowed("bob@example.com"));
+    }
+    @Test
+    void isAuthorAllowedRespectsWhitelist() {
+        RunArgs args = new RunArgs();
+        args.setIncludeAuthorEmails("alice@example.com");
+
+        assertTrue(args.isAuthorAllowed("alice@example.com"));
+        assertFalse(args.isAuthorAllowed("bob@example.com"));
+    }
+    @Test
+    void isAuthorAllowedBlacklistOverridesWhitelist() {
+        RunArgs args = new RunArgs();
+        args.setIncludeAuthorEmails("bob@example.com");
+        args.setExcludeAuthorEmails("bob@example.com");
+
+        assertFalse(args.isAuthorAllowed("bob@example.com"));
+    }
+    @Test
+    void isAuthorAllowedRespectsWildcardBlacklist() {
+        RunArgs args = new RunArgs();
+        args.setExcludeAuthorEmails("jenkins@*");
+
+        assertFalse(args.isAuthorAllowed("jenkins@some-agent.internal"));
+        assertTrue(args.isAuthorAllowed("alice@example.com"));
     }
 }

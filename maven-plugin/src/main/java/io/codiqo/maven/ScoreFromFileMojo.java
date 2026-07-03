@@ -94,6 +94,9 @@ public class ScoreFromFileMojo extends AbstractMojo {
     @Parameter(property = "codiqo.includeAuthorEmails")
     private String includeAuthorEmails;
 
+    @Parameter(property = "codiqo.excludeAuthorEmails")
+    private String excludeAuthorEmails;
+
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try {
@@ -102,7 +105,7 @@ public class ScoreFromFileMojo extends AbstractMojo {
             CommitModel commit = submission.getCommit();
             if (Objects.nonNull(commit) && BooleanUtils.or(new boolean[] {
                     BooleanUtils.negate(args.matchesByBranch(Optional.ofNullable(commit.getBranches()).orElse(Collections.emptyList()))),
-                    BooleanUtils.negate(args.matchesByAuthor(commit.getAuthorEmail()))
+                    BooleanUtils.negate(args.isAuthorAllowed(commit.getAuthorEmail()))
             })) {
                 getLog().info("commit filtered out — branch: " + commit.getBranches() + ", author: " + commit.getAuthorEmail());
                 return;
@@ -203,6 +206,7 @@ public class ScoreFromFileMojo extends AbstractMojo {
         Optional.ofNullable(outputDirectory).ifPresent(toReturn::setOutputDirectory);
         Optional.ofNullable(includeBranches).ifPresent(toReturn::setIncludeBranches);
         Optional.ofNullable(includeAuthorEmails).ifPresent(toReturn::setIncludeAuthorEmails);
+        Optional.ofNullable(excludeAuthorEmails).ifPresent(toReturn::setExcludeAuthorEmails);
         Env.resolveInto(llmApiKey, toReturn::setLlmApiKey);
         toReturn.validate();
         return toReturn;

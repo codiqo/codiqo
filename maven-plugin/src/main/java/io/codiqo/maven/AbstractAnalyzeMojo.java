@@ -266,6 +266,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.includeAuthorEmails")
     protected String includeAuthorEmails;
 
+    @Parameter(property = "codiqo.excludeAuthorEmails")
+    protected String excludeAuthorEmails;
+
     @Parameter(property = "codiqo.jdtUseSharedIndex", defaultValue = "true")
     protected boolean jdtUseSharedIndex;
 
@@ -361,6 +364,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         Optional.ofNullable(outputDirectory).ifPresent(args::setOutputDirectory);
         Optional.ofNullable(includeBranches).ifPresent(args::setIncludeBranches);
         Optional.ofNullable(includeAuthorEmails).ifPresent(args::setIncludeAuthorEmails);
+        Optional.ofNullable(excludeAuthorEmails).ifPresent(args::setExcludeAuthorEmails);
         args.setJdtUseSharedIndex(jdtUseSharedIndex);
         args.setJdtIncludeDecompiledSources(jdtIncludeDecompiledSources);
         args.setJdtDebugPort(jdtDebugPort);

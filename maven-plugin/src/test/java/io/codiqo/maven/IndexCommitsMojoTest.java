@@ -95,6 +95,19 @@ class IndexCommitsMojoTest {
         assertFalse(commits.stream().anyMatch(c -> dropped.getName().equals(c.getSha())));
     }
     @Test
+    void excludeAuthorFilterDropsByEmail() throws Exception {
+        RevCommit kept = commitAs("a.txt", "v1", "kept", "Alice", "alice@example.com");
+        RevCommit dropped = commitAs("a.txt", "v2", "dropped", "Bob", "bob@other.com");
+
+        RunArgs filter = new RunArgs();
+        filter.setExcludeAuthorEmails("bob@other.com");
+        List<CommitModel> commits = extract(filter, "HEAD", EPOCH, "main");
+
+        assertEquals(1, commits.size());
+        assertEquals(kept.getName(), commits.get(0).getSha());
+        assertFalse(commits.stream().anyMatch(c -> dropped.getName().equals(c.getSha())));
+    }
+    @Test
     void mergeCommitSetsIsMergeAndMultipleParents() throws Exception {
         RevCommit base = commit("a.txt", "base", "base");
         git.checkout().setCreateBranch(true).setName("feature").call();
