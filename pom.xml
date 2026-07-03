@@ -74,13 +74,13 @@
         <jgit.version>7.7.0.202606012155-r</jgit.version>
         <listenablefuture.version>9999.0-empty-to-avoid-conflict-with-guava</listenablefuture.version>
         <reactor.version>2025.0.6</reactor.version>
-        <ztzip.version>1.18.0</ztzip.version>
+        <ztzip.version>1.18.1</ztzip.version>
         <ztkill.version>1.11</ztkill.version>
         <ztexec.version>1.12</ztexec.version>
         <jarchivelib.version>1.2.0</jarchivelib.version>
         <ecj.version>3.46.0</ecj.version>
         <lsp4j.version>1.0.0</lsp4j.version>
-        <openrewrite.version>8.86.0</openrewrite.version>
+        <openrewrite.version>8.86.1</openrewrite.version>
         <openrewrite.recipe.version>2.38.0</openrewrite.recipe.version>
         <pmd.version>7.26.0</pmd.version>
         <spotbugs.version>4.10.2</spotbugs.version>
