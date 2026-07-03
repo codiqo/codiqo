@@ -90,6 +90,9 @@ public class IndexCommitsMojo extends AbstractMojo {
     @Parameter(property = "codiqo.includeAuthorEmails")
     private String includeAuthorEmails;
 
+    @Parameter(property = "codiqo.excludeAuthorEmails")
+    private String excludeAuthorEmails;
+
     @Parameter(property = "codiqo.missingAnalysesOutputFile", defaultValue = "${project.build.directory}/codiqo/missing-analyses.txt")
     private File missingAnalysesOutputFile;
 
@@ -114,6 +117,7 @@ public class IndexCommitsMojo extends AbstractMojo {
 
             RunArgs args = new RunArgs();
             Optional.ofNullable(includeAuthorEmails).ifPresent(args::setIncludeAuthorEmails);
+            Optional.ofNullable(excludeAuthorEmails).ifPresent(args::setExcludeAuthorEmails);
 
             Period window = Period.parse(commitWindow);
             Date cutoff = Date.from(LocalDate.now(ZoneOffset.UTC).minus(window).atStartOfDay(ZoneOffset.UTC).toInstant());
@@ -267,7 +271,7 @@ public class IndexCommitsMojo extends AbstractMojo {
                 List<String> branches = branchIndex.getOrDefault(commit.getName(), Collections.emptyList());
                 if (BooleanUtils.or(new boolean[] {
                         BooleanUtils.negate(branches.contains(branch)),
-                        BooleanUtils.negate(filterArgs.matchesByAuthor(commit.getAuthorIdent().getEmailAddress()))
+                        BooleanUtils.negate(filterArgs.isAuthorAllowed(commit.getAuthorIdent().getEmailAddress()))
                 })) {
                     continue;
                 }

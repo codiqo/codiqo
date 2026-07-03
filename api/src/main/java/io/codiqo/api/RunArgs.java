@@ -22,7 +22,10 @@ import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Option.Builder;
 import org.apache.commons.cli.Options;
+import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.io.IOCase;
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.eclipse.jgit.annotations.Nullable;
@@ -181,6 +184,8 @@ public class RunArgs {
     private String includeBranches;
     @Nullable
     private String includeAuthorEmails;
+    @Nullable
+    private String excludeAuthorEmails;
     @Nullable
     private double sizeFactorDivisor = 100.0;
     @Nullable
@@ -440,6 +445,19 @@ public class RunArgs {
         }
         List<String> emails = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(includeAuthorEmails);
         return emails.contains(authorEmail);
+    }
+    public boolean isExcludedAuthor(String authorEmail) {
+        if (StringUtils.isEmpty(excludeAuthorEmails)) {
+            return false;
+        }
+        List<String> patterns = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(excludeAuthorEmails);
+        return patterns.stream().anyMatch(pattern -> FilenameUtils.wildcardMatch(authorEmail, pattern, IOCase.INSENSITIVE));
+    }
+    public boolean isAuthorAllowed(String authorEmail) {
+        return BooleanUtils.and(new boolean[] {
+                matchesByAuthor(authorEmail),
+                BooleanUtils.negate(isExcludedAuthor(authorEmail))
+        });
     }
     public void validate() {
         this.statsQuantile = Math.max(0.85, this.statsQuantile);
