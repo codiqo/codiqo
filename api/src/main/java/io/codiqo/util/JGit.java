@@ -18,6 +18,7 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ListBranchCommand.ListMode;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.StoredConfig;
@@ -39,6 +40,9 @@ public class JGit {
     private static final Set<String> NOISY_BRANCH_EXACT = ImmutableSet.of(Constants.HEAD, "tmp", "tmp-skip");
     private static final Set<String> NOISY_BRANCH_PREFIXES = ImmutableSet.of("bot/", "copilot/", "dependabot/", "renovate/");
 
+    public static String shortSha(String commitSha) {
+        return ObjectId.fromString(commitSha).abbreviate(Constants.OBJECT_ID_ABBREV_STRING_LENGTH).name();
+    }
     public static Repository openRepository(File baseDirectory) throws IOException {
         return new FileRepositoryBuilder()
                 .setGitDir(new File(baseDirectory, ".git"))
