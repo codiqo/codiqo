@@ -722,6 +722,35 @@ components:
           minimum: 0
           maximum: 100
           description: Average coverage percentage across all changed code units
+        changedLineCoverage:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: |
+            Line coverage of only the actually-changed lines, pooled across the commit:
+            covered changed lines / executable changed lines * 100. Deterministic (JaCoCo per-line
+            status intersected with the diff's added lines). Distinct from averageCoverage, which is
+            the per-changed-method whole-method average. Equals the pooled combination of
+            addedLineCoverage and modifiedLineCoverage.
+        addedLineCoverage:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: |
+            Line coverage of only the newly-ADDED lines (pure additions, not replacing prior lines):
+            covered added lines / executable added lines * 100. Deterministic. Answers "how much of
+            the new code did the author cover".
+        modifiedLineCoverage:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: |
+            Line coverage of only the MODIFIED (amended) lines — added lines that replace deleted
+            lines within a change block: covered modified lines / executable modified lines * 100.
+            Deterministic. Answers "how well-covered is the code the author changed in place".
         cpdDuplicationPercent:
           type: number
           format: double
@@ -1196,13 +1225,6 @@ components:
         testCallers:
           type: integer
           minimum: 0
-        avgComplexity:
-          type: number
-          format: double
-        maxComplexity:
-          type: integer
-        uncoveredChanges:
-          type: integer
         coveragePercent:
           type: number
           format: double
@@ -1240,8 +1262,6 @@ components:
           $ref: '#/components/schemas/CoverageSummaryModel'
         duplication:
           $ref: '#/components/schemas/DuplicationSummaryModel'
-        quality:
-          $ref: '#/components/schemas/QualitySummaryModel'
 
     DiagnosticSummaryModel:
       type: object
@@ -1288,20 +1308,6 @@ components:
           format: double
           minimum: 0
           maximum: 100
-
-    QualitySummaryModel:
-      type: object
-      properties:
-        score:
-          type: number
-          format: double
-          minimum: 0
-          maximum: 100
-        grade:
-          type: string
-          enum: [A, B, C, D, E, F]
-        passed:
-          type: boolean
 
     # ==========================================================================
     # Project & Commit
@@ -2077,6 +2083,28 @@ components:
           format: double
           minimum: 0
           maximum: 100
+        changedLineCpdPercent:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: |
+            Percent of the commit's changed lines that fall inside a detected PMD-CPD clone:
+            duplicated changed lines / effective changed lines * 100. Line-scoped (not the
+            method-statement-scoped duplicatedPercentage). Equals the pooled combination of
+            addedLineCpdPercent and modifiedLineCpdPercent.
+        addedLineCpdPercent:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: Percent of the newly-ADDED lines that fall inside a detected clone.
+        modifiedLineCpdPercent:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: Percent of the MODIFIED (amended) lines that fall inside a detected clone.
         clones:
           type: array
           items:
@@ -2735,14 +2763,6 @@ components:
           type: integer
           minimum: 0
           description: Number of test code blocks added
-        testClassesModified:
-          type: integer
-          minimum: 0
-          description: Number of test classes modified
-        testClassesAdded:
-          type: integer
-          minimum: 0
-          description: Number of test classes added
         testFilesChanged:
           type: integer
           minimum: 0
@@ -3175,9 +3195,6 @@ components:
         model:
           type: string
           description: LLM model identifier used for analysis (e.g., "qwen3-coder:480b-cloud")
-        provider:
-          type: string
-          description: LLM provider (e.g., "ollama", "openai", "anthropic")
         tokenUsage:
           $ref: '#/components/schemas/TokenUsageModel'
         toolUsage:

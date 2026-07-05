@@ -312,7 +312,9 @@ public class LlmScoringRequest {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class CoverageInfo {
-        private double changedLineCoverage;
+        private Double changedLineCoverage;
+        private Double addedLineCoverage;
+        private Double modifiedLineCoverage;
         private double changedBranchCoverage;
 
         private double projectLineCoverage;
@@ -381,6 +383,10 @@ public class LlmScoringRequest {
         private int totalDuplicatedLines;
         private int totalDuplicatedTokens;
         private int minimumTokens;
+
+        private Double changedLineCpdPercent;
+        private Double addedLineCpdPercent;
+        private Double modifiedLineCpdPercent;
 
         @Builder.Default
         private List<CloneDetail> cloneDetails = Lists.newArrayList();

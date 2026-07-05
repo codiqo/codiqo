@@ -1049,6 +1049,21 @@ For dashboards, estimate whether each **MODIFY** code unit made the touched code
 
 **rationale** — one sentence naming the signal(s) you used.
 
+## Commit-level change impact (also informational — does NOT affect the score)
+
+Also emit ONE commit-level `changeImpactEstimate` — how this whole commit shifted the test coverage and duplication of the code it touched, as signed percentage-point deltas for trend dashboards:
+- `coverageDeltaPercent` — change in coverage of the touched code (positive = improved: added tests / covered new code; negative = regressed: added untested code). Range about -100..+100; use 0 when coverage held or there is no signal.
+- `duplicationDeltaPercent` — change in duplication (positive = ADDED duplication; negative = REDUCED it, e.g. extracted a shared helper). Range about -100..+100; use 0 when unchanged or no signal.
+- `confidence` (high|medium|low) and `rationale` (one sentence).
+
+**Anchor to the deterministic numbers in the user message.** The "Coverage of Changed Code" and "Copy-Paste Detection" sections carry JaCoCo/CPD ground truth for the exact lines this commit changed — added, modified, and combined. Your deltas MUST NOT contradict them:
+- Added lines at low coverage (e.g. 0%) with no new tests → `coverageDeltaPercent` negative; the lower the added-line coverage and the more added lines, the larger the negative magnitude. Added lines at high coverage → positive.
+- Modified lines that stay well covered → little movement; modified lines whose coverage dropped → negative.
+- High added-line duplication → `duplicationDeltaPercent` positive. If changed-line duplication is **0%**, do NOT report a positive duplication delta; a diff that removed or extracted a duplicated block → negative.
+- When a metric reads `n/a` (no such lines), treat that axis as no-signal (0).
+
+You do NOT have the parent commit's absolute numbers, so this is the direction and rough magnitude of the shift — but it must stay consistent with the deterministic changed-line coverage/CPD you were given; do not fabricate precision beyond them.
+
 ---
 
 # COMMIT TAGGING (REQUIRED - Be Specific!)
@@ -1310,7 +1325,13 @@ Your entire response is parsed as JSON directly.
       "confidence": "<high|medium|low>",
       "rationale": "<one sentence naming the signal(s)>"
     }
-  ]
+  ],
+  "changeImpactEstimate": {
+    "coverageDeltaPercent": <number, -100..100>,
+    "duplicationDeltaPercent": <number, -100..100>,
+    "confidence": "<high|medium|low>",
+    "rationale": "<one sentence>"
+  }
 }
 
 ---

@@ -37,6 +37,7 @@ import io.codiqo.client.model.LocationModel;
 import io.codiqo.client.model.MetricsModel;
 import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.client.model.ProjectModel;
+import io.codiqo.client.model.ProjectQualityModel;
 import io.codiqo.client.model.SymbolKindModel;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringRequest.CoverageInfo;
@@ -371,7 +372,7 @@ class SubmissionToRequestMapperTest {
     }
 
     @Test
-    void fileCoverageAggregatedAcrossMethods() {
+    void changedCoverageSourcedFromProjectQualityBranchFromMethods() {
         AnalysisSubmissionModel submission = baseSubmission();
         CodeUnitModel method = submission.getFiles().get(0).getCodeUnits().get(0);
         CoverageModel coverage = new CoverageModel();
@@ -384,12 +385,21 @@ class SubmissionToRequestMapperTest {
         method.setCoverage(coverage);
         submission.setFullProjectCoverage(projectCoverage(65.0, 55.0));
 
+        ProjectQualityModel projectQuality = new ProjectQualityModel();
+        projectQuality.setChangedLineCoverage(72.5);
+        projectQuality.setAddedLineCoverage(60.0);
+        projectQuality.setModifiedLineCoverage(100.0);
+        submission.setProjectQuality(projectQuality);
+
         LlmScoringRequest request = mapper.apply(submission);
 
         CoverageInfo info = request.getCoverage();
-        assertEquals(80.0, info.getChangedLineCoverage(), 0.001,
-                "changedLineCoverage = totalCovered * 100 / totalLines");
-        assertEquals(75.0, info.getChangedBranchCoverage(), 0.001);
+        assertEquals(72.5, info.getChangedLineCoverage().doubleValue(), 0.001,
+                "changedLineCoverage is the deterministic value from projectQuality, not whole-method aggregation");
+        assertEquals(60.0, info.getAddedLineCoverage().doubleValue(), 0.001);
+        assertEquals(100.0, info.getModifiedLineCoverage().doubleValue(), 0.001);
+        assertEquals(75.0, info.getChangedBranchCoverage(), 0.001,
+                "changedBranchCoverage still aggregated from touched methods (3 of 4 branches)");
         assertEquals(65.0, info.getProjectLineCoverage());
         assertEquals(55.0, info.getProjectBranchCoverage());
     }

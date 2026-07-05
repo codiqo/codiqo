@@ -79,6 +79,67 @@ class PromptTemplateSmokeTest {
         assertFalse(rendered.contains("| src/main/resources/application.yaml | 3 | 1 |"), "ineligible file leaked into the table");
     }
     @Test
+    void userPromptGroundsChangedLineCoverageAndCpdSplit() {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder()
+                        .linesAdded(13).linesDeleted(2).totalLinesChanged(15).totalFilesChanged(1).build())
+                .fileChanges(Lists.newArrayList(FileChange.builder()
+                        .path("Foo.java").changeType(FileChangeType.MODIFIED).language("java")
+                        .linesAdded(13).linesDeleted(2).linesJustificationRequired(true).diff("dummy").build()))
+                .codeBlockChanges(Collections.emptyList())
+                .coverage(LlmScoringRequest.CoverageInfo.builder()
+                        .changedLineCoverage(7.6923076923076925)
+                        .addedLineCoverage(0.0)
+                        .modifiedLineCoverage(100.0)
+                        .build())
+                .duplication(LlmScoringRequest.DuplicationInfo.builder()
+                        .changedLineCpdPercent(2.5)
+                        .addedLineCpdPercent(0.0)
+                        .modifiedLineCpdPercent(25.0)
+                        .build())
+                .build();
+
+        String rendered = builder.buildUserMessageWithScores(request, PromptContext.builder().args(new RunArgs()).build()).getMessage();
+
+        assertTrue(rendered.contains("**Changed lines covered:** 7.7%"), "changed-line coverage not grounded from deterministic value");
+        assertTrue(rendered.contains("**Added lines (new code) covered:** 0.0%"), "added-line coverage missing");
+        assertTrue(rendered.contains("**Modified lines (rewritten code) covered:** 100.0%"), "modified-line coverage missing");
+        assertTrue(rendered.contains("| Changed-line duplication (deterministic) | 2.5% of changed lines |"), "changed-line CPD missing");
+        assertTrue(rendered.contains("| Added-line duplication (deterministic) | 0.0% of added lines |"), "added-line CPD missing");
+        assertTrue(rendered.contains("| Modified-line duplication (deterministic) | 25.0% of modified lines |"), "modified-line CPD missing");
+    }
+    @Test
+    void userPromptShowsNaForAbsentChangedLineCategories() {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder()
+                        .linesAdded(10).linesDeleted(0).totalLinesChanged(10).totalFilesChanged(1).build())
+                .fileChanges(Lists.newArrayList(FileChange.builder()
+                        .path("Foo.java").changeType(FileChangeType.ADDED).language("java")
+                        .linesAdded(10).linesDeleted(0).linesJustificationRequired(true).diff("dummy").build()))
+                .codeBlockChanges(Collections.emptyList())
+                .coverage(LlmScoringRequest.CoverageInfo.builder()
+                        .changedLineCoverage(0.0)
+                        .addedLineCoverage(0.0)
+                        .modifiedLineCoverage(null)
+                        .build())
+                .duplication(LlmScoringRequest.DuplicationInfo.builder()
+                        .changedLineCpdPercent(null)
+                        .addedLineCpdPercent(null)
+                        .modifiedLineCpdPercent(null)
+                        .build())
+                .build();
+
+        String rendered = builder.buildUserMessageWithScores(request, PromptContext.builder().args(new RunArgs()).build()).getMessage();
+
+        assertTrue(rendered.contains("**Added lines (new code) covered:** 0.0%"), "added-line coverage should still render");
+        assertTrue(rendered.contains("**Modified lines (rewritten code) covered:** n/a"), "absent modified lines should render n/a, not 0%");
+        assertTrue(rendered.contains("| Changed-line duplication (deterministic) | n/a"), "absent CPD should render n/a");
+    }
+    @Test
     void userPromptRendersSlimMovedCandidateTable() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
         String moveDiff = String.join("\n",

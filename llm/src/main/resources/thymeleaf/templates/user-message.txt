@@ -61,12 +61,16 @@ The server detected [(${#lists.size(moveCandidates)})] deleted line(s) whose con
 [/]
 ---
 
-## Coverage Information
+## Coverage of Changed Code (deterministic — JaCoCo coverage of the exact lines this commit changed)
 
-- **Changed Line Coverage:** [(${request.coverage != null ? request.coverage.changedLineCoverage : 0})]%
-- **Changed Branch Coverage:** [(${request.coverage != null ? request.coverage.changedBranchCoverage : 0})]%
-- **Project Line Coverage:** [(${request.coverage != null ? request.coverage.projectLineCoverage : 0})]%
-- **Project Branch Coverage:** [(${request.coverage != null ? request.coverage.projectBranchCoverage : 0})]%
+Ground-truth line coverage of the lines this commit touched, split by added vs modified. Anchor `changeImpactEstimate.coverageDeltaPercent` to these — do NOT re-estimate coverage from the diff when they are present.
+
+- **Changed lines covered:** [(${request.coverage != null and request.coverage.changedLineCoverage != null ? #numbers.formatDecimal(request.coverage.changedLineCoverage, 1, 'NONE', 1, 'POINT') + '%' : 'n/a — no executable changed lines'})]
+- **Added lines (new code) covered:** [(${request.coverage != null and request.coverage.addedLineCoverage != null ? #numbers.formatDecimal(request.coverage.addedLineCoverage, 1, 'NONE', 1, 'POINT') + '%' : 'n/a — no added lines'})]
+- **Modified lines (rewritten code) covered:** [(${request.coverage != null and request.coverage.modifiedLineCoverage != null ? #numbers.formatDecimal(request.coverage.modifiedLineCoverage, 1, 'NONE', 1, 'POINT') + '%' : 'n/a — no modified lines'})]
+- **Touched-method branch coverage:** [(${request.coverage != null ? #numbers.formatDecimal(request.coverage.changedBranchCoverage, 1, 'NONE', 1, 'POINT') : '0'})]%
+- **Project Line Coverage:** [(${request.coverage != null ? #numbers.formatDecimal(request.coverage.projectLineCoverage, 1, 'NONE', 1, 'POINT') : '0'})]%
+- **Project Branch Coverage:** [(${request.coverage != null ? #numbers.formatDecimal(request.coverage.projectBranchCoverage, 1, 'NONE', 1, 'POINT') : '0'})]%
 
 ---
 
@@ -89,6 +93,9 @@ The server detected [(${#lists.size(moveCandidates)})] deleted line(s) whose con
 |--------|-------|
 | Duplicated Lines | [(${request.duplication != null ? request.duplication.totalDuplicatedLines : 0})] |
 | Duplication % | [(${request.duplication != null ? request.duplication.duplicatedPercentage : 0})]% of changed code |
+| Changed-line duplication (deterministic) | [(${request.duplication != null and request.duplication.changedLineCpdPercent != null ? #numbers.formatDecimal(request.duplication.changedLineCpdPercent, 1, 'NONE', 1, 'POINT') + '% of changed lines' : 'n/a — no changed lines'})] |
+| Added-line duplication (deterministic) | [(${request.duplication != null and request.duplication.addedLineCpdPercent != null ? #numbers.formatDecimal(request.duplication.addedLineCpdPercent, 1, 'NONE', 1, 'POINT') + '% of added lines' : 'n/a — no added lines'})] |
+| Modified-line duplication (deterministic) | [(${request.duplication != null and request.duplication.modifiedLineCpdPercent != null ? #numbers.formatDecimal(request.duplication.modifiedLineCpdPercent, 1, 'NONE', 1, 'POINT') + '% of modified lines' : 'n/a — no modified lines'})] |
 | Clone Instances | [(${request.duplication != null and request.duplication.cloneDetails != null ? request.duplication.cloneDetails.size() : 0})] |
 | Clones from Existing | [(${request.duplication != null and request.duplication.clonesFromExisting != null ? request.duplication.clonesFromExisting.size() : 0})] |
 | New Clone Groups | [(${request.duplication != null and request.duplication.newClones != null ? request.duplication.newClones.size() : 0})] |
