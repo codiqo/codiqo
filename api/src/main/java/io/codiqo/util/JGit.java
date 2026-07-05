@@ -2,6 +2,7 @@ package io.codiqo.util;
 
 import java.io.File;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -93,6 +94,15 @@ public class JGit {
             toReturn.add(commit.getParent(i).getName());
         }
         return toReturn;
+    }
+    public static boolean isMerge(Repository repo, String rev) throws IOException {
+        ObjectId objectId = repo.resolve(rev);
+        try (RevWalk walk = new RevWalk(repo)) {
+            return isMerge(walk.parseCommit(objectId));
+        }
+    }
+    public static boolean isMerge(RevCommit commit) {
+        return commit.getParentCount() > BigDecimal.ONE.intValue();
     }
     public static List<String> branchesContaining(Repository repo, String commitSha) throws Exception {
         Set<String> toReturn = Sets.newLinkedHashSet();

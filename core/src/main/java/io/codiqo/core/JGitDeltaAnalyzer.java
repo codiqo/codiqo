@@ -167,7 +167,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         toReturn.setCommitterEmail(commit.getCommitterIdent().getEmailAddress());
         toReturn.setCommitTimestamp(Date.from(commit.getCommitterIdent().getWhenAsInstant()));
 
-        toReturn.setMergeCommit(commit.getParentCount() > 1);
+        toReturn.setMergeCommit(JGit.isMerge(commit));
         toReturn.getParentIds().addAll(JGit.parentShas(commit));
         toReturn.getBranches().addAll(JGit.branchesContaining(args.getGit(), commit.getName()));
 
