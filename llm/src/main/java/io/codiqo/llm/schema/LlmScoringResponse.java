@@ -52,6 +52,8 @@ public class LlmScoringResponse {
     @Builder.Default
     private List<ModifyImpactEstimate> modifyImpactEstimates = Lists.newArrayList();
 
+    private ChangeImpactEstimate changeImpactEstimate;
+
     @Builder.Default
     private List<CodeBlockCategoryView> blockCategories = Lists.newArrayList();
 
@@ -569,6 +571,17 @@ public class LlmScoringResponse {
         private ChangeMagnitude coverageMagnitude;
         private DuplicationDirection duplicationDirection;
         private ChangeMagnitude duplicationMagnitude;
+        private Confidence confidence;
+        private String rationale;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ChangeImpactEstimate {
+        private double coverageDeltaPercent;
+        private double duplicationDeltaPercent;
         private Confidence confidence;
         private String rationale;
     }

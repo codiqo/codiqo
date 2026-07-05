@@ -25,6 +25,12 @@ public class ModuleQualityTracker {
     private final MutableInt affectedSpotbugsIssues = new MutableInt();
     private final MutableDouble affectedTotalCoverage = new MutableDouble();
     private final MutableInt affectedCoverageCount = new MutableInt();
+    private final MutableInt changedCoveredLines = new MutableInt();
+    private final MutableInt changedExecutableLines = new MutableInt();
+    private final MutableInt addedCoveredLines = new MutableInt();
+    private final MutableInt addedExecutableLines = new MutableInt();
+    private final MutableInt modifiedCoveredLines = new MutableInt();
+    private final MutableInt modifiedExecutableLines = new MutableInt();
     private final MutableDouble affectedTotalComplexity = new MutableDouble();
     private final MutableInt affectedComplexityCount = new MutableInt();
     private final Set<String> moduleUniqueClasses = Sets.newHashSet();
@@ -73,6 +79,18 @@ public class ModuleQualityTracker {
     void addCoverage(double coveragePercent) {
         affectedTotalCoverage.add(coveragePercent);
         affectedCoverageCount.increment();
+    }
+    void addChangedLineCoverage(int covered, int executable) {
+        changedCoveredLines.add(covered);
+        changedExecutableLines.add(executable);
+    }
+    void addAddedLineCoverage(int covered, int executable) {
+        addedCoveredLines.add(covered);
+        addedExecutableLines.add(executable);
+    }
+    void addModifiedLineCoverage(int covered, int executable) {
+        modifiedCoveredLines.add(covered);
+        modifiedExecutableLines.add(executable);
     }
     void addComplexity(int complexity) {
         affectedTotalComplexity.add(complexity);

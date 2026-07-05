@@ -38,6 +38,12 @@ public class MetricsAggregator implements SubmissionPopulator {
         double totalComplexity = 0.0;
         int coverageCount = 0;
         int complexityCount = 0;
+        int changedCoveredLines = 0;
+        int changedExecutableLines = 0;
+        int addedCoveredLines = 0;
+        int addedExecutableLines = 0;
+        int modifiedCoveredLines = 0;
+        int modifiedExecutableLines = 0;
 
         int fullTotalMethods = 0;
         int fullCoveredMethods = 0;
@@ -122,6 +128,12 @@ public class MetricsAggregator implements SubmissionPopulator {
                 totalComplexity += tracker.affectedTotalComplexity().doubleValue();
                 coverageCount += tracker.affectedCoverageCount().intValue();
                 complexityCount += tracker.affectedComplexityCount().intValue();
+                changedCoveredLines += tracker.changedCoveredLines().intValue();
+                changedExecutableLines += tracker.changedExecutableLines().intValue();
+                addedCoveredLines += tracker.addedCoveredLines().intValue();
+                addedExecutableLines += tracker.addedExecutableLines().intValue();
+                modifiedCoveredLines += tracker.modifiedCoveredLines().intValue();
+                modifiedExecutableLines += tracker.modifiedExecutableLines().intValue();
             }
         }
 
@@ -133,6 +145,15 @@ public class MetricsAggregator implements SubmissionPopulator {
 
         if (coverageCount > 0) {
             projectQualityModel.setAverageCoverage(totalCoverage / coverageCount);
+        }
+        if (changedExecutableLines > 0) {
+            projectQualityModel.setChangedLineCoverage(changedCoveredLines * 100.0 / changedExecutableLines);
+        }
+        if (addedExecutableLines > 0) {
+            projectQualityModel.setAddedLineCoverage(addedCoveredLines * 100.0 / addedExecutableLines);
+        }
+        if (modifiedExecutableLines > 0) {
+            projectQualityModel.setModifiedLineCoverage(modifiedCoveredLines * 100.0 / modifiedExecutableLines);
         }
         if (complexityCount > 0) {
             projectQualityModel.setAverageComplexity(totalComplexity / complexityCount);

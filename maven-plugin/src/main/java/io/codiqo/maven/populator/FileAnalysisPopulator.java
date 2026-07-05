@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 
 import org.apache.commons.collections4.CollectionUtils;
@@ -55,6 +56,7 @@ import io.codiqo.client.model.SpotbugsPropertiesModel;
 import io.codiqo.client.model.SymbolKindModel;
 import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
+import io.codiqo.llm.lang.LanguageCapabilities;
 import io.codiqo.util.JGit;
 import lombok.RequiredArgsConstructor;
 import net.sourceforge.pmd.lang.java.ast.ASTAnnotation;
@@ -121,6 +123,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
 
             if (MapUtils.isNotEmpty(fileAnalysis.getLineCoverage())) {
                 fileChangeModel.setCoverage(buildCoverageModel(fileAnalysis.getLineCoverage()));
+                populateChangedLineCoverage(ctx, fileChangeModel, fileAnalysis);
             }
 
             ctx.getSubmissionModel().getFiles().add(fileChangeModel);
@@ -470,6 +473,37 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
                 tracker.addCoverage(cov.lineCoveragePercent());
             });
         }
+    }
+    private static void populateChangedLineCoverage(SubmissionContext ctx, FileChangeModel fileChangeModel, FileAnalysis fileAnalysis) {
+        Map<Integer, ILine> lineCoverage = fileAnalysis.getLineCoverage();
+
+        ChangedLines changed = ChangedLineClassifier.classify(fileAnalysis.getDiffText(), LanguageCapabilities.filterFor(fileChangeModel));
+
+        CodeBlockCoverage addedCov = coverageOfLines(changed.getAdded(), lineCoverage);
+        CodeBlockCoverage modifiedCov = coverageOfLines(changed.getModified(), lineCoverage);
+        int addedCovered = addedCov.getCovered() + addedCov.getPartial();
+        int addedExecutable = addedCovered + addedCov.getMissed();
+        int modifiedCovered = modifiedCov.getCovered() + modifiedCov.getPartial();
+        int modifiedExecutable = modifiedCovered + modifiedCov.getMissed();
+
+        if (addedExecutable + modifiedExecutable > 0) {
+            fileAnalysis.project().ifPresent(spec -> {
+                ModuleQualityTracker tracker = ctx.getQualityTrackers().getUnchecked(spec.getId());
+                tracker.addAddedLineCoverage(addedCovered, addedExecutable);
+                tracker.addModifiedLineCoverage(modifiedCovered, modifiedExecutable);
+                tracker.addChangedLineCoverage(addedCovered + modifiedCovered, addedExecutable + modifiedExecutable);
+            });
+        }
+    }
+    private static CodeBlockCoverage coverageOfLines(Set<Integer> lines, Map<Integer, ILine> lineCoverage) {
+        Map<Integer, ILine> submap = Maps.newHashMap();
+        for (Integer line : lines) {
+            ILine lineInfo = lineCoverage.get(line);
+            if (Objects.nonNull(lineInfo)) {
+                submap.put(line, lineInfo);
+            }
+        }
+        return CodeBlockCoverage.from(submap);
     }
     private static void populateAnnotations(Annotatable declaration, JavaInfoModel infoModel) {
         for (ASTAnnotation annotation : declaration.getDeclaredAnnotations()) {

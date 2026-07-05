@@ -50,6 +50,7 @@ import io.codiqo.client.model.JavaInfoModel;
 import io.codiqo.client.model.LineCoverageModel;
 import io.codiqo.client.model.LocationModel;
 import io.codiqo.client.model.MetricsModel;
+import io.codiqo.client.model.ProjectQualityModel;
 import io.codiqo.client.model.SymbolKindModel;
 import io.codiqo.llm.lang.LanguageCapabilities;
 import io.codiqo.llm.schema.LlmScoringRequest;
@@ -158,7 +159,10 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .duplicatedPercentage(Optional.ofNullable(duplication.getDuplicatedPercentage()).orElse(0.0))
                 .totalDuplicatedLines(Optional.ofNullable(duplication.getTotalDuplicatedLines()).orElse(0))
                 .totalDuplicatedTokens(Optional.ofNullable(duplication.getTotalDuplicatedTokens()).orElse(0))
-                .minimumTokens(Optional.ofNullable(duplication.getMinimumTokens()).orElse(0));
+                .minimumTokens(Optional.ofNullable(duplication.getMinimumTokens()).orElse(0))
+                .changedLineCpdPercent(duplication.getChangedLineCpdPercent())
+                .addedLineCpdPercent(duplication.getAddedLineCpdPercent())
+                .modifiedLineCpdPercent(duplication.getModifiedLineCpdPercent());
         if (CollectionUtils.isNotEmpty(duplication.getClones())) {
             builder.cloneDetails(duplication.getClones().stream()
                     .map(clone -> mapCloneDetail(clone, fileContext))
@@ -246,12 +250,18 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     private CoverageInfo mapCoverage(AnalysisSubmissionModel submission) {
         CoverageInfo.CoverageInfoBuilder builder = CoverageInfo.builder();
         mapProjectCoverage(submission.getFullProjectCoverage(), builder);
+        if (Objects.nonNull(submission.getProjectQuality())) {
+            mapChangedCoverage(submission.getProjectQuality(), builder);
+        }
         mapFileCoverage(submission.getFiles(), builder);
         return builder.build();
     }
+    private static void mapChangedCoverage(ProjectQualityModel projectQuality, CoverageInfo.CoverageInfoBuilder builder) {
+        builder.changedLineCoverage(projectQuality.getChangedLineCoverage())
+                .addedLineCoverage(projectQuality.getAddedLineCoverage())
+                .modifiedLineCoverage(projectQuality.getModifiedLineCoverage());
+    }
     private void mapFileCoverage(List<FileChangeModel> files, CoverageInfo.CoverageInfoBuilder builder) {
-        int totalCoveredLines = 0;
-        int totalLines = 0;
         int totalCoveredBranches = 0;
         int totalBranches = 0;
         Map<String, CoverageInfo.MethodCoverage> methodCoverages = Maps.newHashMap();
@@ -269,8 +279,6 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 int missedLines = Optional.ofNullable(coverage.getMissedLines()).orElse(BigDecimal.ZERO.intValue());
                 int coveredBranches = Optional.ofNullable(coverage.getCoveredBranches()).orElse(BigDecimal.ZERO.intValue());
                 int missedBranches = Optional.ofNullable(coverage.getMissedBranches()).orElse(BigDecimal.ZERO.intValue());
-                totalCoveredLines += coveredLines;
-                totalLines += coveredLines + missedLines;
                 totalCoveredBranches += coveredBranches;
                 totalBranches += coveredBranches + missedBranches;
                 double linePercent = Optional.ofNullable(coverage.getLinePercent()).orElse(BigDecimal.ZERO.doubleValue());
@@ -289,10 +297,8 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 }
             }
         }
-        double changedLineCoverage = totalLines > 0 ? totalCoveredLines * 100.0 / totalLines : BigDecimal.ZERO.doubleValue();
         double changedBranchCoverage = totalBranches > 0 ? totalCoveredBranches * 100.0 / totalBranches : BigDecimal.ZERO.doubleValue();
-        builder.changedLineCoverage(changedLineCoverage)
-                .changedBranchCoverage(changedBranchCoverage)
+        builder.changedBranchCoverage(changedBranchCoverage)
                 .methodCoverages(methodCoverages)
                 .uncoveredPaths(uncoveredPaths);
     }
