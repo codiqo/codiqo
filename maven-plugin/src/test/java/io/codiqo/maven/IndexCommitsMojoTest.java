@@ -26,6 +26,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.CommitModel;
+import io.codiqo.util.RepositoryUrls;
 
 class IndexCommitsMojoTest {
     private static final Date EPOCH = new Date(0);
@@ -108,7 +109,7 @@ class IndexCommitsMojoTest {
         assertFalse(commits.stream().anyMatch(c -> dropped.getName().equals(c.getSha())));
     }
     @Test
-    void mergeCommitSetsIsMergeAndMultipleParents() throws Exception {
+    void mergeCommitIsIncludedInExtraction() throws Exception {
         RevCommit base = commit("a.txt", "base", "base");
         git.checkout().setCreateBranch(true).setName("feature").call();
         commit("b.txt", "feat", "feature work");
@@ -130,6 +131,42 @@ class IndexCommitsMojoTest {
         assertEquals(2, mergeCommit.getParents().size());
         assertTrue(mergeCommit.getParents().contains(base.getName())
                 || mergeCommit.getParents().stream().anyMatch(StringUtils::isNotEmpty));
+    }
+    @Test
+    void missingAnalysisSelectionSkipsMergeCommits() throws Exception {
+        RevCommit root = commit("a.txt", "base", "base");
+        git.checkout().setCreateBranch(true).setName("feature").call();
+        commit("b.txt", "feat", "feature work");
+        git.checkout().setName("main").call();
+        RevCommit linear = commit("c.txt", "main-side", "main work");
+
+        MergeResult merge = git.merge()
+                .include(repository.resolve("feature"))
+                .setCommit(true)
+                .setMessage("merge feature")
+                .call();
+
+        IndexCommitsMojo.MissingAnalysesSelection selection = IndexCommitsMojo.selectAnalyzableMissingAnalyses(
+                repository,
+                List.of(root.getName(), linear.getName(), merge.getNewHead().getName()));
+
+        assertEquals(List.of(root.getName(), linear.getName()), selection.analyzableShas());
+        assertEquals(0, selection.skippedMissingCommitCount());
+        assertEquals(1, selection.skippedMergeCommitCount());
+        assertEquals(0, selection.skippedMissingParentCount());
+    }
+    @Test
+    void missingAnalysisSelectionCountsMissingCommitShas() throws Exception {
+        RevCommit kept = commit("a.txt", "v1", "initial");
+
+        IndexCommitsMojo.MissingAnalysesSelection selection = IndexCommitsMojo.selectAnalyzableMissingAnalyses(
+                repository,
+                List.of("missing-sha", kept.getName()));
+
+        assertEquals(List.of(kept.getName()), selection.analyzableShas());
+        assertEquals(1, selection.skippedMissingCommitCount());
+        assertEquals(0, selection.skippedMergeCommitCount());
+        assertEquals(0, selection.skippedMissingParentCount());
     }
     @Test
     void revertCommitPopulatesRevertFields() throws Exception {
@@ -189,13 +226,13 @@ class IndexCommitsMojoTest {
     }
     @Test
     void toUriNormalizesScpStyleGitUrls() throws Exception {
-        URI uri = IndexCommitsMojo.toUri(BITBUCKET_SCM_URL);
+        URI uri = RepositoryUrls.toUri(BITBUCKET_SCM_URL);
 
         assertEquals("https://bitbucket.org/turbospaces/turbospaces-boot/tree/master", uri.toString());
     }
     @Test
     void toUriPreservesStandardUris() throws Exception {
-        URI uri = IndexCommitsMojo.toUri("scm:git:https://bitbucket.org/turbospaces/turbospaces-boot.git");
+        URI uri = RepositoryUrls.toUri("scm:git:https://bitbucket.org/turbospaces/turbospaces-boot.git");
 
         assertEquals("https://bitbucket.org/turbospaces/turbospaces-boot.git", uri.toString());
     }
