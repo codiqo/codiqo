@@ -2,7 +2,6 @@ package io.codiqo.maven;
 
 import java.io.File;
 import java.io.IOException;
-import java.math.BigInteger;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
@@ -149,7 +148,7 @@ public class IndexCommitsMojo extends AbstractMojo {
             Optional.ofNullable(project.getScm()).map(Scm::getConnection).filter(StringUtils::isNotBlank).ifPresent(rawUrl -> addRepositoryUri(repoUrls, rawUrl, "project.scm.connection"));
             Optional.ofNullable(project.getScm()).map(Scm::getUrl).filter(StringUtils::isNotBlank).ifPresent(rawUrl -> addRepositoryUri(repoUrls, rawUrl, "project.scm.url"));
         }
-        if (!repoUrls.isEmpty()) {
+        if (CollectionUtils.isNotEmpty(repoUrls)) {
             toReturn.setRepositoryUrls(repoUrls);
         }
 
@@ -204,33 +203,20 @@ public class IndexCommitsMojo extends AbstractMojo {
                 apiUrl,
                 () -> client.listMissingAnalyses(projectId, resolvedBranch, missingAnalysesLimit));
         List<String> shas = Optional.ofNullable(response.getCommitShas()).orElse(Collections.emptyList());
-
-        List<String> analyzable = Lists.newArrayListWithExpectedSize(shas.size());
-        int skippedMissingCommit = 0;
-        int skippedMissingParent = 0;
-
-        try (RevWalk walk = new RevWalk(repo)) {
-            for (String sha : shas) {
-                ObjectId commitId = repo.resolve(sha);
-                if (Objects.isNull(commitId)) {
-                    skippedMissingCommit++;
-                    continue;
-                }
-                RevCommit commit = walk.parseCommit(commitId);
-                if (commit.getParentCount() > 0 && Objects.isNull(repo.resolve(commit.getParent(0).getId().getName()))) {
-                    skippedMissingParent++;
-                    continue;
-                }
-                analyzable.add(sha);
-            }
-        }
+        MissingAnalysesSelection selection = selectAnalyzableMissingAnalyses(repo, shas);
 
         FileUtils.forceMkdir(missingAnalysesOutputFile.getParentFile());
-        FileUtils.writeLines(missingAnalysesOutputFile, StandardCharsets.UTF_8.name(), analyzable);
-        getLog().info("wrote " + analyzable.size() + " missing-analysis SHAs to " + missingAnalysesOutputFile.getAbsolutePath());
-        if (skippedMissingCommit > 0 || skippedMissingParent > 0) {
-            getLog().warn("skipped " + skippedMissingCommit + " commits not present locally and "
-                    + skippedMissingParent + " commits whose first parent is not present locally"
+        FileUtils.writeLines(missingAnalysesOutputFile, StandardCharsets.UTF_8.name(), selection.analyzableShas());
+        getLog().info("wrote " + selection.analyzableShas().size() + " missing-analysis SHAs to " + missingAnalysesOutputFile.getAbsolutePath());
+
+        if (BooleanUtils.or(new boolean[] {
+                BooleanUtils.negate(selection.skippedMissingCommitCount() > 0),
+                BooleanUtils.negate(selection.skippedMergeCommitCount() > 0),
+                BooleanUtils.negate(selection.skippedMissingParentCount() > 0)
+        })) {
+            getLog().warn("skipped " + selection.skippedMissingCommitCount() + " commits not present locally and "
+                    + selection.skippedMergeCommitCount() + " merge commits and "
+                    + selection.skippedMissingParentCount() + " commits whose first parent is not present locally"
                     + " (deepen the Jenkins clone if you want these analyzed)");
         }
     }
@@ -277,11 +263,11 @@ public class IndexCommitsMojo extends AbstractMojo {
                 }
 
                 /**
-                 * drop duplicate squash-merges: one change re-merged into the branch under two SHAs
-                 * (rebase / re-merge) shares a patch-id — keep the first by topo order. only
-                 * single-parent commits have a patch-id; never dedupe merges or roots.
+                 * drop duplicate squash-merges: one change re-applied into the branch under two
+                 * SHAs (rebase / re-merge) shares a patch-id keep the first by order. only
+                 * single-parent commits have a stable parent difference to hash; keep merge commits.
                  */
-                if (commit.getParentCount() == BigInteger.ONE.intValue() && Boolean.FALSE.equals(seenPatchIds.add(patchId(repo, commit)))) {
+                if (commit.getParentCount() == 1 && BooleanUtils.isFalse(seenPatchIds.add(patchId(repo, commit)))) {
                     continue;
                 }
                 toReturn.add(toCommitModel(commit, branches));
@@ -289,8 +275,36 @@ public class IndexCommitsMojo extends AbstractMojo {
         }
         return toReturn;
     }
+    static MissingAnalysesSelection selectAnalyzableMissingAnalyses(Repository repo, List<String> shas) throws IOException {
+        List<String> analyzable = Lists.newArrayListWithExpectedSize(shas.size());
+        int skippedMissingCommit = 0;
+        int skippedMergeCommit = 0;
+        int skippedMissingParent = 0;
+
+        try (RevWalk walk = new RevWalk(repo)) {
+            for (String sha : shas) {
+                ObjectId commitId = repo.resolve(sha);
+                if (Objects.isNull(commitId)) {
+                    skippedMissingCommit++;
+                    continue;
+                }
+                RevCommit commit = walk.parseCommit(commitId);
+                if (JGit.isMerge(commit)) {
+                    skippedMergeCommit++;
+                    continue;
+                }
+                if (commit.getParentCount() > 0 && Objects.isNull(repo.resolve(commit.getParent(0).getId().getName()))) {
+                    skippedMissingParent++;
+                    continue;
+                }
+                analyzable.add(sha);
+            }
+        }
+
+        return new MissingAnalysesSelection(analyzable, skippedMissingCommit, skippedMergeCommit, skippedMissingParent);
+    }
     private static ObjectId patchId(Repository repo, RevCommit commit) throws IOException {
-        try (RevWalk walk = new RevWalk(repo); PatchIdDiffFormatter formatter = new PatchIdDiffFormatter()) {
+        try (RevWalk walk = new RevWalk(repo);PatchIdDiffFormatter formatter = new PatchIdDiffFormatter()) {
             RevCommit parsedCommit = walk.parseCommit(commit);
             RevCommit parent = walk.parseCommit(parsedCommit.getParent(0));
 
@@ -319,9 +333,13 @@ public class IndexCommitsMojo extends AbstractMojo {
         });
         return toReturn;
     }
-    static URI toUri(String raw) throws URISyntaxException {
-        return RepositoryUrls.toUri(raw);
-    }
+
+    record MissingAnalysesSelection(
+            List<String> analyzableShas,
+            int skippedMissingCommitCount,
+            int skippedMergeCommitCount,
+            int skippedMissingParentCount) {}
+
     private void addRepositoryUri(List<URI> repoUrls, String rawUrl, String source) {
         try {
             URI repositoryUri = RepositoryUrls.toUri(rawUrl);
