@@ -311,7 +311,7 @@ public class IndexCommitsMojo extends AbstractMojo {
 
         toReturn.setParents(JGit.parentShas(commit));
         toReturn.setBranches(branches);
-        toReturn.setIsMerge(commit.getParentCount() > 1);
+        toReturn.setIsMerge(JGit.isMerge(commit));
 
         JGit.detectRevertedSha(commit.getFullMessage()).ifPresent(sha -> {
             toReturn.setIsRevert(true);
