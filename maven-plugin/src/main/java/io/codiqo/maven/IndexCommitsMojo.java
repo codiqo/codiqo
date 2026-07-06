@@ -210,12 +210,10 @@ public class IndexCommitsMojo extends AbstractMojo {
         getLog().info("wrote " + selection.analyzableShas().size() + " missing-analysis SHAs to " + missingAnalysesOutputFile.getAbsolutePath());
 
         if (BooleanUtils.or(new boolean[] {
-                BooleanUtils.negate(selection.skippedMissingCommitCount() > 0),
-                BooleanUtils.negate(selection.skippedMergeCommitCount() > 0),
-                BooleanUtils.negate(selection.skippedMissingParentCount() > 0)
+                selection.skippedMissingCommitCount() > 0,
+                selection.skippedMissingParentCount() > 0
         })) {
             getLog().warn("skipped " + selection.skippedMissingCommitCount() + " commits not present locally and "
-                    + selection.skippedMergeCommitCount() + " merge commits and "
                     + selection.skippedMissingParentCount() + " commits whose first parent is not present locally"
                     + " (deepen the Jenkins clone if you want these analyzed)");
         }
@@ -278,7 +276,6 @@ public class IndexCommitsMojo extends AbstractMojo {
     static MissingAnalysesSelection selectAnalyzableMissingAnalyses(Repository repo, List<String> shas) throws IOException {
         List<String> analyzable = Lists.newArrayListWithExpectedSize(shas.size());
         int skippedMissingCommit = 0;
-        int skippedMergeCommit = 0;
         int skippedMissingParent = 0;
 
         try (RevWalk walk = new RevWalk(repo)) {
@@ -289,10 +286,6 @@ public class IndexCommitsMojo extends AbstractMojo {
                     continue;
                 }
                 RevCommit commit = walk.parseCommit(commitId);
-                if (JGit.isMerge(commit)) {
-                    skippedMergeCommit++;
-                    continue;
-                }
                 if (commit.getParentCount() > 0 && Objects.isNull(repo.resolve(commit.getParent(0).getId().getName()))) {
                     skippedMissingParent++;
                     continue;
@@ -301,7 +294,7 @@ public class IndexCommitsMojo extends AbstractMojo {
             }
         }
 
-        return new MissingAnalysesSelection(analyzable, skippedMissingCommit, skippedMergeCommit, skippedMissingParent);
+        return new MissingAnalysesSelection(analyzable, skippedMissingCommit, skippedMissingParent);
     }
     private static ObjectId patchId(Repository repo, RevCommit commit) throws IOException {
         try (RevWalk walk = new RevWalk(repo);PatchIdDiffFormatter formatter = new PatchIdDiffFormatter()) {
@@ -337,7 +330,6 @@ public class IndexCommitsMojo extends AbstractMojo {
     record MissingAnalysesSelection(
             List<String> analyzableShas,
             int skippedMissingCommitCount,
-            int skippedMergeCommitCount,
             int skippedMissingParentCount) {}
 
     private void addRepositoryUri(List<URI> repoUrls, String rawUrl, String source) {

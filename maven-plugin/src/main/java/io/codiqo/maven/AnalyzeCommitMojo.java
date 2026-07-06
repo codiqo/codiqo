@@ -30,6 +30,7 @@ import com.google.common.collect.Lists;
 
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.RunArgs;
+import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.util.JGit;
 import io.codiqo.util.MemoryReport;
 
@@ -51,12 +52,16 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     @Override
     protected void doExecute(RunArgs args) throws Exception {
         if (JGit.isMerge(args.getGit(), commitId)) {
-            getLog().warn(String.format("commit %s skipped: merge commit (multiple parents)", commitId));
+            String reason = "merge commit (multiple parents)";
+            getLog().warn(String.format("commit %s skipped: %s", commitId, reason));
+            doExcludeAnalysis(commitId, reason, AnalysisExcludeCategory.MERGE_COMMIT);
             return;
         }
 
         if (args.isExcludedAuthor(resolveAuthorEmail(args))) {
-            getLog().warn(String.format("commit %s skipped: author excluded by codiqo.excludeAuthorEmails", commitId));
+            String reason = "author excluded by codiqo.excludeAuthorEmails";
+            getLog().warn(String.format("commit %s skipped: %s", commitId, reason));
+            doExcludeAnalysis(commitId, reason, AnalysisExcludeCategory.FILTERED_BY_RULES);
             return;
         }
 
