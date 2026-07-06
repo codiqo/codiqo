@@ -133,7 +133,7 @@ class IndexCommitsMojoTest {
                 || mergeCommit.getParents().stream().anyMatch(StringUtils::isNotEmpty));
     }
     @Test
-    void missingAnalysisSelectionSkipsMergeCommits() throws Exception {
+    void missingAnalysisSelectionIncludesMergeCommits() throws Exception {
         RevCommit root = commit("a.txt", "base", "base");
         git.checkout().setCreateBranch(true).setName("feature").call();
         commit("b.txt", "feat", "feature work");
@@ -150,9 +150,9 @@ class IndexCommitsMojoTest {
                 repository,
                 List.of(root.getName(), linear.getName(), merge.getNewHead().getName()));
 
-        assertEquals(List.of(root.getName(), linear.getName()), selection.analyzableShas());
+        // merges flow through selection so the analyze step can exclude them (excluded=true row)
+        assertEquals(List.of(root.getName(), linear.getName(), merge.getNewHead().getName()), selection.analyzableShas());
         assertEquals(0, selection.skippedMissingCommitCount());
-        assertEquals(1, selection.skippedMergeCommitCount());
         assertEquals(0, selection.skippedMissingParentCount());
     }
     @Test
@@ -165,7 +165,6 @@ class IndexCommitsMojoTest {
 
         assertEquals(List.of(kept.getName()), selection.analyzableShas());
         assertEquals(1, selection.skippedMissingCommitCount());
-        assertEquals(0, selection.skippedMergeCommitCount());
         assertEquals(0, selection.skippedMissingParentCount());
     }
     @Test
