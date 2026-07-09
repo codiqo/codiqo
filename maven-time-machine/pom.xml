@@ -85,10 +85,23 @@
         <dependency>
             <groupId>com.google.cloud.artifactregistry</groupId>
             <artifactId>artifactregistry-auth-common</artifactId>
+            <exclusions>
+                <!-- slf4j-api is provided by the forked Maven runtime on the ext classpath; keep it out of the resolved extension jars to avoid a duplicate/mismatched slf4j-api -->
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-api</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>org.zeroturnaround</groupId>
             <artifactId>zt-exec</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-api</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>org.apache.maven</groupId>
@@ -129,4 +142,21 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+    <build>
+        <plugins>
+            <plugin>
+                <!-- this module legitimately pulls guava transitively via the Google Artifact Registry resolver, so the parent's ban-guava enforcer rule is skipped here -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>ban-guava</id>
+                        <configuration>
+                            <skip>true</skip>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

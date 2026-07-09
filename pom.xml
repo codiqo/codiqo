@@ -825,6 +825,11 @@
                 <artifactId>codiqo-maven-time-machine</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>io.codiqo</groupId>
+                <artifactId>codiqo-maven-coverage-injector</artifactId>
+                <version>${project.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
     <build>
@@ -1280,6 +1285,27 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>ban-guava</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <!-- ban guava only in compile/runtime scope (codiqo's own classpath); provided-scope guava from maven-core is the Maven build runtime, not a codiqo dependency -->
+                                    <excludes>
+                                        <exclude>com.google.guava:guava:*:*:compile</exclude>
+                                        <exclude>com.google.guava:guava:*:*:runtime</exclude>
+                                    </excludes>
+                                    <message>Guava is banned across codiqo (replaced by the JDK / commons-collections4). Only maven-time-machine may pull it transitively via the Google Artifact Registry resolver, where this rule is skipped.</message>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -1293,6 +1319,7 @@
         <module>lang-java</module>
         <module>lang-config</module>
         <module>maven-time-machine</module>
+        <module>maven-coverage-injector</module>
         <module>submit</module>
         <module>maven-plugin</module>
         <module>gradle-plugin</module>

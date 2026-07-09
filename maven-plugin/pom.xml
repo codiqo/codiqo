@@ -160,6 +160,11 @@
             <artifactId>codiqo-maven-time-machine</artifactId>
             <scope>provided</scope>
         </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>codiqo-maven-coverage-injector</artifactId>
+            <scope>provided</scope>
+        </dependency>
         <!-- -->
         <!-- runtime -->
         <!-- -->

@@ -95,6 +95,8 @@ public class RunArgs {
     @Nullable
     private boolean ignoreCoverage = false;
     @Nullable
+    private boolean failOnUninstrumentedModule = true;
+    @Nullable
     private boolean ignoreComplexity = false;
     @Nullable
     private boolean ignoreCpd = false;

@@ -11,7 +11,6 @@ import lombok.experimental.UtilityClass;
 
 @UtilityClass
 public class TimeMachineConfig {
-    public static final String MAVEN_EXT_CLASS_PATH = "maven.ext.class.path";
     public static final String PROP_COMMIT_TIMESTAMP = "codiqo.commit.timestamp";
     public static final String PROP_HTTP_TIMEOUT_SECONDS = "codiqo.timemachine.httpTimeoutSeconds";
     public static final String PROP_MAX_STALENESS = "codiqo.timemachine.maxStaleness";

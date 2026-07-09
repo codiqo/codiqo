@@ -30,6 +30,7 @@ public class AnalysisRequest implements Serializable {
     private boolean ignoreDiagnostics;
     private boolean ignoreComplexity;
     private boolean failOnJdtlsError;
+    private boolean failOnUninstrumentedModule = true;
 
     private List<ModuleData> modules = new ArrayList<>();
 }

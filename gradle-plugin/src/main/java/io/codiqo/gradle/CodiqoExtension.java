@@ -22,4 +22,5 @@ public class CodiqoExtension {
     private boolean ignoreComplexity;
 
     private boolean failOnJdtlsError;
+    private boolean failOnUninstrumentedModule = true;
 }
