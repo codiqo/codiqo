@@ -40,6 +40,7 @@ import java.util.ArrayList;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
@@ -299,6 +300,7 @@ public class JavaLanguageSpec implements LanguageSpec {
 
         ExecFileLoader loader = new ExecFileLoader();
         List<File> outputDirectories = new ArrayList<>();
+        List<String> uninstrumentedModules = new ArrayList<>();
 
         for (ProjectSpec project : summary.getProjects()) {
             Optional<File> coverage = project.coverage();
@@ -331,7 +333,15 @@ public class JavaLanguageSpec implements LanguageSpec {
                 if (project.getOutputDirectory().exists()) {
                     outputDirectories.add(project.getOutputDirectory());
                 }
+            } else if (args.isFailOnUninstrumentedModule() && expectsCoverage(project)) {
+                uninstrumentedModules.add(project.getName());
             }
+        }
+
+        if (CollectionUtils.isNotEmpty(uninstrumentedModules)) {
+            throw new IOException(String.format(
+                    "coverage was required (codiqo.failOnUninstrumentedModule) but no coverage data was produced for module(s) with tests: %s — the JaCoCo agent did not attach or no tests executed",
+                    String.join(", ", uninstrumentedModules)));
         }
 
         if (CollectionUtils.isEmpty(outputDirectories)) {
@@ -696,9 +706,40 @@ public class JavaLanguageSpec implements LanguageSpec {
         spotbugsWatch.stop();
         log.info("spotbugs analysis completed in %s", spotbugsWatch);
     }
+    static boolean expectsCoverage(ProjectSpec project) throws IOException {
+        /**
+         * a module "expects" coverage only when its test fork actually ran: compiled main classes AND at least one
+         * surefire/failsafe report. a pom aggregator, a code-less module, or a module whose only src/test sources are
+         * main()-style helpers (dev-server starters, migration generators) with no @Test methods runs no tests, forks
+         * no JVM, and legitimately produces no jacoco.exec — so it must not be flagged. keying on executed reports
+         * still catches the real regression: tests ran (reports present) but the agent never attached (no jacoco.exec).
+         */
+        if (project instanceof JvmProjectSpec) {
+            File outputDir = project.getOutputDirectory();
+            if (outputDir.isDirectory() && hasFilesWithExtension(outputDir, "class")) {
+                return ranTests(outputDir.getParentFile());
+            }
+        }
+        return false;
+    }
+    private static boolean ranTests(File buildDirectory) {
+        for (String reportDir : new String[] { "surefire-reports", "failsafe-reports" }) {
+            File dir = new File(buildDirectory, reportDir);
+            if (dir.isDirectory()) {
+                File[] results = dir.listFiles((d, name) -> name.startsWith("TEST-") && name.endsWith(".xml"));
+                if (ArrayUtils.isNotEmpty(results)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
     private static boolean hasClassFiles(File outputDir) throws IOException {
-        try (Stream<Path> walk = Files.walk(outputDir.toPath())) {
-            return walk.anyMatch(p -> "class".equals(FilenameUtils.getExtension(p.toString())));
+        return hasFilesWithExtension(outputDir, "class");
+    }
+    private static boolean hasFilesWithExtension(File dir, String extension) throws IOException {
+        try (Stream<Path> walk = Files.walk(dir.toPath())) {
+            return walk.anyMatch(p -> extension.equals(FilenameUtils.getExtension(p.toString())));
         }
     }
     private static void verifyClassesNotStale(ProjectSpec project, File outputDir) throws IOException {

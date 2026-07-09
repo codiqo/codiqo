@@ -46,6 +46,7 @@ public class GradleModelCollector {
         request.setIgnoreDiagnostics(ext.isIgnoreDiagnostics());
         request.setIgnoreComplexity(ext.isIgnoreComplexity());
         request.setFailOnJdtlsError(ext.isFailOnJdtlsError());
+        request.setFailOnUninstrumentedModule(boolProp(root, "codiqo.failOnUninstrumentedModule", ext.isFailOnUninstrumentedModule()));
 
         for (Project project : root.getAllprojects()) {
             // skip container/aggregator projects (Maven parity: reactor.getModules() empty) — an

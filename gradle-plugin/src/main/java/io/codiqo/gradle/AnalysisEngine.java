@@ -60,6 +60,7 @@ public class AnalysisEngine {
         args.setIgnoreDiagnostics(request.isIgnoreDiagnostics());
         args.setIgnoreComplexity(request.isIgnoreComplexity());
         args.setFailOnJdtlsError(request.isFailOnJdtlsError());
+        args.setFailOnUninstrumentedModule(request.isFailOnUninstrumentedModule());
         args.setJavaHome(new File(request.getJavaHome()));
         args.setOutputDirectory(new File(request.getOutputDirectory()));
         args.validate();

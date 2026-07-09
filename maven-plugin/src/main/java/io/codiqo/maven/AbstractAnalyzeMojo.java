@@ -101,6 +101,7 @@ import io.codiqo.submit.OutputSerializer;
 import io.codiqo.maven.populator.ProjectModelPopulator;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.maven.populator.SubmissionSummaryPrinter;
+import io.codiqo.maven.coverage.CoverageInjectorConfig;
 import io.codiqo.maven.timemachine.TimeMachineConfig;
 import io.codiqo.submit.ScoringConfigs;
 import io.codiqo.util.Env;
@@ -121,10 +122,17 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
     private static final String CODIQO_GROUP_ID = "io.codiqo";
     private static final String TIME_MACHINE_ARTIFACT_ID = "codiqo-maven-time-machine";
+    private static final String COVERAGE_INJECTOR_ARTIFACT_ID = "codiqo-maven-coverage-injector";
 
-    private static final Set<String> TIME_MACHINE_EXTENSION_JAR_BLACKLIST = Set.of("slf4j-api-");
+    private static final String JACOCO_GROUP_ID = "org.jacoco";
+    private static final String JACOCO_AGENT_ARTIFACT_ID = "org.jacoco.agent";
+    private static final String JACOCO_AGENT_CLASSIFIER = "runtime";
+
+    private static final String MAVEN_EXT_CLASS_PATH = "maven.ext.class.path";
 
     private Collection<File> timeMachineExtensionJars;
+    private Collection<File> coverageInjectorJars;
+    private File jacocoAgentJar;
 
     @Inject
     private RuntimeInformation runtimeInformation;
@@ -194,6 +202,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
     @Parameter(property = "codiqo.ignoreCoverage", defaultValue = "false")
     protected boolean ignoreCoverage;
+
+    @Parameter(property = "codiqo.failOnUninstrumentedModule", defaultValue = "true")
+    protected boolean failOnUninstrumentedModule;
 
     @Parameter(property = "codiqo.ignoreCpd", defaultValue = "false")
     protected boolean ignoreCpd;
@@ -341,6 +352,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setJdtlsUseSnapshot(jdtlsUseSnapshot);
         args.setDumpAnalysis(dumpAnalysis);
         args.setIgnoreCoverage(ignoreCoverage);
+        args.setFailOnUninstrumentedModule(failOnUninstrumentedModule);
         args.setIgnoreCpd(ignoreCpd);
         args.setIgnoreDiagnostics(ignoreDiagnostics);
         args.setIgnoreComplexity(ignoreComplexity);
@@ -394,6 +406,28 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 args.getAgents().addAll(apply(agent));
             }
             timeMachineExtensionJars = apply(new DefaultArtifact(CODIQO_GROUP_ID, TIME_MACHINE_ARTIFACT_ID, JAR_EXTENSION, versions.get("codiqo.version").toString()));
+
+            if (BooleanUtils.negate(ignoreCoverage)) {
+                /**
+                 * agent resolution is best-effort: apply() sneaky-throws on an unresolvable artifact (offline build,
+                 * private mirror without the runtime classifier), so catch it here and leave the jar null — coverage
+                 * auto-injection then stays off instead of aborting the whole analysis. resolve the injector extension
+                 * before the agent so a non-null agent jar always implies the injector jars are present too.
+                 */
+                try {
+                    coverageInjectorJars = apply(new DefaultArtifact(CODIQO_GROUP_ID, COVERAGE_INJECTOR_ARTIFACT_ID, JAR_EXTENSION, versions.get("codiqo.version").toString()));
+                    jacocoAgentJar = apply(new DefaultArtifact(JACOCO_GROUP_ID, JACOCO_AGENT_ARTIFACT_ID, JACOCO_AGENT_CLASSIFIER, JAR_EXTENSION, versions.get("jacoco.version").toString()))
+                            .stream()
+                            .filter(jar -> BooleanUtils.and(new boolean[] { jar.getName().startsWith(JACOCO_AGENT_ARTIFACT_ID + "-"), jar.getName().endsWith("-" + JACOCO_AGENT_CLASSIFIER + ".jar") }))
+                            .findFirst()
+                            .orElse(null);
+                } catch (Exception err) {
+                    getLog().debug("jacoco agent resolution failed", err);
+                }
+                if (Objects.isNull(jacocoAgentJar)) {
+                    getLog().warn(String.format("could not resolve %s:%s:%s; coverage auto-injection disabled for projects without jacoco-maven-plugin", JACOCO_GROUP_ID, JACOCO_AGENT_ARTIFACT_ID, JACOCO_AGENT_CLASSIFIER));
+                }
+            }
         } catch (IOException err) {
             throw new MojoExecutionException(err);
         }
@@ -569,26 +603,45 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             request.setMavenHome(mavenHome);
         }
 
-        if (StringUtils.isNotBlank(args.getCommitId()) && args.isTimeMachineEnabled()) {
-            Instant ts = TimeMachineSupport.resolveCommitTimestamp(args);
+        boolean timeMachineActive = BooleanUtils.and(new boolean[] { StringUtils.isNotBlank(args.getCommitId()), args.isTimeMachineEnabled() });
+        boolean injectJacocoAgent = BooleanUtils.and(new boolean[] { BooleanUtils.negate(args.isIgnoreCoverage()), Objects.nonNull(jacocoAgentJar) });
 
-            List<String> extensionClasspath = timeMachineExtensionJars.stream()
-                    .filter(jar -> TIME_MACHINE_EXTENSION_JAR_BLACKLIST.stream().noneMatch(prefix -> jar.getName().startsWith(prefix)))
-                    .map(File::getAbsolutePath)
-                    .toList();
-
-            File metaDir = Files.createTempDirectory("codiqo-tm-").toFile();
-            args.setTimeMachineMetaDir(metaDir);
-
+        /**
+         * each codiqo core extension is loaded on maven.ext.class.path only when its own feature is active: the
+         * time-machine snapshot resolver ships in codiqo-maven-time-machine (with the Google/Aether stack), the JaCoCo
+         * agent injector ships in codiqo-maven-coverage-injector. keeping the jar sets separate means a coverage-only
+         * run never puts the time-machine resolver on the forked build's extension realm, and vice versa.
+         */
+        if (BooleanUtils.or(new boolean[] { timeMachineActive, injectJacocoAgent })) {
+            List<String> extensionClasspath = new ArrayList<>();
             Properties props = Optional.ofNullable(request.getProperties()).orElseGet(Properties::new);
-            props.setProperty(TimeMachineConfig.MAVEN_EXT_CLASS_PATH, StringUtils.join(extensionClasspath, File.pathSeparator));
-            props.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, DateTimeFormatter.ISO_INSTANT.format(ts));
-            props.setProperty(TimeMachineConfig.PROP_META_DIR, metaDir.getAbsolutePath());
-            request.setProperties(props);
 
-            getLog().info(String.format("time-machine enabled for commit %s (timestamp: %s, metaDir: %s)", args.getCommitId(), ts, metaDir.getAbsolutePath()));
+            if (timeMachineActive) {
+                extensionClasspath.addAll(extensionJarPaths(timeMachineExtensionJars));
+
+                Instant ts = TimeMachineSupport.resolveCommitTimestamp(args);
+                File metaDir = Files.createTempDirectory("codiqo-tm-").toFile();
+                args.setTimeMachineMetaDir(metaDir);
+
+                props.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, DateTimeFormatter.ISO_INSTANT.format(ts));
+                props.setProperty(TimeMachineConfig.PROP_META_DIR, metaDir.getAbsolutePath());
+                getLog().info(String.format("time-machine enabled for commit %s (timestamp: %s, metaDir: %s)", args.getCommitId(), ts, metaDir.getAbsolutePath()));
+            }
+
+            if (injectJacocoAgent) {
+                extensionClasspath.addAll(extensionJarPaths(coverageInjectorJars));
+
+                props.setProperty(CoverageInjectorConfig.PROP_AGENT_JAR, jacocoAgentJar.getAbsolutePath());
+                getLog().info("JaCoCo agent injection enabled for modules without jacoco-maven-plugin: " + jacocoAgentJar.getAbsolutePath());
+            }
+
+            props.setProperty(MAVEN_EXT_CLASS_PATH, StringUtils.join(extensionClasspath.stream().distinct().toList(), File.pathSeparator));
+            request.setProperties(props);
         }
         return request;
+    }
+    private static List<String> extensionJarPaths(Collection<File> jars) {
+        return jars.stream().map(File::getAbsolutePath).toList();
     }
     protected BuildOutcome buildProject(
             RunArgs args,
