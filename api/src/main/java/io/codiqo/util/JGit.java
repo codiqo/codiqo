@@ -11,6 +11,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.HashMap;
+import java.util.ArrayList;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -27,10 +29,6 @@ import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 
-import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
 
 import lombok.experimental.UtilityClass;
 
@@ -38,8 +36,9 @@ import lombok.experimental.UtilityClass;
 public class JGit {
     private static final Pattern REVERT_PATTERN = Pattern.compile("This reverts commit ([a-f0-9]{40})\\.");
     private static final Pattern AUTO_GENERATED_BRANCH_PATTERN = Pattern.compile("^[^/]+/[^/]+(?:-[^/]+){2,}-\\d{12,}$");
-    private static final Set<String> NOISY_BRANCH_EXACT = ImmutableSet.of(Constants.HEAD, "tmp", "tmp-skip");
-    private static final Set<String> NOISY_BRANCH_PREFIXES = ImmutableSet.of("bot/", "copilot/", "dependabot/", "renovate/");
+    private static final Pattern DETACHED_HEAD_SHA = Pattern.compile("^[a-f0-9]{40}$");
+    private static final Set<String> NOISY_BRANCH_EXACT = Set.of(Constants.HEAD, "tmp", "tmp-skip");
+    private static final Set<String> NOISY_BRANCH_PREFIXES = Set.of("bot/", "copilot/", "dependabot/", "renovate/");
 
     public static String shortSha(String commitSha) {
         return ObjectId.fromString(commitSha).abbreviate(Constants.OBJECT_ID_ABBREV_STRING_LENGTH).name();
@@ -89,7 +88,7 @@ public class JGit {
         return refName;
     }
     public static List<String> parentShas(RevCommit commit) {
-        List<String> toReturn = Lists.newArrayListWithCapacity(commit.getParentCount());
+        List<String> toReturn = new ArrayList<>(commit.getParentCount());
         for (int i = 0; i < commit.getParentCount(); i++) {
             toReturn.add(commit.getParent(i).getName());
         }
@@ -105,7 +104,7 @@ public class JGit {
         return commit.getParentCount() > BigDecimal.ONE.intValue();
     }
     public static List<String> branchesContaining(Repository repo, String commitSha) throws Exception {
-        Set<String> toReturn = Sets.newLinkedHashSet();
+        Set<String> toReturn = new LinkedHashSet<>();
 
         try (Git git = Git.wrap(repo)) {
             for (Ref ref : git.branchList().setListMode(ListMode.ALL).setContains(commitSha).call()) {
@@ -115,7 +114,7 @@ public class JGit {
                 }
             }
         }
-        return Lists.newArrayList(toReturn);
+        return new ArrayList<>(toReturn);
     }
     public static Optional<String> detectDefaultBranch(Repository repo) throws IOException {
         Ref originHead = repo.exactRef(Constants.R_REMOTES + Constants.DEFAULT_REMOTE_NAME + "/" + Constants.HEAD);
@@ -125,10 +124,17 @@ public class JGit {
         }
 
         String branch = repo.getBranch();
-        if (StringUtils.isBlank(branch) || branch.matches("^[a-f0-9]{40}$")) {
+        if (StringUtils.isBlank(branch) || DETACHED_HEAD_SHA.matcher(branch).matches()) {
             return Optional.empty();
         }
         return Optional.of(branch);
+    }
+    public static String currentBranchOrDefault(Repository repo) throws IOException {
+        String branch = repo.getBranch();
+        if (StringUtils.isBlank(branch) || DETACHED_HEAD_SHA.matcher(branch).matches()) {
+            return detectDefaultBranch(repo).orElse(branch);
+        }
+        return branch;
     }
     public static Optional<String> detectRemoteUrl(Repository repo) {
         return detectRemoteUrls(repo).stream().findFirst();
@@ -145,7 +151,7 @@ public class JGit {
         return toReturn;
     }
     public static Map<String, List<String>> buildBranchIndex(Repository repo) throws Exception {
-        Map<String, List<String>> toReturn = Maps.newHashMap();
+        Map<String, List<String>> toReturn = new HashMap<>();
 
         try (Git git = Git.wrap(repo)) {
             for (Ref ref : git.branchList().setListMode(ListMode.ALL).call()) {
@@ -156,7 +162,7 @@ public class JGit {
                 try (RevWalk walk = new RevWalk(repo)) {
                     walk.markStart(walk.parseCommit(ref.getObjectId()));
                     for (RevCommit commit : walk) {
-                        List<String> branches = toReturn.computeIfAbsent(commit.getName(), k -> Lists.newArrayList());
+                        List<String> branches = toReturn.computeIfAbsent(commit.getName(), k -> new ArrayList<>());
                         if (!branches.contains(branchName)) {
                             branches.add(branchName);
                         }

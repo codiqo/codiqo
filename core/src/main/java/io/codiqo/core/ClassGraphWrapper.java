@@ -1,16 +1,11 @@
 package io.codiqo.core;
 
 import java.net.URL;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
-
-import com.google.common.cache.CacheBuilder;
-import com.google.common.cache.CacheLoader;
-import com.google.common.cache.LoadingCache;
-import com.google.common.collect.Maps;
+import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 import io.codiqo.api.ClassGraphSpec;
 import io.github.classgraph.ClassInfo;
@@ -23,38 +18,8 @@ import lombok.RequiredArgsConstructor;
 public class ClassGraphWrapper implements ClassGraphSpec {
     private final ScanResult scan;
 
-    private final LoadingCache<ClassInfo, Map<MethodKey, MethodEntry>> methods = CacheBuilder.newBuilder().build(new CacheLoader<>() {
-        @Override
-        public Map<MethodKey, MethodEntry> load(ClassInfo info) throws Exception {
-            Map<MethodKey, MethodEntry> toReturn = Maps.newHashMap();
-
-            for (MethodInfo method : info.getMethodInfo()) {
-                String name = method.getName();
-                String descriptor = method.getTypeDescriptorStr();
-                String signature = method.getTypeSignatureStr();
-                MethodKey key = new MethodKey(name, descriptor);
-                toReturn.put(key, new MethodEntry(descriptor, signature));
-            }
-
-            return toReturn;
-        }
-    });
-    private final LoadingCache<ClassInfo, Map<MethodKey, MethodEntry>> constructors = CacheBuilder.newBuilder().build(new CacheLoader<>() {
-        @Override
-        public Map<MethodKey, MethodEntry> load(ClassInfo info) throws Exception {
-            Map<MethodKey, MethodEntry> toReturn = Maps.newHashMap();
-
-            for (MethodInfo method : info.getConstructorInfo()) {
-                String name = method.getName();
-                String descriptor = method.getTypeDescriptorStr();
-                String signature = method.getTypeSignatureStr();
-                MethodKey key = new MethodKey(name, descriptor);
-                toReturn.put(key, new MethodEntry(descriptor, signature));
-            }
-
-            return toReturn;
-        }
-    });
+    private final Map<ClassInfo, Map<MethodKey, MethodEntry>> methods = new ConcurrentHashMap<>();
+    private final Map<ClassInfo, Map<MethodKey, MethodEntry>> constructors = new ConcurrentHashMap<>();
 
     @Override
     public List<URL> getClasspathURLs() {
@@ -64,17 +29,17 @@ public class ClassGraphWrapper implements ClassGraphSpec {
     public ClassInfo getClassInfo(String fqn) {
         ClassInfo toReturn = scan.getClassInfo(fqn);
         if (Objects.nonNull(toReturn)) {
-            methods.getUnchecked(toReturn);
+            methods.computeIfAbsent(toReturn, ClassGraphWrapper::loadMethods);
         }
         return toReturn;
     }
     @Override
     public Map<MethodKey, MethodEntry> getMethods(ClassInfo fqn) {
-        return Optional.ofNullable(methods.getUnchecked(fqn)).orElseGet(Collections::emptyMap);
+        return methods.computeIfAbsent(fqn, ClassGraphWrapper::loadMethods);
     }
     @Override
     public Map<MethodKey, MethodEntry> getConstructors(ClassInfo fqn) {
-        return Optional.ofNullable(constructors.getUnchecked(fqn)).orElseGet(Collections::emptyMap);
+        return constructors.computeIfAbsent(fqn, ClassGraphWrapper::loadConstructors);
     }
     @Override
     public ClassInfoList getAllClasses() {
@@ -123,5 +88,19 @@ public class ClassGraphWrapper implements ClassGraphSpec {
     @Override
     public void close() throws Exception {
         scan.close();
+    }
+    private static Map<MethodKey, MethodEntry> loadMethods(ClassInfo info) {
+        return buildEntries(info.getMethodInfo());
+    }
+    private static Map<MethodKey, MethodEntry> loadConstructors(ClassInfo info) {
+        return buildEntries(info.getConstructorInfo());
+    }
+    private static Map<MethodKey, MethodEntry> buildEntries(Iterable<MethodInfo> methodInfos) {
+        Map<MethodKey, MethodEntry> toReturn = new HashMap<>();
+        for (MethodInfo method : methodInfos) {
+            String descriptor = method.getTypeDescriptorStr();
+            toReturn.put(new MethodKey(method.getName(), descriptor), new MethodEntry(descriptor, method.getTypeSignatureStr()));
+        }
+        return toReturn;
     }
 }

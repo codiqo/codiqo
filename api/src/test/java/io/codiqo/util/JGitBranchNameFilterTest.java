@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.lang.reflect.Method;
+import java.util.List;
 
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
@@ -11,12 +12,11 @@ import org.eclipse.jgit.lib.ObjectIdRef;
 import org.eclipse.jgit.lib.Ref;
 import org.junit.jupiter.api.Test;
 
-import com.google.common.collect.ImmutableList;
 
 class JGitBranchNameFilterTest {
     @Test
     void noisyBranchNamesReturnNullForLocalAndRemoteRefs() throws Exception {
-        for (String branchName : ImmutableList.of(
+        for (String branchName : List.of(
                 Constants.HEAD,
                 "tmp",
                 "tmp-skip",
@@ -36,7 +36,7 @@ class JGitBranchNameFilterTest {
     }
     @Test
     void signalBranchNamesPassThroughUnchangedForLocalAndRemoteRefs() throws Exception {
-        for (String branchName : ImmutableList.of(
+        for (String branchName : List.of(
                 "main",
                 "dev",
                 "feature/x",

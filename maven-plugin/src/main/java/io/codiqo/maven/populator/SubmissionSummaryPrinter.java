@@ -8,6 +8,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -23,7 +24,6 @@ import com.github.freva.asciitable.AsciiTable;
 import com.github.freva.asciitable.Column;
 import com.github.freva.asciitable.ColumnData;
 import com.github.freva.asciitable.HorizontalAlign;
-import com.google.common.collect.Lists;
 
 import io.codiqo.api.metrics.DriverScaler;
 import io.codiqo.api.metrics.DriverScaler.DimensionStats;
@@ -36,6 +36,10 @@ import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.MetricsModel;
 import io.codiqo.client.model.ModuleModel;
 import io.codiqo.client.model.SymbolKindModel;
+import io.codiqo.submit.ModuleQualityTracker;
+import io.codiqo.submit.SampleMaxTracker;
+import io.codiqo.submit.SubmissionContext;
+import io.codiqo.submit.SubmissionPopulator;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -151,7 +155,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         log.info(String.format("  constructor/test:  %d", bucketCounts.ctorTest()));
     }
     private static String renderOutliersTable(List<BlockRow> rows) {
-        List<ColumnData<BlockRow>> columns = Lists.newArrayList();
+        List<ColumnData<BlockRow>> columns = new ArrayList<>();
         columns.add(new Column().header("File").dataAlign(HorizontalAlign.LEFT).maxWidth(determineWidth(rows, BlockRow::file, "File")).with((BlockRow r) -> r.file()));
         columns.add(new Column().header("Block").dataAlign(HorizontalAlign.LEFT).maxWidth(determineWidth(rows, BlockRow::block, "Block")).with((BlockRow r) -> r.block()));
         columns.addAll(OUTLIER_BLOCKS_FIXED_COLUMNS);
@@ -263,7 +267,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
     private static TrivialCounts aggregateTrivialCounts(SubmissionContext ctx) {
         TrivialCounts counts = new TrivialCounts();
         for (ModuleModel moduleModel : ctx.getProjectModel().getModules()) {
-            ModuleQualityTracker tracker = ctx.getQualityTrackers().getIfPresent(moduleModel.getId());
+            ModuleQualityTracker tracker = ctx.getQualityTrackers().get(moduleModel.getId());
             if (Objects.nonNull(tracker)) {
                 counts.methodProd += tracker.trivialMethodProd().intValue();
                 counts.methodTest += tracker.trivialMethodTest().intValue();
@@ -274,8 +278,8 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         return counts;
     }
     private static RowBundle buildChangedBlockRows(SubmissionContext ctx, AnalysisSubmissionModel submission) {
-        List<BlockRow> nonTrivial = Lists.newArrayList();
-        List<BlockRow> trivial = Lists.newArrayList();
+        List<BlockRow> nonTrivial = new ArrayList<>();
+        List<BlockRow> trivial = new ArrayList<>();
         for (FileChangeModel file : CollectionUtils.emptyIfNull(submission.getFiles())) {
             boolean isTest = Boolean.TRUE.equals(file.getIsTest());
             for (CodeUnitModel unit : CollectionUtils.emptyIfNull(file.getCodeUnits())) {
@@ -298,14 +302,14 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         return new RowBundle(nonTrivial, trivial);
     }
     private static String renderChangedBlocksTable(List<BlockRow> rows) {
-        List<ColumnData<BlockRow>> columns = Lists.newArrayList();
+        List<ColumnData<BlockRow>> columns = new ArrayList<>();
         columns.add(new Column().header("File").dataAlign(HorizontalAlign.LEFT).maxWidth(determineWidth(rows, BlockRow::file, "File")).with((BlockRow r) -> r.file()));
         columns.add(new Column().header("Block").dataAlign(HorizontalAlign.LEFT).maxWidth(determineWidth(rows, BlockRow::block, "Block")).with((BlockRow r) -> r.block()));
         columns.addAll(CHANGED_BLOCKS_FIXED_COLUMNS);
         return AsciiTable.getTable(rows, columns);
     }
     private static String renderTrivialBlocksTable(List<BlockRow> rows) {
-        List<ColumnData<BlockRow>> columns = Lists.newArrayList();
+        List<ColumnData<BlockRow>> columns = new ArrayList<>();
         columns.add(new Column().header("File").dataAlign(HorizontalAlign.LEFT).maxWidth(determineWidth(rows, BlockRow::file, "File")).with((BlockRow r) -> r.file()));
         columns.add(new Column().header("Block").dataAlign(HorizontalAlign.LEFT).maxWidth(determineWidth(rows, BlockRow::block, "Block")).with((BlockRow r) -> r.block()));
         columns.addAll(TRIVIAL_BLOCKS_FIXED_COLUMNS);

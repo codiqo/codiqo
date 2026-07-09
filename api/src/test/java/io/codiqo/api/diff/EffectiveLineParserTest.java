@@ -9,8 +9,6 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSet;
 
 class EffectiveLineParserTest {
     private static final String DIFF = String.join("\n",
@@ -32,27 +30,27 @@ class EffectiveLineParserTest {
 
     @Test
     void parseAddedLinesReturnsAllAddedLineNumbers() {
-        assertEquals(ImmutableSet.of(2, 3, 4, 5), EffectiveLineParser.parseAddedLines(DIFF));
+        assertEquals(Set.of(2, 3, 4, 5), EffectiveLineParser.parseAddedLines(DIFF));
     }
     @Test
     void parseEffectiveAddedLinesFiltersBlanksAndComments() {
         Set<Integer> effective = EffectiveLineParser.parseEffectiveAddedLines(DIFF, C_STYLE.commentFilter());
-        assertEquals(ImmutableSet.of(2, 5), effective);
+        assertEquals(Set.of(2, 5), effective);
     }
     @Test
     void parseEffectiveAddedLinesWithNoneKeepsNonBlankLines() {
         Set<Integer> effective = EffectiveLineParser.parseEffectiveAddedLines(DIFF, IneffectiveLineFilter.NONE.commentFilter());
-        assertEquals(ImmutableSet.of(2, 3, 5), effective);
+        assertEquals(Set.of(2, 3, 5), effective);
     }
     @Test
     void parseEffectiveDeletedLineContentsKeepsTrimmedNonImportNonCommentLines() {
         Map<Integer, List<String>> deleted = EffectiveLineParser.parseEffectiveDeletedLineContents(DIFF, C_STYLE.commentOrImportFilter());
-        assertEquals(ImmutableMap.of(6, List.of("int removed = 2;")), deleted);
+        assertEquals(Map.of(6, List.of("int removed = 2;")), deleted);
     }
     @Test
     void parseEffectiveDeletionAnchorsCountsByNewSideAnchor() {
         Map<Integer, Integer> anchors = EffectiveLineParser.parseEffectiveDeletionAnchors(DIFF, C_STYLE.commentOrImportFilter());
-        assertEquals(ImmutableMap.of(6, 1), anchors);
+        assertEquals(Map.of(6, 1), anchors);
     }
     @Test
     void walkVisitsAddedDeletedAndContextInOrder() {

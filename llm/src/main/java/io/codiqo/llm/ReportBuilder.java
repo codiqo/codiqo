@@ -3,8 +3,8 @@ package io.codiqo.llm;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.HashMap;
 
-import com.google.common.collect.Maps;
 
 import io.codiqo.client.model.DiagnosticModel;
 import io.codiqo.llm.client.ScoringClient.ScoringResult;
@@ -31,6 +31,6 @@ public interface ReportBuilder {
         String llmModel;
         Duration analysisDuration;
         @Builder.Default
-        Map<String, List<DiagnosticModel>> criticalViolationsByModule = Maps.newHashMap();
+        Map<String, List<DiagnosticModel>> criticalViolationsByModule = new HashMap<>();
     }
 }

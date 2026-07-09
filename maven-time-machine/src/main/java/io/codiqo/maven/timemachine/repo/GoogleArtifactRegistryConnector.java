@@ -10,6 +10,8 @@ import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -18,6 +20,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.ArrayList;
 
 import javax.annotation.PreDestroy;
 import javax.inject.Inject;
@@ -29,6 +32,7 @@ import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManagerFactory;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.maven.artifact.repository.metadata.SnapshotVersion;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.Artifact;
@@ -53,9 +57,6 @@ import com.google.cloud.artifactregistry.auth.CommandExecutor;
 import com.google.cloud.artifactregistry.auth.CommandExecutorResult;
 import com.google.cloud.artifactregistry.auth.CredentialProvider;
 import com.google.cloud.artifactregistry.auth.DefaultCredentialProvider;
-import com.google.common.base.Joiner;
-import com.google.common.base.Splitter;
-import com.google.common.collect.Lists;
 
 import io.codiqo.maven.timemachine.TimeMachineConfig;
 import lombok.SneakyThrows;
@@ -74,8 +75,6 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
     private static final String APPLICATION_NAME = "codiqo-time-machine";
     private static final int PAGE_SIZE = 1000;
     private static final char RESOURCE_SEPARATOR = '/';
-    private static final Joiner RESOURCE_JOINER = Joiner.on(RESOURCE_SEPARATOR);
-    private static final Splitter URL_PATH_SPLITTER = Splitter.on(RESOURCE_SEPARATOR).omitEmptyStrings();
     private static final String FILTER_NAME_STARTS_WITH = "name=\"%s*\"";
 
     /**
@@ -131,21 +130,26 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
             }
         }
     }
-    @SneakyThrows
     private List<SnapshotVersion> fetchDeploys(GoogleArtifactRegistryLocation location, Artifact artifact, RemoteRepository repo, String resourcePrefix) {
-        Pattern filenamePattern = snapshotFilenamePattern(artifact);
-        List<SnapshotVersion> toReturn = Lists.newArrayList();
-        String pageToken = null;
-        while (true) {
-            ListFilesResponse page = listFilesPage(location, resourcePrefix, pageToken);
-            if (Objects.nonNull(page.getFiles())) {
-                for (GoogleDevtoolsArtifactregistryV1File file : page.getFiles()) {
-                    parseDeploy(file, filenamePattern).ifPresent(toReturn::add);
+        for (;;) {
+            try {
+                Pattern filenamePattern = snapshotFilenamePattern(artifact);
+                List<SnapshotVersion> toReturn = new ArrayList<>();
+                String pageToken = null;
+                while (true) {
+                    ListFilesResponse page = listFilesPage(location, resourcePrefix, pageToken);
+                    if (Objects.nonNull(page.getFiles())) {
+                        for (GoogleDevtoolsArtifactregistryV1File file : page.getFiles()) {
+                            parseDeploy(file, filenamePattern).ifPresent(toReturn::add);
+                        }
+                    }
+                    pageToken = page.getNextPageToken();
+                    if (Objects.isNull(pageToken) || pageToken.isEmpty()) {
+                        return toReturn;
+                    }
                 }
-            }
-            pageToken = page.getNextPageToken();
-            if (Objects.isNull(pageToken) || pageToken.isEmpty()) {
-                return toReturn;
+            } catch (IOException err) {
+                ExceptionUtils.wrapAndThrow(err);
             }
         }
     }
@@ -170,7 +174,7 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
         return sslContext.getSocketFactory();
     }
     private static String snapshotFolderResourcePrefix(GoogleArtifactRegistryLocation location, Artifact artifact) {
-        return RESOURCE_JOINER.join(
+        return StringUtils.joinWith(String.valueOf(RESOURCE_SEPARATOR),
                 location.parentResource(),
                 "files",
                 artifact.getGroupId().replace('.', RESOURCE_SEPARATOR),
@@ -216,7 +220,7 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
     private static final class ZtCommandExecutor implements CommandExecutor {
         @Override
         public CommandExecutorResult executeCommand(String command, String... args) throws IOException {
-            List<String> argList = Lists.newArrayList();
+            List<String> argList = new ArrayList<>();
             argList.add(command);
             argList.addAll(List.of(args));
 
@@ -254,15 +258,17 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
             if (Objects.isNull(host) || !host.endsWith(HOST_SUFFIX)) {
                 throw new IllegalArgumentException(invalidUrlMessage(repo));
             }
-            List<String> segments = URL_PATH_SPLITTER.splitToList(Optional.ofNullable(uri.getPath()).orElse(StringUtils.EMPTY));
+            List<String> segments = Arrays.asList(StringUtils.split(Optional.ofNullable(uri.getPath()).orElse(StringUtils.EMPTY), RESOURCE_SEPARATOR));
             if (segments.size() < 2) {
                 throw new IllegalArgumentException(invalidUrlMessage(repo));
             }
             String locationId = host.substring(0, host.length() - HOST_SUFFIX.length());
-            return new GoogleArtifactRegistryLocation(segments.get(0), locationId, segments.get(1));
+
+            Iterator<String> segmentIterator = segments.iterator();
+            return new GoogleArtifactRegistryLocation(segmentIterator.next(), locationId, segmentIterator.next());
         }
         String parentResource() {
-            return RESOURCE_JOINER.join(
+            return StringUtils.joinWith(String.valueOf(RESOURCE_SEPARATOR),
                     "projects", project,
                     "locations", locationId,
                     "repositories", repository);

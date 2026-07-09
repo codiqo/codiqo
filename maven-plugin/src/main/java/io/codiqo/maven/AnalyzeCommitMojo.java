@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Collection;
 import java.util.Optional;
+import java.util.LinkedList;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -26,7 +27,6 @@ import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.RefSpec;
 
-import com.google.common.collect.Lists;
 
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.RunArgs;
@@ -154,7 +154,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             }
             ProjectBuildingResult result = ((BuildOutcome.Proceeded) buildOutcome).result();
 
-            Collection<MavenProject> reactors = Lists.newLinkedList();
+            Collection<MavenProject> reactors = new LinkedList<>();
             Optional<BuildOutcome.Skipped> moduleOutcome = buildAndCollectModules(
                     result.getProject(), clone.getWorkTree(), buildingReq, args, reactors);
             if (moduleOutcome.isPresent()) {

@@ -115,10 +115,11 @@ class TimeMachineVersionResolverTest {
     }
 
     @Test
-    void fallsBackToDelegateWhenNoMatch() throws VersionResolutionException {
+    void fallsBackToDelegateWhenNoMatchBeforeOrAfter() throws VersionResolutionException {
         System.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, "2024-01-10T00:00:00Z");
         VersionRequest request = snapshotRequest("1.0-SNAPSHOT");
         when(client.closestSnapshotBefore(any(), any(), any(), any())).thenReturn(Optional.empty());
+        when(client.closestSnapshotAfter(any(), any(), any(), any())).thenReturn(Optional.empty());
         VersionResult expected = new VersionResult(request);
         when(delegate.resolveVersion(session, request)).thenReturn(expected);
 
@@ -126,6 +127,38 @@ class TimeMachineVersionResolverTest {
 
         assertSame(expected, result);
         verify(delegate, times(1)).resolveVersion(session, request);
+    }
+
+    @Test
+    void usesForwardPickWhenNothingBeforeTarget() throws VersionResolutionException {
+        System.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, "2024-01-10T00:00:00Z");
+        VersionRequest request = snapshotRequest("1.0-SNAPSHOT");
+        when(client.closestSnapshotBefore(any(), any(), any(), any())).thenReturn(Optional.empty());
+        Instant deployedAt = Instant.parse("2024-01-10T06:00:00Z");
+        when(client.closestSnapshotAfter(any(), any(), any(), any()))
+                .thenReturn(Optional.of(new SnapshotWithMetadata("1.0-20240110.060000-1", deployedAt, repo)));
+
+        VersionResult result = resolver.resolveVersion(session, request);
+
+        assertEquals("1.0-20240110.060000-1", result.getVersion());
+        assertSame(repo, result.getRepository());
+        verify(delegate, never()).resolveVersion(any(), any());
+    }
+
+    @Test
+    void writesMetadataForForwardPick() throws VersionResolutionException {
+        System.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, "2024-01-10T00:00:00Z");
+        System.setProperty(TimeMachineConfig.PROP_META_DIR, metaDir.toString());
+        VersionRequest request = snapshotRequest("1.0-SNAPSHOT");
+        when(client.closestSnapshotBefore(any(), any(), any(), any())).thenReturn(Optional.empty());
+        Instant deployedAt = Instant.parse("2024-01-10T06:00:00Z");
+        when(client.closestSnapshotAfter(any(), any(), any(), any()))
+                .thenReturn(Optional.of(new SnapshotWithMetadata("1.0-20240110.060000-1", deployedAt, repo)));
+
+        VersionResult result = resolver.resolveVersion(session, request);
+
+        assertEquals("1.0-20240110.060000-1", result.getVersion());
+        assertEquals(1, metadataFileCount(metaDir));
     }
 
     @Test

@@ -11,4 +11,5 @@ import io.codiqo.maven.timemachine.SnapshotWithMetadata;
 
 public interface RepoClient {
     Optional<SnapshotWithMetadata> closestSnapshotBefore(RepositorySystemSession session, Artifact artifact, RemoteRepository repo, Instant target);
+    Optional<SnapshotWithMetadata> closestSnapshotAfter(RepositorySystemSession session, Artifact artifact, RemoteRepository repo, Instant target);
 }

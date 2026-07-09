@@ -12,10 +12,11 @@ import java.time.ZoneOffset;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.LinkedHashSet;
+import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
@@ -30,18 +31,12 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
-import org.eclipse.jgit.diff.PatchIdDiffFormatter;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
-import org.eclipse.jgit.revwalk.RevSort;
 import org.eclipse.jgit.revwalk.RevWalk;
-import org.eclipse.jgit.revwalk.filter.CommitTimeRevFilter;
 
-import com.google.common.base.Joiner;
-import com.google.common.collect.Iterables;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Sets;
+import org.apache.commons.collections4.ListUtils;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.ApiClient;
@@ -52,6 +47,7 @@ import io.codiqo.client.model.CommitIndexBatchResultModel;
 import io.codiqo.client.model.CommitModel;
 import io.codiqo.client.model.MissingAnalysesModel;
 import io.codiqo.client.model.ProjectModel;
+import io.codiqo.submit.CommitIndexer;
 import io.codiqo.util.Env;
 import io.codiqo.util.JGit;
 import io.codiqo.util.RepositoryUrls;
@@ -120,7 +116,7 @@ public class IndexCommitsMojo extends AbstractMojo {
 
             Period window = Period.parse(commitWindow);
             Date cutoff = Date.from(LocalDate.now(ZoneOffset.UTC).minus(window).atStartOfDay(ZoneOffset.UTC).toInstant());
-            List<CommitModel> commits = extractCommits(repo, args, indexRef, cutoff, resolvedBranch);
+            List<CommitModel> commits = CommitIndexer.extractCommits(repo, args, indexRef, cutoff, resolvedBranch);
             getLog().info("extracted " + commits.size() + " commits since " + cutoff + " (window=" + commitWindow + ")");
 
             ProjectModel projectMetadata = buildProjectMetadata(projectId, repo);
@@ -141,7 +137,7 @@ public class IndexCommitsMojo extends AbstractMojo {
         toReturn.setCode(projectId);
         toReturn.setName(Optional.ofNullable(project.getName()).filter(StringUtils::isNotBlank).orElse(project.getArtifactId()));
 
-        List<URI> repoUrls = Lists.newArrayList();
+        List<URI> repoUrls = new ArrayList<>();
         JGit.detectRemoteUrls(repo).forEach(rawUrl -> addRepositoryUri(repoUrls, rawUrl, "git remote"));
         if (CollectionUtils.isEmpty(repoUrls)) {
             Optional.ofNullable(project.getScm()).map(Scm::getDeveloperConnection).filter(StringUtils::isNotBlank).ifPresent(rawUrl -> addRepositoryUri(repoUrls, rawUrl, "project.scm.developerConnection"));
@@ -174,9 +170,9 @@ public class IndexCommitsMojo extends AbstractMojo {
             ProjectModel projectMetadata,
             List<CommitModel> commits) throws ApiException {
         int totalAccepted = 0;
-        Set<String> unknownParents = Sets.newLinkedHashSet();
+        Set<String> unknownParents = new LinkedHashSet<>();
 
-        for (List<CommitModel> chunk : Lists.partition(commits, batchSize)) {
+        for (List<CommitModel> chunk : ListUtils.partition(commits, batchSize)) {
             CommitIndexBatchModel batch = new CommitIndexBatchModel().commits(chunk).project(projectMetadata);
             CommitIndexBatchResultModel result = ApiRetry.call(
                     getLog(),
@@ -191,7 +187,7 @@ public class IndexCommitsMojo extends AbstractMojo {
         getLog().info("indexed " + totalAccepted + "/" + commits.size() + " commits");
 
         if (CollectionUtils.isNotEmpty(unknownParents)) {
-            String sample = Joiner.on(", ").join(Iterables.limit(unknownParents, UNKNOWN_PARENTS_SAMPLE_LIMIT));
+            String sample = StringUtils.join(unknownParents.stream().limit(UNKNOWN_PARENTS_SAMPLE_LIMIT).toList(), ", ");
             String suffix = unknownParents.size() > UNKNOWN_PARENTS_SAMPLE_LIMIT ? " ..." : StringUtils.EMPTY;
             getLog().warn("server reported " + unknownParents.size() + " unknown parent SHAs (re-run with a wider codiqo.commitWindow): " + sample + suffix);
         }
@@ -230,51 +226,8 @@ public class IndexCommitsMojo extends AbstractMojo {
                 .orElseThrow(() -> new MojoExecutionException(
                         "cannot resolve branch: HEAD is detached and no default branch is available; set -Dcodiqo.branch explicitly"));
     }
-    static List<CommitModel> extractCommits(
-            Repository repo,
-            RunArgs filterArgs,
-            String indexRef,
-            Date cutoff,
-            String branch) throws Exception {
-        List<CommitModel> toReturn = Lists.newArrayList();
-
-        ObjectId startId = repo.resolve(indexRef);
-        if (Objects.isNull(startId)) {
-            throw new MojoExecutionException("cannot resolve codiqo.indexRef: " + indexRef);
-        }
-
-        Map<String, List<String>> branchIndex = JGit.buildBranchIndex(repo);
-        Set<ObjectId> seenPatchIds = Sets.newHashSet();
-
-        try (RevWalk walk = new RevWalk(repo)) {
-            walk.sort(RevSort.TOPO);
-            walk.setRevFilter(CommitTimeRevFilter.after(cutoff.toInstant()));
-            walk.markStart(walk.parseCommit(startId));
-
-            for (RevCommit commit : walk) {
-                List<String> branches = branchIndex.getOrDefault(commit.getName(), Collections.emptyList());
-                if (BooleanUtils.or(new boolean[] {
-                        BooleanUtils.negate(branches.contains(branch)),
-                        BooleanUtils.negate(filterArgs.isAuthorAllowed(commit.getAuthorIdent().getEmailAddress()))
-                })) {
-                    continue;
-                }
-
-                /**
-                 * drop duplicate squash-merges: one change re-applied into the branch under two
-                 * SHAs (rebase / re-merge) shares a patch-id keep the first by order. only
-                 * single-parent commits have a stable parent difference to hash; keep merge commits.
-                 */
-                if (commit.getParentCount() == 1 && BooleanUtils.isFalse(seenPatchIds.add(patchId(repo, commit)))) {
-                    continue;
-                }
-                toReturn.add(toCommitModel(commit, branches));
-            }
-        }
-        return toReturn;
-    }
     static MissingAnalysesSelection selectAnalyzableMissingAnalyses(Repository repo, List<String> shas) throws IOException {
-        List<String> analyzable = Lists.newArrayListWithExpectedSize(shas.size());
+        List<String> analyzable = new ArrayList<>(shas.size());
         int skippedMissingCommit = 0;
         int skippedMissingParent = 0;
 
@@ -296,37 +249,6 @@ public class IndexCommitsMojo extends AbstractMojo {
 
         return new MissingAnalysesSelection(analyzable, skippedMissingCommit, skippedMissingParent);
     }
-    private static ObjectId patchId(Repository repo, RevCommit commit) throws IOException {
-        try (RevWalk walk = new RevWalk(repo);PatchIdDiffFormatter formatter = new PatchIdDiffFormatter()) {
-            RevCommit parsedCommit = walk.parseCommit(commit);
-            RevCommit parent = walk.parseCommit(parsedCommit.getParent(0));
-
-            formatter.setRepository(repo);
-            formatter.format(parent.getTree(), parsedCommit.getTree());
-            formatter.flush();
-            return formatter.getCalulatedPatchId();
-        }
-    }
-    private static CommitModel toCommitModel(RevCommit commit, List<String> branches) {
-        CommitModel toReturn = new CommitModel();
-
-        toReturn.setSha(commit.getName());
-        toReturn.setMessage(commit.getFullMessage());
-        toReturn.setAuthor(commit.getAuthorIdent().getName());
-        toReturn.setAuthorEmail(commit.getAuthorIdent().getEmailAddress());
-        toReturn.setTimestamp(commit.getAuthorIdent().getWhenAsInstant().atOffset(ZoneOffset.UTC));
-
-        toReturn.setParents(JGit.parentShas(commit));
-        toReturn.setBranches(branches);
-        toReturn.setIsMerge(JGit.isMerge(commit));
-
-        JGit.detectRevertedSha(commit.getFullMessage()).ifPresent(sha -> {
-            toReturn.setIsRevert(true);
-            toReturn.setRevertedCommitId(sha);
-        });
-        return toReturn;
-    }
-
     record MissingAnalysesSelection(
             List<String> analyzableShas,
             int skippedMissingCommitCount,

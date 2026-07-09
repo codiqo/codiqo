@@ -7,18 +7,21 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.LinkedHashSet;
+import java.util.HashSet;
+import java.util.HashMap;
+import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.math3.util.Precision;
+import org.slf4j.event.Level;
 
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.JavaInvocationCounter;
+import io.codiqo.api.logging.Log;
 import io.codiqo.llm.MovedLineDetector.MoveCandidate;
 import io.codiqo.llm.VolumeScoreCalculator.CodeBlockEffort;
 import io.codiqo.llm.VolumeScoreCalculator.FileEffort;
@@ -37,9 +40,7 @@ import io.codiqo.llm.schema.LlmScoringResponse.LinePair;
 import io.codiqo.llm.schema.LlmScoringResponse.QualityMultiplier;
 import io.codiqo.llm.schema.LlmScoringResponse.VolumeScore;
 import lombok.Value;
-import lombok.extern.slf4j.Slf4j;
 
-@Slf4j
 public class FinalScoreCalculator {
     private static final int ROUNDING_PRECISION = 2;
     private static final int MAX_ARCHITECTURE_IMPACT = 10;
@@ -48,9 +49,11 @@ public class FinalScoreCalculator {
     private final RunArgs args;
     private final VolumeScoreCalculator volumeScoreCalculator;
     private final MovedLineDetector movedLineDetector;
+    private final Log log;
 
-    public FinalScoreCalculator(RunArgs args) {
+    public FinalScoreCalculator(RunArgs args, Log log) {
         this.args = Objects.requireNonNull(args);
+        this.log = log;
         this.volumeScoreCalculator = new VolumeScoreCalculator(args);
         this.movedLineDetector = new MovedLineDetector(args);
     }
@@ -60,7 +63,7 @@ public class FinalScoreCalculator {
     }
     public void apply(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
         dropMovedPairsWhenDetectionDisabled(response);
-        DiffClassificationDeriver.derive(response, request, movedLineDetector.detect(request));
+        new DiffClassificationDeriver(log).derive(response, request, movedLineDetector.detect(request));
         DiffAdjustment adjustment = computeDiffAdjustment(response, preComputed, request);
         PreComputedScores effective = adjustment.getScores();
         Map<String, FileDiffClassification> classificationByFile = buildClassificationByFile(response);
@@ -156,9 +159,9 @@ public class FinalScoreCalculator {
         }
         if (Objects.nonNull(response.getEffortBreakdown()) && Objects.nonNull(response.getEffortBreakdown().getDiffClassification())
                 && CollectionUtils.isNotEmpty(response.getEffortBreakdown().getDiffClassification().getMovedPairs())) {
-            log.warn("diffClassification.droppedMovedPairs count={} — move detection is disabled",
+            log.warn("diffClassification.droppedMovedPairs count=%d — move detection is disabled",
                     response.getEffortBreakdown().getDiffClassification().getMovedPairs().size());
-            response.getEffortBreakdown().getDiffClassification().setMovedPairs(Lists.newArrayList());
+            response.getEffortBreakdown().getDiffClassification().setMovedPairs(new ArrayList<>());
         }
     }
     private DiffAdjustment computeDiffAdjustment(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
@@ -182,7 +185,7 @@ public class FinalScoreCalculator {
      * share at movedLineCoefficient/2, mirroring the per-line relocation charge.
      */
     private Map<String, Double> buildPerBlockMovedFactor(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
-        Map<String, Double> toReturn = Maps.newHashMap();
+        Map<String, Double> toReturn = new HashMap<>();
         if (Objects.isNull(request) || CollectionUtils.isEmpty(request.getFileChanges()) || CollectionUtils.isEmpty(preComputed.getCodeBlockEfforts())) {
             return toReturn;
         }
@@ -190,14 +193,14 @@ public class FinalScoreCalculator {
             return toReturn;
         }
 
-        Map<String, List<CodeBlockEffort>> blocksByFile = Maps.newHashMap();
+        Map<String, List<CodeBlockEffort>> blocksByFile = new HashMap<>();
         for (CodeBlockEffort cbe : preComputed.getCodeBlockEfforts()) {
             if (!cbe.isConfig()) {
-                blocksByFile.computeIfAbsent(cbe.getFile(), k -> Lists.newArrayList()).add(cbe);
+                blocksByFile.computeIfAbsent(cbe.getFile(), k -> new ArrayList<>()).add(cbe);
             }
         }
 
-        Map<String, FileChange> fileChangesByPath = Maps.newHashMapWithExpectedSize(request.getFileChanges().size());
+        Map<String, FileChange> fileChangesByPath = new HashMap<>(request.getFileChanges().size());
         for (FileChange fc : request.getFileChanges()) {
             fileChangesByPath.put(fc.getPath(), fc);
         }
@@ -249,7 +252,7 @@ public class FinalScoreCalculator {
         return toReturn;
     }
     private Map<String, Double> buildPerBlockCoeff(LlmScoringResponse response) {
-        Map<String, Double> toReturn = Maps.newHashMap();
+        Map<String, Double> toReturn = new HashMap<>();
         for (CodeBlockCategoryView view : CollectionUtils.emptyIfNull(response.getBlockCategories())) {
             if (Objects.isNull(view.getCategory()) || StringUtils.isBlank(view.getSignature())) {
                 continue;
@@ -280,14 +283,14 @@ public class FinalScoreCalculator {
             return PerFileResult.empty();
         }
 
-        Map<String, FileChange> fileChangesByPath = Maps.newHashMapWithExpectedSize(request.getFileChanges().size());
+        Map<String, FileChange> fileChangesByPath = new HashMap<>(request.getFileChanges().size());
         for (FileChange fc : request.getFileChanges()) {
             fileChangesByPath.put(fc.getPath(), fc);
         }
 
         populatePerFileScalars(classification);
 
-        Map<String, Double> perFileFactor = Maps.newHashMap();
+        Map<String, Double> perFileFactor = new HashMap<>();
         int totalCosmetic = 0;
         int totalPairsCollapsed = 0;
         int totalMovedLines = 0;
@@ -296,11 +299,11 @@ public class FinalScoreCalculator {
         for (FileDiffClassification entry : classification.getPerFile()) {
             FileChange fc = fileChangesByPath.get(entry.getFile());
             if (Objects.isNull(fc)) {
-                log.debug("diffClassification.skipReason=unknownFile file='{}'", entry.getFile());
+                log.log(Level.DEBUG, "diffClassification.skipReason=unknownFile file='%s'", entry.getFile());
                 continue;
             }
             if (!fc.isLinesJustificationRequired()) {
-                log.debug("diffClassification.skipReason=notEligible file='{}' language='{}'", entry.getFile(), fc.getLanguage());
+                log.log(Level.DEBUG, "diffClassification.skipReason=notEligible file='%s' language='%s'", entry.getFile(), fc.getLanguage());
                 continue;
             }
 
@@ -322,14 +325,14 @@ public class FinalScoreCalculator {
              * from DiffStats.categorize and the file's factor can't be trusted
              */
             if (addedTotal != fc.getLinesAdded()) {
-                log.warn("diffClassification.skipReason=addedTotalMismatch file='{}' addedTotal={} linesAdded={}",
+                log.warn("diffClassification.skipReason=addedTotalMismatch file='%s' addedTotal=%d linesAdded=%d",
                         entry.getFile(),
                         addedTotal,
                         fc.getLinesAdded());
                 continue;
             }
             if (deletedTotal != fc.getLinesDeleted()) {
-                log.warn("diffClassification.skipReason=deletedTotalMismatch file='{}' deletedTotal={} linesDeleted={}",
+                log.warn("diffClassification.skipReason=deletedTotalMismatch file='%s' deletedTotal=%d linesDeleted=%d",
                         entry.getFile(),
                         deletedTotal,
                         fc.getLinesDeleted());
@@ -401,13 +404,13 @@ public class FinalScoreCalculator {
     }
     private static Map<String, FileDiffClassification> buildClassificationByFile(LlmScoringResponse response) {
         if (Objects.isNull(response.getEffortBreakdown()) || Objects.isNull(response.getEffortBreakdown().getDiffClassification())) {
-            return Maps.newHashMap();
+            return new HashMap<>();
         }
         List<FileDiffClassification> perFile = response.getEffortBreakdown().getDiffClassification().getPerFile();
         if (CollectionUtils.isEmpty(perFile)) {
-            return Maps.newHashMap();
+            return new HashMap<>();
         }
-        Map<String, FileDiffClassification> toReturn = Maps.newHashMapWithExpectedSize(perFile.size());
+        Map<String, FileDiffClassification> toReturn = new HashMap<>(perFile.size());
         for (FileDiffClassification entry : perFile) {
             toReturn.put(entry.getFile(), entry);
         }
@@ -446,7 +449,7 @@ public class FinalScoreCalculator {
         List<CodeBlockEffort> blocks = fe.getCodeBlockEfforts();
         int[] collapsedPairs = collapsedPairsPerBlock(fileClassification, blocks);
 
-        List<CodeBlockEffortView> blockViews = Lists.newArrayListWithCapacity(blocks.size());
+        List<CodeBlockEffortView> blockViews = new ArrayList<>(blocks.size());
         for (int i = 0; i < blocks.size(); i++) {
             blockViews.add(toCodeBlockEffortView(blocks.get(i), collapsedPairs[i]));
         }
@@ -590,7 +593,7 @@ public class FinalScoreCalculator {
      * violated and are no longer checked.
      */
     public ValidationReport validate(LlmScoringResponse response, LlmScoringRequest request) {
-        List<ValidationFailure> failures = Lists.newArrayList();
+        List<ValidationFailure> failures = new ArrayList<>();
 
         if (Objects.isNull(response.getEffortBreakdown()) || Objects.isNull(response.getEffortBreakdown().getDiffClassification())) {
             return new ValidationReport(failures);
@@ -611,7 +614,7 @@ public class FinalScoreCalculator {
             return new ValidationReport(failures);
         }
 
-        Map<String, FileChange> fileChangesByPath = Maps.newHashMapWithExpectedSize(request.getFileChanges().size());
+        Map<String, FileChange> fileChangesByPath = new HashMap<>(request.getFileChanges().size());
         for (FileChange fc : request.getFileChanges()) {
             fileChangesByPath.put(fc.getPath(), fc);
         }
@@ -624,11 +627,11 @@ public class FinalScoreCalculator {
 
             UnifiedDiffLines diffLines = UnifiedDiffLines.parse(fc.getDiff(), fc.getLineFilter());
 
-            Set<String> validBlockIds = Sets.newLinkedHashSet();
+            Set<String> validBlockIds = new LinkedHashSet<>();
             for (UnifiedDiffLines.ChangeBlock block : diffLines.getBlocks()) {
                 validBlockIds.add(block.getId());
             }
-            List<String> unknownBlocks = Lists.newArrayList();
+            List<String> unknownBlocks = new ArrayList<>();
             if (MapUtils.isNotEmpty(entry.getBlockKinds())) {
                 for (String blockId : entry.getBlockKinds().keySet()) {
                     if (!validBlockIds.contains(blockId)) {
@@ -638,7 +641,7 @@ public class FinalScoreCalculator {
             }
             if (CollectionUtils.isNotEmpty(unknownBlocks)) {
                 failures.add(new ValidationFailure(entry.getFile(), FailureReason.UNKNOWN_BLOCK,
-                        unknownBlocks, Lists.newArrayList(validBlockIds)));
+                        unknownBlocks, new ArrayList<>(validBlockIds)));
             }
 
             List<String> unknownAdded = unknownLines(entry.getCosmeticAdded(), diffLines.getCandidateAddedLines());
@@ -662,9 +665,9 @@ public class FinalScoreCalculator {
     private static void validateConfirmedMoveIds(DiffClassification classification, List<MoveCandidate> moveCandidates, List<ValidationFailure> failures) {
         if (CollectionUtils.isNotEmpty(classification.getConfirmedMoveIds())) {
             List<String> validIds = moveCandidates.stream().map(MoveCandidate::getId).toList();
-            Set<String> validSet = Sets.newHashSet(validIds);
+            Set<String> validSet = new HashSet<>(validIds);
 
-            List<String> unknownIds = Lists.newArrayList();
+            List<String> unknownIds = new ArrayList<>();
             for (String id : classification.getConfirmedMoveIds()) {
                 if (Objects.isNull(id) || !validSet.contains(id)) {
                     unknownIds.add(String.valueOf(id));
@@ -682,19 +685,19 @@ public class FinalScoreCalculator {
      */
     private static void validateMovedPairs(DiffClassification classification, LlmScoringRequest request, List<MoveCandidate> moveCandidates, List<ValidationFailure> failures) {
         if (CollectionUtils.isNotEmpty(classification.getMovedPairs())) {
-            Map<String, UnifiedDiffLines> diffLinesByFile = Maps.newHashMap();
+            Map<String, UnifiedDiffLines> diffLinesByFile = new HashMap<>();
             for (FileChange fc : request.getFileChanges()) {
                 if (fc.isLinesJustificationRequired() && StringUtils.isNotBlank(fc.getDiff())) {
                     diffLinesByFile.put(fc.getPath(), UnifiedDiffLines.parse(fc.getDiff(), fc.getLineFilter()));
                 }
             }
 
-            Map<String, MoveCandidate> candidatesById = Maps.newHashMap();
+            Map<String, MoveCandidate> candidatesById = new HashMap<>();
             for (MoveCandidate candidate : moveCandidates) {
                 candidatesById.put(candidate.getId(), candidate);
             }
-            Set<String> claimedDeleted = Sets.newHashSet();
-            Set<String> claimedAdded = Sets.newHashSet();
+            Set<String> claimedDeleted = new HashSet<>();
+            Set<String> claimedAdded = new HashSet<>();
             for (String id : CollectionUtils.emptyIfNull(classification.getConfirmedMoveIds())) {
                 MoveCandidate candidate = candidatesById.get(id);
                 if (Objects.nonNull(candidate)) {
@@ -703,7 +706,7 @@ public class FinalScoreCalculator {
                 }
             }
 
-            List<String> offending = Lists.newArrayList();
+            List<String> offending = new ArrayList<>();
             for (String raw : classification.getMovedPairs()) {
                 Optional<MovedPair> parsed = MovedPair.parse(raw);
                 if (parsed.isEmpty()) {
@@ -730,7 +733,7 @@ public class FinalScoreCalculator {
         }
     }
     private static List<String> unknownLines(List<Integer> cited, Set<Integer> valid) {
-        List<String> unknown = Lists.newArrayList();
+        List<String> unknown = new ArrayList<>();
         for (Integer line : CollectionUtils.emptyIfNull(cited)) {
             if (Objects.isNull(line) || !valid.contains(line)) {
                 unknown.add(String.valueOf(line));
@@ -775,7 +778,7 @@ public class FinalScoreCalculator {
         DiffBookkeeping bookkeeping;
 
         static PerFileResult empty() {
-            return new PerFileResult(Maps.newHashMap(), DiffBookkeeping.zero());
+            return new PerFileResult(new HashMap<>(), DiffBookkeeping.zero());
         }
     }
 

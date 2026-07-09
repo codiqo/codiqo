@@ -15,10 +15,12 @@ public class TimeMachineConfig {
     public static final String PROP_COMMIT_TIMESTAMP = "codiqo.commit.timestamp";
     public static final String PROP_HTTP_TIMEOUT_SECONDS = "codiqo.timemachine.httpTimeoutSeconds";
     public static final String PROP_MAX_STALENESS = "codiqo.timemachine.maxStaleness";
+    public static final String PROP_FORWARD_WINDOW = "codiqo.timemachine.forwardWindow";
     public static final String PROP_META_DIR = "codiqo.timemachine.metaDir";
 
     private static final int DEFAULT_HTTP_TIMEOUT_SECONDS = 30;
     private static final String DEFAULT_MAX_STALENESS = "P90D";
+    private static final String DEFAULT_FORWARD_WINDOW = "P1D";
 
     public static Optional<Instant> targetTimestamp() {
         String raw = System.getProperty(PROP_COMMIT_TIMESTAMP);
@@ -45,6 +47,13 @@ public class TimeMachineConfig {
         String raw = System.getProperty(PROP_MAX_STALENESS);
         if (isBlank(raw)) {
             raw = DEFAULT_MAX_STALENESS;
+        }
+        return Duration.parse(raw);
+    }
+    public static Duration forwardWindow() {
+        String raw = System.getProperty(PROP_FORWARD_WINDOW);
+        if (isBlank(raw)) {
+            raw = DEFAULT_FORWARD_WINDOW;
         }
         return Duration.parse(raw);
     }

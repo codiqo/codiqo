@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Predicate;
+import java.util.stream.Stream;
 
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -32,6 +34,13 @@ public class DefaultRepoClient implements RepoClient {
     }
     @Override
     public Optional<SnapshotWithMetadata> closestSnapshotBefore(RepositorySystemSession session, Artifact artifact, RemoteRepository repo, Instant target) {
+        return select(session, artifact, repo, deployedAt -> !deployedAt.isAfter(target), true);
+    }
+    @Override
+    public Optional<SnapshotWithMetadata> closestSnapshotAfter(RepositorySystemSession session, Artifact artifact, RemoteRepository repo, Instant target) {
+        return select(session, artifact, repo, deployedAt -> deployedAt.isAfter(target), false);
+    }
+    private Optional<SnapshotWithMetadata> select(RepositorySystemSession session, Artifact artifact, RemoteRepository repo, Predicate<Instant> when, boolean latest) {
         SnapshotConnector connector = connectors.stream().filter(c -> c.supports(repo)).findFirst().orElse(null);
         if (Objects.isNull(connector)) {
             log.debug("no connector supports {} ({}); skipping", repo.getId(), repo.getUrl());
@@ -44,11 +53,13 @@ public class DefaultRepoClient implements RepoClient {
             log.warn("failed to enumerate snapshots in {} for {}: {}", repo.getId(), artifact, err.getMessage());
             return Optional.empty();
         }
-        return deploys.stream()
+
+        Comparator<Map.Entry<SnapshotVersion, Instant>> byDeployedAt = Comparator.comparing(Map.Entry::getValue);
+        Stream<Map.Entry<SnapshotVersion, Instant>> candidates = deploys.stream()
                 .filter(sv -> matches(sv, artifact))
                 .map(sv -> Map.entry(sv, SnapshotConnector.parse(sv.getUpdated())))
-                .filter(entry -> !entry.getValue().isAfter(target))
-                .max(Comparator.comparing(Map.Entry::getValue))
+                .filter(entry -> when.test(entry.getValue()));
+        return (latest ? candidates.max(byDeployedAt) : candidates.min(byDeployedAt))
                 .map(entry -> new SnapshotWithMetadata(entry.getKey().getVersion(), entry.getValue(), repo));
     }
     private static boolean matches(SnapshotVersion sv, Artifact artifact) {

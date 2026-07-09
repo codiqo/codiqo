@@ -69,10 +69,11 @@
         <snakeyaml.version>2.6</snakeyaml.version>
         <okio.version>3.17.0</okio.version>
         <okhttp.version>5.4.0</okhttp.version>
+        <!-- no codiqo module uses guava directly; this pins the version pulled transitively by the
+             Google Cloud Artifact Registry client (maven-time-machine) so it can't drift/collide -->
         <guava.version>33.6.0-jre</guava.version>
         <vavr.version>1.0.0</vavr.version>
         <jgit.version>7.7.0.202606012155-r</jgit.version>
-        <listenablefuture.version>9999.0-empty-to-avoid-conflict-with-guava</listenablefuture.version>
         <reactor.version>2025.0.6</reactor.version>
         <ztzip.version>1.18.1</ztzip.version>
         <ztkill.version>1.11</ztkill.version>
@@ -90,7 +91,9 @@
         <classgraph.version>4.8.184</classgraph.version>
         <oshi.version>7.3.2</oshi.version>
         <openapi.version>4.41.0</openapi.version>
+        <djl.tokenizers.version>0.36.0</djl.tokenizers.version>
         <jtokkit.version>1.1.0</jtokkit.version>
+        <gradle.api.version>8.10.2</gradle.api.version>
         <thymeleaf.version>3.1.5.RELEASE</thymeleaf.version>
         <commons-lang3.version>3.20.0</commons-lang3.version>
         <commons-collections4.version>4.5.0</commons-collections4.version>
@@ -157,6 +160,11 @@
                 <version>${mockito.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>dev.gradleplugins</groupId>
+                <artifactId>gradle-api</artifactId>
+                <version>${gradle.api.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.google.guava</groupId>
@@ -508,11 +516,6 @@
                 <version>${vavr.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.google.guava</groupId>
-                <artifactId>listenablefuture</artifactId>
-                <version>${listenablefuture.version}</version>
-            </dependency>
-            <dependency>
                 <groupId>com.openai</groupId>
                 <artifactId>openai-java</artifactId>
                 <version>${openapi.version}</version>
@@ -526,6 +529,11 @@
                 <groupId>com.openai</groupId>
                 <artifactId>openai-java-core</artifactId>
                 <version>${openapi.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ai.djl.huggingface</groupId>
+                <artifactId>tokenizers</artifactId>
+                <version>${djl.tokenizers.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.knuddels</groupId>
@@ -1285,7 +1293,9 @@
         <module>lang-java</module>
         <module>lang-config</module>
         <module>maven-time-machine</module>
+        <module>submit</module>
         <module>maven-plugin</module>
+        <module>gradle-plugin</module>
         <module>openapi</module>
         <module>llm</module>
     </modules>

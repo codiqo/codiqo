@@ -23,6 +23,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.maven.artifact.repository.metadata.SnapshotVersion;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.Artifact;
@@ -92,10 +93,12 @@ class GoogleArtifactRegistryConnectorTest {
         Artifact artifact = new DefaultArtifact("g", "a", StringUtils.EMPTY, "jar", "1.0-SNAPSHOT");
         RepositorySystemSession session = mock(RepositorySystemSession.class);
 
-        IOException err = org.junit.jupiter.api.Assertions.assertThrows(
-                IOException.class,
+        Throwable err = org.junit.jupiter.api.Assertions.assertThrows(
+                RuntimeException.class,
                 () -> connector.listDeploys(session, artifact, garRepo));
-        org.junit.jupiter.api.Assertions.assertEquals("simulated auth failure", err.getMessage());
+        Throwable rootCause = ExceptionUtils.getRootCause(err);
+        assertTrue(rootCause instanceof IOException, "root cause should be the transport IOException");
+        assertEquals("simulated auth failure", rootCause.getMessage());
     }
 
     @Test

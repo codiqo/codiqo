@@ -17,6 +17,8 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.List;
+import java.util.HashMap;
 
 import org.eclipse.lsp4j.CallHierarchyCapabilities;
 import org.eclipse.lsp4j.ClientCapabilities;
@@ -93,9 +95,6 @@ import org.eclipse.lsp4j.services.LanguageClient;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.slf4j.event.Level;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Maps;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.common.AsFlux;
@@ -176,7 +175,7 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
         params.setProcessId(pid);
         params.setLocale("en");
         params.setTrace("verbose");
-        params.setWorkspaceFolders(ImmutableList.of(new WorkspaceFolder(projectRoot.toUri().toString(), projectRoot.getFileName().toString())));
+        params.setWorkspaceFolders(List.of(new WorkspaceFolder(projectRoot.toUri().toString(), projectRoot.getFileName().toString())));
 
         ClientCapabilities cap = new ClientCapabilities();
         WorkspaceClientCapabilities ws = new WorkspaceClientCapabilities();
@@ -186,7 +185,7 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
 
         WorkspaceEditCapabilities workspaceEdit = new WorkspaceEditCapabilities();
         workspaceEdit.setDocumentChanges(true);
-        workspaceEdit.setResourceOperations(ImmutableList.of(ResourceOperationKind.Create, ResourceOperationKind.Rename, ResourceOperationKind.Delete));
+        workspaceEdit.setResourceOperations(List.of(ResourceOperationKind.Create, ResourceOperationKind.Rename, ResourceOperationKind.Delete));
         workspaceEdit.setFailureHandling(FailureHandlingKind.TextOnlyTransactional);
         workspaceEdit.setNormalizesLineEndings(true);
         ws.setWorkspaceEdit(workspaceEdit);
@@ -213,7 +212,7 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
 
         PublishDiagnosticsCapabilities publishDiagnostics = new PublishDiagnosticsCapabilities();
         publishDiagnostics.setRelatedInformation(true);
-        publishDiagnostics.setTagSupport(new DiagnosticsTagSupport(ImmutableList.of(DiagnosticTag.Unnecessary, DiagnosticTag.Deprecated)));
+        publishDiagnostics.setTagSupport(new DiagnosticsTagSupport(List.of(DiagnosticTag.Unnecessary, DiagnosticTag.Deprecated)));
         publishDiagnostics.setCodeDescriptionSupport(true);
         publishDiagnostics.setDataSupport(true);
         textDocument.setPublishDiagnostics(publishDiagnostics);
@@ -223,20 +222,20 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
         completion.setContextSupport(true);
         CompletionItemCapabilities compItem = new CompletionItemCapabilities(false);
         compItem.setCommitCharactersSupport(true);
-        compItem.setDocumentationFormat(ImmutableList.of(MarkupKind.MARKDOWN, MarkupKind.PLAINTEXT));
+        compItem.setDocumentationFormat(List.of(MarkupKind.MARKDOWN, MarkupKind.PLAINTEXT));
         compItem.setDeprecatedSupport(true);
         compItem.setPreselectSupport(true);
-        compItem.setResolveSupport(new CompletionItemResolveSupportCapabilities(ImmutableList.of("documentation", "detail", "additionalTextEdits")));
+        compItem.setResolveSupport(new CompletionItemResolveSupportCapabilities(List.of("documentation", "detail", "additionalTextEdits")));
         compItem.setLabelDetailsSupport(true);
         completion.setCompletionItem(compItem);
         completion.setCompletionItemKind(
                 new CompletionItemKindCapabilities(IntStream.rangeClosed(1, 25).mapToObj(CompletionItemKind::forValue).collect(Collectors.toList())));
         textDocument.setCompletion(completion);
-        textDocument.setHover(new HoverCapabilities(ImmutableList.of(MarkupKind.MARKDOWN, MarkupKind.PLAINTEXT), true));
+        textDocument.setHover(new HoverCapabilities(List.of(MarkupKind.MARKDOWN, MarkupKind.PLAINTEXT), true));
 
         SignatureHelpCapabilities signatureHelp = new SignatureHelpCapabilities();
         signatureHelp.setDynamicRegistration(true);
-        SignatureInformationCapabilities sigInfo = new SignatureInformationCapabilities(ImmutableList.of(MarkupKind.MARKDOWN, MarkupKind.PLAINTEXT));
+        SignatureInformationCapabilities sigInfo = new SignatureInformationCapabilities(List.of(MarkupKind.MARKDOWN, MarkupKind.PLAINTEXT));
         sigInfo.setParameterInformation(new ParameterInformationCapabilities(true));
         sigInfo.setActiveParameterSupport(true);
         signatureHelp.setSignatureInformation(sigInfo);
@@ -265,7 +264,7 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
 
         SemanticTokensCapabilities semanticTokens = new SemanticTokensCapabilities(true);
         semanticTokens.setTokenTypes(
-                ImmutableList.of(
+                List.of(
                         "namespace",
                         "type",
                         "class",
@@ -290,7 +289,7 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
                         "operator",
                         "decorator"));
         semanticTokens.setTokenModifiers(
-                ImmutableList.of(
+                List.of(
                         "declaration",
                         "definition",
                         "readonly",
@@ -301,7 +300,7 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
                         "modification",
                         "documentation",
                         "defaultLibrary"));
-        semanticTokens.setFormats(ImmutableList.of(TokenFormat.Relative));
+        semanticTokens.setFormats(List.of(TokenFormat.Relative));
         semanticTokens.setRequests(new SemanticTokensClientCapabilitiesRequests(new SemanticTokensClientCapabilitiesRequestsFull(true), true));
         textDocument.setSemanticTokens(semanticTokens);
         textDocument.setInlayHint(new InlayHintCapabilities(true));
@@ -310,59 +309,59 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
 
         GeneralClientCapabilities general = new GeneralClientCapabilities();
         general.setStaleRequestSupport(new StaleRequestCapabilities(true,
-                ImmutableList.of(
+                List.of(
                         "textDocument/semanticTokens/full",
                         "textDocument/semanticTokens/range",
                         "textDocument/semanticTokens/full/delta")));
-        general.setPositionEncodings(ImmutableList.of(PositionEncodingKind.UTF16));
+        general.setPositionEncodings(List.of(PositionEncodingKind.UTF16));
         cap.setGeneral(general);
         params.setCapabilities(cap);
 
-        Map<String, Object> java = Maps.newHashMap();
+        Map<String, Object> java = new HashMap<>();
 
-        Map<String, Object> jdt = Maps.newHashMap();
-        Map<String, Object> ls = Maps.newHashMap();
-        ls.put("lombokSupport", ImmutableMap.of("enabled", true));
-        ls.put("protobufSupport", ImmutableMap.of("enabled", true));
-        ls.put("androidSupport", ImmutableMap.of("enabled", true));
-        ls.put("aspectjSupportEnabled", ImmutableMap.of("enabled", true));
-        ls.put("javac", ImmutableMap.of("enabled", false));
+        Map<String, Object> jdt = new HashMap<>();
+        Map<String, Object> ls = new HashMap<>();
+        ls.put("lombokSupport", Map.of("enabled", true));
+        ls.put("protobufSupport", Map.of("enabled", true));
+        ls.put("androidSupport", Map.of("enabled", true));
+        ls.put("aspectjSupportEnabled", Map.of("enabled", true));
+        ls.put("javac", Map.of("enabled", false));
         jdt.put("ls", ls);
 
         java.put("jdt", jdt);
-        java.put("errors", ImmutableMap.of("incompleteClasspath", ImmutableMap.of("severity", "warning")));
+        java.put("errors", Map.of("incompleteClasspath", Map.of("severity", "warning")));
 
-        Map<String, Object> configuration = Maps.newHashMap();
+        Map<String, Object> configuration = new HashMap<>();
         configuration.put("checkProjectSettingsExclusions", false);
         configuration.put("updateBuildConfiguration", "automatic");
         configuration.put("workspaceCacheLimit", 90);
-        configuration.put("runtimes", ImmutableList.of());
+        configuration.put("runtimes", List.of());
 
-        Map<String, Object> mavenConfig = Maps.newHashMap();
+        Map<String, Object> mavenConfig = new HashMap<>();
         mavenConfig.put("notCoveredPluginExecutionSeverity", "warning");
         mavenConfig.put("defaultMojoExecutionAction", "ignore");
         mavenConfig.put("lifecycleMappings", null);
         configuration.put("maven", mavenConfig);
         java.put("configuration", configuration);
 
-        java.put("trace", ImmutableMap.of("server", "verbose"));
+        java.put("trace", Map.of("server", "verbose"));
 
-        Map<String, Object> importOpts = Maps.newHashMap();
+        Map<String, Object> importOpts = new HashMap<>();
 
-        Map<String, Object> mavenImport = Maps.newHashMap();
+        Map<String, Object> mavenImport = new HashMap<>();
         mavenImport.put("enabled", true);
-        mavenImport.put("offline", ImmutableMap.of("enabled", false));
+        mavenImport.put("offline", Map.of("enabled", false));
         mavenImport.put("disableTestClasspathFlag", false);
         importOpts.put("maven", mavenImport);
 
-        Map<String, Object> gradleImport = Maps.newHashMap();
+        Map<String, Object> gradleImport = new HashMap<>();
         gradleImport.put("enabled", true);
-        gradleImport.put("wrapper", ImmutableMap.of("enabled", true));
-        gradleImport.put("offline", ImmutableMap.of("enabled", false));
-        gradleImport.put("annotationProcessing", ImmutableMap.of("enabled", true));
+        gradleImport.put("wrapper", Map.of("enabled", true));
+        gradleImport.put("offline", Map.of("enabled", false));
+        gradleImport.put("annotationProcessing", Map.of("enabled", true));
         importOpts.put("gradle", gradleImport);
 
-        importOpts.put("exclusions", ImmutableList.of(
+        importOpts.put("exclusions", List.of(
                 "**/node_modules/**",
                 "**/.metadata/**",
                 "**/archetype-resources/**",
@@ -370,58 +369,58 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
         importOpts.put("generatesMetadataFilesAtProjectRoot", false);
         java.put("import", importOpts);
 
-        java.put("maven", ImmutableMap.of("downloadSources", false, "updateSnapshots", false));
-        java.put("eclipse", ImmutableMap.of("downloadSources", false));
-        java.put("signatureHelp", ImmutableMap.of("enabled", true, "description", ImmutableMap.of("enabled", true)));
+        java.put("maven", Map.of("downloadSources", false, "updateSnapshots", false));
+        java.put("eclipse", Map.of("downloadSources", false));
+        java.put("signatureHelp", Map.of("enabled", true, "description", Map.of("enabled", true)));
 
-        java.put("referencesCodeLens", ImmutableMap.of("enabled", true));
+        java.put("referencesCodeLens", Map.of("enabled", true));
         java.put("implementationsCodeLens", "all");
 
-        Map<String, Object> format = Maps.newHashMap();
+        Map<String, Object> format = new HashMap<>();
         format.put("enabled", true);
-        format.put("comments", ImmutableMap.of("enabled", true));
-        format.put("onType", ImmutableMap.of("enabled", true));
+        format.put("comments", Map.of("enabled", true));
+        format.put("onType", Map.of("enabled", true));
         format.put("insertSpaces", true);
         format.put("tabSize", 4);
         java.put("format", format);
 
-        java.put("saveActions", ImmutableMap.of("organizeImports", false));
+        java.put("saveActions", Map.of("organizeImports", false));
 
-        Map<String, Object> project = Maps.newHashMap();
-        project.put("referencedLibraries", ImmutableList.of("lib/**/*.jar"));
+        Map<String, Object> project = new HashMap<>();
+        project.put("referencedLibraries", List.of("lib/**/*.jar"));
         project.put("importOnFirstTimeStartup", "automatic");
         project.put("importHint", true);
-        project.put("resourceFilters", ImmutableList.of("node_modules", "\\.git"));
+        project.put("resourceFilters", List.of("node_modules", "\\.git"));
         project.put("encoding", "ignore");
-        project.put("sourcePaths", ImmutableList.of());
+        project.put("sourcePaths", List.of());
         project.put("outputPath", null);
         java.put("project", project);
 
-        java.put("autobuild", ImmutableMap.of("enabled", args.isAutoBuild()));
+        java.put("autobuild", Map.of("enabled", args.isAutoBuild()));
         java.put("maxConcurrentBuilds", Runtime.getRuntime().availableProcessors());
-        java.put("selectionRange", ImmutableMap.of("enabled", true));
+        java.put("selectionRange", Map.of("enabled", true));
 
-        java.put("server", ImmutableMap.of("launchMode", "Standard"));
-        java.put("imports", ImmutableMap.of("gradle", ImmutableMap.of("wrapper", ImmutableMap.of("checksums", ImmutableList.of()))));
-        java.put("typeHierarchy", ImmutableMap.of("lazyLoad", false));
-        java.put("templates", ImmutableMap.of("fileHeader", ImmutableList.of(), "typeComment", ImmutableList.of()));
-        java.put("symbols", ImmutableMap.of("includeSourceMethodDeclarations", false));
-        java.put("search", ImmutableMap.of("scope", "main"));
-        java.put("references", ImmutableMap.of("includeAccessors", true, "includeDecompiledSources", args.isJdtIncludeDecompiledSources()));
+        java.put("server", Map.of("launchMode", "Standard"));
+        java.put("imports", Map.of("gradle", Map.of("wrapper", Map.of("checksums", List.of()))));
+        java.put("typeHierarchy", Map.of("lazyLoad", false));
+        java.put("templates", Map.of("fileHeader", List.of(), "typeComment", List.of()));
+        java.put("symbols", Map.of("includeSourceMethodDeclarations", false));
+        java.put("search", Map.of("scope", "main"));
+        java.put("references", Map.of("includeAccessors", true, "includeDecompiledSources", args.isJdtIncludeDecompiledSources()));
 
-        java.put("quickfix", ImmutableMap.of("showAt", "line"));
-        java.put("codeAction", ImmutableMap.of("sortMembers", ImmutableMap.of("avoidVolatileChanges", true)));
-        java.put("inlayHints", ImmutableMap.of("parameterNames", ImmutableMap.of("enabled", "literals", "exclusions", ImmutableList.of())));
+        java.put("quickfix", Map.of("showAt", "line"));
+        java.put("codeAction", Map.of("sortMembers", Map.of("avoidVolatileChanges", true)));
+        java.put("inlayHints", Map.of("parameterNames", Map.of("enabled", "literals", "exclusions", List.of())));
 
-        Map<String, Object> codeGeneration = Maps.newHashMap();
+        Map<String, Object> codeGeneration = new HashMap<>();
         codeGeneration.put("generateComments", false);
         codeGeneration.put("useBlocks", false);
         codeGeneration.put("insertionLocation", "lastMember");
         codeGeneration.put("addFinalForNewDeclaration", "none");
 
-        codeGeneration.put("hashCodeEquals", ImmutableMap.of("useJava7Objects", true, "useInstanceof", true, "generateComments", false));
+        codeGeneration.put("hashCodeEquals", Map.of("useJava7Objects", true, "useInstanceof", true, "generateComments", false));
 
-        codeGeneration.put("toString", ImmutableMap.of(
+        codeGeneration.put("toString", Map.of(
                 "codeStyle", "STRING_CONCATENATION",
                 "template", "${object.className} [${member.name()}=${member.value}, ${otherMembers}]",
                 "skipNullValues", false,
@@ -429,30 +428,30 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
                 "limitElements", 0));
         java.put("codeGeneration", codeGeneration);
 
-        java.put("compile", ImmutableMap.of("nullAnalysis", ImmutableMap.of(
-                "nonnull", ImmutableList.of(
+        java.put("compile", Map.of("nullAnalysis", Map.of(
+                "nonnull", List.of(
                         "javax.annotation.Nonnull",
                         "org.eclipse.jdt.annotation.NonNull",
                         "org.springframework.lang.NonNull",
                         "org.jetbrains.annotations.NotNull"),
-                "nullable", ImmutableList.of(
+                "nullable", List.of(
                         "javax.annotation.Nullable",
                         "org.eclipse.jdt.annotation.Nullable",
                         "org.springframework.lang.Nullable",
                         "org.jetbrains.annotations.Nullable"),
-                "nonnullbydefault", ImmutableList.of(
+                "nonnullbydefault", List.of(
                         "javax.annotation.ParametersAreNonnullByDefault",
                         "org.eclipse.jdt.annotation.NonNullByDefault",
                         "org.springframework.lang.NonNullApi"),
                 "mode", "automatic")));
 
-        java.put("sharedIndexes", ImmutableMap.of("enabled", args.isJdtUseSharedIndex() ? "auto" : "off"));
+        java.put("sharedIndexes", Map.of("enabled", args.isJdtUseSharedIndex() ? "auto" : "off"));
 
-        Map<String, Object> completions = Maps.newHashMap();
+        Map<String, Object> completions = new HashMap<>();
         completions.put("enabled", true);
         completions.put("overwrite", true);
         completions.put("favoriteStaticMembers",
-                ImmutableList.of(
+                List.of(
                         "org.junit.Assert.*",
                         "org.junit.Assume.*",
                         "org.junit.jupiter.api.Assertions.*",
@@ -464,7 +463,7 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
                         "org.mockito.Answers.*",
                         "org.assertj.core.api.Assertions.*"));
         completions.put("filteredTypes",
-                ImmutableList.of(
+                List.of(
                         "java.awt.*",
                         "com.sun.*",
                         "sun.*",
@@ -472,33 +471,33 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
                         "org.graalvm.*",
                         "io.micrometer.shaded.*"));
         completions.put("guessMethodArguments", "insertParameterNames");
-        completions.put("importOrder", ImmutableList.of("java", "javax", "org", "com"));
+        completions.put("importOrder", List.of("java", "javax", "org", "com"));
         completions.put("maxResults", 0);
-        completions.put("postfix", ImmutableMap.of("enabled", true));
-        completions.put("chain", ImmutableMap.of("enabled", false));
-        completions.put("lazyResolveTextEdit", ImmutableMap.of("enabled", true));
+        completions.put("postfix", Map.of("enabled", true));
+        completions.put("chain", Map.of("enabled", false));
+        completions.put("lazyResolveTextEdit", Map.of("enabled", true));
         completions.put("matchCase", "off");
         completions.put("collapseCompletionItems", false);
         java.put("completion", completions);
 
-        java.put("foldingRange", ImmutableMap.of("enabled", true));
-        java.put("cleanup", ImmutableMap.of("actionsOnSave", ImmutableList.of()));
-        java.put("recommendations", ImmutableMap.of("dependency", ImmutableMap.of("analytics", ImmutableMap.of("show", true))));
-        java.put("diagnostic", ImmutableMap.of("filter", ImmutableList.of()));
+        java.put("foldingRange", Map.of("enabled", true));
+        java.put("cleanup", Map.of("actionsOnSave", List.of()));
+        java.put("recommendations", Map.of("dependency", Map.of("analytics", Map.of("show", true))));
+        java.put("diagnostic", Map.of("filter", List.of()));
         java.put("silentNotification", false);
-        java.put("showBuildStatusOnStart", ImmutableMap.of("enabled", "notification"));
-        java.put("help", ImmutableMap.of("firstView", "auto", "showReleaseNotes", false, "collectErrorLog", true));
+        java.put("showBuildStatusOnStart", Map.of("enabled", "notification"));
+        java.put("help", Map.of("firstView", "auto", "showReleaseNotes", false, "collectErrorLog", true));
 
-        java.put("test", ImmutableMap.of("defaultConfig", "", "config", ImmutableMap.of()));
-        java.put("dependency", ImmutableMap.of("showMembers", false, "syncWithFolderExplorer", true, "autoRefresh", true, "packagePresentation", "flat"));
-        java.put("refactoring", ImmutableMap.of("extract", ImmutableMap.of("interface", ImmutableMap.of("replace", true))));
-        java.put("edit", ImmutableMap.of("smartSemicolonDetection", ImmutableMap.of("enabled", false), "validateAllOpenBuffersOnChanges", true));
+        java.put("test", Map.of("defaultConfig", "", "config", Map.of()));
+        java.put("dependency", Map.of("showMembers", false, "syncWithFolderExplorer", true, "autoRefresh", true, "packagePresentation", "flat"));
+        java.put("refactoring", Map.of("extract", Map.of("interface", Map.of("replace", true))));
+        java.put("edit", Map.of("smartSemicolonDetection", Map.of("enabled", false), "validateAllOpenBuffersOnChanges", true));
 
         java.put("memberSortOrder", "T,SF,SI,SM,F,I,C,M");
-        java.put("rename", ImmutableMap.of("enabled", true));
-        java.put("telemetry", ImmutableMap.of("enabled", false));
+        java.put("rename", Map.of("enabled", true));
+        java.put("telemetry", Map.of("enabled", false));
 
-        ImmutableMap<String, Serializable> toApply = ImmutableMap.of("bundles", ImmutableList.of(), "settings", ImmutableMap.of("java", java));
+        Map<String, Serializable> toApply = Map.<String, Serializable>of("bundles", (Serializable) List.of(), "settings", (Serializable) Map.of("java", java));
         params.setInitializationOptions(toApply);
 
         LanguageServer remoteProxy = launcher.getRemoteProxy();

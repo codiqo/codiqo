@@ -88,10 +88,60 @@ class DefaultRepoClientTest {
         when(connector.listDeploys(any(), any(), any())).thenReturn(List.of(
                 deploy("1.0-20240115.103045-7", StringUtils.EMPTY, "jar", "2024-01-15T10:30:45Z")));
 
-        Optional<SnapshotWithMetadata> result = client.closestSnapshotBefore(
+        Optional<SnapshotWithMetadata> before = client.closestSnapshotBefore(
+                session, jar("1.0-SNAPSHOT"), repo, Instant.parse("2024-01-10T00:00:00Z"));
+
+        assertTrue(before.isEmpty());
+
+        // the co-deployment gap the forward-window fills: the same build is available going forward
+        Optional<SnapshotWithMetadata> after = client.closestSnapshotAfter(
+                session, jar("1.0-SNAPSHOT"), repo, Instant.parse("2024-01-10T00:00:00Z"));
+
+        assertTrue(after.isPresent());
+        assertEquals("1.0-20240115.103045-7", after.get().getVersion());
+    }
+
+    @Test
+    void picksEarliestSnapshotDeployedAfterTarget() {
+        when(connector.listDeploys(any(), any(), any())).thenReturn(List.of(
+                deploy("1.0-20240101.120000-1", StringUtils.EMPTY, "jar", "2024-01-01T12:00:00Z"),
+                deploy("1.0-20240112.080000-8", StringUtils.EMPTY, "jar", "2024-01-12T08:00:00Z"),
+                deploy("1.0-20240115.103045-7", StringUtils.EMPTY, "jar", "2024-01-15T10:30:45Z")));
+
+        Optional<SnapshotWithMetadata> result = client.closestSnapshotAfter(
+                session, jar("1.0-SNAPSHOT"), repo, Instant.parse("2024-01-10T00:00:00Z"));
+
+        assertTrue(result.isPresent());
+        assertEquals("1.0-20240112.080000-8", result.get().getVersion());
+        assertEquals(Instant.parse("2024-01-12T08:00:00Z"), result.get().getDeployedAt());
+    }
+
+    @Test
+    void emptyWhenNothingDeployedAfterTarget() {
+        when(connector.listDeploys(any(), any(), any())).thenReturn(List.of(
+                deploy("1.0-20240101.120000-1", StringUtils.EMPTY, "jar", "2024-01-01T12:00:00Z")));
+
+        Optional<SnapshotWithMetadata> result = client.closestSnapshotAfter(
                 session, jar("1.0-SNAPSHOT"), repo, Instant.parse("2024-01-10T00:00:00Z"));
 
         assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void closestSnapshotAfterFiltersByClassifierAndExtension() {
+        when(connector.listDeploys(any(), any(), any())).thenReturn(List.of(
+                deploy("1.0-20240112.080000-8", StringUtils.EMPTY, "jar", "2024-01-12T08:00:00Z"),
+                deploy("1.0-20240111.090000-9", "sources", "jar", "2024-01-11T09:00:00Z"),
+                deploy("1.0-20240113.100000-10", "javadoc", "jar", "2024-01-13T10:00:00Z")));
+
+        Optional<SnapshotWithMetadata> result = client.closestSnapshotAfter(
+                session,
+                new DefaultArtifact("a", "b", "sources", "jar", "1.0-SNAPSHOT"),
+                repo,
+                Instant.parse("2024-01-10T00:00:00Z"));
+
+        assertTrue(result.isPresent());
+        assertEquals("1.0-20240111.090000-9", result.get().getVersion());
     }
 
     @Test

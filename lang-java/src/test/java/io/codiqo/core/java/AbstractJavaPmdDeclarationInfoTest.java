@@ -5,11 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.util.Map;
+import java.util.ArrayList;
 
 import org.junit.jupiter.api.Test;
 
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Lists;
 
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.SourceLocation;
@@ -96,7 +95,7 @@ class AbstractJavaPmdDeclarationInfoTest {
                     .file(new File("Test.java"))
                     .location(location)
                     .node(node)
-                    .invocations(Lists.newArrayList())
+                    .invocations(new ArrayList<>())
                     .body(node.getText().toString())
                     .build();
         }
@@ -104,7 +103,7 @@ class AbstractJavaPmdDeclarationInfoTest {
                 .file(new File("Test.java"))
                 .location(location)
                 .node(node)
-                .invocations(Lists.newArrayList())
+                .invocations(new ArrayList<>())
                 .body(node.getText().toString())
                 .build();
     }
@@ -119,7 +118,7 @@ class AbstractJavaPmdDeclarationInfoTest {
         try (TextFile file = TextFile.forCharSeq(source, fileId, LANG.getDefaultVersion())) {
             try (TextDocument doc = TextDocument.create(file)) {
                 LanguageRegistry registry = LanguageRegistry.singleton(LANG);
-                Map<Language, LanguagePropertyBundle> props = ImmutableMap.of(LANG, bundle);
+                Map<Language, LanguagePropertyBundle> props = Map.of(LANG, bundle);
                 try (LanguageProcessorRegistry procRegistry = LanguageProcessorRegistry.create(registry, props,
                         PmdReporter.quiet())) {
                     Parser parser = procRegistry.getProcessor(LANG).services().getParser();

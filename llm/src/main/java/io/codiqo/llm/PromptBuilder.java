@@ -14,6 +14,7 @@ public interface PromptBuilder {
     UserMessageResult buildUserMessageWithScores(LlmScoringRequest request, PromptContext context);
     String buildWebSearchResults(String query, List<WebSearchResultItem> results);
     String buildValidationFeedback(FinalScoreCalculator.ValidationReport report);
+    int estimateTokens(String model, String text);
 
     @Value
     @Builder

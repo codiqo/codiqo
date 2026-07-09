@@ -15,6 +15,9 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
+import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
@@ -87,14 +90,8 @@ import org.openrewrite.staticanalysis.UseDiamondOperator;
 import org.openrewrite.staticanalysis.UseJavaStyleArrayDeclarations;
 import org.openrewrite.staticanalysis.UsePortableNewlines;
 
-import com.google.common.base.Joiner;
-import com.google.common.base.Splitter;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
-
 import io.codiqo.util.JGit;
+import io.codiqo.util.Split;
 
 @Mojo(name = "normalize-sources",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
@@ -102,57 +99,57 @@ import io.codiqo.util.JGit;
 public class NormalizeSourcesMojo extends AbstractMojo {
     private static final Set<String> NON_CODE_PACKAGINGS = Set.of("pom", "bom");
     private static final String JAVA_EXTENSION = ".java";
-    private static final List<Class<? extends Recipe>> DEFAULT_RECIPE_CLASSES = ImmutableList.<Class<? extends Recipe>>builder()
-            .add(AtomicPrimitiveEqualsUsesGet.class)
-            .add(BigDecimalDoubleConstructorRecipe.class)
-            .add(BooleanChecksNotInverted.class)
-            .add(CaseInsensitiveComparisonsDoNotChangeCase.class)
-            .add(ChainStringBuilderAppendCalls.class)
-            .add(CollectionToArrayShouldHaveProperType.class)
-            .add(CovariantEquals.class)
-            .add(DefaultComesLast.class)
-            .add(EqualsAvoidsNull.class)
-            .add(FixStringFormatExpressions.class)
-            .add(InlineVariable.class)
-            .add(IsEmptyCallOnCollections.class)
-            .add(NewStringBuilderBufferWithCharArgument.class)
-            .add(NoDoubleBraceInitialization.class)
-            .add(NoEmptyCollectionWithRawType.class)
-            .add(NoEqualityInForCondition.class)
-            .add(NoPrimitiveWrappersForToStringOrCompareTo.class)
-            .add(NoRedundantJumpStatements.class)
-            .add(NoToStringOnStringType.class)
-            .add(NoValueOfOnStringType.class)
-            .add(PrimitiveWrapperClassConstructorToValueOf.class)
-            .add(RemoveRedundantNullCheckBeforeInstanceof.class)
-            .add(RemoveRedundantNullCheckBeforeLiteralEquals.class)
-            .add(ReplaceClassIsInstanceWithInstanceof.class)
-            .add(ReplaceStringBuilderWithString.class)
-            .add(ReplaceStringConcatenationWithStringValueOf.class)
-            .add(SimplifyArraysAsList.class)
-            .add(SimplifyBooleanExpression.class)
-            .add(SimplifyBooleanReturn.class)
-            .add(StringLiteralEquality.class)
-            .add(UnnecessaryReturnAsLastStatement.class)
-            .add(UsePortableNewlines.class)
+    private static final List<Class<? extends Recipe>> DEFAULT_RECIPE_CLASSES = List.<Class<? extends Recipe>>of(
+            AtomicPrimitiveEqualsUsesGet.class,
+            BigDecimalDoubleConstructorRecipe.class,
+            BooleanChecksNotInverted.class,
+            CaseInsensitiveComparisonsDoNotChangeCase.class,
+            ChainStringBuilderAppendCalls.class,
+            CollectionToArrayShouldHaveProperType.class,
+            CovariantEquals.class,
+            DefaultComesLast.class,
+            EqualsAvoidsNull.class,
+            FixStringFormatExpressions.class,
+            InlineVariable.class,
+            IsEmptyCallOnCollections.class,
+            NewStringBuilderBufferWithCharArgument.class,
+            NoDoubleBraceInitialization.class,
+            NoEmptyCollectionWithRawType.class,
+            NoEqualityInForCondition.class,
+            NoPrimitiveWrappersForToStringOrCompareTo.class,
+            NoRedundantJumpStatements.class,
+            NoToStringOnStringType.class,
+            NoValueOfOnStringType.class,
+            PrimitiveWrapperClassConstructorToValueOf.class,
+            RemoveRedundantNullCheckBeforeInstanceof.class,
+            RemoveRedundantNullCheckBeforeLiteralEquals.class,
+            ReplaceClassIsInstanceWithInstanceof.class,
+            ReplaceStringBuilderWithString.class,
+            ReplaceStringConcatenationWithStringValueOf.class,
+            SimplifyArraysAsList.class,
+            SimplifyBooleanExpression.class,
+            SimplifyBooleanReturn.class,
+            StringLiteralEquality.class,
+            UnnecessaryReturnAsLastStatement.class,
+            UsePortableNewlines.class,
             //
             // ~ import / syntax cleanup
             //
-            .add(RemoveUnusedImports.class)
-            .add(UnnecessaryParentheses.class)
-            .add(RemoveExtraSemicolons.class)
-            .add(UseDiamondOperator.class)
-            .add(UnnecessaryExplicitTypeArguments.class)
-            .add(ModifierOrder.class)
-            .add(UseJavaStyleArrayDeclarations.class)
-            .add(ShortenFullyQualifiedTypeReferences.class)
+            RemoveUnusedImports.class,
+            UnnecessaryParentheses.class,
+            RemoveExtraSemicolons.class,
+            UseDiamondOperator.class,
+            UnnecessaryExplicitTypeArguments.class,
+            ModifierOrder.class,
+            UseJavaStyleArrayDeclarations.class,
+            ShortenFullyQualifiedTypeReferences.class,
             //
             // ~ lambda normalisation (last — operates on output of prior recipes)
             //
-            .add(ReplaceLambdaWithMethodReference.class)
-            .add(LambdaBlockToExpression.class)
+            ReplaceLambdaWithMethodReference.class,
+            LambdaBlockToExpression.class
             //.add(UseLambdaForFunctionalInterface.class)
-            .build();
+            );
 
     @Parameter(property = "codiqo.recipes")
     private String recipes;
@@ -197,7 +194,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
 
                 getLog().info(String.format("parsed %d source files in %s", allSourceFiles.size(), stopWatch));
 
-                Map<Path, List<String>> fileRecipeMap = Maps.newLinkedHashMap();
+                Map<Path, List<String>> fileRecipeMap = new LinkedHashMap<>();
 
                 stopWatch = StopWatch.createStarted();
                 List<Result> results = runRecipes(recipeList, allSourceFiles, fileRecipeMap);
@@ -221,7 +218,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
     }
     private List<Recipe> instantiateRecipes() throws MojoFailureException {
         List<Class<? extends Recipe>> classes = resolveRecipeClasses();
-        List<Recipe> toReturn = Lists.newArrayList();
+        List<Recipe> toReturn = new ArrayList<>();
 
         for (Class<? extends Recipe> clazz : classes) {
             try {
@@ -238,8 +235,8 @@ public class NormalizeSourcesMojo extends AbstractMojo {
             return DEFAULT_RECIPE_CLASSES;
         }
 
-        List<String> names = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(recipes);
-        List<Class<? extends Recipe>> toReturn = Lists.newArrayList();
+        List<String> names = Split.on(recipes, ',');
+        List<Class<? extends Recipe>> toReturn = new ArrayList<>();
 
         for (String name : names) {
             try {
@@ -256,7 +253,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
         ExecutionContext ctx = new InMemoryExecutionContext(err -> getLog().warn("parse error: " + err.getMessage()));
         JavaTypeCache typeCache = new JavaTypeCache();
         DirCache index = repo.readDirCache();
-        List<SourceFile> toReturn = Lists.newArrayList();
+        List<SourceFile> toReturn = new ArrayList<>();
 
         for (MavenProject reactor : reactors) {
             if (NON_CODE_PACKAGINGS.contains(reactor.getPackaging())) {
@@ -285,8 +282,8 @@ public class NormalizeSourcesMojo extends AbstractMojo {
     }
     private List<Result> runRecipes(List<Recipe> recipeList, List<SourceFile> sourceFiles, Map<Path, List<String>> fileRecipeMap) {
         ExecutionContext ctx = new InMemoryExecutionContext(err -> getLog().warn("recipe error: " + err.getMessage()));
-        List<SourceFile> current = Lists.newArrayList(sourceFiles);
-        Set<Path> changedPaths = Sets.newLinkedHashSet();
+        List<SourceFile> current = new ArrayList<>(sourceFiles);
+        Set<Path> changedPaths = new LinkedHashSet<>();
 
         for (Recipe recipe : recipeList) {
             StopWatch stopWatch = StopWatch.createStarted();
@@ -303,7 +300,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
                 for (Result result : results) {
                     Path path = result.getAfter().getSourcePath();
                     changedPaths.add(path);
-                    fileRecipeMap.computeIfAbsent(path, k -> Lists.newArrayList()).add(recipeName);
+                    fileRecipeMap.computeIfAbsent(path, k -> new ArrayList<>()).add(recipeName);
 
                     current = current.stream()
                             .map(sf -> sf.getSourcePath().equals(result.getBefore().getSourcePath()) ? result.getAfter() : sf)
@@ -312,7 +309,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
             }
         }
 
-        List<Result> toReturn = Lists.newArrayList();
+        List<Result> toReturn = new ArrayList<>();
         for (int i = 0; i < sourceFiles.size(); i++) {
             SourceFile original = sourceFiles.get(i);
             SourceFile modified = current.get(i);
@@ -332,7 +329,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
         for (Map.Entry<Path, List<String>> entry : fileRecipeMap.entrySet()) {
             getLog().info(String.format("  %s — [%s]",
                     baseDir.resolve(entry.getKey()),
-                    Joiner.on(", ").join(entry.getValue())));
+                    StringUtils.join(entry.getValue(), ", ")));
         }
         getLog().info(StringUtils.EMPTY);
     }
@@ -365,8 +362,8 @@ public class NormalizeSourcesMojo extends AbstractMojo {
         }
     }
     private static List<Path> collectJavaFiles(MavenProject reactor, Path baseDir, DirCache index) {
-        List<Path> toReturn = Lists.newArrayList();
-        List<String> roots = Lists.newArrayList();
+        List<Path> toReturn = new ArrayList<>();
+        List<String> roots = new ArrayList<>();
         roots.addAll(reactor.getCompileSourceRoots());
         roots.addAll(reactor.getTestCompileSourceRoots());
 
@@ -396,7 +393,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
         });
     }
     private static List<Path> resolveClasspath(MavenProject reactor) throws DependencyResolutionRequiredException {
-        Set<String> elements = Sets.newLinkedHashSet();
+        Set<String> elements = new LinkedHashSet<>();
         elements.addAll(reactor.getCompileClasspathElements());
         elements.addAll(reactor.getTestClasspathElements());
 

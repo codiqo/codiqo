@@ -4,6 +4,8 @@ import java.io.File;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.LinkedHashSet;
+import java.util.HashMap;
 
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.builder.EqualsBuilder;
@@ -11,8 +13,6 @@ import org.apache.commons.lang3.builder.HashCodeBuilder;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.jacoco.core.analysis.ILine;
 
-import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
 
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.diff.AffectedSymbolInfo;
@@ -40,9 +40,9 @@ public class GitFileAnalysis implements FileAnalysis {
     @ToString.Exclude
     private GitStructuredDiff structuredDiff;
     @ToString.Exclude
-    private Set<AffectedSymbolInfo> potentiallyAffectedSymbols = Sets.newLinkedHashSet();
+    private Set<AffectedSymbolInfo> potentiallyAffectedSymbols = new LinkedHashSet<>();
     @ToString.Exclude
-    private Map<Integer, ILine> lineCoverage = Maps.newHashMap();
+    private Map<Integer, ILine> lineCoverage = new HashMap<>();
     private boolean testFile;
     @Getter(AccessLevel.NONE)
     private Optional<ProjectSpec> project = Optional.empty();

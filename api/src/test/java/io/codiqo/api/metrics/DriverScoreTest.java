@@ -4,10 +4,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.ArrayList;
 
 import org.junit.jupiter.api.Test;
 
-import com.google.common.collect.Lists;
 
 class DriverScoreTest {
     @Test
@@ -87,7 +87,7 @@ class DriverScoreTest {
     }
     @Test
     void forNewCrossDimLeakIsRemoved() {
-        List<DriverScaler.Sample> samples = Lists.newArrayList();
+        List<DriverScaler.Sample> samples = new ArrayList<>();
         for (int i = 1; i <= 100; i++) {
             samples.add(new DriverScaler.Sample(i, i, i));
         }
@@ -115,7 +115,7 @@ class DriverScoreTest {
     }
 
     private static DriverScaler uniformScaler(int min, int max) {
-        List<DriverScaler.Sample> samples = Lists.newArrayList();
+        List<DriverScaler.Sample> samples = new ArrayList<>();
         for (int i = min; i <= max; i++) {
             samples.add(new DriverScaler.Sample(i, i, i));
         }

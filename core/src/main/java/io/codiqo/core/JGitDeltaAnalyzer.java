@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Objects;
@@ -39,14 +40,12 @@ import org.eclipse.jgit.treewalk.filter.PathFilter;
 import org.eclipse.jgit.util.io.DisabledOutputStream;
 import org.slf4j.event.Level;
 
-import com.google.common.collect.Lists;
-
 import io.codiqo.api.DeltaAnalyzer;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.diff.FileAnalysis;
-import io.codiqo.api.diff.LanguageCapabilities;
 import io.codiqo.api.diff.FileRevisionInfo;
+import io.codiqo.api.diff.LanguageCapabilities;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.core.diff.GitCommitAnalysis;
@@ -93,7 +92,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
     }
     @Override
     public List<FileRevisionInfo> getFileHistory(String filePath, int maxRevisions) throws Exception {
-        List<FileRevisionInfo> toReturn = Lists.newArrayList();
+        List<FileRevisionInfo> toReturn = new ArrayList<>();
 
         try (RevWalk revWalk = new RevWalk(args.getGit())) {
             ObjectId head = args.getGit().resolve("HEAD");
@@ -383,7 +382,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
                     List<DiffEntry> entries = formatter.scan(new EmptyTreeIterator(), workingTreeIter);
 
                     if (CollectionUtils.isNotEmpty(entries)) {
-                        DiffEntry diff = entries.get(0);
+                        DiffEntry diff = entries.iterator().next();
                         FileHeader fileHeader = formatter.toFileHeader(diff);
                         if (fileHeader.getPatchType() == FileHeader.PatchType.UNIFIED) {
                             formatter.format(diff);

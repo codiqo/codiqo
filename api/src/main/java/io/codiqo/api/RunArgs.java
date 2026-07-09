@@ -11,12 +11,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.HashSet;
+import java.util.ArrayList;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
@@ -31,14 +34,9 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.eclipse.jgit.annotations.Nullable;
 import org.eclipse.jgit.lib.Repository;
 
-import com.google.common.base.CaseFormat;
-import com.google.common.base.Splitter;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Sets;
-
 import edu.umd.cs.findbugs.Priorities;
 import io.codiqo.util.JGit;
+import io.codiqo.util.Split;
 import lombok.Data;
 import net.sourceforge.pmd.lang.rule.RulePriority;
 import okhttp3.HttpUrl;
@@ -48,7 +46,7 @@ public class RunArgs {
     public static final String DEFAULT_API_URL = "https://api.codiqo.io";
     public static final int DEFAULT_NUM_CTX = 256 * 1024;
     public static final int DEFAULT_SEED = 42;
-    public static final Map<String, String> JDTLS_CONFIG = ImmutableMap.of(
+    public static final Map<String, String> JDTLS_CONFIG = Map.of(
             "osx-x86_64", "config_mac",
             "osx-aarch_64", "config_mac_arm",
             "linux-x86_64", "config_linux",
@@ -56,6 +54,7 @@ public class RunArgs {
             "windows-x86_64", "config_win");
     public static final Path JDT_SHARED_INDEX = FileSystems.getDefault().getPath(System.getProperty("user.home"), ".cache", "jdtls");
     private static final Pattern JDTLS_ARCHIVE_VERSION = Pattern.compile("jdt-language-server-(\\d+\\.\\d+\\.\\d+)-");
+    private static final Pattern CAMEL_HUMP = Pattern.compile("(?<=[a-z0-9])(?=[A-Z])");
     static {
         try {
             Files.createDirectories(JDT_SHARED_INDEX);
@@ -75,14 +74,14 @@ public class RunArgs {
     @Nullable
     private String pmdMinPriority = RulePriority.HIGH.name();
     @Nullable
-    private List<String> pmdRules = Lists.newArrayList(
+    private List<String> pmdRules = new ArrayList<>(List.of(
             "category/java/bestpractices.xml",
             "category/java/codestyle.xml",
             "category/java/design.xml",
             "category/java/errorprone.xml",
             "category/java/performance.xml",
             "category/java/multithreading.xml",
-            "category/java/security.xml");
+            "category/java/security.xml"));
     @Nullable
     private Integer spotbugsPriorityThreshold = Priorities.HIGH_PRIORITY;
     @Nullable
@@ -143,15 +142,15 @@ public class RunArgs {
     @Nullable
     private double cpdIntroducedThreshold = 0.4;
     @Nullable
-    private transient List<ProjectSpec> projects = Lists.newArrayList();
+    private transient List<ProjectSpec> projects = new ArrayList<>();
     @Nullable
-    private transient List<File> agents = Lists.newArrayList();
+    private transient List<File> agents = new ArrayList<>();
     @Nullable
     private transient Repository git;
     @Nullable
     private transient String defaultBranch;
     @Nullable
-    private transient Set<String> remoteUrls = Sets.newHashSet();
+    private transient Set<String> remoteUrls = new HashSet<>();
     @Nullable
     private String llmApiKey = System.getProperty("ollama.apiKey");
     @Nullable
@@ -264,6 +263,8 @@ public class RunArgs {
     private double categoryIntricateCoeff = 1.4;
     @Nullable
     private boolean moveDetectionEnabled = true;
+    @Nullable
+    private boolean timeMachineEnabled = true;
     /**
      * threshold on multiset containment |tokens(A)∩tokens(B)| / min(|A|,|B|) — NOT Dice/Jaccard.
      * Relocation typically only adds tokens (e.g. re-qualified receivers: props.X → channel.props.X),
@@ -436,21 +437,21 @@ public class RunArgs {
         if (StringUtils.isEmpty(includeBranches)) {
             return true;
         }
-        List<String> patterns = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(includeBranches);
+        List<String> patterns = Split.on(includeBranches, ',');
         return branches.stream().anyMatch(branch -> patterns.stream().anyMatch(pattern -> branch.matches(pattern)));
     }
     public boolean matchesByAuthor(String authorEmail) {
         if (StringUtils.isEmpty(includeAuthorEmails)) {
             return true;
         }
-        List<String> emails = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(includeAuthorEmails);
+        List<String> emails = Split.on(includeAuthorEmails, ',');
         return emails.contains(authorEmail);
     }
     public boolean isExcludedAuthor(String authorEmail) {
         if (StringUtils.isEmpty(excludeAuthorEmails)) {
             return false;
         }
-        List<String> patterns = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(excludeAuthorEmails);
+        List<String> patterns = Split.on(excludeAuthorEmails, ',');
         return patterns.stream().anyMatch(pattern -> FilenameUtils.wildcardMatch(authorEmail, pattern, IOCase.INSENSITIVE));
     }
     public boolean isAuthorAllowed(String authorEmail) {
@@ -472,8 +473,7 @@ public class RunArgs {
             if (Modifier.isTransient(field.getModifiers()) || Modifier.isStatic(field.getModifiers())) {
                 continue;
             }
-            String camel = field.getName();
-            String kebab = CaseFormat.LOWER_CAMEL.to(CaseFormat.LOWER_HYPHEN, camel);
+            String kebab = toKebabCase(field.getName());
             Builder builder = Option.builder().longOpt(kebab);
             if (field.getType().equals(boolean.class)) {
                 builder = builder.hasArg(false);
@@ -493,8 +493,7 @@ public class RunArgs {
             if (Modifier.isTransient(field.getModifiers()) || Modifier.isStatic(field.getModifiers())) {
                 continue;
             }
-            String camel = field.getName();
-            String kebab = CaseFormat.LOWER_CAMEL.to(CaseFormat.LOWER_HYPHEN, camel);
+            String kebab = toKebabCase(field.getName());
             if (cmd.hasOption(kebab)) {
                 if (field.getType().equals(boolean.class)) {
                     field.set(toReturn, true);
@@ -516,11 +515,14 @@ public class RunArgs {
                 } else if (field.getType().equals(Repository.class)) {
                     field.set(toReturn, JGit.openRepository(new File(value)));
                 } else if (field.getType().equals(List.class)) {
-                    field.set(toReturn, Splitter.on(',').trimResults().omitEmptyStrings().splitToList(value));
+                    field.set(toReturn, Split.on(value, ','));
                 }
             }
         }
         toReturn.validate();
         return toReturn;
+    }
+    private static String toKebabCase(String camel) {
+        return CAMEL_HUMP.matcher(camel).replaceAll("-").toLowerCase(Locale.ROOT);
     }
 }

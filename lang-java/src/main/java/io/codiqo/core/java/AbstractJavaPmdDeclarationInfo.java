@@ -7,14 +7,13 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import java.util.HashMap;
+import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.jacoco.core.analysis.ILine;
 
-import com.google.common.base.Objects;
-import com.google.common.base.Suppliers;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
+import java.util.Objects;
 
 import edu.umd.cs.findbugs.BugInstance;
 import io.codiqo.api.code.SourceLocation;
@@ -23,6 +22,7 @@ import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.metrics.CodeBlockMetrics;
 import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
+import io.codiqo.util.Lazy;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
@@ -51,18 +51,18 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
     private String body;
     private SourceLocation location;
     @Builder.Default
-    private Collection<JInvocationBlock> invocations = Lists.newArrayList();
+    private Collection<JInvocationBlock> invocations = new ArrayList<>();
     @Builder.Default
-    private List<RuleViolation> pmdViolations = Lists.newArrayList();
+    private List<RuleViolation> pmdViolations = new ArrayList<>();
     @Builder.Default
-    private List<BugInstance> spotbugs = Lists.newArrayList();
+    private List<BugInstance> spotbugs = new ArrayList<>();
     @Builder.Default
-    private Map<Integer, ILine> lineCoverage = Maps.newHashMap();
+    private Map<Integer, ILine> lineCoverage = new HashMap<>();
     @Builder.Default
     private Optional<AffectedSymbolInfo> affectedSymbol = Optional.empty();
 
-    private final Supplier<CodeBlockCoverage> coverage = Suppliers.memoize(() -> CodeBlockCoverage.from(lineCoverage));
-    private final Supplier<CodeBlockMetrics> metrics = Suppliers.memoize(() -> {
+    private final Supplier<CodeBlockCoverage> coverage = Lazy.of(() -> CodeBlockCoverage.from(lineCoverage));
+    private final Supplier<CodeBlockMetrics> metrics = Lazy.of(() -> {
         int lineCount = MetricsUtil.computeMetric(JavaMetrics.LINES_OF_CODE, node, MetricOptions.emptyOptions());
         JavaLineCountAnalyzer.LineCounts lineCounts = JavaLineCountAnalyzer.analyze(node);
         int nonCommentCodeLines = lineCounts.getCodeLines();
@@ -223,7 +223,7 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
     }
     @Override
     public boolean equals(Object other) {
-        return Objects.equal(node, ((AbstractJavaPmdDeclarationInfo) other).node);
+        return Objects.equals(node, ((AbstractJavaPmdDeclarationInfo) other).node);
     }
     @Override
     public String toString() {

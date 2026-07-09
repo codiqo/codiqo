@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
+import java.util.HashMap;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
@@ -26,7 +27,6 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.util.StdDateFormat;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import com.google.common.collect.Maps;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisResultModel;
@@ -48,6 +48,8 @@ import io.codiqo.llm.client.ScoringClient.ScoringResult;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import io.codiqo.maven.logging.MavenMessageReporter;
+import io.codiqo.submit.SubmissionContext;
+import io.codiqo.submit.SubmissionPopulator;
 import lombok.RequiredArgsConstructor;
 
 @RequiredArgsConstructor
@@ -227,7 +229,7 @@ public class LlmScoringPopulator implements SubmissionPopulator {
                 .build();
     }
     public static Map<String, List<DiagnosticModel>> extractCriticalViolations(AnalysisSubmissionModel submission) {
-        Map<String, List<DiagnosticModel>> toReturn = Maps.newHashMap();
+        Map<String, List<DiagnosticModel>> toReturn = new HashMap<>();
         if (Objects.nonNull(submission.getProject()) && CollectionUtils.isNotEmpty(submission.getProject().getModules())) {
             for (ModuleModel module : submission.getProject().getModules()) {
                 if (Objects.nonNull(module.getQuality()) && CollectionUtils.isNotEmpty(module.getQuality().getCriticalViolations())) {

@@ -8,6 +8,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.HashMap;
+import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FilenameUtils;
@@ -17,8 +19,6 @@ import org.thymeleaf.context.Context;
 import org.thymeleaf.templatemode.TemplateMode;
 import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver;
 
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.DiagnosticModel;
@@ -456,7 +456,7 @@ public class HtmlReportBuilder implements ReportBuilder {
         ctx.setVariable("totalNewIssues", pmdNewCount + spotbugsNewCount);
     }
     private static List<DimensionView> buildDimensionScores(QualityDimensions dims) {
-        List<DimensionView> toReturn = Lists.newArrayList();
+        List<DimensionView> toReturn = new ArrayList<>();
         addDimension(toReturn, "Architecture Impact", dims.getArchitectureImpact(), "architecture");
         addDimension(toReturn, "Concurrency Risk", dims.getConcurrencyRisk(), "concurrency");
         addDimension(toReturn, "Integration Surface", dims.getIntegrationSurface(), "integration");
@@ -482,7 +482,7 @@ public class HtmlReportBuilder implements ReportBuilder {
         }
     }
     private static List<FindingView> buildFindings(LlmScoringResponse response) {
-        List<FindingView> toReturn = Lists.newArrayList();
+        List<FindingView> toReturn = new ArrayList<>();
         if (Objects.nonNull(response.getBugs())) {
             if (Objects.nonNull(response.getBugs().getBlocking())) {
                 response.getBugs().getBlocking().forEach(bug -> toReturn.add(buildFindingView(bug, "BLOCKING")));
@@ -529,17 +529,17 @@ public class HtmlReportBuilder implements ReportBuilder {
         if (Objects.isNull(request.getFileChanges())) {
             return Collections.emptyList();
         }
-        Map<String, List<CodeBlockChange>> methodsByFile = Maps.newHashMap();
+        Map<String, List<CodeBlockChange>> methodsByFile = new HashMap<>();
         if (Objects.nonNull(request.getCodeBlockChanges())) {
             for (CodeBlockChange method : request.getCodeBlockChanges()) {
                 if (Objects.nonNull(method.getFile())) {
-                    methodsByFile.computeIfAbsent(method.getFile(), k -> Lists.newArrayList()).add(method);
+                    methodsByFile.computeIfAbsent(method.getFile(), k -> new ArrayList<>()).add(method);
                 }
             }
         }
-        List<FileView> toReturn = Lists.newArrayList();
+        List<FileView> toReturn = new ArrayList<>();
         for (FileChange file : request.getFileChanges()) {
-            List<CodeBlockView> symbols = Lists.newArrayList();
+            List<CodeBlockView> symbols = new ArrayList<>();
             List<CodeBlockChange> methods = methodsByFile.get(file.getPath());
             if (Objects.isNull(methods)) {
                 for (Map.Entry<String, List<CodeBlockChange>> entry : methodsByFile.entrySet()) {
@@ -565,7 +565,7 @@ public class HtmlReportBuilder implements ReportBuilder {
         return toReturn;
     }
     private static CodeBlockView buildCodeBlockView(CodeBlockChange method) {
-        List<CallerView> callerViews = Lists.newArrayList();
+        List<CallerView> callerViews = new ArrayList<>();
         if (Objects.nonNull(method.getCallers())) {
             for (CallerInfo caller : method.getCallers()) {
                 callerViews.add(CallerView.builder()
@@ -590,7 +590,7 @@ public class HtmlReportBuilder implements ReportBuilder {
     }
     private static void populateCriticalViolations(Context ctx, ReportContext reportContext) {
         Map<String, List<DiagnosticModel>> byModule = reportContext.getCriticalViolationsByModule();
-        List<CriticalViolationView> allViolations = Lists.newArrayList();
+        List<CriticalViolationView> allViolations = new ArrayList<>();
         for (Map.Entry<String, List<DiagnosticModel>> entry : byModule.entrySet()) {
             String moduleId = entry.getKey();
             for (DiagnosticModel diag : entry.getValue()) {
@@ -646,7 +646,7 @@ public class HtmlReportBuilder implements ReportBuilder {
         String contentBefore;
         String contentAfter;
         @lombok.Builder.Default
-        List<CodeBlockView> affectedCodeBlocks = Lists.newArrayList();
+        List<CodeBlockView> affectedCodeBlocks = new ArrayList<>();
     }
     @Value
     @Builder
@@ -660,7 +660,7 @@ public class HtmlReportBuilder implements ReportBuilder {
         String fullyQualifiedName;
         int callerCount;
         @lombok.Builder.Default
-        List<CallerView> callers = Lists.newArrayList();
+        List<CallerView> callers = new ArrayList<>();
     }
     @Value
     @Builder

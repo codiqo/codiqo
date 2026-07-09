@@ -7,7 +7,7 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 
 import io.codiqo.api.RunArgs;
-import io.codiqo.maven.populator.SubmissionContext;
+import io.codiqo.submit.SubmissionContext;
 
 @Mojo(name = "dump-commit-analysis",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,

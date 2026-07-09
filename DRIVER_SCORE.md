@@ -40,7 +40,7 @@ NCSS counts logical statements. For traditional imperative Java code this tracks
 
 The last two rows are the pain point: at roughly the same real effort, imperative code scored 5× higher than functional code. Reviewers found the difference unjustifiable.
 
-The driver score solves this by combining **three orthogonal signals** that together cover both styles. A builder has high `L`, low `S`, high `I`. An imperative loop has medium `L`, high `S`, medium `I`. A one-line lambda stream has low `L`, low `S`, medium `I`. Each dimension fires on a different kind of work, so composing them gives a balanced measure.
+The driver score solves this by combining **three orthogonal signals** that together cover both styles. A builder's `S` is low and — because a same-type fluent run [counts as one invocation](#what-counts-as-an-invocation) — its `I` reflects the number of *distinct* operations it performs, not its setter-chain length, so its volume comes mainly from `L`. An imperative loop has medium `L`, high `S`, medium `I`. A one-line lambda stream has low `L`, low `S`, and an `I` driven by its lambda bodies rather than the pipeline operators. Each dimension fires on a different kind of work, so composing them gives a balanced measure — and no fluent-chain style (proto/gRPC builders, getter navigation, stream pipelines) can run away with the score purely by chain length.
 
 ---
 
@@ -128,6 +128,8 @@ The invocation counter walks the method's AST and counts one for each of:
 - Constructor calls — `new Foo(...)`
 - Explicit constructor invocations — `this(...)`, `super(...)`
 - Method references — `Foo::bar`
+
+**Same-type fluent runs count once.** A run of consecutive chained calls that return the **same type** — a builder / `return this` fluent run like `X.newBuilder().setA().setB()` (every call returns the builder type) — is one logical operation, so only its head is counted. Concretely: a method call whose receiver is itself a call (or a `new` constructor call) of the **same return type** is a *chained continuation* and is not counted again. A call that **changes type** mid-chain (`builder.build()` → the built message) or navigates across types (`event.getDetails().getReason()`, `LockDetails → String`) starts a new invocation and **is** counted. Calls on distinct receivers, calls in separate statements, and calls nested inside argument lists (`foo(bar())` → 2) also count separately. When a call's return type cannot be resolved, it is counted (conservative — collapse only when the run is confirmed same-type). This keeps `I` a measure of *distinct logical operations*, not fluent-chain length — without it, builder-heavy code inflated `I` far above the real number of decisions (a proto builder chains many setters that are one construction). Method references, `this()`/`super()`, and enum constants are always heads.
 
 It **does not** recurse into nested type declarations (anonymous classes, local classes). Invocations inside an anonymous class body belong to that class's own methods, not the enclosing method. Lambdas, on the other hand, ARE walked — a lambda body's calls count for the enclosing method, because lambdas don't get their own code block.
 
@@ -414,7 +416,7 @@ The HTML report shows one row per changed code block with the full pipeline; the
 | **Ratio** | HTML only | `changeRatio` for MODIFY blocks, `1.00` for NEW |
 | **Effort** | HTML only | `Driver × operationMult × testWeight × categoryCoeff` — what the block contributes to `totalEffortRaw`. The HTML report is post-LLM, so `Driver` already carries the per-file effective-line factor and `categoryCoeff` is the per-block [difficulty-category](#per-block-difficulty-category) coefficient (`1.0` if uncategorized) |
 
-**Interpretation tip:** scan the `pL / pS / pI` columns first. They're all in the same lines-equivalent unit, so you can compare them directly. If one of them is much larger than the others, that block is "big in one way only" — usually a builder (high pI), a Lombok-generated getter spray (high pL), or an algorithmic density method (high pS). If all three are balanced, the block is uniformly large.
+**Interpretation tip:** scan the `pL / pS / pI` columns first. They're all in the same lines-equivalent unit, so you can compare them directly. If one of them is much larger than the others, that block is "big in one way only" — usually a fan-out-heavy orchestration method that calls many *distinct* collaborators (high pI), a Lombok-generated getter spray or fluent builder with many lines but few distinct call-sites (high pL, since a fluent chain counts as one invocation), or an algorithmic density method (high pS). If all three are balanced, the block is uniformly large.
 
 ---
 
@@ -497,7 +499,7 @@ scalers:
   ... (other three buckets) ...
 
 driver_formula:
-  weights:          W_L=1.00  W_S=1.00  W_I=1.00   (total=3.00)
+  weights:          W_L=1.00  W_S=1.00  W_I=0.50   (total=2.50)
   formula_new:      (W_L·lines + W_S·ncss·k_S + W_I·invocs·k_I) / total
   formula_modify:   (W_L·linesChanged + W_I·invocsChanged·k_I) / (W_L + W_I)
   factors (k_S = lines.p50 / ncss.p50, k_I = lines.p50 / invocs.p50; raw bucket-level — no clamp):
@@ -510,15 +512,15 @@ Reading notes:
 - `baseline_populations` shows the `N` each scaler was built from plus how many trivial blocks were filtered out.
 - `driver_score_cap` shows the global formula and per-bucket `bucket_budget_per_block = quantile × driverScoreCapMultiplier`. This is the contribution **a single block in that bucket** makes to `totalBaseline` (before operation/test multipliers); the actual cap is the sum across all changed blocks.
 - Each scaler prints `min / p50 / p75 / p90 / max` per dimension. Only the `p50` rows participate in the formula (via `k_S` and `k_I`); the other percentiles are informational.
-- `driver_formula` shows the equal weights, the per-scope raw projection factors, and the formulas. Each `k_S` / `k_I` is annotated with the three p50 numbers it was derived from — useful for sanity-checking that the project's style is being captured faithfully.
+- `driver_formula` shows the weights, the per-scope raw projection factors, and the formulas. Invocations carry half weight (`W_I=0.50`) because a call is already counted as a line and a statement — see the weights FAQ below. Each `k_S` / `k_I` is annotated with the three p50 numbers it was derived from — useful for sanity-checking that the project's style is being captured faithfully.
 - The non-trivial blocks table stops at `Driver` — `Effort` is applied later in the LLM scoring pipeline and shows up in the HTML report, not the Maven summary.
 
 ---
 
 ## FAQ
 
-**Q: Why equal weights on all three dimensions?**
-A: Because the projection factors (`k_S`, `k_I`) already put them on commensurable lines-equivalent scales. Unequal weights would be a second-order tuning on top of the projection, and we didn't want to hide a preference inside the formula. The weights are constants in `DriverScore.java` and easy to change.
+**Q: Why full weight on lines and NCSS but half weight on invocations?**
+A: The projection factors (`k_S`, `k_I`) put all three on commensurable lines-equivalent scales, so a median block scores the same regardless of weights — the weights only decide how above/below-median *deviations* in each dimension combine. Lines and NCSS are two views of size and carry full weight. Invocations are different: measured across real JDK sources (BigDecimal, Collectors, DateTimeFormatterBuilder) there are ~0.7–1.0 calls per NCSS statement, i.e. a call is almost always *already* counted as a line and a statement — invocations are ~1:1 collinear with NCSS, not an independent axis. Their only extra signal is orchestration/fan-out density (e.g. `a(b(c(d())))` is one statement but four calls). Full weight double-counts call-heavy glue code and penalizes dense compute that makes few calls; half weight (`W_I=0.50`) keeps the fan-out signal without the double-count. The weights are constants in `DriverScore.java` and easy to change.
 
 **Q: Why median-anchored projection instead of raw counts (`L + S + I`) or MinMax?**
 A: Raw counts would give each unit equal weight, which is wrong — one line of code is not the same amount of work as one NCSS statement or one method invocation, and the ratio depends on the project's coding style. The median-based factors let the project's own baseline say "on average, one S is worth roughly X lines in *this* codebase". The medians themselves are robust to outliers, so we take the resulting factors as-is — abuse protection lives one level down, on individual blocks via `driverFactorMaxDeviation`.

@@ -6,10 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.ArrayList;
 
 import org.junit.jupiter.api.Test;
 
-import com.google.common.collect.Lists;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.metrics.DriverScaler;
@@ -262,7 +262,7 @@ class VolumeScoreCalculatorTest {
     }
 
     private static DriverScaler uniformScaler(int min, int max) {
-        List<DriverScaler.Sample> samples = Lists.newArrayList();
+        List<DriverScaler.Sample> samples = new ArrayList<>();
         for (int i = min; i <= max; i++) {
             samples.add(new DriverScaler.Sample(i, i, i));
         }

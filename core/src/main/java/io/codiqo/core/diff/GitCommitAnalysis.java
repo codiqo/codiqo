@@ -6,19 +6,17 @@ import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
-import java.util.function.Function;
-
-import com.google.common.base.Supplier;
-import com.google.common.base.Suppliers;
-import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Sets;
+import java.util.function.Supplier;
+import java.util.LinkedHashSet;
+import java.util.ArrayList;
+import java.util.stream.Collectors;
 
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.cpd.CopyPasteDetectionSummary;
 import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.diff.FileAnalysis;
+import io.codiqo.util.Lazy;
 import lombok.Data;
 
 @Data
@@ -31,25 +29,16 @@ public class GitCommitAnalysis implements CommitAnalysis {
     private String committer;
     private String committerEmail;
     private Date commitTimestamp;
-    private List<String> parentIds = Lists.newArrayList();
-    private List<String> branches = Lists.newArrayList();
+    private List<String> parentIds = new ArrayList<>();
+    private List<String> branches = new ArrayList<>();
     private boolean mergeCommit;
     private boolean revertCommit;
     private String revertedCommitId;
     private int filesChanged;
-    private Set<FileAnalysis> files = Sets.newLinkedHashSet();
-    private List<CopyPasteDetectionSummary> cpd = Lists.newArrayList();
-    private final Supplier<Set<File>> destinations = Suppliers.memoize(new Supplier<>() {
-        @Override
-        public Set<File> get() {
-            return getFiles().stream().map(new Function<FileAnalysis, File>() {
-                @Override
-                public File apply(FileAnalysis file) {
-                    return file.getFile();
-                }
-            }).collect(ImmutableSet.toImmutableSet());
-        }
-    });
+    private Set<FileAnalysis> files = new LinkedHashSet<>();
+    private List<CopyPasteDetectionSummary> cpd = new ArrayList<>();
+    private final Supplier<Set<File>> destinations = Lazy.of(
+            () -> getFiles().stream().map(FileAnalysis::getFile).collect(Collectors.toUnmodifiableSet()));
 
     @Override
     public Set<File> locations() {

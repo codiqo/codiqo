@@ -6,15 +6,14 @@ import java.util.Collection;
 import java.util.Iterator;
 import java.util.Objects;
 import java.util.Set;
+import java.util.LinkedHashSet;
+import java.util.function.Supplier;
 
 import org.apache.commons.lang3.builder.CompareToBuilder;
 
-import com.google.common.base.Supplier;
-import com.google.common.base.Suppliers;
-import com.google.common.collect.Sets;
-
 import io.codiqo.api.DuplicateMark;
 import io.codiqo.api.code.CodeBlockInfo;
+import io.codiqo.util.Lazy;
 import lombok.Builder;
 import lombok.Getter;
 import net.sourceforge.pmd.cpd.Match;
@@ -27,15 +26,10 @@ public class PmdDuplicationMatch implements DuplicationMatch {
     private final int lineCount;
     private final Collection<DuplicateMark> marks;
     @Builder.Default
-    private final Set<CodeBlockInfo> blocks = Sets.newLinkedHashSet();
+    private final Set<CodeBlockInfo> blocks = new LinkedHashSet<>();
     @Builder.Default
-    private final Set<File> files = Sets.newLinkedHashSet();
-    private final Supplier<Boolean> crossFile = Suppliers.memoize(new Supplier<Boolean>() {
-        @Override
-        public Boolean get() {
-            return marks.stream().map(DuplicateMark::getFile).distinct().count() > BigDecimal.ONE.intValue();
-        }
-    });
+    private final Set<File> files = new LinkedHashSet<>();
+    private final Supplier<Boolean> crossFile = Lazy.of(this::computeCrossFile);
 
     @Override
     public void accept(CodeBlockInfo info) {
@@ -49,6 +43,9 @@ public class PmdDuplicationMatch implements DuplicationMatch {
     @Override
     public boolean isCrossFile() {
         return crossFile.get();
+    }
+    private boolean computeCrossFile() {
+        return marks.stream().map(DuplicateMark::getFile).distinct().count() > BigDecimal.ONE.intValue();
     }
     @Override
     public int hashCode() {

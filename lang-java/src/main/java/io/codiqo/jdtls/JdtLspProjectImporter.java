@@ -35,7 +35,7 @@ import org.eclipse.lsp4j.services.LanguageServer;
 import org.eclipse.lsp4j.services.TextDocumentService;
 import org.eclipse.lsp4j.services.WorkspaceService;
 
-import com.google.common.base.Preconditions;
+import org.apache.commons.lang3.Validate;
 
 import io.codiqo.api.LanguageServerProjectImporter;
 import io.codiqo.api.RunArgs;
@@ -134,8 +134,8 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
         WorkspaceService service = getLangServer().getWorkspaceService();
         WorkspaceSymbolParams params = new WorkspaceSymbolParams(query);
         return service.symbol(params).thenApply(either -> {
-            Preconditions.checkArgument(BooleanUtils.isTrue(either.isRight()));
-            Preconditions.checkArgument(BooleanUtils.isFalse(either.isLeft()));
+            Validate.isTrue(BooleanUtils.isTrue(either.isRight()));
+            Validate.isTrue(BooleanUtils.isFalse(either.isLeft()));
             return either.getRight();
         });
     }
@@ -163,8 +163,8 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
         params.setTextDocument(new TextDocumentIdentifier(location.getUri()));
         params.setPosition(location.getRange().getStart());
         return service.definition(params).thenApply(either -> {
-            Preconditions.checkArgument(BooleanUtils.isTrue(either.isLeft()));
-            Preconditions.checkArgument(BooleanUtils.isFalse(either.isRight()));
+            Validate.isTrue(BooleanUtils.isTrue(either.isLeft()));
+            Validate.isTrue(BooleanUtils.isFalse(either.isRight()));
             return either.getLeft();
         });
     }
@@ -184,8 +184,8 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
         params.setTextDocument(new TextDocumentIdentifier(location.getUri()));
         params.setPosition(location.getRange().getStart());
         return service.implementation(params).thenApply(either -> {
-            Preconditions.checkArgument(BooleanUtils.isTrue(either.isLeft()));
-            Preconditions.checkArgument(BooleanUtils.isFalse(either.isRight()));
+            Validate.isTrue(BooleanUtils.isTrue(either.isLeft()));
+            Validate.isTrue(BooleanUtils.isFalse(either.isRight()));
             return either.getLeft();
         });
     }
@@ -196,8 +196,8 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
         params.setTextDocument(new TextDocumentIdentifier(location.getUri()));
         params.setPosition(location.getRange().getStart());
         return service.typeDefinition(params).thenApply(either -> {
-            Preconditions.checkArgument(BooleanUtils.isTrue(either.isLeft()));
-            Preconditions.checkArgument(BooleanUtils.isFalse(either.isRight()));
+            Validate.isTrue(BooleanUtils.isTrue(either.isLeft()));
+            Validate.isTrue(BooleanUtils.isFalse(either.isRight()));
             return either.getLeft();
         });
     }
@@ -207,8 +207,8 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
         DocumentSymbolParams params = new DocumentSymbolParams();
         params.setTextDocument(new TextDocumentIdentifier(uri));
         return service.documentSymbol(params).thenApply(l -> l.stream().map(either -> {
-            Preconditions.checkArgument(BooleanUtils.isFalse(either.isLeft()));
-            Preconditions.checkArgument(BooleanUtils.isTrue(either.isRight()));
+            Validate.isTrue(BooleanUtils.isFalse(either.isLeft()));
+            Validate.isTrue(BooleanUtils.isTrue(either.isRight()));
             return either.getRight();
         }).collect(Collectors.toList()));
     }

@@ -5,10 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import java.util.Set;
+import java.util.TreeSet;
 
 import org.junit.jupiter.api.Test;
 
-import com.google.common.collect.Sets;
 
 import io.codiqo.api.diff.CommentSyntax;
 import io.codiqo.api.diff.IneffectiveLineFilter;
@@ -46,18 +46,18 @@ class UnifiedDiffLinesTest {
     void parseTracksOldAndNewCountersAcrossHunks() {
         UnifiedDiffLines lines = UnifiedDiffLines.parse(TWO_HUNK_DIFF, C_STYLE);
 
-        assertEquals(Sets.newTreeSet(Set.of(6, 8, 281, 283, 284)), lines.getDeletedLines(),
+        assertEquals(new TreeSet<>(Set.of(6, 8, 281, 283, 284)), lines.getDeletedLines(),
                 "deleted lines carry old-file numbers");
-        assertEquals(Sets.newTreeSet(Set.of(7, 279, 281)), lines.getAddedLines(),
+        assertEquals(new TreeSet<>(Set.of(7, 279, 281)), lines.getAddedLines(),
                 "added lines carry new-file numbers");
     }
     @Test
     void candidatesExcludeImportsBlanksAndComments() {
         UnifiedDiffLines lines = UnifiedDiffLines.parse(TWO_HUNK_DIFF, C_STYLE);
 
-        assertEquals(Sets.newTreeSet(Set.of(281, 283, 284)), lines.getCandidateDeletedLines(),
+        assertEquals(new TreeSet<>(Set.of(281, 283, 284)), lines.getCandidateDeletedLines(),
                 "all hunk-1 deletions are imports → filtered out of the candidate set");
-        assertEquals(Sets.newTreeSet(Set.of(279, 281)), lines.getCandidateAddedLines(),
+        assertEquals(new TreeSet<>(Set.of(279, 281)), lines.getCandidateAddedLines(),
                 "the hunk-1 addition is an import → filtered out of the candidate set");
     }
     @Test
@@ -99,9 +99,9 @@ class UnifiedDiffLinesTest {
     void noneProfileKeepsImportsAndComments() {
         UnifiedDiffLines lines = UnifiedDiffLines.parse(TWO_HUNK_DIFF, IneffectiveLineFilter.NONE);
 
-        assertEquals(Sets.newTreeSet(Set.of(6, 8, 281, 283, 284)), lines.getCandidateDeletedLines(),
+        assertEquals(new TreeSet<>(Set.of(6, 8, 281, 283, 284)), lines.getCandidateDeletedLines(),
                 "NONE filters only blanks; import/comment filtering lives in the C_STYLE/XML profiles");
-        assertEquals(Sets.newTreeSet(Set.of(7, 279, 281)), lines.getCandidateAddedLines());
+        assertEquals(new TreeSet<>(Set.of(7, 279, 281)), lines.getCandidateAddedLines());
     }
     @Test
     void metadataAndMissingHunksProduceNoLines() {

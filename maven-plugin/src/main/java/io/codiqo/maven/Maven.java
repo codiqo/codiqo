@@ -35,7 +35,6 @@ import org.apache.maven.project.ProjectBuildingRequest;
 import org.apache.maven.project.ProjectBuildingResult;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 
-import com.google.common.collect.ImmutableSet;
 
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import kr.motd.maven.os.Detector;
@@ -54,7 +53,7 @@ public class Maven {
      * Common exceptions that indicate dependency resolution failure, which is a common cause of fork failure.
      * See: https://cwiki.apache.org/confluence/display/MAVEN/Errors+and+Solutions
      */
-    private static final Set<String> DEPENDENCY_RESOLUTION_EXCEPTIONS = ImmutableSet.of(
+    private static final Set<String> DEPENDENCY_RESOLUTION_EXCEPTIONS = Set.of(
             UnresolvableModelException.class.getSimpleName(),
             ArtifactResolutionException.class.getSimpleName(),
             DependencyResolutionException.class.getSimpleName(),

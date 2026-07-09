@@ -2,13 +2,12 @@ package io.codiqo.core.java;
 
 import java.util.Iterator;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.commons.Method;
-
-import com.google.common.base.Joiner;
 
 import lombok.experimental.UtilityClass;
 import net.sourceforge.pmd.lang.java.symbols.JClassSymbol;
@@ -64,12 +63,12 @@ public class JavaBinaryFormat {
         }
 
         sb.append('(');
-        sb.append(Joiner.on(", ").join(sig.getFormalParameters().stream().map(p -> TypePrettyPrint.prettyPrintWithSimpleNames(p)).iterator()));
+        sb.append(sig.getFormalParameters().stream().map(TypePrettyPrint::prettyPrintWithSimpleNames).collect(Collectors.joining(", ")));
         sb.append(')');
 
         if (CollectionUtils.isNotEmpty(sig.getTypeParameters())) {
             sb.append(" <");
-            sb.append(Joiner.on(", ").join(sig.getTypeParameters().stream().map(JTypeVar::getName).iterator()));
+            sb.append(sig.getTypeParameters().stream().map(JTypeVar::getName).collect(Collectors.joining(", ")));
             sb.append('>');
         }
 

@@ -58,9 +58,9 @@ public class TimeMachineVersionResolver implements VersionResolver {
             return delegate.resolveVersion(session, request);
         }
         Instant target = targetOpt.get();
-        SnapshotWithMetadata pick = cache.computeIfAbsent(artifact, a -> lookup(session, a, request.getRepositories(), target));
+        SnapshotWithMetadata pick = cache.computeIfAbsent(artifact, a -> resolvePick(session, a, request.getRepositories(), target));
         if (Objects.isNull(pick)) {
-            log.warn("no snapshot of {}:{}:{} deployed before {} — falling back to default resolver",
+            log.warn("no snapshot of {}:{}:{} found before or after {} — falling back to default resolver",
                     artifact.getGroupId(),
                     artifact.getArtifactId(),
                     artifact.getBaseVersion(),
@@ -77,12 +77,22 @@ public class TimeMachineVersionResolver implements VersionResolver {
         result.setRepository(pick.getRepository());
         return result;
     }
-    private SnapshotWithMetadata lookup(RepositorySystemSession session, Artifact artifact, List<RemoteRepository> repositories, Instant target) {
+    private SnapshotWithMetadata resolvePick(RepositorySystemSession session, Artifact artifact, List<RemoteRepository> repositories, Instant target) {
+        SnapshotWithMetadata backward = pickClosest(session, artifact, repositories, target, true);
+        if (Objects.nonNull(backward)) {
+            return backward;
+        }
+        return pickClosest(session, artifact, repositories, target, false);
+    }
+    private SnapshotWithMetadata pickClosest(RepositorySystemSession session, Artifact artifact, List<RemoteRepository> repositories, Instant target, boolean before) {
         SnapshotWithMetadata best = null;
         for (RemoteRepository repo : repositories) {
             if (isSnapshotEnabled(repo)) {
-                SnapshotWithMetadata candidate = repoClient.closestSnapshotBefore(session, artifact, repo, target).orElse(null);
-                if (Objects.nonNull(candidate) && isBetter(candidate, best)) {
+                Optional<SnapshotWithMetadata> found = before
+                        ? repoClient.closestSnapshotBefore(session, artifact, repo, target)
+                        : repoClient.closestSnapshotAfter(session, artifact, repo, target);
+                SnapshotWithMetadata candidate = found.orElse(null);
+                if (Objects.nonNull(candidate) && isCloser(candidate, best, target)) {
                     best = candidate;
                 }
             }
@@ -101,26 +111,35 @@ public class TimeMachineVersionResolver implements VersionResolver {
         RepositoryPolicy policy = repo.getPolicy(true);
         return Objects.isNull(policy) || policy.isEnabled();
     }
-    private static boolean isBetter(SnapshotWithMetadata candidate, SnapshotWithMetadata incumbent) {
-        return Objects.isNull(incumbent) || candidate.getDeployedAt().isAfter(incumbent.getDeployedAt());
+    private static boolean isCloser(SnapshotWithMetadata candidate, SnapshotWithMetadata incumbent, Instant target) {
+        if (Objects.isNull(incumbent)) {
+            return true;
+        }
+        Duration candidateGap = Duration.between(candidate.getDeployedAt(), target).abs();
+        Duration incumbentGap = Duration.between(incumbent.getDeployedAt(), target).abs();
+        return candidateGap.compareTo(incumbentGap) < 0;
     }
     private static void logResult(Artifact artifact, Instant target, SnapshotWithMetadata pick) {
-        Duration gap = Duration.between(pick.getDeployedAt(), target);
-        Duration max = TimeMachineConfig.maxStaleness();
-        if (gap.compareTo(max) > 0) {
-            log.warn("{}:{}:{} pinned to {} ({} stale; threshold {})",
+        boolean forward = pick.getDeployedAt().isAfter(target);
+        Duration gap = Duration.between(target, pick.getDeployedAt()).abs();
+        Duration threshold = forward ? TimeMachineConfig.forwardWindow() : TimeMachineConfig.maxStaleness();
+        if (gap.compareTo(threshold) > 0) {
+            log.warn("{}:{}:{} pinned {} to {} ({} {}; threshold {})",
                     artifact.getGroupId(),
                     artifact.getArtifactId(),
                     artifact.getBaseVersion(),
+                    forward ? "forward" : "backward",
                     pick.getVersion(),
                     gap,
-                    max);
+                    forward ? "after commit" : "stale",
+                    threshold);
         } else {
-            log.info("{}:{}:{} -> {} (deployed {} from {})",
+            log.info("{}:{}:{} -> {} ({} {} from {})",
                     artifact.getGroupId(),
                     artifact.getArtifactId(),
                     artifact.getBaseVersion(),
                     pick.getVersion(),
+                    forward ? "deployed after commit" : "deployed",
                     pick.getDeployedAt(),
                     pick.getRepository().getId());
         }

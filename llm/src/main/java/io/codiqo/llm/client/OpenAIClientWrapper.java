@@ -1,14 +1,13 @@
 package io.codiqo.llm.client;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
 import org.apache.commons.collections4.CollectionUtils;
 
-import com.google.common.collect.Iterables;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
 import com.openai.client.OpenAIClient;
 import com.openai.core.http.StreamResponse;
 import com.openai.models.chat.completions.ChatCompletionChunk;
@@ -25,12 +24,12 @@ public class OpenAIClientWrapper {
 
     public StreamingResult stream(ChatCompletionCreateParams params, StreamingHandler handler) {
         StreamingResult result = new StreamingResult();
-        Map<Long, AccumulatedToolCall> toolCallMap = Maps.newLinkedHashMap();
+        Map<Long, AccumulatedToolCall> toolCallMap = new LinkedHashMap<>();
 
         try (StreamResponse<ChatCompletionChunk> stream = client.chat().completions().createStreaming(params)) {
             stream.stream().forEach(chunk -> {
                 if (CollectionUtils.isNotEmpty(chunk.choices())) {
-                    ChatCompletionChunk.Choice choice = Iterables.getOnlyElement(chunk.choices());
+                    ChatCompletionChunk.Choice choice = chunk.choices().iterator().next();
                     choice.finishReason().ifPresent(reason -> result.setFinishReason(reason.toString()));
                     ChatCompletionChunk.Choice.Delta delta = choice.delta();
 
@@ -59,7 +58,7 @@ public class OpenAIClientWrapper {
             });
         }
 
-        result.setToolCalls(Lists.newArrayList(toolCallMap.values()));
+        result.setToolCalls(new ArrayList<>(toolCallMap.values()));
         handler.onComplete(result);
         return result;
     }
@@ -88,7 +87,7 @@ public class OpenAIClientWrapper {
         private int promptTokens;
         private int completionTokens;
         private int totalTokens;
-        private List<AccumulatedToolCall> toolCalls = Lists.newArrayList();
+        private List<AccumulatedToolCall> toolCalls = new ArrayList<>();
 
         private void appendContent(String text) {
             if (Objects.nonNull(text)) {
