@@ -5,10 +5,9 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 
-import com.google.common.collect.Maps;
-import com.google.common.collect.Range;
-import com.google.common.collect.Sets;
 
 import io.codiqo.api.DuplicateMark;
 import io.codiqo.api.IndexingSummary;
@@ -22,9 +21,9 @@ import lombok.experimental.Accessors;
 @Getter
 @Accessors(fluent = true)
 public class PMDCopyPasteDetectionSummary implements CopyPasteDetectionSummary {
-    private final Map<CodeBlockInfo, Set<CodeBlockInfo>> copyPasteFrom = Maps.newLinkedHashMap();
-    private final Set<Set<CodeBlockInfo>> copyPasteNew = Sets.newLinkedHashSet();
-    private final Set<DuplicationMatch> affected = Sets.newLinkedHashSet();
+    private final Map<CodeBlockInfo, Set<CodeBlockInfo>> copyPasteFrom = new LinkedHashMap<>();
+    private final Set<Set<CodeBlockInfo>> copyPasteNew = new LinkedHashSet<>();
+    private final Set<DuplicationMatch> affected = new LinkedHashSet<>();
     private final Map<File, Integer> tokensPerFile;
 
     public PMDCopyPasteDetectionSummary(
@@ -38,13 +37,13 @@ public class PMDCopyPasteDetectionSummary implements CopyPasteDetectionSummary {
             Collection<File> locations = analysis.locations();
             for (DuplicateMark mark : match) {
                 if (locations.contains(mark.getFile())) {
-                    Range<Integer> markRange = Range.closed(mark.getLocation().getStartLine(), mark.getLocation().getEndLine());
+                    int markStart = mark.getLocation().getStartLine();
+                    int markEnd = mark.getLocation().getEndLine();
 
                     for (FileAnalysis fileAnalysis : analysis) {
                         if (mark.getFile().equals(fileAnalysis.getFile())) {
                             for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
-                                Range<Integer> symbolRange = Range.closed(symbol.getLocation().getStartLine(), symbol.getLocation().getEndLine());
-                                if (symbolRange.encloses(markRange)) {
+                                if (symbol.getLocation().getStartLine() <= markStart && markEnd <= symbol.getLocation().getEndLine()) {
                                     symbol.block().ifPresent(block -> {
                                         affected.add(match);
                                     });
@@ -60,10 +59,10 @@ public class PMDCopyPasteDetectionSummary implements CopyPasteDetectionSummary {
             if (affected.contains(match)) {
                 for (DuplicateMark mark : match) {
                     Collection<CodeBlockInfo> blocks = summary.getBlocks().get(mark.getFile());
-                    Range<Integer> sourceMarkRange = Range.closed(mark.getLocation().getStartLine(), mark.getLocation().getEndLine());
+                    int markStart = mark.getLocation().getStartLine();
+                    int markEnd = mark.getLocation().getEndLine();
                     for (CodeBlockInfo block : blocks) {
-                        Range<Integer> blockRange = Range.closed(block.getLocation().getStartLine(), block.getLocation().getEndLine());
-                        if (blockRange.encloses(sourceMarkRange)) {
+                        if (block.getLocation().getStartLine() <= markStart && markEnd <= block.getLocation().getEndLine()) {
                             match.accept(block);
                             mark.accept(block);
                         }
@@ -73,8 +72,8 @@ public class PMDCopyPasteDetectionSummary implements CopyPasteDetectionSummary {
         });
 
         affected.forEach(match -> {
-            Set<CodeBlockInfo> modifiedSet = Sets.newLinkedHashSet();
-            Set<CodeBlockInfo> staticSet = Sets.newLinkedHashSet();
+            Set<CodeBlockInfo> modifiedSet = new LinkedHashSet<>();
+            Set<CodeBlockInfo> staticSet = new LinkedHashSet<>();
 
             for (DuplicateMark mark : match) {
                 mark.block().ifPresent(block -> {
@@ -90,7 +89,7 @@ public class PMDCopyPasteDetectionSummary implements CopyPasteDetectionSummary {
                 copyPasteNew.add(modifiedSet);
             } else {
                 for (CodeBlockInfo it : modifiedSet) {
-                    copyPasteFrom.computeIfAbsent(it, k -> Sets.newLinkedHashSet()).addAll(staticSet);
+                    copyPasteFrom.computeIfAbsent(it, k -> new LinkedHashSet<>()).addAll(staticSet);
                 }
             }
         });

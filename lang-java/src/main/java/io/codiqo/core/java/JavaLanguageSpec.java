@@ -30,12 +30,17 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
+import java.util.HashSet;
+import java.util.HashMap;
+import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.BooleanUtils;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.commons.lang3.time.StopWatch;
@@ -52,14 +57,6 @@ import org.jacoco.core.data.ExecutionDataStore;
 import org.jacoco.core.tools.ExecFileLoader;
 import org.slf4j.event.Level;
 
-import com.google.common.base.Splitter;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Range;
-import com.google.common.collect.Sets;
-
 import edu.umd.cs.findbugs.BugCollection;
 import edu.umd.cs.findbugs.BugCollectionBugReporter;
 import edu.umd.cs.findbugs.BugInstance;
@@ -74,7 +71,7 @@ import edu.umd.cs.findbugs.plugins.DuplicatePluginIdException;
 import io.codiqo.api.IncomingCallsResolver;
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.LanguageSpec;
-import io.codiqo.api.MavenProjectSpec;
+import io.codiqo.api.JvmProjectSpec;
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.code.CodeBlockInfo;
@@ -86,6 +83,7 @@ import io.codiqo.jdtls.JdtLspProjectImporter;
 import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.util.Fetch;
+import io.codiqo.util.Split;
 import net.sourceforge.pmd.PMDConfiguration;
 import net.sourceforge.pmd.PmdAnalysis;
 import net.sourceforge.pmd.lang.JvmLanguagePropertyBundle;
@@ -131,7 +129,7 @@ public class JavaLanguageSpec implements LanguageSpec {
     private final RunArgs args;
     private final JavaLanguageModule language = new JavaLanguageModule();
     private final Function<NodeStream<? extends JavaNode>, Collection<JInvocationBlock>> outboundASTconverter = stream -> {
-        ImmutableList.Builder<JInvocationBlock> builder = ImmutableList.builder();
+        List<JInvocationBlock> builder = new ArrayList<>();
         stream.toStream().forEach(node -> {
             if (node instanceof MethodUsage usage) {
                 OverloadSelectionResult overload = usage.getOverloadSelectionInfo();
@@ -151,7 +149,7 @@ public class JavaLanguageSpec implements LanguageSpec {
                 }
             }
         });
-        return builder.build();
+        return List.copyOf(builder);
     };
     private final IncomingCallsResolver incomingCallsResolver;
     private final JdtLspProjectImporter jdt;
@@ -176,20 +174,20 @@ public class JavaLanguageSpec implements LanguageSpec {
     }
     @Override
     public List<CodeBlockInfo> parse(ProjectSpec owner, Collection<File> files) throws IOException {
-        ImmutableList.Builder<CodeBlockInfo> builder = ImmutableList.builder();
+        List<CodeBlockInfo> builder = new ArrayList<>();
 
         LanguagePropertyBundle bundle = language.newPropertyBundle();
         bundle.setProperty(JavaLanguageProperties.FIRST_CLASS_LOMBOK, true);
 
-        if (owner instanceof MavenProjectSpec mvn) {
-            Set<String> jars = Sets.newLinkedHashSet();
-            mvn.getCompileClasspathElements().stream().forEach(element -> jars.add(element.getAbsolutePath()));
-            mvn.getTestClasspathElements().stream().forEach(element -> jars.add(element.getAbsolutePath()));
+        if (owner instanceof JvmProjectSpec jvm) {
+            Set<String> jars = new LinkedHashSet<>();
+            jvm.getCompileClasspathElements().stream().forEach(element -> jars.add(element.getAbsolutePath()));
+            jvm.getTestClasspathElements().stream().forEach(element -> jars.add(element.getAbsolutePath()));
             bundle.setProperty(JvmLanguagePropertyBundle.AUX_CLASSPATH, jars.stream().collect(Collectors.joining(File.pathSeparator)));
         }
 
         LanguageRegistry languageRegistry = LanguageRegistry.singleton(language);
-        ImmutableMap<Language, LanguagePropertyBundle> languageProperties = ImmutableMap.of(language, bundle);
+        Map<Language, LanguagePropertyBundle> languageProperties = Map.of(language, bundle);
         try (LanguageProcessorRegistry processingRegistry = LanguageProcessorRegistry.create(languageRegistry, languageProperties, log)) {
             Parser pmd = processingRegistry.getProcessor(language).services().getParser();
             SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
@@ -251,8 +249,8 @@ public class JavaLanguageSpec implements LanguageSpec {
                                                 .build());
                                     }
 
-                                    if (owner instanceof MavenProjectSpec mvn) {
-                                        toAdd.stream().forEach(signature -> signature.accept(mvn));
+                                    if (owner instanceof JvmProjectSpec jvm) {
+                                        toAdd.stream().forEach(signature -> signature.accept(jvm));
                                     }
                                 }
                             };
@@ -264,7 +262,7 @@ public class JavaLanguageSpec implements LanguageSpec {
             }
         }
 
-        return builder.build();
+        return List.copyOf(builder);
     }
     @Override
     public void captureViolations(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
@@ -300,7 +298,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         StopWatch stopWatch = StopWatch.createStarted();
 
         ExecFileLoader loader = new ExecFileLoader();
-        List<File> outputDirectories = Lists.newArrayList();
+        List<File> outputDirectories = new ArrayList<>();
 
         for (ProjectSpec project : summary.getProjects()) {
             Optional<File> coverage = project.coverage();
@@ -379,11 +377,11 @@ public class JavaLanguageSpec implements LanguageSpec {
                 bundle.getPackages().size(),
                 totalAnalyzed);
 
-        Map<File, ISourceFileCoverage> coverages = Maps.newConcurrentMap();
+        Map<File, ISourceFileCoverage> coverages = new ConcurrentHashMap<>();
 
         summary.getProjects().forEach(project -> {
-            if (project instanceof MavenProjectSpec mvn) {
-                for (File sourceRoot : mvn.getCompileSourceRoots()) {
+            if (project instanceof JvmProjectSpec jvm) {
+                for (File sourceRoot : jvm.getCompileSourceRoots()) {
                     Path normalized = sourceRoot.toPath().normalize().toAbsolutePath();
                     for (IPackageCoverage pkg : bundle.getPackages()) {
                         for (ISourceFileCoverage source : pkg.getSourceFiles()) {
@@ -465,20 +463,20 @@ public class JavaLanguageSpec implements LanguageSpec {
         log.info("coverage analysis: %d files affected matched, %d unmatched, %d lines with coverage", matched.get(), unmatched.get(), linesWithCoverage.get());
     }
     private void capturePmdViolations(IndexingSummary summary, CommitAnalysis analysis) {
-        Map<ProjectSpec, List<File>> filesByProject = Maps.newLinkedHashMap();
-        List<File> orphans = Lists.newArrayList();
+        Map<ProjectSpec, List<File>> filesByProject = new LinkedHashMap<>();
+        List<File> orphans = new ArrayList<>();
         for (File sourceFile : summary.getBlocks().keySet()) {
             if (FilenameUtils.isExtension(sourceFile.getName(), language.getExtensions())) {
                 Optional<ProjectSpec> owner = args.owner(sourceFile);
                 if (owner.isPresent()) {
-                    filesByProject.computeIfAbsent(owner.get(), k -> Lists.newArrayList()).add(sourceFile);
+                    filesByProject.computeIfAbsent(owner.get(), k -> new ArrayList<>()).add(sourceFile);
                 } else {
                     orphans.add(sourceFile);
                 }
             }
         }
 
-        List<Collection<File>> groups = Lists.newArrayList();
+        List<Collection<File>> groups = new ArrayList<>();
         groups.addAll(filesByProject.values());
         if (CollectionUtils.isNotEmpty(orphans)) {
             groups.add(orphans);
@@ -512,7 +510,7 @@ public class JavaLanguageSpec implements LanguageSpec {
             }
 
             if (toApply.isTrue()) {
-                Map<String, File> filesByAbsolutePath = Maps.newHashMap();
+                Map<String, File> filesByAbsolutePath = new HashMap<>();
                 for (File sourceFile : filesForProject) {
                     filesByAbsolutePath.put(sourceFile.getAbsolutePath(), sourceFile);
                 }
@@ -521,11 +519,11 @@ public class JavaLanguageSpec implements LanguageSpec {
                 report.getViolations().forEach(violation -> {
                     File sourceFile = filesByAbsolutePath.get(violation.getFileId().getAbsolutePath());
                     if (Objects.nonNull(sourceFile)) {
-                        Range<Integer> markRange = Range.closed(violation.getLocation().getStartLine(), violation.getLocation().getEndLine());
+                        int markStart = violation.getLocation().getStartLine();
+                        int markEnd = violation.getLocation().getEndLine();
                         Collection<CodeBlockInfo> blocks = summary.getBlocks().get(sourceFile);
                         for (CodeBlockInfo block : blocks) {
-                            Range<Integer> blockRange = Range.closed(block.getLocation().getStartLine(), block.getLocation().getEndLine());
-                            if (blockRange.encloses(markRange)) {
+                            if (block.getLocation().getStartLine() <= markStart && markEnd <= block.getLocation().getEndLine()) {
                                 block.pmdViolation(violation);
                                 if (analysis.isPresent(sourceFile, block)) {
                                     log.info("detected PMD violation for %s : line(%d:%d-%d:%d)  %s",
@@ -544,9 +542,9 @@ public class JavaLanguageSpec implements LanguageSpec {
         }
     }
     private void captureSpotbugsViolations(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
-        Map<ProjectSpec, edu.umd.cs.findbugs.Project> projects = Maps.newHashMap();
+        Map<ProjectSpec, edu.umd.cs.findbugs.Project> projects = new HashMap<>();
         for (ProjectSpec project : summary.getProjects()) {
-            if (project instanceof MavenProjectSpec mvn) {
+            if (project instanceof JvmProjectSpec jvm) {
                 File outputDir = project.getOutputDirectory();
                 if (outputDir.exists()) {
                     if (hasClassFiles(outputDir)) {
@@ -556,13 +554,13 @@ public class JavaLanguageSpec implements LanguageSpec {
                             spotbugs.setProjectName(target.getName());
                             spotbugs.addFile(target.getOutputDirectory().getAbsolutePath());
 
-                            mvn.getCompileClasspathElements().stream().forEach(element -> spotbugs.addAuxClasspathEntry(element.getAbsolutePath()));
-                            mvn.getTestClasspathElements().stream().forEach(element -> spotbugs.addAuxClasspathEntry(element.getAbsolutePath()));
+                            jvm.getCompileClasspathElements().stream().forEach(element -> spotbugs.addAuxClasspathEntry(element.getAbsolutePath()));
+                            jvm.getTestClasspathElements().stream().forEach(element -> spotbugs.addAuxClasspathEntry(element.getAbsolutePath()));
 
-                            for (File dir : mvn.getCompileSourceRoots()) {
+                            for (File dir : jvm.getCompileSourceRoots()) {
                                 spotbugs.addSourceDirs(Collections.singletonList(dir.getAbsolutePath()));
                             }
-                            for (File dir : mvn.getTestCompileSourceRoots()) {
+                            for (File dir : jvm.getTestCompileSourceRoots()) {
                                 spotbugs.addSourceDirs(Collections.singletonList(dir.getAbsolutePath()));
                             }
 
@@ -576,7 +574,7 @@ public class JavaLanguageSpec implements LanguageSpec {
             }
         }
 
-        Set<Plugin> plugins = Sets.newHashSet();
+        Set<Plugin> plugins = new HashSet<>();
         Set<String> current = Plugin.getAllPlugins()
                 .stream()
                 .map(Plugin::getPluginLoader)
@@ -613,15 +611,15 @@ public class JavaLanguageSpec implements LanguageSpec {
         UnhiddenDetectorFactoryCollection detectorFactory = new UnhiddenDetectorFactoryCollection(plugins);
         DetectorFactoryCollection.resetInstance(detectorFactory);
 
-        Set<Path> sourceRoots = Sets.newHashSet();
+        Set<Path> sourceRoots = new HashSet<>();
         for (ProjectSpec project : projects.keySet()) {
-            if (project instanceof MavenProjectSpec mvn) {
-                mvn.getCompileSourceRoots().forEach(dir -> sourceRoots.add(dir.toPath().normalize()));
-                mvn.getTestCompileSourceRoots().forEach(dir -> sourceRoots.add(dir.toPath().normalize()));
+            if (project instanceof JvmProjectSpec jvm) {
+                jvm.getCompileSourceRoots().forEach(dir -> sourceRoots.add(dir.toPath().normalize()));
+                jvm.getTestCompileSourceRoots().forEach(dir -> sourceRoots.add(dir.toPath().normalize()));
             }
         }
 
-        Map<String, File> filesBySourcePath = Maps.newHashMap();
+        Map<String, File> filesBySourcePath = new HashMap<>();
         for (File sourceFile : summary.getBlocks().keySet()) {
             Path normalized = sourceFile.toPath().normalize();
             for (Path rootPath : sourceRoots) {
@@ -632,11 +630,7 @@ public class JavaLanguageSpec implements LanguageSpec {
             }
         }
 
-        Set<String> omitVisitors = Sets.newHashSet(
-                Splitter.on(',')
-                        .trimResults()
-                        .omitEmptyStrings()
-                        .splitToList(Optional.ofNullable(args.getSpotbugsOmitVisitors()).orElse(StringUtils.EMPTY)));
+        Set<String> omitVisitors = new HashSet<>(Split.on(args.getSpotbugsOmitVisitors(), ','));
 
         StopWatch spotbugsWatch = StopWatch.createStarted();
         projects.values().forEach(spotbugs -> {
@@ -667,14 +661,14 @@ public class JavaLanguageSpec implements LanguageSpec {
                         BugCollection bugCollection = bugReporter.getBugCollection();
                         for (BugInstance bug : bugCollection) {
                             SourceLineAnnotation sourceLine = bug.getPrimarySourceLineAnnotation();
-                            Range<Integer> markRange = Range.closed(sourceLine.getStartLine(), sourceLine.getEndLine());
+                            int markStart = sourceLine.getStartLine();
+                            int markEnd = sourceLine.getEndLine();
 
                             File sourceFile = filesBySourcePath.get(sourceLine.getSourcePath());
                             if (Objects.nonNull(sourceFile)) {
                                 Collection<CodeBlockInfo> blocks = summary.getBlocks().get(sourceFile);
                                 for (CodeBlockInfo block : blocks) {
-                                    Range<Integer> blockRange = Range.closed(block.getLocation().getStartLine(), block.getLocation().getEndLine());
-                                    if (blockRange.encloses(markRange)) {
+                                    if (block.getLocation().getStartLine() <= markStart && markEnd <= block.getLocation().getEndLine()) {
                                         if (block instanceof JavaCodeBlockInfo) {
                                             ((JavaCodeBlockInfo) block).spotbug(bug);
                                         }

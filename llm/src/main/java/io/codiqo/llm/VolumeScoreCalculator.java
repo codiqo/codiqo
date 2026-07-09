@@ -6,13 +6,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.HashSet;
+import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.math3.util.Precision;
 
-import com.google.common.collect.Lists;
-import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.metrics.DriverScaler;
@@ -139,7 +139,7 @@ public class VolumeScoreCalculator {
     public PreComputedScores recompute(PreComputedScores original, Map<String, Double> perFileEffectiveLineFactor, Map<String, Double> perBlockCoeff, Map<String, Double> perBlockMovedFactor) {
         double maxDeviation = args.getDriverFactorMaxDeviation();
 
-        List<CodeBlockEffort> rescaled = Lists.newArrayListWithCapacity(original.getCodeBlockEfforts().size());
+        List<CodeBlockEffort> rescaled = new ArrayList<>(original.getCodeBlockEfforts().size());
         for (CodeBlockEffort cbe : original.getCodeBlockEfforts()) {
             String key = blockKey(cbe.getFile(), cbe.getSignature());
             double factor = perFileEffectiveLineFactor.getOrDefault(cbe.getFile(), 1.0);
@@ -235,8 +235,8 @@ public class VolumeScoreCalculator {
         return new CpdPreComputed(effectivePenalty, category, impact, total, introduced, testOnly);
     }
     public StaticAnalysisPreComputed calculateStaticAnalysisPenalty(LlmScoringRequest request) {
-        Set<String> introducedErrorRules = Sets.newHashSet();
-        Set<String> preExistingErrorRules = Sets.newHashSet();
+        Set<String> introducedErrorRules = new HashSet<>();
+        Set<String> preExistingErrorRules = new HashSet<>();
         if (Objects.nonNull(request.getCodeBlockChanges())) {
             for (CodeBlockChange codeBlock : request.getCodeBlockChanges()) {
                 if (Objects.nonNull(codeBlock.getDiagnostics())) {
@@ -285,10 +285,10 @@ public class VolumeScoreCalculator {
             double testMult,
             double maxDeviation) {
         if (CollectionUtils.isEmpty(codeBlocks)) {
-            return Lists.newArrayList();
+            return new ArrayList<>();
         }
 
-        List<CodeBlockEffort> toReturn = Lists.newArrayList();
+        List<CodeBlockEffort> toReturn = new ArrayList<>();
         for (CodeBlockChange block : codeBlocks) {
             if (block.isDelete()) {
                 continue;
@@ -354,10 +354,10 @@ public class VolumeScoreCalculator {
     // classification later rescales these in recompute, collapsing cosmetic and in-place churn.
     static List<CodeBlockEffort> calculateConfigFileEfforts(List<FileChange> fileChanges, double modifyMult, double configMult) {
         if (CollectionUtils.isEmpty(fileChanges)) {
-            return Lists.newArrayList();
+            return new ArrayList<>();
         }
 
-        List<CodeBlockEffort> toReturn = Lists.newArrayList();
+        List<CodeBlockEffort> toReturn = new ArrayList<>();
         for (FileChange fc : fileChanges) {
             if (!fc.isConfig()) {
                 continue;
@@ -388,7 +388,7 @@ public class VolumeScoreCalculator {
         if (CollectionUtils.isEmpty(initialEfforts)) {
             return initialEfforts;
         }
-        List<CodeBlockEffort> toReturn = Lists.newArrayListWithCapacity(initialEfforts.size());
+        List<CodeBlockEffort> toReturn = new ArrayList<>(initialEfforts.size());
         for (CodeBlockEffort cbe : initialEfforts) {
             double effortShare = totalEffortRaw > 0 ? cbe.getEffort() / totalEffortRaw : 0.0;
             boolean globalCapDriver = globalCapApplied && effortShare > maxDeviation;
@@ -457,7 +457,7 @@ public class VolumeScoreCalculator {
     }
     static List<FileEffort> groupByFile(List<CodeBlockEffort> blockEfforts, double maxDeviation) {
         if (CollectionUtils.isEmpty(blockEfforts)) {
-            return Lists.newArrayList();
+            return new ArrayList<>();
         }
         Map<String, List<CodeBlockEffort>> byFile = blockEfforts.stream()
                 .collect(Collectors.groupingBy(CodeBlockEffort::getFile, Collectors.toList()));
@@ -465,7 +465,7 @@ public class VolumeScoreCalculator {
         return byFile.entrySet().stream().map(entry -> {
             List<CodeBlockEffort> blocks = entry.getValue();
             double totalEffort = blocks.stream().mapToDouble(CodeBlockEffort::getEffort).sum();
-            boolean isTest = blocks.get(0).isTest();
+            boolean isTest = blocks.iterator().next().isTest();
 
             int outliers = (int) blocks.stream().filter(CodeBlockEffort::isBlockRatioOutlier).count();
             int capDrivers = (int) blocks.stream().filter(CodeBlockEffort::isGlobalCapDriver).count();
@@ -526,9 +526,9 @@ public class VolumeScoreCalculator {
         StaticAnalysisCategory staticAnalysisCategory;
         double staticAnalysisRecommendedImpact;
         @Builder.Default
-        List<CodeBlockEffort> codeBlockEfforts = Lists.newArrayList();
+        List<CodeBlockEffort> codeBlockEfforts = new ArrayList<>();
         @Builder.Default
-        List<FileEffort> fileEfforts = Lists.newArrayList();
+        List<FileEffort> fileEfforts = new ArrayList<>();
     }
 
     @Value

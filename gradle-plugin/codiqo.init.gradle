@@ -1,0 +1,30 @@
+// Applies the Codiqo Gradle plugin to a target build WITHOUT editing its build files, and
+// force-applies the jacoco plugin so coverage is produced even when the target project does not
+// configure jacoco itself (e.g. spring-kafka).
+//
+// Usage (from the target project, e.g. a spring-kafka checkout):
+//   ./gradlew --init-script /path/to/codiqo.init.gradle \
+//       :spring-kafka:test :spring-kafka:jacocoTestReport codiqoDumpAnalysis \
+//       -Pcodiqo.commitId=<sha> -Pcodiqo.outputDirectory=/path/to/reports
+//
+// Requires `mvn install` to have published io.codiqo:* to the local Maven repo first.
+
+initscript {
+    repositories {
+        mavenLocal()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'io.codiqo:codiqo-gradle-plugin:1.0-SNAPSHOT'
+    }
+}
+
+rootProject {
+    apply plugin: io.codiqo.gradle.CodiqoGradlePlugin
+}
+
+allprojects { project ->
+    project.pluginManager.withPlugin('java') {
+        project.pluginManager.apply('jacoco')
+    }
+}

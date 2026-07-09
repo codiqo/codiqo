@@ -21,6 +21,11 @@ import java.util.Set;
 import java.util.SortedSet;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+import java.util.TreeSet;
+import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
+import java.util.HashSet;
+import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FilenameUtils;
@@ -32,14 +37,9 @@ import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.lib.Repository;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Multimap;
-import com.google.common.collect.MultimapBuilder;
-import com.google.common.collect.Multimaps;
-import com.google.common.collect.Sets;
 
+import org.apache.commons.collections4.MultiValuedMap;
+import org.apache.commons.collections4.multimap.HashSetValuedHashMap;
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.IndexingSummary.IndexingSummaryBuilder;
 import io.codiqo.api.LanguageProcessors;
@@ -76,12 +76,12 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     private final Log log;
     private final RunArgs args;
     private final List<LanguageSpec> processors;
-    private final Set<String> extensions = Sets.newHashSet();
+    private final Set<String> extensions = new HashSet<>();
 
     public DefaultLanguageProcessors(LogFactory logFactory, RunArgs args, Fetch fetch) throws IOException {
         this.log = logFactory.getLogger(getClass());
         this.args = Objects.requireNonNull(args);
-        this.processors = Lists.newArrayList(new JavaLanguageSpec(logFactory, args, fetch));
+        this.processors = new ArrayList<>(List.of(new JavaLanguageSpec(logFactory, args, fetch)));
 
         processors.forEach(processor -> extensions.addAll(processor.lang().getExtensions()));
     }
@@ -114,15 +114,26 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     }
     @Override
     public Mono<?> load() {
-        return Mono.zip(processors.stream().map(LanguageSpec::load).collect(ImmutableList.toImmutableList()), objects -> processors.size());
+        return Mono.zip(processors.stream().map(LanguageSpec::load).toList(), objects -> processors.size());
     }
     @Override
     public IndexingSummary index(CommitAnalysis analysis) throws IOException {
         IndexingSummaryBuilder toReturn = IndexingSummary.builder();
-        Multimap<File, CodeBlockInfo> blocks = Multimaps.synchronizedMultimap(MultimapBuilder.hashKeys().linkedHashSetValues().build());
-        List<Path> totalFiles = Lists.newArrayList();
-        List<Path> ignoredFiles = Lists.newArrayList();
-        List<Path> skippedFiles = Lists.newArrayList();
+
+        /**
+         * LinkedHashSet-backed values preserve deterministic parse-order iteration of a file's blocks.
+         * CodeBlockInfo.hashCode() is the PMD AST node identity hashCode (varies per JVM run), so a plain
+         * HashSet would make downstream code-unit ordering — and thus the dumped YAML — non-reproducible.
+         */
+        MultiValuedMap<File, CodeBlockInfo> blocks = new HashSetValuedHashMap<>() {
+            @Override
+            protected HashSet<CodeBlockInfo> createCollection() {
+                return new LinkedHashSet<>();
+            }
+        };
+        List<Path> totalFiles = new ArrayList<>();
+        List<Path> ignoredFiles = new ArrayList<>();
+        List<Path> skippedFiles = new ArrayList<>();
         AtomicInteger skippedTrivial = new AtomicInteger();
         AtomicInteger totalSymbols = new AtomicInteger();
 
@@ -133,7 +144,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
             /**
              * gather all attached files in the repository
              */
-            Set<Path> indexed = Sets.newLinkedHashSet();
+            Set<Path> indexed = new LinkedHashSet<>();
             DirCache dirCache = repo.readDirCache();
             int entryCount = dirCache.getEntryCount();
             for (int i = 0; i < entryCount; i++) {
@@ -185,13 +196,13 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                 }
             });
 
-            Map<ProjectSpec, List<File>> filesByOwner = Maps.newLinkedHashMap();
-            List<File> orphans = Lists.newArrayList();
+            Map<ProjectSpec, List<File>> filesByOwner = new LinkedHashMap<>();
+            List<File> orphans = new ArrayList<>();
             for (Path path : totalFiles) {
                 File file = path.toFile();
                 Optional<ProjectSpec> opt = args.owner(file);
                 if (opt.isPresent()) {
-                    filesByOwner.computeIfAbsent(opt.get(), k -> Lists.newArrayList()).add(file);
+                    filesByOwner.computeIfAbsent(opt.get(), k -> new ArrayList<>()).add(file);
                 } else {
                     orphans.add(file);
                 }
@@ -200,12 +211,14 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
             filesByOwner.entrySet().parallelStream().forEach(group -> processors.forEach(processor -> {
                 List<File> matching = group.getValue().stream()
                         .filter(file -> FilenameUtils.isExtension(file.getName(), processor.lang().getExtensions()))
-                        .collect(ImmutableList.toImmutableList());
+                        .toList();
                 if (CollectionUtils.isNotEmpty(matching)) {
                     for (;;) {
                         try {
                             processor.parse(group.getKey(), matching).forEach(block -> {
-                                blocks.put(block.getFile(), block);
+                                synchronized (blocks) {
+                                    blocks.put(block.getFile(), block);
+                                }
 
                                 if (block.isTrivial()) {
                                     skippedTrivial.incrementAndGet();
@@ -259,7 +272,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                         /**
                          * identify affected blocks by checking if any of the changed lines from the GIT difference fall within the symbol's location
                          */
-                        Set<Integer> lines = Sets.newHashSet();
+                        Set<Integer> lines = new HashSet<>();
                         if (Objects.nonNull(gitAnalysis.getStructuredDiff())) {
                             for (GitDiffHunk hunk : gitAnalysis.getStructuredDiff().getHunks()) {
                                 for (int line = hunk.getNewStartLine(); line < hunk.getNewEndLine(); line++) {
@@ -295,7 +308,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     public void captureCopyPaste(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
         for (LanguageSpec processor : processors) {
             if (Boolean.FALSE.equals(args.isIgnoreCpd())) {
-                SortedSet<DuplicationMatch> matches = Sets.newTreeSet();
+                SortedSet<DuplicationMatch> matches = new TreeSet<>();
                 MutableBoolean toApply = new MutableBoolean();
 
                 CPDConfiguration cfg = new CPDConfiguration(LanguageRegistry.singleton(processor.lang()));
@@ -344,7 +357,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                                                         .startColumn(mark.getLocation().getStartColumn())
                                                         .endColumn(mark.getLocation().getEndColumn())
                                                         .build())
-                                                .build()).collect(ImmutableList.toImmutableList()))
+                                                .build()).collect(Collectors.toUnmodifiableList()))
                                         .build());
                             }
 

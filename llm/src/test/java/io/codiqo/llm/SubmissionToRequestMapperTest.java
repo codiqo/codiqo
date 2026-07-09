@@ -1,4 +1,5 @@
 package io.codiqo.llm;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -7,13 +8,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 
 import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
-import com.google.common.collect.Lists;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommentSyntax;
@@ -78,7 +79,7 @@ class SubmissionToRequestMapperTest {
     @Test
     void emptyBranchesListMapsToNullBranch() {
         AnalysisSubmissionModel submission = baseSubmission();
-        submission.getCommit().setBranches(Lists.newArrayList());
+        submission.getCommit().setBranches(new ArrayList<>());
 
         LlmScoringRequest request = mapper.apply(submission);
 
@@ -138,7 +139,7 @@ class SubmissionToRequestMapperTest {
         diag.setSeverity(input);
         diag.setMessage("boom");
         diag.setLocation(location(3, 3));
-        method.setDiagnostics(Lists.newArrayList(diag));
+        method.setDiagnostics(new ArrayList<>(List.of(diag)));
 
         LlmScoringRequest request = mapper.apply(submission);
 
@@ -255,7 +256,7 @@ class SubmissionToRequestMapperTest {
         FileChangeModel file = submission.getFiles().get(0);
         file.setPath("pom.xml");
         file.setLanguage(null);
-        file.setCodeUnits(Lists.newArrayList());
+        file.setCodeUnits(new ArrayList<>());
         file.setDiff(
                 """
                     --- a/pom.xml
@@ -283,7 +284,7 @@ class SubmissionToRequestMapperTest {
         FileChangeModel file = submission.getFiles().get(0);
         file.setPath("api/v1/user.proto");
         file.setLanguage(null);
-        file.setCodeUnits(Lists.newArrayList());
+        file.setCodeUnits(new ArrayList<>());
         file.setDiff(
                 """
                     --- a/api/v1/user.proto
@@ -308,7 +309,7 @@ class SubmissionToRequestMapperTest {
         FileChangeModel file = submission.getFiles().get(0);
         file.setPath("pom.xml");
         file.setLanguage(null);
-        file.setCodeUnits(Lists.newArrayList());
+        file.setCodeUnits(new ArrayList<>());
         file.setDiff(
                 """
                     --- a/pom.xml
@@ -464,11 +465,11 @@ class SubmissionToRequestMapperTest {
         method.setLocation(location(2, 6));
 
         CoverageModel coverage = new CoverageModel();
-        coverage.setLines(Lists.newArrayList(
+        coverage.setLines(new ArrayList<>(List.of(
                 lineCoverage(3, LineCoverageModel.StatusEnum.COVERED),
                 lineCoverage(4, LineCoverageModel.StatusEnum.MISSED),
                 lineCoverage(5, LineCoverageModel.StatusEnum.PARTIAL),
-                lineCoverage(99, LineCoverageModel.StatusEnum.COVERED)));
+                lineCoverage(99, LineCoverageModel.StatusEnum.COVERED))));
         method.setCoverage(coverage);
 
         LlmScoringRequest request = mapper.apply(submission);
@@ -477,7 +478,7 @@ class SubmissionToRequestMapperTest {
         assertEquals(1, block.getChangedLinesCovered());
         assertEquals(1, block.getChangedLinesMissed());
         assertEquals(1, block.getChangedLinesPartiallyCovered());
-        assertEquals(Lists.newArrayList(4), block.getUncoveredChangedLines(),
+        assertEquals(new ArrayList<>(List.of(4)), block.getUncoveredChangedLines(),
                 "only the missed changed line is listed; line 99 sits outside the diff and is ignored");
     }
 
@@ -503,10 +504,10 @@ class SubmissionToRequestMapperTest {
         clone.setTokenCount(50);
         clone.setLineCount(10);
         clone.setIsCrossFile(false);
-        clone.setLocations(Lists.newArrayList(
+        clone.setLocations(new ArrayList<>(List.of(
                 cloneLocation("Foo.java", 1, 10, "com.example.Foo.doWork()"),
-                cloneLocation("Foo.java", 20, 30, "com.example.Foo.doWork()")));
-        dup.setClones(Lists.newArrayList(clone));
+                cloneLocation("Foo.java", 20, 30, "com.example.Foo.doWork()"))));
+        dup.setClones(new ArrayList<>(List.of(clone)));
         submission.setDuplication(dup);
 
         LlmScoringRequest request = mapper.apply(submission);
@@ -524,10 +525,10 @@ class SubmissionToRequestMapperTest {
 
         DuplicationReportModel dup = new DuplicationReportModel();
         CloneModel clone = new CloneModel();
-        clone.setLocations(Lists.newArrayList(
+        clone.setLocations(new ArrayList<>(List.of(
                 cloneLocation("Foo.java", 1, 5, "sigA"),
-                cloneLocation("Foo.java", 10, 15, "sigB")));
-        dup.setClones(Lists.newArrayList(clone));
+                cloneLocation("Foo.java", 10, 15, "sigB"))));
+        dup.setClones(new ArrayList<>(List.of(clone)));
         submission.setDuplication(dup);
 
         LlmScoringRequest request = mapper.apply(submission);
@@ -564,7 +565,7 @@ class SubmissionToRequestMapperTest {
                     -    container.start();
                     +    container.restart();
                     """);
-        file.setCodeUnits(Lists.newArrayList(outer, inner));
+        file.setCodeUnits(new ArrayList<>(List.of(outer, inner)));
 
         LlmScoringRequest request = mapper.apply(submission);
 
@@ -604,8 +605,8 @@ class SubmissionToRequestMapperTest {
         method.setOperation(CodeUnitModel.OperationEnum.NEW);
         method.setLocation(location(1, 10));
         method.setMetrics(baseMetrics());
-        method.setCallers(Lists.newArrayList());
-        method.setDiagnostics(Lists.newArrayList());
+        method.setCallers(new ArrayList<>());
+        method.setDiagnostics(new ArrayList<>());
         JavaInfoModel java = new JavaInfoModel();
         java.setPackageName("com.example");
         java.setClassName("Foo");
@@ -617,14 +618,14 @@ class SubmissionToRequestMapperTest {
         file.setLanguage(FileChangeModel.LanguageEnum.JAVA);
         file.setIsTest(false);
         file.setDiff(METHOD_DIFF);
-        file.setCodeUnits(Lists.newArrayList(method));
+        file.setCodeUnits(new ArrayList<>(List.of(method)));
 
         CommitModel commit = new CommitModel();
         commit.setSha("abc123");
         commit.setMessage("test commit");
         commit.setAuthor("Jane");
         commit.setTimestamp(OffsetDateTime.parse("2026-01-01T00:00:00Z"));
-        commit.setBranches(Lists.newArrayList("main"));
+        commit.setBranches(new ArrayList<>(List.of("main")));
 
         ProjectModel project = new ProjectModel();
         project.setCode("proj-1");
@@ -632,7 +633,7 @@ class SubmissionToRequestMapperTest {
         AnalysisSubmissionModel submission = new AnalysisSubmissionModel();
         submission.setProject(project);
         submission.setCommit(commit);
-        submission.setFiles(Lists.newArrayList(file));
+        submission.setFiles(new ArrayList<>(List.of(file)));
         submission.setFullProjectCoverage(projectCoverage(0.0, 0.0));
         submission.setDuplication(new DuplicationReportModel());
         return submission;
@@ -646,8 +647,8 @@ class SubmissionToRequestMapperTest {
         toReturn.setOperation(CodeUnitModel.OperationEnum.MODIFY);
         toReturn.setLocation(location(startLine, endLine));
         toReturn.setMetrics(baseMetrics());
-        toReturn.setCallers(Lists.newArrayList());
-        toReturn.setDiagnostics(Lists.newArrayList());
+        toReturn.setCallers(new ArrayList<>());
+        toReturn.setDiagnostics(new ArrayList<>());
         return toReturn;
     }
 

@@ -7,11 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.ArrayList;
 
 import org.junit.jupiter.api.Test;
-import org.slf4j.event.Level;
 
-import com.google.common.collect.Lists;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
@@ -23,16 +22,7 @@ import io.codiqo.llm.schema.LlmScoringRequest.FileChange;
 import io.codiqo.llm.schema.LlmScoringRequest.FileChangeType;
 
 class PromptTemplateSmokeTest {
-    private static final Log NOOP_LOG = new Log() {
-        @Override
-        public boolean isLoggable(Level level) { return false; }
-        @Override
-        public void logEx(Level level, String message, Object[] formatArgs, Throwable error) { }
-        @Override
-        public void log(Level level, String message, Object... formatArgs) { }
-        @Override
-        public int numErrors() { return 0; }
-    };
+    private static final Log NOOP_LOG = NoopLog.INSTANCE;
 
     @Test
     void userPromptRendersPerFileTargetTable() {
@@ -66,7 +56,7 @@ class PromptTemplateSmokeTest {
                         .codeBlocksModified(1)
                         .codeBlocksAdded(0)
                         .build())
-                .fileChanges(Lists.newArrayList(eligible, ineligible))
+                .fileChanges(new ArrayList<>(List.of(eligible, ineligible)))
                 .codeBlockChanges(Collections.emptyList())
                 .build();
 
@@ -85,9 +75,9 @@ class PromptTemplateSmokeTest {
         LlmScoringRequest request = LlmScoringRequest.builder()
                 .changeSummary(ChangeSummary.builder()
                         .linesAdded(13).linesDeleted(2).totalLinesChanged(15).totalFilesChanged(1).build())
-                .fileChanges(Lists.newArrayList(FileChange.builder()
+                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
                         .path("Foo.java").changeType(FileChangeType.MODIFIED).language("java")
-                        .linesAdded(13).linesDeleted(2).linesJustificationRequired(true).diff("dummy").build()))
+                        .linesAdded(13).linesDeleted(2).linesJustificationRequired(true).diff("dummy").build())))
                 .codeBlockChanges(Collections.emptyList())
                 .coverage(LlmScoringRequest.CoverageInfo.builder()
                         .changedLineCoverage(7.6923076923076925)
@@ -117,9 +107,9 @@ class PromptTemplateSmokeTest {
         LlmScoringRequest request = LlmScoringRequest.builder()
                 .changeSummary(ChangeSummary.builder()
                         .linesAdded(10).linesDeleted(0).totalLinesChanged(10).totalFilesChanged(1).build())
-                .fileChanges(Lists.newArrayList(FileChange.builder()
+                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
                         .path("Foo.java").changeType(FileChangeType.ADDED).language("java")
-                        .linesAdded(10).linesDeleted(0).linesJustificationRequired(true).diff("dummy").build()))
+                        .linesAdded(10).linesDeleted(0).linesJustificationRequired(true).diff("dummy").build())))
                 .codeBlockChanges(Collections.emptyList())
                 .coverage(LlmScoringRequest.CoverageInfo.builder()
                         .changedLineCoverage(0.0)
@@ -169,7 +159,7 @@ class PromptTemplateSmokeTest {
                         .totalLinesChanged(2)
                         .totalFilesChanged(1)
                         .build())
-                .fileChanges(Lists.newArrayList(fc))
+                .fileChanges(new ArrayList<>(List.of(fc)))
                 .codeBlockChanges(Collections.emptyList())
                 .build();
 
@@ -213,7 +203,7 @@ class PromptTemplateSmokeTest {
         FinalScoreCalculator.ValidationFailure unknownDeleted = new FinalScoreCalculator.ValidationFailure(
                 "Foo.java", FinalScoreCalculator.FailureReason.UNKNOWN_DELETED_LINE,
                 List.of("95"), List.of("94", "97"));
-        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator.ValidationReport(Lists.newArrayList(unknownBlock, unknownDeleted));
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator.ValidationReport(new ArrayList<>(List.of(unknownBlock, unknownDeleted)));
 
         String rendered = builder.buildValidationFeedback(report);
 
@@ -253,7 +243,7 @@ class PromptTemplateSmokeTest {
                         .totalLinesChanged(2)
                         .totalFilesChanged(1)
                         .build())
-                .fileChanges(Lists.newArrayList(fileChange))
+                .fileChanges(new ArrayList<>(List.of(fileChange)))
                 .codeBlockChanges(Collections.emptyList())
                 .build();
 
@@ -269,7 +259,7 @@ class PromptTemplateSmokeTest {
         FinalScoreCalculator.ValidationFailure unknownAdded = new FinalScoreCalculator.ValidationFailure(
                 "Foo.java", FinalScoreCalculator.FailureReason.UNKNOWN_ADDED_LINE,
                 List.of("281", "282"), List.of("288", "290", "292"));
-        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator.ValidationReport(Lists.newArrayList(unknownAdded));
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator.ValidationReport(new ArrayList<>(List.of(unknownAdded)));
 
         String rendered = builder.buildValidationFeedback(report);
 

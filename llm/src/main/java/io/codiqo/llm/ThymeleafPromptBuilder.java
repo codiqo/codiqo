@@ -1,5 +1,6 @@
 package io.codiqo.llm;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Comparator;
@@ -8,8 +9,11 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.IdentityHashMap;
+import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.thymeleaf.TemplateEngine;
 import org.thymeleaf.context.Context;
 import org.thymeleaf.templatemode.TemplateMode;
@@ -21,11 +25,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.util.StdDateFormat;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import com.knuddels.jtokkit.Encodings;
-import com.knuddels.jtokkit.api.Encoding;
-import com.knuddels.jtokkit.api.EncodingType;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
@@ -43,8 +42,6 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private static final String TEMPLATE_VALIDATION_FEEDBACK = "validation-feedback";
     private static final TemplateEngine TEMPLATE_ENGINE;
     private static final ObjectMapper MAPPER;
-    private static final Encoding TOKEN_ENCODER = Encodings.newLazyEncodingRegistry().getEncoding(EncodingType.O200K_BASE);
-
     static {
         ClassLoaderTemplateResolver resolver = new ClassLoaderTemplateResolver();
         resolver.setPrefix("thymeleaf/templates/");
@@ -68,9 +65,14 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private final Log log;
     private final VolumeScoreCalculator volumeCalculator;
     private final MovedLineDetector movedLineDetector;
+    private final LlmTokenizers tokenizers;
 
     public ThymeleafPromptBuilder(RunArgs args, Log log) {
+        this(args, log, new LlmTokenizers(log));
+    }
+    public ThymeleafPromptBuilder(RunArgs args, Log log, LlmTokenizers tokenizers) {
         this.log = log;
+        this.tokenizers = tokenizers;
         volumeCalculator = new VolumeScoreCalculator(args);
         movedLineDetector = new MovedLineDetector(args);
     }
@@ -102,38 +104,44 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
                 context.getMethodCapQuantileTest(),
                 context.getConstructorCapQuantileProd(),
                 context.getConstructorCapQuantileTest());
-        logPromptMetrics(request, preComputedScores, requestJson);
+        logPromptMetrics(context.getArgs().getLlmModel(), request, preComputedScores, requestJson);
         ctx.setVariable("preComputedScores", preComputedScores);
         ctx.setVariable("preComputedScoresSection", buildPreComputedScoresSection(preComputedScores));
 
         String message = TEMPLATE_ENGINE.process(TEMPLATE_USER_PROMPT, ctx);
         return new UserMessageResult(message, preComputedScores);
     }
-    @SneakyThrows
-    private void logPromptMetrics(LlmScoringRequest request, PreComputedScores scores, String requestJson) {
-        LlmScoringRequest.ChangeSummary cs = request.getChangeSummary();
-        log.info("prompt: files=%d, methods=%d, lines=%d (effectiveStmts=%d) | json=%d chars (~%d tokens)",
-                cs.getTotalFilesChanged(),
-                cs.getCodeBlocksModified() + cs.getCodeBlocksAdded(),
-                cs.getTotalLinesChanged(),
-                scores.getTotalEffectiveStatements(),
-                requestJson.length(),
-                estimateTokens(requestJson));
+    private void logPromptMetrics(String model, LlmScoringRequest request, PreComputedScores scores, String requestJson) {
+        for (;;) {
+            try {
+                LlmScoringRequest.ChangeSummary cs = request.getChangeSummary();
+                log.info("prompt: files=%d, methods=%d, lines=%d (effectiveStmts=%d) | json=%d chars (~%d tokens)",
+                        cs.getTotalFilesChanged(),
+                        cs.getCodeBlocksModified() + cs.getCodeBlocksAdded(),
+                        cs.getTotalLinesChanged(),
+                        scores.getTotalEffectiveStatements(),
+                        requestJson.length(),
+                        estimateTokens(model, requestJson));
 
-        if (CollectionUtils.isEmpty(request.getFileChanges())) {
-            return;
-        }
+                if (CollectionUtils.isEmpty(request.getFileChanges())) {
+                    return;
+                }
 
-        List<FileTokens> perFile = Lists.newArrayList();
-        for (LlmScoringRequest.FileChange file : request.getFileChanges()) {
-            int tokens = estimateTokens(MAPPER.writeValueAsString(file));
-            perFile.add(FileTokens.builder().path(file.getPath()).tokens(tokens).linesChanged(file.getLinesAdded() + file.getLinesDeleted()).build());
-        }
-        perFile.sort(Comparator.comparingInt(FileTokens::getTokens).reversed());
+                List<FileTokens> perFile = new ArrayList<>();
+                for (LlmScoringRequest.FileChange file : request.getFileChanges()) {
+                    int tokens = estimateTokens(model, MAPPER.writeValueAsString(file));
+                    perFile.add(FileTokens.builder().path(file.getPath()).tokens(tokens).linesChanged(file.getLinesAdded() + file.getLinesDeleted()).build());
+                }
+                perFile.sort(Comparator.comparingInt(FileTokens::getTokens).reversed());
 
-        log.info("token breakdown by file (largest first):");
-        for (FileTokens entry : perFile) {
-            log.info("  %s: ~%d tokens (%d lines changed)", entry.getPath(), entry.getTokens(), entry.getLinesChanged());
+                log.info("token breakdown by file (largest first):");
+                for (FileTokens entry : perFile) {
+                    log.info("  %s: ~%d tokens (%d lines changed)", entry.getPath(), entry.getTokens(), entry.getLinesChanged());
+                }
+                return;
+            } catch (IOException err) {
+                ExceptionUtils.wrapAndThrow(err);
+            }
         }
     }
     @Override
@@ -149,11 +157,12 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         ctx.setVariable("failures", report.getFailures());
         return TEMPLATE_ENGINE.process(TEMPLATE_VALIDATION_FEEDBACK, ctx);
     }
-    public static int estimateTokens(String text) {
-        return TOKEN_ENCODER.countTokensOrdinary(text);
+    @Override
+    public int estimateTokens(String model, String text) {
+        return tokenizers.estimateTokens(model, text);
     }
     private static Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> stripSourceSlices(LlmScoringRequest request) {
-        Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> saved = Maps.newIdentityHashMap();
+        Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> saved = new IdentityHashMap<>();
         if (Objects.nonNull(request.getDuplication()) && CollectionUtils.isNotEmpty(request.getDuplication().getCloneDetails())) {
             for (LlmScoringRequest.DuplicationInfo.CloneDetail cd : request.getDuplication().getCloneDetails()) {
                 if (CollectionUtils.isNotEmpty(cd.getLocations())) {
@@ -172,7 +181,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         saved.forEach(LlmScoringRequest.DuplicationInfo.CloneLocation::setSourceSlice);
     }
     private static Map<LlmScoringRequest.FileChange, String> annotateDiffs(LlmScoringRequest request) {
-        Map<LlmScoringRequest.FileChange, String> saved = Maps.newIdentityHashMap();
+        Map<LlmScoringRequest.FileChange, String> saved = new IdentityHashMap<>();
         if (CollectionUtils.isNotEmpty(request.getFileChanges())) {
             for (LlmScoringRequest.FileChange fc : request.getFileChanges()) {
                 if (Objects.nonNull(fc.getDiff())) {

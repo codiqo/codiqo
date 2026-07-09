@@ -5,19 +5,17 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
+
 import org.apache.commons.lang3.BooleanUtils;
 
-import org.apache.maven.artifact.Artifact;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.commons.Method;
 
-import com.google.common.base.Supplier;
-import com.google.common.base.Suppliers;
-import com.google.common.collect.ImmutableSet;
-
 import io.codiqo.api.ClassGraphSpec;
-import io.codiqo.api.MavenProjectSpec;
+import io.codiqo.api.JvmProjectSpec;
 import io.codiqo.lang.spec.JInvocationBlock;
+import io.codiqo.util.Lazy;
 import io.github.classgraph.ClassInfo;
 import io.github.classgraph.Resource;
 import lombok.EqualsAndHashCode;
@@ -38,7 +36,7 @@ import net.sourceforge.pmd.lang.java.types.JMethodSig;
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
 class PmdJInvocationBlock implements JInvocationBlock {
     private static final String METHOD_DESCRIPTOR_PREFIX = "(";
-    private static final Set<Integer> CTOR_KEYWORD_KINDS = ImmutableSet.of(JavaTokenKinds.THIS, JavaTokenKinds.SUPER);
+    private static final Set<Integer> CTOR_KEYWORD_KINDS = Set.of(JavaTokenKinds.THIS, JavaTokenKinds.SUPER);
 
     @Getter
     @EqualsAndHashCode.Include
@@ -50,10 +48,10 @@ class PmdJInvocationBlock implements JInvocationBlock {
     private final String displayName;
     private final Method method;
     private Optional<ClassInfo> classInfo;
-    private Optional<Artifact> artifact = Optional.empty();
+    private Optional<String> artifactCoordinate = Optional.empty();
     private Optional<String> targetDescriptor = Optional.empty();
     private Optional<String> targetOwner = Optional.empty();
-    private final Supplier<FileLocation> nameLocation = Suppliers.memoize(this::computeNameLocation);
+    private final Supplier<FileLocation> nameLocation = Lazy.of(this::computeNameLocation);
 
     protected PmdJInvocationBlock(MethodUsage usage) {
         this.usage = Objects.requireNonNull(usage);
@@ -64,14 +62,14 @@ class PmdJInvocationBlock implements JInvocationBlock {
         this.displayName = JavaBinaryFormat.toDisplayName(signature, false);
     }
     @Override
-    public void accept(MavenProjectSpec spec) {
+    public void accept(JvmProjectSpec spec) {
         classInfo = Optional.ofNullable(spec.getClassInfo(declaringType.getBinaryName()));
         classInfo.ifPresent(info -> {
             Resource resource = info.getResource();
             if (Objects.nonNull(resource)) {
                 File file = resource.getClasspathElementFile();
                 if (Objects.nonNull(file)) {
-                    artifact = Optional.ofNullable(spec.getArtifacts().inverse().get(file));
+                    artifactCoordinate = spec.artifactCoordinate(file);
                 }
             }
 
@@ -97,8 +95,8 @@ class PmdJInvocationBlock implements JInvocationBlock {
         return classInfo;
     }
     @Override
-    public Optional<Artifact> artifact() {
-        return artifact;
+    public Optional<String> artifactCoordinate() {
+        return artifactCoordinate;
     }
     @Override
     public Optional<String> targetDescriptor() {

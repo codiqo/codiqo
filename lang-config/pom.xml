@@ -12,10 +12,6 @@
     <description>Config-file analysis support (pom.xml, .proto): path detection and line-filtering profiles.</description>
     <dependencies>
         <dependency>
-            <groupId>com.google.guava</groupId>
-            <artifactId>guava</artifactId>
-        </dependency>
-        <dependency>
             <groupId>commons-io</groupId>
             <artifactId>commons-io</artifactId>
         </dependency>

@@ -4,10 +4,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.ArrayList;
 
 import org.junit.jupiter.api.Test;
 
-import com.google.common.collect.Lists;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.MovedLineDetector.MoveCandidate;
@@ -162,7 +162,7 @@ class MovedLineDetectorTest {
     }
     private static LlmScoringRequest requestWith(FileChange... fileChanges) {
         return LlmScoringRequest.builder()
-                .fileChanges(Lists.newArrayList(fileChanges))
+                .fileChanges(new ArrayList<>(List.of(fileChanges)))
                 .build();
     }
     private static FileChange fileChange(String file, String diff) {

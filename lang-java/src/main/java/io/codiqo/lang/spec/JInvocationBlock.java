@@ -3,14 +3,12 @@ package io.codiqo.lang.spec;
 import java.util.Optional;
 import java.util.function.Consumer;
 
-import org.apache.maven.artifact.Artifact;
-
-import io.codiqo.api.MavenProjectSpec;
+import io.codiqo.api.JvmProjectSpec;
 import io.github.classgraph.ClassInfo;
 import net.sourceforge.pmd.lang.java.ast.MethodUsage;
 import net.sourceforge.pmd.lang.java.symbols.JClassSymbol;
 
-public interface JInvocationBlock extends Consumer<MavenProjectSpec> {
+public interface JInvocationBlock extends Consumer<JvmProjectSpec> {
     MethodUsage getUsage();
     JClassSymbol getDeclaringType();
 
@@ -40,7 +38,7 @@ public interface JInvocationBlock extends Consumer<MavenProjectSpec> {
     boolean isEnumConstant();
 
     Optional<ClassInfo> classInfo();
-    Optional<Artifact> artifact();
+    Optional<String> artifactCoordinate();
 
     Optional<String> targetDescriptor();
     Optional<String> targetOwner();

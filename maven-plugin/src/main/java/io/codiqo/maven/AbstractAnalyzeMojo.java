@@ -21,6 +21,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.LinkedHashSet;
+import java.util.ArrayList;
 
 import javax.inject.Inject;
 
@@ -70,13 +72,6 @@ import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.transport.HttpTransport;
 import org.eclipse.jgit.transport.TagOpt;
 
-import com.google.common.base.Joiner;
-import com.google.common.base.Splitter;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Sets;
-import com.google.common.io.Resources;
-
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.DeltaAnalyzer;
 import io.codiqo.api.IndexingSummary;
@@ -87,29 +82,32 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.client.model.AnalysisExcludeCategory;
+import io.codiqo.client.model.ClientInfoModel;
 import io.codiqo.core.ClassGraphWrapper;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.lang.config.ConfigFiles;
 import io.codiqo.llm.client.DaemonExecutors;
 import io.codiqo.maven.logging.MavenLogFactory;
-import io.codiqo.maven.populator.CommitModelPopulator;
-import io.codiqo.maven.populator.DuplicationReportPopulator;
-import io.codiqo.maven.populator.EffectiveChangePopulator;
-import io.codiqo.maven.populator.FileAnalysisPopulator;
-import io.codiqo.maven.populator.IndexModelPopulator;
+import io.codiqo.submit.CommitModelPopulator;
+import io.codiqo.submit.DuplicationReportPopulator;
+import io.codiqo.submit.EffectiveChangePopulator;
+import io.codiqo.submit.FileAnalysisPopulator;
+import io.codiqo.submit.IndexModelPopulator;
 import io.codiqo.maven.populator.LlmScoringPopulator;
-import io.codiqo.maven.populator.MetricsAggregator;
-import io.codiqo.maven.populator.ModuleLevelMetricsPopulator;
-import io.codiqo.maven.populator.OutputSerializer;
+import io.codiqo.submit.MetricsAggregator;
+import io.codiqo.submit.ModuleLevelMetricsPopulator;
+import io.codiqo.submit.OutputSerializer;
 import io.codiqo.maven.populator.ProjectModelPopulator;
-import io.codiqo.maven.populator.SubmissionContext;
+import io.codiqo.submit.SubmissionContext;
 import io.codiqo.maven.populator.SubmissionSummaryPrinter;
 import io.codiqo.maven.timemachine.TimeMachineConfig;
+import io.codiqo.submit.ScoringConfigs;
 import io.codiqo.util.Env;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
 import io.codiqo.util.MemoryReport;
+import io.codiqo.util.Split;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
 import lombok.RequiredArgsConstructor;
@@ -291,6 +289,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.driverScoreCapDryRun", defaultValue = "false")
     protected boolean driverScoreCapDryRun;
 
+    @Parameter(property = "codiqo.timeMachineEnabled", defaultValue = "true")
+    protected boolean timeMachineEnabled;
+
     @Parameter(property = "codiqo.moveDetectionEnabled", defaultValue = "true")
     protected boolean moveDetectionEnabled;
 
@@ -315,7 +316,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                         .stream()
                         .map(ArtifactResult::getArtifact)
                         .map(Artifact::getFile)
-                        .collect(ImmutableList.toImmutableList());
+                        .collect(java.util.stream.Collectors.toUnmodifiableList());
             } catch (Exception err) {
                 ExceptionUtils.wrapAndThrow(err);
             }
@@ -348,7 +349,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setSkipOnBuildFailure(skipOnBuildFailure);
         args.setPmdMinPriority(pmdMinPriority);
         if (StringUtils.isNotBlank(pmdRules)) {
-            args.setPmdRules(Splitter.on(',').trimResults().omitEmptyStrings().splitToList(pmdRules));
+            args.setPmdRules(Split.on(pmdRules, ','));
         }
         args.setSpotbugsPriorityThreshold(spotbugsPriorityThreshold);
         Optional.ofNullable(spotbugsOmitVisitors).ifPresent(args::setSpotbugsOmitVisitors);
@@ -373,13 +374,18 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setDriverFactorMaxDeviation(driverFactorMaxDeviation);
         args.setDriverScoreCapDryRun(driverScoreCapDryRun);
 
+        args.setTimeMachineEnabled(timeMachineEnabled);
+
         args.setMoveDetectionEnabled(moveDetectionEnabled);
         args.setMoveSimilarityThreshold(moveSimilarityThreshold);
         args.setMovedLineCoefficient(movedLineCoefficient);
 
         Env.resolveInto(llmApiKey, args::setLlmApiKey);
         args.validate();
-        try (InputStream stream = Resources.getResource("codiqo.versions").openStream()) {
+        try (InputStream stream = getClass().getClassLoader().getResourceAsStream("codiqo.versions")) {
+            if (Objects.isNull(stream)) {
+                throw new MojoExecutionException("resource not found on plugin classpath: codiqo.versions");
+            }
             Properties versions = new Properties();
             versions.load(stream);
             for (DefaultArtifact agent : new DefaultArtifact[] {
@@ -409,7 +415,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         }
     }
     protected ClassGraphSpec scanProjects(RunArgs args, Collection<MavenProject> projects) {
-        Set<URI> jars = Sets.newLinkedHashSet();
+        Set<URI> jars = new LinkedHashSet<>();
         projects.stream()
                 .filter(reactor -> BooleanUtils.negate(NON_CODE_PACKAGINGS.contains(reactor.getPackaging())))
                 .filter(reactor -> CollectionUtils.isEmpty(reactor.getModules())).filter(reactor -> {
@@ -531,7 +537,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         InvocationRequest request = new DefaultInvocationRequest();
         request.setPomFile(rootPom);
         if (args.isIgnoreCoverage()) {
-            request.addArgs(ImmutableList.of(
+            request.addArgs(List.of(
                     "clean",
                     "verify",
                     "-DskipTests=true",
@@ -541,7 +547,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         } else {
             long surefireTimeout = args.getTestTimeout().getSeconds();
             long surefireExitTimeout = args.getBuildTimeout().minusMinutes(1).getSeconds();
-            request.addArgs(ImmutableList.of(
+            request.addArgs(List.of(
                     "clean",
                     "verify",
                     "-DskipTests=false",
@@ -563,7 +569,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             request.setMavenHome(mavenHome);
         }
 
-        if (StringUtils.isNotBlank(args.getCommitId())) {
+        if (StringUtils.isNotBlank(args.getCommitId()) && args.isTimeMachineEnabled()) {
             Instant ts = TimeMachineSupport.resolveCommitTimestamp(args);
 
             List<String> extensionClasspath = timeMachineExtensionJars.stream()
@@ -575,7 +581,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             args.setTimeMachineMetaDir(metaDir);
 
             Properties props = Optional.ofNullable(request.getProperties()).orElseGet(Properties::new);
-            props.setProperty(TimeMachineConfig.MAVEN_EXT_CLASS_PATH, Joiner.on(File.pathSeparator).join(extensionClasspath));
+            props.setProperty(TimeMachineConfig.MAVEN_EXT_CLASS_PATH, StringUtils.join(extensionClasspath, File.pathSeparator));
             props.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, DateTimeFormatter.ISO_INSTANT.format(ts));
             props.setProperty(TimeMachineConfig.PROP_META_DIR, metaDir.getAbsolutePath());
             request.setProperties(props);
@@ -609,7 +615,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 String reason = Optional.ofNullable(sysout.firstErrorLine())
                         .or(() -> Optional.ofNullable(syserr.firstErrorLine()))
                         .orElse("fork build failed (exit code " + result.getExitCode() + ")");
-                List<String> helpLines = Lists.newArrayList();
+                List<String> helpLines = new ArrayList<>();
                 helpLines.addAll(sysout.helpUrlLines());
                 helpLines.addAll(syserr.helpUrlLines());
                 AnalysisExcludeCategory category = Maven.classifyForkFailure(helpLines);
@@ -719,7 +725,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 MutableBoolean toApply = new MutableBoolean();
                 DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, args);
                 CommitAnalysis analysis = analyzer.analyze();
-                List<String> changedFiles = Lists.newArrayList();
+                List<String> changedFiles = new ArrayList<>();
                 analysis.forEach(diff -> {
                     String name = diff.getFile().getName();
                     changedFiles.add(name);
@@ -764,14 +770,20 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     getLog().info(MemoryReport.snapshot("after identify symbols"));
                     registry.collectAndCapture(index, analysis);
                     getLog().info(MemoryReport.snapshot("after collect capture"));
+                    ClientInfoModel clientInfo = new ClientInfoModel();
+                    clientInfo.setBuildTool(ClientInfoModel.BuildToolEnum.MAVEN);
+                    clientInfo.setVersion(runtimeInformation.getMavenVersion());
+                    clientInfo.setName("codiqo-maven-plugin");
+
                     SubmissionContext ctx = SubmissionContext.create(
                             args,
                             index,
                             analysis,
                             workTree,
                             logFactory,
-                            project,
-                            runtimeInformation);
+                            project.getGroupId() + ":" + project.getArtifactId(),
+                            project.getName(),
+                            clientInfo);
                     new ProjectModelPopulator(getLog()).accept(ctx);
                     new CommitModelPopulator().accept(ctx);
                     new ModuleLevelMetricsPopulator().accept(ctx);
@@ -784,7 +796,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     new SubmissionSummaryPrinter(getLog()).accept(ctx);
                     // set before the dump so codiqo-submission-<sha> replays carry the effective config
                     ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
-                    new OutputSerializer(preferYaml, getLog()).accept(ctx);
+                    new OutputSerializer(preferYaml, logFactory.getLogger(OutputSerializer.class)).accept(ctx);
                     return Optional.of(ctx);
                 }
             }
@@ -804,7 +816,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     }
     @SuppressWarnings("deprecation")
     private void purgeNonJavaSourceJars(RunArgs args) throws IOException {
-        List<String> exclusions = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(jdtSourceExclusions);
+        List<String> exclusions = Split.on(jdtSourceExclusions, ',');
         if (CollectionUtils.isNotEmpty(exclusions)) {
             LocalRepositoryManager localRepoManager = mavenSession.getRepositorySession().getLocalRepositoryManager();
             AtomicInteger purged = new AtomicInteger();
@@ -852,7 +864,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     private static BuildOutcome.Skipped classifyProjectBuildingException(ProjectBuildingException pbe, RunArgs args) throws MojoExecutionException {
         List<String> unresolved = Maven.unresolvedDependencyCoords(pbe);
         if (CollectionUtils.isNotEmpty(unresolved)) {
-            String reason = "unresolved dependencies: " + Joiner.on(", ").join(unresolved);
+            String reason = "unresolved dependencies: " + StringUtils.join(unresolved, ", ");
             if (args.isSkipOnUnresolvedDependencies()) {
                 return new BuildOutcome.Skipped(reason, AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE);
             }
@@ -877,7 +889,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         private static final Pattern HELP_LINE = Pattern.compile("\\[ERROR\\]\\s+\\[Help\\s+\\d+\\]\\s+");
 
         private final InvocationOutputHandler delegate;
-        private final List<String> helpUrlLines = Lists.newArrayList();
+        private final List<String> helpUrlLines = new ArrayList<>();
         private String firstErrorLine;
 
         @Override

@@ -11,6 +11,7 @@ import java.time.OffsetDateTime;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
+import java.util.HashMap;
 
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.ArrayUtils;
@@ -18,7 +19,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.maven.plugin.logging.Log;
 
-import com.google.common.collect.Maps;
 
 import io.codiqo.api.MavenProjectSpec;
 import io.codiqo.client.model.DependencyModel;
@@ -28,6 +28,8 @@ import io.codiqo.client.model.ModuleModel;
 import io.codiqo.client.model.SnapshotMetadataModel;
 import io.codiqo.maven.MavenProjectWrapper;
 import io.codiqo.maven.timemachine.SnapshotMetadataStore;
+import io.codiqo.submit.SubmissionContext;
+import io.codiqo.submit.SubmissionPopulator;
 import io.codiqo.util.RepositoryUrls;
 import lombok.RequiredArgsConstructor;
 
@@ -98,7 +100,7 @@ public class ProjectModelPopulator implements SubmissionPopulator {
                 });
     }
     private static Map<String, SnapshotMetadataModel> loadSnapshotMetadata(File metaDir) {
-        Map<String, SnapshotMetadataModel> toReturn = Maps.newHashMap();
+        Map<String, SnapshotMetadataModel> toReturn = new HashMap<>();
         if (Objects.nonNull(metaDir) && metaDir.isDirectory()) {
             File[] files = metaDir.listFiles((dir, fileName) -> "properties".equals(FilenameUtils.getExtension(fileName)));
             if (ArrayUtils.isNotEmpty(files)) {

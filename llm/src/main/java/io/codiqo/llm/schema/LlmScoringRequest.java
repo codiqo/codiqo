@@ -4,11 +4,11 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.HashMap;
+import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
 
 import io.codiqo.api.diff.IneffectiveLineFilter;
 import io.codiqo.api.metrics.DriverScaler;
@@ -197,14 +197,14 @@ public class LlmScoringRequest {
         private List<String> annotations;
 
         @Builder.Default
-        private List<CallerInfo> callers = Lists.newArrayList();
+        private List<CallerInfo> callers = new ArrayList<>();
 
         /**
          * PMD and SpotBugs diagnostics for this method.
          * Used by LLM to assess code quality and identify issues.
          */
         @Builder.Default
-        private List<DiagnosticInfo> diagnostics = Lists.newArrayList();
+        private List<DiagnosticInfo> diagnostics = new ArrayList<>();
 
         /**
          * For MODIFY: coverage of the lines this block changed — post-change JaCoCo per-line status
@@ -216,7 +216,7 @@ public class LlmScoringRequest {
         private int changedLinesPartiallyCovered;
 
         @Builder.Default
-        private List<Integer> uncoveredChangedLines = Lists.newArrayList();
+        private List<Integer> uncoveredChangedLines = new ArrayList<>();
 
         public boolean isNew() {
             return operation == Operation.NEW;
@@ -321,9 +321,9 @@ public class LlmScoringRequest {
         private double projectBranchCoverage;
 
         @Builder.Default
-        private Map<String, MethodCoverage> methodCoverages = Maps.newHashMap();
+        private Map<String, MethodCoverage> methodCoverages = new HashMap<>();
         @Builder.Default
-        private List<UncoveredPath> uncoveredPaths = Lists.newArrayList();
+        private List<UncoveredPath> uncoveredPaths = new ArrayList<>();
 
         @Data
         @Builder
@@ -389,11 +389,11 @@ public class LlmScoringRequest {
         private Double modifiedLineCpdPercent;
 
         @Builder.Default
-        private List<CloneDetail> cloneDetails = Lists.newArrayList();
+        private List<CloneDetail> cloneDetails = new ArrayList<>();
         @Builder.Default
-        private List<CloneFromExisting> clonesFromExisting = Lists.newArrayList();
+        private List<CloneFromExisting> clonesFromExisting = new ArrayList<>();
         @Builder.Default
-        private List<NewCloneGroup> newClones = Lists.newArrayList();
+        private List<NewCloneGroup> newClones = new ArrayList<>();
 
         @Data
         @Builder
@@ -407,7 +407,7 @@ public class LlmScoringRequest {
             private boolean allTestCode;
             private boolean introducedInCommit;
             @Builder.Default
-            private List<CloneLocation> locations = Lists.newArrayList();
+            private List<CloneLocation> locations = new ArrayList<>();
         }
 
         @Data
@@ -432,7 +432,7 @@ public class LlmScoringRequest {
         public static class CloneFromExisting {
             private String affectedSignature;
             @Builder.Default
-            private List<String> sourceSignatures = Lists.newArrayList();
+            private List<String> sourceSignatures = new ArrayList<>();
         }
 
         @Data
@@ -441,7 +441,7 @@ public class LlmScoringRequest {
         @AllArgsConstructor
         public static class NewCloneGroup {
             @Builder.Default
-            private List<String> memberSignatures = Lists.newArrayList();
+            private List<String> memberSignatures = new ArrayList<>();
         }
     }
 }

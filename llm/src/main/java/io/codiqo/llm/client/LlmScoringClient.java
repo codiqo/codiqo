@@ -12,6 +12,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.stream.Collectors;
+import java.util.LinkedHashMap;
+import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
@@ -23,9 +25,7 @@ import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import com.google.common.base.Preconditions;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
+import org.apache.commons.lang3.Validate;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.core.JsonValue;
@@ -41,6 +41,7 @@ import com.openai.models.chat.completions.ChatCompletionToolMessageParam;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.llm.FinalScoreCalculator;
+import io.codiqo.llm.LlmTokenizers;
 import io.codiqo.llm.PromptBuilder;
 import io.codiqo.llm.PromptBuilder.PromptContext;
 import io.codiqo.llm.PromptBuilder.UserMessageResult;
@@ -64,6 +65,7 @@ public class LlmScoringClient implements ScoringClient {
     private final OpenAIClient client;
     private final OpenAIClientWrapper wrapper;
     private final PromptBuilder promptBuilder;
+    private final LlmTokenizers tokenizers;
     private final FinalScoreCalculator finalScoreCalculator;
     private final ObjectMapper objectMapper;
     private final OllamaWebSearchClient webSearchClient;
@@ -102,8 +104,9 @@ public class LlmScoringClient implements ScoringClient {
         }
         this.client = builder.build();
         this.wrapper = new OpenAIClientWrapper(client);
-        this.promptBuilder = new ThymeleafPromptBuilder(args, log);
-        this.finalScoreCalculator = new FinalScoreCalculator(args);
+        this.tokenizers = new LlmTokenizers(log);
+        this.promptBuilder = new ThymeleafPromptBuilder(args, log, tokenizers);
+        this.finalScoreCalculator = new FinalScoreCalculator(args, log);
         this.model = args.getLlmModel();
         this.temperature = args.getLlmTemperature();
         this.topP = args.getLlmTopP();
@@ -115,7 +118,7 @@ public class LlmScoringClient implements ScoringClient {
         this.enableWebSearch = args.isLlmEnableWebSearchTool();
         this.webSearchClient = enableWebSearch ? new OllamaWebSearchClient(args, promptBuilder, executor) : null;
 
-        Preconditions.checkArgument(maxRetries >= BigDecimal.ONE.intValue(), "llmMaxRetries must be >= 1 (was %s)", maxRetries);
+        Validate.isTrue(maxRetries >= BigDecimal.ONE.intValue(), "llmMaxRetries must be >= 1 (was %s)", maxRetries);
 
         log.info(String.format(
                 "LLM config model: %s temperature: %s topP: %s maxCompletionTokens: %s numCtx: %s seed: %s maxRetries: %d validationMaxRetries: %d webSearch: %b",
@@ -147,8 +150,8 @@ public class LlmScoringClient implements ScoringClient {
         String userMessage = userMessageResult.getMessage();
         PreComputedScores preComputedScores = userMessageResult.getPreComputedScores();
         int promptLength = systemPrompt.length() + userMessage.length();
-        int systemTokens = ThymeleafPromptBuilder.estimateTokens(systemPrompt);
-        int userTokens = ThymeleafPromptBuilder.estimateTokens(userMessage);
+        int systemTokens = promptBuilder.estimateTokens(model, systemPrompt);
+        int userTokens = promptBuilder.estimateTokens(model, userMessage);
         log.info(String.format("prompt system: %d chars (~%d tokens) user: %d chars (~%d tokens) total: %d chars (~%d tokens)",
                 systemPrompt.length(),
                 systemTokens,
@@ -177,7 +180,7 @@ public class LlmScoringClient implements ScoringClient {
          * Send every sampling knob through `options` so temperature/seed are honored together with num_ctx and scoring is reproducible
          * (top-level temperature/topP above stay for portability to non-Ollama providers).
          */
-        Map<String, Object> options = Maps.newLinkedHashMap();
+        Map<String, Object> options = new LinkedHashMap<>();
         if (Objects.nonNull(numCtx)) {
             options.put("num_ctx", numCtx);
         }
@@ -200,7 +203,7 @@ public class LlmScoringClient implements ScoringClient {
 
         int totalPromptTokens = 0;
         int totalCompletionTokens = 0;
-        List<String> toolCallsMade = Lists.newArrayList();
+        List<String> toolCallsMade = new ArrayList<>();
 
         OpenAIClientWrapper.StreamingHandler bridgeHandler = new OpenAIClientWrapper.StreamingHandler() {
             @Override
@@ -350,6 +353,7 @@ public class LlmScoringClient implements ScoringClient {
         if (Objects.nonNull(webSearchClient)) {
             webSearchClient.close();
         }
+        tokenizers.close();
     }
     private LlmScoringResponse deserializeResponse(String rawContent) throws Exception {
         try {

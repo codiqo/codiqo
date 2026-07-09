@@ -37,10 +37,6 @@
             <artifactId>org.eclipse.lsp4j</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.google.guava</groupId>
-            <artifactId>guava</artifactId>
-        </dependency>
-        <dependency>
             <groupId>io.projectreactor</groupId>
             <artifactId>reactor-core</artifactId>
         </dependency>
@@ -95,14 +91,17 @@
         <dependency>
             <groupId>org.jacoco</groupId>
             <artifactId>org.jacoco.core</artifactId>
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>net.sourceforge.pmd</groupId>
             <artifactId>pmd-java</artifactId>
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>com.github.spotbugs</groupId>
             <artifactId>spotbugs</artifactId>
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>org.apache.maven.shared</groupId>
@@ -139,6 +138,7 @@
             <groupId>${project.groupId}</groupId>
             <artifactId>codiqo-lang-java</artifactId>
             <version>${project.version}</version>
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>${project.groupId}</groupId>
@@ -148,6 +148,11 @@
         <dependency>
             <groupId>${project.groupId}</groupId>
             <artifactId>codiqo-llm</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>codiqo-submit</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>

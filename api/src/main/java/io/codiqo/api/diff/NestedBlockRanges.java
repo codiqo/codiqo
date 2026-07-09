@@ -1,8 +1,8 @@
 package io.codiqo.api.diff;
 
 import java.util.List;
+import java.util.ArrayList;
 
-import com.google.common.collect.Lists;
 
 import lombok.experimental.UtilityClass;
 
@@ -15,7 +15,7 @@ import lombok.experimental.UtilityClass;
 @UtilityClass
 public class NestedBlockRanges {
     public static List<int[]> nestedWithin(int startLine, int endLine, List<int[]> blockRanges) {
-        List<int[]> toReturn = Lists.newArrayList();
+        List<int[]> toReturn = new ArrayList<>();
         for (int[] range : blockRanges) {
             boolean inside = range[0] >= startLine && range[1] <= endLine;
             boolean smaller = range[1] - range[0] < endLine - startLine;

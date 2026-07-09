@@ -4,7 +4,6 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import com.google.common.collect.ImmutableSet;
 
 import lombok.experimental.UtilityClass;
 
@@ -17,7 +16,7 @@ import lombok.experimental.UtilityClass;
 @UtilityClass
 public class JavaInvocationCounter {
     private static final Pattern CALL_SHAPE = Pattern.compile("\\b([A-Za-z_$][\\w$]*)\\s*\\(");
-    private static final Set<String> CONTROL_FLOW_KEYWORDS = ImmutableSet.of(
+    private static final Set<String> CONTROL_FLOW_KEYWORDS = Set.of(
             "if", "while", "for", "switch", "catch", "synchronized", "try", "return", "throw");
 
     public static int countInLine(String line) {

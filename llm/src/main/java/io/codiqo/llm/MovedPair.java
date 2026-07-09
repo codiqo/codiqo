@@ -1,13 +1,13 @@
 package io.codiqo.llm;
 
+import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.math.NumberUtils;
 
-import com.google.common.base.Splitter;
-
+import io.codiqo.util.Split;
 import lombok.Value;
 
 /**
@@ -32,13 +32,14 @@ public class MovedPair {
             return Optional.empty();
         }
 
-        List<String> sides = Splitter.on(ARROW).trimResults().omitEmptyStrings().splitToList(raw);
+        List<String> sides = Split.on(raw, ARROW);
         if (sides.size() != 2) {
             return Optional.empty();
         }
 
-        Optional<FileLine> from = parseSide(sides.get(0));
-        Optional<FileLine> to = parseSide(sides.get(1));
+        Iterator<String> iterator = sides.iterator();
+        Optional<FileLine> from = parseSide(iterator.next());
+        Optional<FileLine> to = parseSide(iterator.next());
         if (from.isEmpty() || to.isEmpty()) {
             return Optional.empty();
         }

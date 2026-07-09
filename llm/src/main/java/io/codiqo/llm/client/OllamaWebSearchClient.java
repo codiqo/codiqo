@@ -5,10 +5,10 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.ArrayList;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.collect.Lists;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.PromptBuilder;
@@ -70,7 +70,7 @@ public class OllamaWebSearchClient implements WebSearchClient {
                 String responseBody = response.body().string();
                 SearchResponse searchResponse = objectMapper.readValue(responseBody, SearchResponse.class);
 
-                List<WebSearchResultItem> items = Lists.newArrayList();
+                List<WebSearchResultItem> items = new ArrayList<>();
                 if (Objects.nonNull(searchResponse.getResults())) {
                     for (ApiSearchResultItem item : searchResponse.getResults()) {
                         items.add(WebSearchResultItem.builder()
@@ -105,7 +105,7 @@ public class OllamaWebSearchClient implements WebSearchClient {
     @AllArgsConstructor
     @JsonIgnoreProperties(ignoreUnknown = true)
     private static class SearchResponse {
-        private List<ApiSearchResultItem> results = Lists.newArrayList();
+        private List<ApiSearchResultItem> results = new ArrayList<>();
     }
 
     @Data

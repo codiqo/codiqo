@@ -2,10 +2,10 @@ package io.codiqo.llm.client;
 
 import java.io.Closeable;
 import java.util.List;
+import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 
-import com.google.common.collect.Lists;
 
 import io.codiqo.llm.PromptBuilder.PromptContext;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
@@ -37,7 +37,7 @@ public interface ScoringClient extends Scorer<ScoringClient.Params, ScoringClien
         int completionTokens;
         int promptLength;
         @Builder.Default
-        List<String> toolCallsMade = Lists.newArrayList();
+        List<String> toolCallsMade = new ArrayList<>();
 
         public int getTotalTokens() {
             return promptTokens + completionTokens;

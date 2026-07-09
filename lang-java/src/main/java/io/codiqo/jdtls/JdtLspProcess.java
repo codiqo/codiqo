@@ -12,6 +12,7 @@ import java.util.Objects;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
+import java.util.ArrayList;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.SystemUtils;
@@ -22,8 +23,6 @@ import org.rauschig.jarchivelib.FileType;
 import org.zeroturnaround.process.JavaProcess;
 import org.zeroturnaround.process.Processes;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
@@ -48,7 +47,7 @@ class JdtLspProcess implements Closeable {
 
         Properties lookup = new Properties();
         OSDetector detector = new OSDetector(logFactory);
-        detector.detect(lookup, ImmutableList.of());
+        detector.detect(lookup, List.of());
 
         String os = RunArgs.JDTLS_CONFIG.get(lookup.getProperty("os.detected.classifier"));
         String latest = args.resolveJdtlsArchiveName();
@@ -80,15 +79,15 @@ class JdtLspProcess implements Closeable {
             java = args.getJavaHome().toPath().normalize().resolve("bin").resolve(java).toFile().getAbsolutePath();
         }
 
-        List<String> cmd = Lists.newArrayList();
+        List<String> cmd = new ArrayList<>();
         cmd.add(java);
-        cmd.addAll(ImmutableList.of("-server", "-Xlog:disable"));
+        cmd.addAll(List.of("-server", "-Xlog:disable"));
         if (Objects.nonNull(args.getJdtDebugPort())) {
             cmd.add("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=*:" + args.getJdtDebugPort());
         }
-        cmd.addAll(ImmutableList.of("-XX:+UnlockExperimentalVMOptions", "-XX:+UnlockDiagnosticVMOptions", "-XX:+UseStringDeduplication"));
+        cmd.addAll(List.of("-XX:+UnlockExperimentalVMOptions", "-XX:+UnlockDiagnosticVMOptions", "-XX:+UseStringDeduplication"));
         cmd.addAll(
-                ImmutableList.of(
+                List.of(
                         "-Declipse.application=org.eclipse.jdt.ls.core.id1",
                         "-Dosgi.bundles.defaultStartLevel=4",
                         "-Declipse.product=org.eclipse.jdt.ls.core.product",
@@ -130,7 +129,7 @@ class JdtLspProcess implements Closeable {
             cmd.add("--add-opens=java.base/java." + pkg + "=ALL-UNNAMED");
         }
         cmd.addAll(
-                ImmutableList.of(
+                List.of(
                         "--add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED",
                         "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
                         "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
@@ -148,9 +147,9 @@ class JdtLspProcess implements Closeable {
 
         cmd.addAll(JvmOptionsFilter.keepMemory(System.getenv("MAVEN_OPTS")));
 
-        cmd.addAll(ImmutableList.of("-jar", launcherJar.toString()));
-        cmd.addAll(ImmutableList.of("-configuration", config.toString()));
-        cmd.addAll(ImmutableList.of("-data", data.toString()));
+        cmd.addAll(List.of("-jar", launcherJar.toString()));
+        cmd.addAll(List.of("-configuration", config.toString()));
+        cmd.addAll(List.of("-data", data.toString()));
 
         //
         // ~ advance JVM options matched to the spawned JDK, not the current JVM
@@ -227,7 +226,7 @@ class JdtLspProcess implements Closeable {
 
         public OSDetector(LogFactory logFactory) {
             this.log = logFactory.getLogger(getClass());
-            super.detect(properties, ImmutableList.of());
+            super.detect(properties, List.of());
         }
         @Override
         protected void log(String message) {

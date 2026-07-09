@@ -1,4 +1,5 @@
 package io.codiqo.llm;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -7,12 +8,12 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
+import java.util.ArrayList;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
-import com.google.common.collect.Lists;
 
 import io.codiqo.client.model.AnalysisResultModel;
 import io.codiqo.client.model.BlastRadiusAnalysisModel;
@@ -74,7 +75,7 @@ class LlmResponseMapperTest {
     @Test
     void modifyImpactEstimateMapsAllEnumsAndFields() {
         LlmScoringResponse response = new LlmScoringResponse();
-        response.setModifyImpactEstimates(Lists.newArrayList(
+        response.setModifyImpactEstimates(new ArrayList<>(List.of(
                 LlmScoringResponse.ModifyImpactEstimate.builder()
                         .signature("com.example.Foo.bar()")
                         .file("Foo.java")
@@ -84,7 +85,7 @@ class LlmResponseMapperTest {
                         .duplicationMagnitude(LlmScoringResponse.ChangeMagnitude.SLIGHT)
                         .confidence(Confidence.HIGH)
                         .rationale("added tests and extracted a duplicated block")
-                        .build()));
+                        .build())));
         AnalysisResultModel result = new AnalysisResultModel();
 
         mapper.mapToAnalysisResult(response, result);
@@ -103,8 +104,8 @@ class LlmResponseMapperTest {
     @Test
     void modifyImpactEstimateDefaultsApplyWhenEnumsOmitted() {
         LlmScoringResponse response = new LlmScoringResponse();
-        response.setModifyImpactEstimates(Lists.newArrayList(
-                LlmScoringResponse.ModifyImpactEstimate.builder().signature("com.example.Foo.bar()").build()));
+        response.setModifyImpactEstimates(new ArrayList<>(List.of(
+                LlmScoringResponse.ModifyImpactEstimate.builder().signature("com.example.Foo.bar()").build())));
         AnalysisResultModel result = new AnalysisResultModel();
 
         mapper.mapToAnalysisResult(response, result);
@@ -134,7 +135,7 @@ class LlmResponseMapperTest {
     void bugFieldDefaultsApplyWhenEnumsOmitted() {
         LlmScoringResponse response = new LlmScoringResponse();
         response.setBugs(Bugs.builder()
-                .blocking(Lists.newArrayList(Bug.builder().title("blocker").build()))
+                .blocking(new ArrayList<>(List.of(Bug.builder().title("blocker").build())))
                 .build());
         AnalysisResultModel result = new AnalysisResultModel();
 
@@ -279,8 +280,8 @@ class LlmResponseMapperTest {
     void staticAnalysisFindingNullSeverityFallsBackToInfo() {
         LlmScoringResponse response = new LlmScoringResponse();
         StaticAnalysisReview review = new StaticAnalysisReview();
-        review.setPmdInChangedLines(Lists.newArrayList(
-                StaticAnalysisFinding.builder().rule("R1").file("F.java").line(10).assessment("tp").build()));
+        review.setPmdInChangedLines(new ArrayList<>(List.of(
+                StaticAnalysisFinding.builder().rule("R1").file("F.java").line(10).assessment("tp").build())));
         response.setStaticAnalysisReview(review);
         AnalysisResultModel result = new AnalysisResultModel();
 
@@ -361,7 +362,7 @@ class LlmResponseMapperTest {
     void bugTypeIsExhaustivelyMapped(BugType input) {
         LlmScoringResponse response = new LlmScoringResponse();
         response.setBugs(Bugs.builder()
-                .blocking(Lists.newArrayList(Bug.builder().type(input).build()))
+                .blocking(new ArrayList<>(List.of(Bug.builder().type(input).build())))
                 .build());
         AnalysisResultModel result = new AnalysisResultModel();
 
@@ -375,7 +376,7 @@ class LlmResponseMapperTest {
     void bugConfidenceIsExhaustivelyMapped(Confidence input) {
         LlmScoringResponse response = new LlmScoringResponse();
         response.setBugs(Bugs.builder()
-                .blocking(Lists.newArrayList(Bug.builder().confidence(input).build()))
+                .blocking(new ArrayList<>(List.of(Bug.builder().confidence(input).build())))
                 .build());
         AnalysisResultModel result = new AnalysisResultModel();
 
@@ -389,7 +390,7 @@ class LlmResponseMapperTest {
     void bugSourceIsExhaustivelyMapped(BugSource input) {
         LlmScoringResponse response = new LlmScoringResponse();
         response.setBugs(Bugs.builder()
-                .blocking(Lists.newArrayList(Bug.builder().source(input).build()))
+                .blocking(new ArrayList<>(List.of(Bug.builder().source(input).build())))
                 .build());
         AnalysisResultModel result = new AnalysisResultModel();
 
@@ -403,8 +404,8 @@ class LlmResponseMapperTest {
     void findingSeverityIsExhaustivelyMapped(FindingSeverity input) {
         LlmScoringResponse response = new LlmScoringResponse();
         StaticAnalysisReview review = new StaticAnalysisReview();
-        review.setPmdInChangedLines(Lists.newArrayList(
-                StaticAnalysisFinding.builder().rule("R").severity(input).build()));
+        review.setPmdInChangedLines(new ArrayList<>(List.of(
+                StaticAnalysisFinding.builder().rule("R").severity(input).build())));
         response.setStaticAnalysisReview(review);
         AnalysisResultModel result = new AnalysisResultModel();
 
@@ -500,7 +501,7 @@ class LlmResponseMapperTest {
         ScoringResult scoring = ScoringResult.builder()
                 .promptTokens(10)
                 .completionTokens(5)
-                .toolCallsMade(Lists.newArrayList("web_search", "web_search", "fetch"))
+                .toolCallsMade(new ArrayList<>(List.of("web_search", "web_search", "fetch")))
                 .build();
 
         LlmAnalysisModel analysis = LlmResponseMapper.mapLlmAnalysis(scoring, Duration.ZERO, "gpt-test");

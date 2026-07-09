@@ -7,7 +7,7 @@ import org.apache.maven.plugins.annotations.ResolutionScope;
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisAcceptedModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
-import io.codiqo.maven.populator.SubmissionContext;
+import io.codiqo.submit.SubmissionContext;
 import io.codiqo.util.Env;
 
 @Mojo(name = "submit-commit-analysis",

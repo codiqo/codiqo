@@ -1,18 +1,16 @@
 package io.codiqo.llm;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.commons.collections4.Bag;
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.bag.HashBag;
 import org.apache.commons.lang3.StringUtils;
-
-import com.google.common.collect.HashMultiset;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Multiset;
-import com.google.common.collect.Multisets;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.schema.LlmScoringRequest;
@@ -49,11 +47,10 @@ public class MovedLineDetector {
         this.similarityThreshold = args.getMoveSimilarityThreshold();
     }
     public List<MoveCandidate> detect(LlmScoringRequest request) {
-        List<MoveCandidate> toReturn = Lists.newArrayList();
-        // short-circuit needed: fileChanges access depends on request being non-null (test-only overloads pass null)
+        List<MoveCandidate> toReturn = new ArrayList<>();
         if (enabled && Objects.nonNull(request) && CollectionUtils.isNotEmpty(request.getFileChanges())) {
-            List<LineEntry> deleted = Lists.newArrayList();
-            List<LineEntry> added = Lists.newArrayList();
+            List<LineEntry> deleted = new ArrayList<>();
+            List<LineEntry> added = new ArrayList<>();
             for (FileChange fc : request.getFileChanges()) {
                 if (fc.isLinesJustificationRequired() && StringUtils.isNotBlank(fc.getDiff())) {
                     UnifiedDiffLines diffLines = UnifiedDiffLines.parse(fc.getDiff(), fc.getLineFilter());
@@ -109,14 +106,20 @@ public class MovedLineDetector {
     }
     private static void collectEntries(String file, Map<Integer, String> contentByLine, List<LineEntry> target) {
         for (Map.Entry<Integer, String> entry : contentByLine.entrySet()) {
-            Multiset<String> tokens = tokenize(entry.getValue());
+            Bag<String> tokens = tokenize(entry.getValue());
             if (tokens.size() >= MIN_INFORMATIVE_TOKENS) {
                 target.add(new LineEntry(file, entry.getKey(), entry.getValue().trim(), tokens));
             }
         }
     }
-    private static boolean isBetterMatch(double similarity, boolean sameFile, int distance,
-            double bestSimilarity, boolean bestSameFile, int bestDistance, int currentBest) {
+    private static boolean isBetterMatch(
+            double similarity,
+            boolean sameFile,
+            int distance,
+            double bestSimilarity,
+            boolean bestSameFile,
+            int bestDistance,
+            int currentBest) {
         if (currentBest < 0) {
             return true;
         }
@@ -128,14 +131,14 @@ public class MovedLineDetector {
         }
         return distance < bestDistance;
     }
-    private static boolean isSizeCompatible(Multiset<String> a, Multiset<String> b) {
+    private static boolean isSizeCompatible(Bag<String> a, Bag<String> b) {
         return (double) Math.min(a.size(), b.size()) / Math.max(a.size(), b.size()) >= SIZE_RATIO_MIN;
     }
-    private static double containment(Multiset<String> a, Multiset<String> b) {
-        return (double) Multisets.intersection(a, b).size() / Math.min(a.size(), b.size());
+    private static double containment(Bag<String> a, Bag<String> b) {
+        return (double) CollectionUtils.intersection(a, b).size() / Math.min(a.size(), b.size());
     }
-    private static Multiset<String> tokenize(String content) {
-        Multiset<String> toReturn = HashMultiset.create();
+    private static Bag<String> tokenize(String content) {
+        Bag<String> toReturn = new HashBag<>();
 
         Matcher matcher = WORD_TOKEN.matcher(content);
         while (matcher.find()) {
@@ -160,6 +163,6 @@ public class MovedLineDetector {
         String file;
         int line;
         String content;
-        Multiset<String> tokens;
+        Bag<String> tokens;
     }
 }

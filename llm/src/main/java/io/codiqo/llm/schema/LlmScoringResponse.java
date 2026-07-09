@@ -4,12 +4,12 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.HashMap;
+import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -35,7 +35,7 @@ public class LlmScoringResponse {
     private ChangeClassification changeClassification;
 
     @Builder.Default
-    private List<TaskType> taskTypes = Lists.newArrayList();
+    private List<TaskType> taskTypes = new ArrayList<>();
 
     private Integer taskComplexity;
     private String taskComplexityRationale;
@@ -45,17 +45,17 @@ public class LlmScoringResponse {
     private BlastRadiusAnalysis blastRadiusAnalysis;
     private int requiresSeniorReview;
     @Builder.Default
-    private List<String> seniorReviewReasons = Lists.newArrayList();
+    private List<String> seniorReviewReasons = new ArrayList<>();
     private String summary;
     private Tags tags;
 
     @Builder.Default
-    private List<ModifyImpactEstimate> modifyImpactEstimates = Lists.newArrayList();
+    private List<ModifyImpactEstimate> modifyImpactEstimates = new ArrayList<>();
 
     private ChangeImpactEstimate changeImpactEstimate;
 
     @Builder.Default
-    private List<CodeBlockCategoryView> blockCategories = Lists.newArrayList();
+    private List<CodeBlockCategoryView> blockCategories = new ArrayList<>();
 
     public boolean hasBlockingBugs() {
         return Objects.nonNull(bugs) && CollectionUtils.isNotEmpty(bugs.getBlocking());
@@ -176,7 +176,7 @@ public class LlmScoringResponse {
         private ComplexityMultiplier complexityMultiplier;
         private double baseEffortScore;
         @Builder.Default
-        private List<FileEffortView> fileEfforts = Lists.newArrayList();
+        private List<FileEffortView> fileEfforts = new ArrayList<>();
         private DiffClassification diffClassification;
     }
 
@@ -221,11 +221,11 @@ public class LlmScoringResponse {
         private int pureAddDeleteLines;
         private int movedLines;
         @Builder.Default
-        private List<String> confirmedMoveIds = Lists.newArrayList();
+        private List<String> confirmedMoveIds = new ArrayList<>();
         @Builder.Default
-        private List<String> movedPairs = Lists.newArrayList();
+        private List<String> movedPairs = new ArrayList<>();
         @Builder.Default
-        private List<FileDiffClassification> perFile = Lists.newArrayList();
+        private List<FileDiffClassification> perFile = new ArrayList<>();
         private String rationale;
     }
 
@@ -241,24 +241,24 @@ public class LlmScoringResponse {
         private int movedLines;
 
         @Builder.Default
-        private Map<String, String> blockKinds = Maps.newHashMap();
+        private Map<String, String> blockKinds = new HashMap<>();
         @Builder.Default
-        private List<Integer> cosmeticAdded = Lists.newArrayList();
+        private List<Integer> cosmeticAdded = new ArrayList<>();
         @Builder.Default
-        private List<Integer> cosmeticDeleted = Lists.newArrayList();
+        private List<Integer> cosmeticDeleted = new ArrayList<>();
         @Builder.Default
-        private List<LinePair> inPlaceModifyPairs = Lists.newArrayList();
+        private List<LinePair> inPlaceModifyPairs = new ArrayList<>();
         @Builder.Default
-        private List<LinePair> trueModifyPairs = Lists.newArrayList();
+        private List<LinePair> trueModifyPairs = new ArrayList<>();
         @Builder.Default
-        private List<Integer> pureAdd = Lists.newArrayList();
+        private List<Integer> pureAdd = new ArrayList<>();
         @Builder.Default
-        private List<Integer> pureDelete = Lists.newArrayList();
+        private List<Integer> pureDelete = new ArrayList<>();
         // server-derived from confirmed move candidates; a cross-file pair splits its sides across two entries
         @Builder.Default
-        private List<Integer> movedAdded = Lists.newArrayList();
+        private List<Integer> movedAdded = new ArrayList<>();
         @Builder.Default
-        private List<Integer> movedDeleted = Lists.newArrayList();
+        private List<Integer> movedDeleted = new ArrayList<>();
     }
 
     @Data
@@ -342,9 +342,9 @@ public class LlmScoringResponse {
     @AllArgsConstructor
     public static class ArchitectureAnalysis {
         @Builder.Default
-        private List<String> solidViolations = Lists.newArrayList();
+        private List<String> solidViolations = new ArrayList<>();
         @Builder.Default
-        private List<String> architectureIssues = Lists.newArrayList();
+        private List<String> architectureIssues = new ArrayList<>();
         private double penaltyImpact;
     }
 
@@ -354,7 +354,7 @@ public class LlmScoringResponse {
     @AllArgsConstructor
     public static class QualityGateAnalysis {
         @Builder.Default
-        private List<String> failedGates = Lists.newArrayList();
+        private List<String> failedGates = new ArrayList<>();
         private double impact;
     }
 
@@ -412,11 +412,11 @@ public class LlmScoringResponse {
     @AllArgsConstructor
     public static class Bugs {
         @Builder.Default
-        private List<Bug> blocking = Lists.newArrayList();
+        private List<Bug> blocking = new ArrayList<>();
         @Builder.Default
-        private List<Bug> major = Lists.newArrayList();
+        private List<Bug> major = new ArrayList<>();
         @Builder.Default
-        private List<Bug> minor = Lists.newArrayList();
+        private List<Bug> minor = new ArrayList<>();
     }
 
     @Data
@@ -442,17 +442,17 @@ public class LlmScoringResponse {
     @AllArgsConstructor
     public static class StaticAnalysisReview {
         @Builder.Default
-        private List<StaticAnalysisFinding> pmdInChangedLines = Lists.newArrayList();
+        private List<StaticAnalysisFinding> pmdInChangedLines = new ArrayList<>();
         @Builder.Default
-        private List<StaticAnalysisFinding> pmdPreExisting = Lists.newArrayList();
+        private List<StaticAnalysisFinding> pmdPreExisting = new ArrayList<>();
         @Builder.Default
-        private List<StaticAnalysisFinding> pmdFalsePositives = Lists.newArrayList();
+        private List<StaticAnalysisFinding> pmdFalsePositives = new ArrayList<>();
         @Builder.Default
-        private List<StaticAnalysisFinding> spotbugsInChangedLines = Lists.newArrayList();
+        private List<StaticAnalysisFinding> spotbugsInChangedLines = new ArrayList<>();
         @Builder.Default
-        private List<StaticAnalysisFinding> spotbugsPreExisting = Lists.newArrayList();
+        private List<StaticAnalysisFinding> spotbugsPreExisting = new ArrayList<>();
         @Builder.Default
-        private List<StaticAnalysisFinding> spotbugsFalsePositives = Lists.newArrayList();
+        private List<StaticAnalysisFinding> spotbugsFalsePositives = new ArrayList<>();
     }
 
     @Data
@@ -485,7 +485,7 @@ public class LlmScoringResponse {
         private int testCallers;
         private RiskLevel riskLevel;
         @Builder.Default
-        private List<String> criticalCallers = Lists.newArrayList();
+        private List<String> criticalCallers = new ArrayList<>();
         private ModuleType moduleType;
         private SignatureChanges signatureChanges;
         private ExternalImpact externalImpactEstimate;
@@ -499,7 +499,7 @@ public class LlmScoringResponse {
     public static class SignatureChanges {
         private boolean hasBreakingChanges;
         @Builder.Default
-        private List<String> changedSignatures = Lists.newArrayList();
+        private List<String> changedSignatures = new ArrayList<>();
         private BreakingChangeType breakingChangeType;
     }
 
@@ -509,9 +509,9 @@ public class LlmScoringResponse {
     @AllArgsConstructor
     public static class Tags {
         @Builder.Default
-        private List<String> technical = Lists.newArrayList();
+        private List<String> technical = new ArrayList<>();
         @Builder.Default
-        private List<String> functional = Lists.newArrayList();
+        private List<String> functional = new ArrayList<>();
     }
 
     @Data
@@ -523,7 +523,7 @@ public class LlmScoringResponse {
         private double totalEffort;
         private boolean isTest;
         @Builder.Default
-        private List<CodeBlockEffortView> codeBlockEfforts = Lists.newArrayList();
+        private List<CodeBlockEffortView> codeBlockEfforts = new ArrayList<>();
         private int blocksFlaggedAsRatioOutlier;
         private int blocksFlaggedAsGlobalCapDriver;
         private double maxBlockRatioDeviationNcss;

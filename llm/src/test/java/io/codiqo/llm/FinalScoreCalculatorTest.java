@@ -8,9 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.HashMap;
+import java.util.ArrayList;
 
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
 
 import org.junit.jupiter.api.Test;
 
@@ -39,7 +39,7 @@ class FinalScoreCalculatorTest {
     @Test
     void qualityMultiplierBelowMinIsClampedToMin() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         LlmScoringResponse response = new LlmScoringResponse();
         response.setQualityMultiplier(QualityMultiplier.builder().finalMultiplier(0.1).build());
         PreComputedScores preComputed = baseScores(100.0);
@@ -52,7 +52,7 @@ class FinalScoreCalculatorTest {
     @Test
     void qualityMultiplierAboveMaxIsClampedToMax() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         LlmScoringResponse response = new LlmScoringResponse();
         response.setQualityMultiplier(QualityMultiplier.builder().finalMultiplier(5.0).build());
         PreComputedScores preComputed = baseScores(100.0);
@@ -65,7 +65,7 @@ class FinalScoreCalculatorTest {
     @Test
     void qualityMultiplierWithinRangeIsPassedThrough() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         LlmScoringResponse response = new LlmScoringResponse();
         response.setQualityMultiplier(QualityMultiplier.builder().finalMultiplier(0.9).build());
         PreComputedScores preComputed = baseScores(100.0);
@@ -78,7 +78,7 @@ class FinalScoreCalculatorTest {
     @Test
     void qualityMultiplierMissingDefaultsToOne() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         LlmScoringResponse response = new LlmScoringResponse();
         PreComputedScores preComputed = baseScores(100.0);
 
@@ -90,7 +90,7 @@ class FinalScoreCalculatorTest {
     @Test
     void architectureBonusComputedFromImpactAndQualityFactor() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         LlmScoringResponse response = new LlmScoringResponse();
         response.setArchitectureEffortBonus(ArchitectureEffortBonus.builder()
                 .architectureImpactScore(7)
@@ -110,7 +110,7 @@ class FinalScoreCalculatorTest {
     @Test
     void architectureImpactScoreIsClampedToZeroTenRange() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         LlmScoringResponse response = new LlmScoringResponse();
         response.setArchitectureEffortBonus(ArchitectureEffortBonus.builder()
                 .architectureImpactScore(50)
@@ -127,7 +127,7 @@ class FinalScoreCalculatorTest {
     @Test
     void negativeArchitectureImpactScoreIsClampedToZero() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         LlmScoringResponse response = new LlmScoringResponse();
         response.setArchitectureEffortBonus(ArchitectureEffortBonus.builder()
                 .architectureImpactScore(-3)
@@ -153,7 +153,7 @@ class FinalScoreCalculatorTest {
                 .qualityFactor(1.0)
                 .build());
 
-        new FinalScoreCalculator(args).apply(response, baseScores(100.0), request);
+        new FinalScoreCalculator(args, NoopLog.INSTANCE).apply(response, baseScores(100.0), request);
 
         assertEquals(0.0, response.getArchitectureEffortBonus().getBonusPoints(), 0.001,
                 "a commit with no code blocks (pom-only) must not earn an architecture bonus");
@@ -177,7 +177,7 @@ class FinalScoreCalculatorTest {
                 "category coefficient multiplies per-block effort before the volume power-law");
     }
     private static double scoreWithCategory(RunArgs args, CodeBlockCategory category) {
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         LlmScoringResponse response = new LlmScoringResponse();
         response.setBlockCategories(List.of(CodeBlockCategoryView.builder()
                 .file("Foo.java").signature("doStuff()").category(category).build()));
@@ -189,7 +189,7 @@ class FinalScoreCalculatorTest {
     @Test
     void allCosmeticClassificationDropsBlockEffortToZero() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
         LlmScoringRequest request = requestWithFileChange("Foo.java", /*added*/ 3, /*deleted*/ 3);
         LlmScoringResponse response = responseWithClassification(
@@ -209,7 +209,7 @@ class FinalScoreCalculatorTest {
     @Test
     void allInPlacePairsHalveFileBlockEffort() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
         LlmScoringRequest request = requestWithFileChange("Foo.java", /*added*/ 4, /*deleted*/ 4);
         FileDiffClassification fileDiff = FileDiffClassification.builder()
@@ -247,7 +247,7 @@ class FinalScoreCalculatorTest {
                 .inPlaceModifyPairs(pairs(p(1, 11), p(2, 12), p(3, 13), p(4, 14)))
                 .build());
 
-        new FinalScoreCalculator(args).apply(response, preComputed, request);
+        new FinalScoreCalculator(args, NoopLog.INSTANCE).apply(response, preComputed, request);
 
         // 4 in-place pairs = 4 logical changed lines, each discounted by configFileScoreMultiplier.
         // The delete+add collapse must happen exactly once (not twice → would be 2 logical lines).
@@ -262,7 +262,7 @@ class FinalScoreCalculatorTest {
     @Test
     void trueModifyPairsCostSameAsInPlacePairs() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
         LlmScoringRequest request = requestWithFileChange("Foo.java", /*added*/ 4, /*deleted*/ 4);
         FileDiffClassification fileDiff = FileDiffClassification.builder()
@@ -282,7 +282,7 @@ class FinalScoreCalculatorTest {
     @Test
     void pureAddCountsOneEffortPerLineNoReduction() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0, Operation.NEW);
         LlmScoringRequest request = requestWithFileChange("Foo.java", /*added*/ 10, /*deleted*/ 0);
         FileDiffClassification fileDiff = FileDiffClassification.builder()
@@ -303,7 +303,7 @@ class FinalScoreCalculatorTest {
     @Test
     void pureAddWithCosmeticTrims() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0, Operation.NEW);
         LlmScoringRequest request = requestWithFileChange("Foo.java", /*added*/ 10, /*deleted*/ 0);
         FileDiffClassification fileDiff = FileDiffClassification.builder()
@@ -324,7 +324,7 @@ class FinalScoreCalculatorTest {
     @Test
     void mixedAllFiveCategoriesComputesCorrectFactor() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
         LlmScoringRequest request = requestWithFileChange("Foo.java", /*added*/ 6, /*deleted*/ 4);
         FileDiffClassification fileDiff = FileDiffClassification.builder()
@@ -354,7 +354,7 @@ class FinalScoreCalculatorTest {
     @Test
     void serverDerivesCountFieldsFromArrays() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
         LlmScoringRequest request = requestWithFileChange("Foo.java", /*added*/ 4, /*deleted*/ 4);
         FileDiffClassification fileDiff = FileDiffClassification.builder()
@@ -380,7 +380,7 @@ class FinalScoreCalculatorTest {
     @Test
     void addedTotalMismatchFallsBack() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
         LlmScoringRequest request = requestWithFileChange("Foo.java", /*added*/ 5, /*deleted*/ 5);
         FileDiffClassification fileDiff = FileDiffClassification.builder()
@@ -401,7 +401,7 @@ class FinalScoreCalculatorTest {
     @Test
     void deletedTotalMismatchFallsBack() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
         LlmScoringRequest request = requestWithFileChange("Foo.java", /*added*/ 3, /*deleted*/ 3);
         FileDiffClassification fileDiff = FileDiffClassification.builder()
@@ -423,7 +423,7 @@ class FinalScoreCalculatorTest {
         // stored) or candidate filtering drifted. The file is skipped WITHOUT mutating any array —
         // the persisted classification stays the audit trail of what was produced.
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
         LlmScoringRequest request = requestWithFileChange("Foo.java", /*added*/ 5, /*deleted*/ 2);
         FileDiffClassification fileDiff = FileDiffClassification.builder()
@@ -448,7 +448,7 @@ class FinalScoreCalculatorTest {
         // Target: linesAdded=5, linesDeleted=5 but only 2 added lines classified (no diff stored,
         // so derivation could not rebuild the entry). Hard reject — no reduction.
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
         LlmScoringRequest request = requestWithFileChange("Foo.java", /*added*/ 5, /*deleted*/ 5);
         FileDiffClassification fileDiff = FileDiffClassification.builder()
@@ -469,7 +469,7 @@ class FinalScoreCalculatorTest {
     @Test
     void onlyUnknownFilesInClassificationFallsBack() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
         LlmScoringRequest request = requestWithFileChange("Foo.java", 3, 3);
         FileDiffClassification unknown = FileDiffClassification.builder()
@@ -488,7 +488,7 @@ class FinalScoreCalculatorTest {
     @Test
     void nonEligibleFileEntryIsSkippedWhileEligibleEntriesStillApply() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
         LlmScoringRequest request = requestWithFileChanges(
                 fileChange("Foo.java", /*added*/ 5, /*deleted*/ 5, /*justify*/ true),
@@ -521,7 +521,7 @@ class FinalScoreCalculatorTest {
     @Test
     void inPlacePairFullyInsideBlockCollapsesEffectiveLinesChanged() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithBlockBody("Foo.java", /*blockEffort*/ 100.0,
                 /*effLinesChanged*/ 2, /*bodyStart*/ 55, /*bodyEnd*/ 67, /*bodyCodeLines*/ 13);
         LlmScoringRequest request = requestWithFileChange("Foo.java", /*added*/ 1, /*deleted*/ 1);
@@ -540,7 +540,7 @@ class FinalScoreCalculatorTest {
     @Test
     void trueModifyPairFullyInsideBlockCollapsesEffectiveLinesChanged() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithBlockBody("Foo.java", 100.0, 2, 55, 67, 13);
         LlmScoringRequest request = requestWithFileChange("Foo.java", 1, 1);
         FileDiffClassification fileDiff = FileDiffClassification.builder()
@@ -558,7 +558,7 @@ class FinalScoreCalculatorTest {
     @Test
     void pairWithSideOutsideBlockDoesNotCollapse() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithBlockBody("Foo.java", 100.0, 2, 55, 67, 13);
         LlmScoringRequest request = requestWithFileChange("Foo.java", 1, 1);
         FileDiffClassification fileDiff = FileDiffClassification.builder()
@@ -576,7 +576,7 @@ class FinalScoreCalculatorTest {
     @Test
     void pairInsideNestedBlockCollapsesOnlyInInnermostBlock() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         CodeBlockEffort outer = blockEffort("Foo.java", "outer", /*effLinesChanged*/ 1, /*bodyStart*/ 1, /*bodyEnd*/ 50, /*bodyCodeLines*/ 50);
         CodeBlockEffort inner = blockEffort("Foo.java", "createInstance", /*effLinesChanged*/ 2, /*bodyStart*/ 10, /*bodyEnd*/ 20, /*bodyCodeLines*/ 11);
         FileEffort fileEffort = new FileEffort("Foo.java", 100.0, false, List.of(outer, inner), 0, 0, 0.0, 0.0, false);
@@ -588,8 +588,8 @@ class FinalScoreCalculatorTest {
                 .filesScopeMultiplier(1.0)
                 .volumeScore(100.0)
                 .baseEffort(100.0)
-                .codeBlockEfforts(Lists.newArrayList(outer, inner))
-                .fileEfforts(Lists.newArrayList(fileEffort))
+                .codeBlockEfforts(new ArrayList<>(List.of(outer, inner)))
+                .fileEfforts(new ArrayList<>(List.of(fileEffort)))
                 .build();
         LlmScoringRequest request = requestWithFileChange("Foo.java", 1, 1);
         FileDiffClassification fileDiff = FileDiffClassification.builder()
@@ -630,13 +630,13 @@ class FinalScoreCalculatorTest {
     void explicitNullPerFileFallsBackWithoutThrowing() {
         // Jackson calls setPerFile(null) for an explicit JSON "perFile": null, bypassing @Builder.Default
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
         LlmScoringRequest request = requestWithFileChange("Foo.java", 3, 3);
         LlmScoringResponse response = responseWithClassification();
         response.getEffortBreakdown().getDiffClassification().setPerFile(null);
 
-        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs(), NoopLog.INSTANCE).validate(response, request);
         assertFalse(report.hasFailures(), "null perFile → nothing to validate");
 
         calculator.apply(response, preComputed, request);
@@ -653,7 +653,7 @@ class FinalScoreCalculatorTest {
                 .cosmeticDeleted(list(13))
                 .build());
 
-        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs(), NoopLog.INSTANCE).validate(response, request);
 
         assertFalse(report.hasFailures(), "block id and cosmetic numbers all exist in the diff");
     }
@@ -665,7 +665,7 @@ class FinalScoreCalculatorTest {
                 .blockKinds(kinds("B7", "inPlace"))
                 .build());
 
-        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs(), NoopLog.INSTANCE).validate(response, request);
 
         assertTrue(report.hasFailures());
         FinalScoreCalculator.ValidationFailure failure = report.getFailures().stream()
@@ -683,7 +683,7 @@ class FinalScoreCalculatorTest {
                 .cosmeticAdded(list(12)) // new-file 12 is a context line, not a + line
                 .build());
 
-        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs(), NoopLog.INSTANCE).validate(response, request);
 
         assertTrue(report.hasFailures());
         FinalScoreCalculator.ValidationFailure failure = report.getFailures().stream()
@@ -700,7 +700,7 @@ class FinalScoreCalculatorTest {
                 .cosmeticDeleted(list(12)) // old-file 12 is a context line, not a - line
                 .build());
 
-        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs(), NoopLog.INSTANCE).validate(response, request);
 
         assertTrue(report.hasFailures());
         FinalScoreCalculator.ValidationFailure failure = report.getFailures().stream()
@@ -714,7 +714,7 @@ class FinalScoreCalculatorTest {
         // 3 added (1 pure + 2 moved), 3 deleted (1 pure + 2 moved); rawLines = 6
         // effectiveLines = 1 + 1 + 4 × 0.25/2 = 2.5 → factor = 2.5/6
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
         LlmScoringRequest request = requestWithFileChange("Foo.java", 3, 3);
         LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder()
@@ -752,13 +752,13 @@ class FinalScoreCalculatorTest {
                 "+registry.register(handler, priority);",
                 " context4");
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
         LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, moveDiff);
         LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder()
                 .file("Foo.java")
                 .build());
-        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M1"));
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M1")));
 
         calculator.apply(response, preComputed, request);
 
@@ -774,7 +774,7 @@ class FinalScoreCalculatorTest {
     @Test
     void movedInvocationsDiscountBillingAndDestinationBlocks() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         // deleted line anchors at new-file 11 (inside "billed"), re-added at 29 (inside "destination")
         CodeBlockEffort billed = invocationBlock("Foo.java", "billed", Operation.MODIFY, /*billedInvocations*/ 4,
                 /*scaledLines*/ 6.0, /*scaledInvocations*/ 8.0, /*bodyStart*/ 1, /*bodyEnd*/ 20, /*bodyCodeLines*/ 20);
@@ -783,7 +783,7 @@ class FinalScoreCalculatorTest {
         PreComputedScores preComputed = scoresWithBlocks("Foo.java", billed, destination);
         LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
         LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
-        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M1"));
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M1")));
 
         calculator.apply(response, preComputed, request);
 
@@ -800,14 +800,14 @@ class FinalScoreCalculatorTest {
     @Test
     void movedInAdditionDiscountsNewDestinationBlock() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         CodeBlockEffort billed = invocationBlock("Foo.java", "billed", Operation.MODIFY, 4, 6.0, 8.0, 1, 20, 20);
         // NEW destination is billed via directInvocationCount, driver = (lines + ncss + inv)/3
         CodeBlockEffort destination = invocationBlock("Foo.java", "destination", Operation.NEW, 2, 6.0, 4.0, 25, 35, 11);
         PreComputedScores preComputed = scoresWithBlocks("Foo.java", billed, destination);
         LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
         LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
-        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M1"));
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M1")));
 
         calculator.apply(response, preComputed, request);
 
@@ -822,14 +822,14 @@ class FinalScoreCalculatorTest {
     @Test
     void movedLinesOutsideBlockSpansKeepUniformFileFactorOnly() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         // neither the deleted anchor (11) nor the added line (29) falls inside a block body
         CodeBlockEffort first = invocationBlock("Foo.java", "first", Operation.MODIFY, 4, 6.0, 8.0, 100, 120, 21);
         CodeBlockEffort second = invocationBlock("Foo.java", "second", Operation.MODIFY, 2, 6.0, 4.0, 200, 210, 11);
         PreComputedScores preComputed = scoresWithBlocks("Foo.java", first, second);
         LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
         LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
-        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M1"));
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M1")));
 
         calculator.apply(response, preComputed, request);
 
@@ -852,9 +852,9 @@ class FinalScoreCalculatorTest {
                 " context4");
         LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, moveDiff);
         LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
-        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M1"));
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M1")));
 
-        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs(), NoopLog.INSTANCE).validate(response, request);
 
         assertFalse(report.hasFailures(), "M1 is a server-offered candidate");
     }
@@ -862,9 +862,9 @@ class FinalScoreCalculatorTest {
     void validateReportsUnknownMoveId() {
         LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 2, VALIDATION_DIFF);
         LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
-        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M7"));
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M7")));
 
-        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs(), NoopLog.INSTANCE).validate(response, request);
 
         assertTrue(report.hasFailures());
         FinalScoreCalculator.ValidationFailure failure = report.getFailures().stream()
@@ -877,11 +877,11 @@ class FinalScoreCalculatorTest {
     void moveDetectionDisabledIgnoresMovedPairs() {
         RunArgs args = new RunArgs();
         args.setMoveDetectionEnabled(false);
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
         LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
         LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
-        response.getEffortBreakdown().getDiffClassification().setMovedPairs(Lists.newArrayList("Foo.java:11->Foo.java:29"));
+        response.getEffortBreakdown().getDiffClassification().setMovedPairs(new ArrayList<>(List.of("Foo.java:11->Foo.java:29")));
 
         FinalScoreCalculator.ValidationReport report = calculator.validate(response, request);
         assertFalse(report.hasFailures(), "disabled feature must not burn retries on cited pairs");
@@ -897,11 +897,11 @@ class FinalScoreCalculatorTest {
     @Test
     void movedOnlyCommitReportsAtLeastOneAdjustedLine() {
         RunArgs args = new RunArgs();
-        FinalScoreCalculator calculator = new FinalScoreCalculator(args);
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0);
         LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
         LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
-        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M1"));
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M1")));
 
         calculator.apply(response, preComputed, request);
 
@@ -914,9 +914,9 @@ class FinalScoreCalculatorTest {
     void validateAcceptsMovedPairsCitingEffectiveLines() {
         LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
         LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
-        response.getEffortBreakdown().getDiffClassification().setMovedPairs(Lists.newArrayList("Foo.java:11->Foo.java:29"));
+        response.getEffortBreakdown().getDiffClassification().setMovedPairs(new ArrayList<>(List.of("Foo.java:11->Foo.java:29")));
 
-        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs(), NoopLog.INSTANCE).validate(response, request);
 
         assertFalse(report.hasFailures(), "both sides are block-tagged effective lines");
     }
@@ -925,10 +925,10 @@ class FinalScoreCalculatorTest {
         LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
         LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
         // unparseable citation, and a deleted side pointing at a context line
-        response.getEffortBreakdown().getDiffClassification().setMovedPairs(Lists.newArrayList(
-                "garbage", "Foo.java:10->Foo.java:29"));
+        response.getEffortBreakdown().getDiffClassification().setMovedPairs(new ArrayList<>(List.of(
+                "garbage", "Foo.java:10->Foo.java:29")));
 
-        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs(), NoopLog.INSTANCE).validate(response, request);
 
         assertTrue(report.hasFailures());
         FinalScoreCalculator.ValidationFailure failure = report.getFailures().stream()
@@ -940,10 +940,10 @@ class FinalScoreCalculatorTest {
     void validateReportsMovedPairOverlappingConfirmedId() {
         LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
         LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
-        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList("M1"));
-        response.getEffortBreakdown().getDiffClassification().setMovedPairs(Lists.newArrayList("Foo.java:11->Foo.java:29"));
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M1")));
+        response.getEffortBreakdown().getDiffClassification().setMovedPairs(new ArrayList<>(List.of("Foo.java:11->Foo.java:29")));
 
-        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs(), NoopLog.INSTANCE).validate(response, request);
 
         assertTrue(report.hasFailures());
         FinalScoreCalculator.ValidationFailure failure = report.getFailures().stream()
@@ -962,7 +962,7 @@ class FinalScoreCalculatorTest {
                 .cosmeticAdded(list(999))
                 .build());
 
-        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs()).validate(response, request);
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator(new RunArgs(), NoopLog.INSTANCE).validate(response, request);
 
         assertFalse(report.hasFailures(), "no diff to check against → file skipped");
     }
@@ -970,7 +970,7 @@ class FinalScoreCalculatorTest {
     private static void assertBookkeepingInvariantHolds(double blockEffort,
             Function<FileDiffClassification.FileDiffClassificationBuilder, FileDiffClassification.FileDiffClassificationBuilder> shape,
             LlmScoringRequest request) {
-        FinalScoreCalculator calculator = new FinalScoreCalculator(new RunArgs());
+        FinalScoreCalculator calculator = new FinalScoreCalculator(new RunArgs(), NoopLog.INSTANCE);
         PreComputedScores preComputed = scoresWithFileEffort(request.getFileChanges().get(0).getPath(), blockEffort);
         LlmScoringResponse response = responseWithClassification(shape.apply(FileDiffClassification.builder()).build());
 
@@ -1024,8 +1024,8 @@ class FinalScoreCalculatorTest {
                 .filesScopeMultiplier(filesScopeMultiplier)
                 .volumeScore(volumeScore)
                 .baseEffort(volumeScore)
-                .codeBlockEfforts(Lists.newArrayList(cbe))
-                .fileEfforts(Lists.newArrayList(fileEffort))
+                .codeBlockEfforts(new ArrayList<>(List.of(cbe)))
+                .fileEfforts(new ArrayList<>(List.of(fileEffort)))
                 .build();
     }
     private static PreComputedScores scoresWithBlocks(String file, CodeBlockEffort... blocks) {
@@ -1043,8 +1043,8 @@ class FinalScoreCalculatorTest {
                 .filesScopeMultiplier(1.0)
                 .volumeScore(total)
                 .baseEffort(total)
-                .codeBlockEfforts(Lists.newArrayList(blocks))
-                .fileEfforts(Lists.newArrayList(fileEffort))
+                .codeBlockEfforts(new ArrayList<>(List.of(blocks)))
+                .fileEfforts(new ArrayList<>(List.of(fileEffort)))
                 .build();
     }
     private static CodeBlockEffort invocationBlock(String file, String name, Operation operation, int billedInvocations,
@@ -1107,11 +1107,11 @@ class FinalScoreCalculatorTest {
     }
     private static LlmScoringRequest requestWithFileChange(String file, int linesAdded, int linesDeleted, boolean linesJustificationRequired) {
         return LlmScoringRequest.builder()
-                .fileChanges(Lists.newArrayList(fileChange(file, linesAdded, linesDeleted, linesJustificationRequired)))
+                .fileChanges(new ArrayList<>(List.of(fileChange(file, linesAdded, linesDeleted, linesJustificationRequired))))
                 .build();
     }
     private static LlmScoringRequest requestWithFileChanges(FileChange... fileChanges) {
-        return LlmScoringRequest.builder().fileChanges(Lists.newArrayList(fileChanges)).build();
+        return LlmScoringRequest.builder().fileChanges(new ArrayList<>(List.of(fileChanges))).build();
     }
     private static FileChange fileChange(String file, int linesAdded, int linesDeleted, boolean linesJustificationRequired) {
         return FileChange.builder()
@@ -1129,10 +1129,10 @@ class FinalScoreCalculatorTest {
                 .build();
     }
     private static List<Integer> list(Integer... values) {
-        return Lists.newArrayList(values);
+        return new ArrayList<>(List.of(values));
     }
     private static Map<String, String> kinds(String blockId, String kind) {
-        Map<String, String> toReturn = Maps.newHashMap();
+        Map<String, String> toReturn = new HashMap<>();
         toReturn.put(blockId, kind);
         return toReturn;
     }
@@ -1140,10 +1140,10 @@ class FinalScoreCalculatorTest {
         return LinePair.builder().deleted(deleted).added(added).build();
     }
     private static List<LinePair> pairs(LinePair... entries) {
-        return Lists.newArrayList(entries);
+        return new ArrayList<>(List.of(entries));
     }
     private static List<LinePair> buildPairs(int count) {
-        List<LinePair> toReturn = Lists.newArrayListWithCapacity(count);
+        List<LinePair> toReturn = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             toReturn.add(p(3000 + i, 4000 + i));
         }
@@ -1151,7 +1151,7 @@ class FinalScoreCalculatorTest {
     }
     private static LlmScoringResponse responseWithClassification(FileDiffClassification... perFile) {
         DiffClassification classification = DiffClassification.builder()
-                .perFile(Lists.newArrayList(perFile))
+                .perFile(new ArrayList<>(List.of(perFile)))
                 .build();
         LlmScoringResponse response = new LlmScoringResponse();
         response.setEffortBreakdown(EffortBreakdown.builder().diffClassification(classification).build());

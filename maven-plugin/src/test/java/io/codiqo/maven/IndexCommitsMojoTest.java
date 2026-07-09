@@ -26,6 +26,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.CommitModel;
+import io.codiqo.submit.CommitIndexer;
 import io.codiqo.util.RepositoryUrls;
 
 class IndexCommitsMojoTest {
@@ -236,7 +237,7 @@ class IndexCommitsMojoTest {
         assertEquals("https://bitbucket.org/turbospaces/turbospaces-boot.git", uri.toString());
     }
     private List<CommitModel> extract(RunArgs filter, String ref, Date cutoff, String branch) throws Exception {
-        return IndexCommitsMojo.extractCommits(repository, filter, ref, cutoff, branch);
+        return CommitIndexer.extractCommits(repository, filter, ref, cutoff, branch);
     }
     private RevCommit commit(String path, String content, String message) throws Exception {
         return commitAs(path, content, message, "Test Author", "test@example.com");

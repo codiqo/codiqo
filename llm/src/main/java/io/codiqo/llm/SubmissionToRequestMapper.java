@@ -11,6 +11,9 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
+import java.util.HashSet;
+import java.util.HashMap;
+import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
@@ -22,9 +25,6 @@ import org.apache.commons.math3.stat.descriptive.rank.Percentile;
 import org.eclipse.jgit.patch.FormatError;
 import org.eclipse.jgit.patch.Patch;
 
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.EffectiveLineParser;
@@ -172,14 +172,14 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
             builder.clonesFromExisting(duplication.getClonesFromExisting().stream()
                     .map(clone -> LlmScoringRequest.DuplicationInfo.CloneFromExisting.builder()
                             .affectedSignature(clone.getAffectedSignature())
-                            .sourceSignatures(Optional.ofNullable(clone.getSourceSignatures()).orElse(Lists.newArrayList()))
+                            .sourceSignatures(Optional.ofNullable(clone.getSourceSignatures()).orElse(new ArrayList<>()))
                             .build())
                     .collect(Collectors.toList()));
         }
         if (CollectionUtils.isNotEmpty(duplication.getNewClones())) {
             builder.newClones(duplication.getNewClones().stream()
                     .map(clone -> LlmScoringRequest.DuplicationInfo.NewCloneGroup.builder()
-                            .memberSignatures(Optional.ofNullable(clone.getMemberSignatures()).orElse(Lists.newArrayList()))
+                            .memberSignatures(Optional.ofNullable(clone.getMemberSignatures()).orElse(new ArrayList<>()))
                             .build())
                     .collect(Collectors.toList()));
         }
@@ -196,7 +196,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
             selfDuplication = uniqueSignatures.size() == 1;
         }
 
-        List<LlmScoringRequest.DuplicationInfo.CloneLocation> mappedLocations = Lists.newArrayList();
+        List<LlmScoringRequest.DuplicationInfo.CloneLocation> mappedLocations = new ArrayList<>();
         if (CollectionUtils.isNotEmpty(locations)) {
             mappedLocations = locations.stream().map(loc -> mapCloneLocation(loc, fileContext)).collect(Collectors.toList());
         }
@@ -264,8 +264,8 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     private void mapFileCoverage(List<FileChangeModel> files, CoverageInfo.CoverageInfoBuilder builder) {
         int totalCoveredBranches = 0;
         int totalBranches = 0;
-        Map<String, CoverageInfo.MethodCoverage> methodCoverages = Maps.newHashMap();
-        List<CoverageInfo.UncoveredPath> uncoveredPaths = Lists.newArrayList();
+        Map<String, CoverageInfo.MethodCoverage> methodCoverages = new HashMap<>();
+        List<CoverageInfo.UncoveredPath> uncoveredPaths = new ArrayList<>();
         for (FileChangeModel file : files) {
             if (CollectionUtils.isEmpty(file.getCodeUnits())) {
                 continue;
@@ -326,7 +326,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         int maxComplexity = 0;
         int newHighComplexity = 0;
         int modifiedHighComplexity = 0;
-        List<Integer> perMethodCyclomatic = Lists.newArrayList();
+        List<Integer> perMethodCyclomatic = new ArrayList<>();
 
         for (FileChangeModel file : files) {
             if (CollectionUtils.isEmpty(file.getCodeUnits())) {
@@ -393,7 +393,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .build();
     }
     private static List<CodeBlockChange> mapCodeBlockChanges(List<FileChangeModel> files, FileContext fileContext) {
-        List<CodeBlockChange> toReturn = Lists.newArrayList();
+        List<CodeBlockChange> toReturn = new ArrayList<>();
         for (FileChangeModel file : files) {
             if (CollectionUtils.isEmpty(file.getCodeUnits())) {
                 continue;
@@ -495,7 +495,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
             int covered = 0;
             int missed = 0;
             int partial = 0;
-            List<Integer> uncoveredChangedLines = Lists.newArrayList();
+            List<Integer> uncoveredChangedLines = new ArrayList<>();
             for (LineCoverageModel line : coverage.getLines()) {
                 if (changedLines.contains(line.getLine())) {
                     LineCoverageModel.StatusEnum status = line.getStatus();
@@ -551,7 +551,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         int testClassesModified = 0;
         int filesWithChanges = 0;
         int testFilesWithChanges = 0;
-        Set<String> packagesAffected = Sets.newHashSet();
+        Set<String> packagesAffected = new HashSet<>();
         for (FileChangeModel file : files) {
             boolean isTest = Boolean.TRUE.equals(file.getIsTest());
             DiffStats stats = DiffStats.fromPatch(file.getDiff(), LanguageCapabilities.filterFor(file));
@@ -655,15 +655,15 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .testClassesAdded(testClassesAdded)
                 .testClassesModified(testClassesModified)
                 .testFilesChanged(testFilesWithChanges)
-                .packagesAffected(Lists.newArrayList(packagesAffected))
+                .packagesAffected(new ArrayList<>(packagesAffected))
                 .build();
     }
     private static FileContext buildFileContext(List<FileChangeModel> files) {
-        Set<String> testFiles = Sets.newHashSet();
-        Map<String, Set<Integer>> addedByFile = Maps.newHashMap();
-        Map<String, Set<Integer>> effectiveAddedByFile = Maps.newHashMap();
-        Map<String, Map<Integer, Integer>> effectiveDeletionAnchorsByFile = Maps.newHashMap();
-        Map<String, List<int[]>> blockRangesByFile = Maps.newHashMap();
+        Set<String> testFiles = new HashSet<>();
+        Map<String, Set<Integer>> addedByFile = new HashMap<>();
+        Map<String, Set<Integer>> effectiveAddedByFile = new HashMap<>();
+        Map<String, Map<Integer, Integer>> effectiveDeletionAnchorsByFile = new HashMap<>();
+        Map<String, List<int[]>> blockRangesByFile = new HashMap<>();
         for (FileChangeModel file : files) {
             String path = file.getPath();
             if (Boolean.TRUE.equals(file.getIsTest())) {
@@ -698,7 +698,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         return new FileContext(testFiles, addedByFile, effectiveAddedByFile, effectiveDeletionAnchorsByFile, blockRangesByFile);
     }
     private static List<int[]> collectBlockRanges(List<CodeUnitModel> codeUnits) {
-        List<int[]> toReturn = Lists.newArrayList();
+        List<int[]> toReturn = new ArrayList<>();
         for (CodeUnitModel codeUnit : CollectionUtils.emptyIfNull(codeUnits)) {
             if (Boolean.TRUE.equals(codeUnit.getIsTrivial())) {
                 continue;
