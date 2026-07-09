@@ -288,7 +288,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     protected Integer jdtDebugPort;
 
     @Parameter(property = "codiqo.jdtSourceExclusions",
-            defaultValue = "org.scala-lang, org.apache.kafka, org.apache.pekko, org.apache.spark, org.apache.flink, com.typesafe.akka, com.typesafe, io.gatling, com.lightbend.lagom, com.twitter, org.json4s, org.scalactic, org.scalatest")
+            defaultValue = "org.scala-lang, org.apache.kafka, org.apache.pekko, org.apache.spark, org.apache.flink, com.typesafe.akka, com.typesafe, io.gatling, com.lightbend.lagom, com.twitter, org.json4s, org.scalactic, org.scalatest, org.jetbrains.kotlin, org.jetbrains.kotlinx, com.squareup.okhttp3, com.squareup.okio, org.junit.jupiter, org.springframework")
     protected String jdtSourceExclusions;
 
     @Parameter(property = "codiqo.driverScoreCapMultiplier", defaultValue = "2.5")
