@@ -1,7 +1,12 @@
 package io.codiqo.gradle;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.Callable;
+
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
+import org.gradle.api.tasks.testing.Test;
 
 public class CodiqoGradlePlugin implements Plugin<Project> {
     private static final String EXTENSION_NAME = "codiqo";
@@ -14,6 +19,13 @@ public class CodiqoGradlePlugin implements Plugin<Project> {
         project.getTasks().register(DUMP_TASK, CodiqoDumpAnalysisTask.class, task -> {
             task.setGroup(TASK_GROUP);
             task.setDescription("Analyze the current checkout and dump the Codiqo analysis submission as YAML");
+
+            // When tests run in the same build, the dump reads build/jacoco/test.exec directly, so it
+            // must run after every Test task has written it — otherwise the dump's fast JDT import
+            // finishes first under parallel execution and coverage comes out empty. Lazy Callable: the
+            // subproject test tasks are registered later (the init script applies jacoco), so they are
+            // enumerated only when Gradle resolves the execution graph.
+            task.mustRunAfter((Callable<List<Test>>) () -> allTestTasks(project));
         });
         project.getTasks().register("codiqoIndexCommits", CodiqoIndexCommitsTask.class, task -> {
             task.setGroup(TASK_GROUP);
@@ -28,5 +40,13 @@ public class CodiqoGradlePlugin implements Plugin<Project> {
                 task.setRequest(GradleModelCollector.collect(project.getRootProject(), ext));
             }
         });
+    }
+
+    private static List<Test> allTestTasks(Project project) {
+        List<Test> toReturn = new ArrayList<>();
+        for (Project p : project.getRootProject().getAllprojects()) {
+            toReturn.addAll(p.getTasks().withType(Test.class));
+        }
+        return toReturn;
     }
 }

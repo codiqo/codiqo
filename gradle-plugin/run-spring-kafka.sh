@@ -20,26 +20,21 @@ OUT="${OUT:-/Users/andreyborisov/dev/tmp/reports-gradle}"
 MODE="${MODE:-fast}"
 RESTORE_REF="${RESTORE_REF:-main}"
 
+# dev-testing baseline: 10 random code-bearing commits (>=1 .java changed) from the last
+# 3 months on main (window 2026-04-10..2026-07-01, drawn 2026-07-09). Number in () = java lines changed.
 COMMITS=(
-  cecc2f9a85d39ad2d0ab5ae91d04103fb9befd26  # GH-4327 share container stop/failed-start events (337)
-  5be5015a67952ab88891c05676b58489bac12ee2  # GH-4430 KafkaStreams DLQ record content (292)
-  51427d9c55066786063ba241a93ae3697a7ebd53  # GH-4380 AcknowledgementCommitCallback share consumer (200)
-  7c9f5c0b0dcd5f027708112fdb703e5410f705fd  # GH-4455 BackOffFunction batch listeners (190)
-  7dab9351ce54b37fa71a77123fab7dfb0e3f7e8b  # GH-4504 bound async retry (189)
-  7495b376bec5e80fd86377aef60a318962ce80f9  # GH-4493 retry topic headers decoding (114)
-  9439fbb9ec9f3ccdca205cf0bda446a4afa57531  # GH-4496 trusted header types (100)
-  890cef92764817ef4395346e9037b22e66b3927b  # await share consumer startup (97)
-  3a3be04b62905b7a16c5e4fca0d3f179c2e4e438  # GH-4439 batchRollback empty recordList (96)
-  f62f0bc27be8e03162ec1d95469f760cabaa2290  # GH-4384 override properties consistency (93)
+  87710eacc15cb02c86aaed5593764f775af5a84d  # GH-4504: Fix silent record loss with two failing asy (48)
+  ca2337ba789c5778a10197bda17a62915247ff6c  # GH-4489: Fix unbounded cache in DelegatingDeserializ (51)
+  7495b376bec5e80fd86377aef60a318962ce80f9  # GH-4493: Harden retry topic headers decoding (114)
+  8b4e205d6ab8958dd53705a1e6c816bcad608233  # GH-4468: Fix no-op ack detection for non-null Acknow (31)
+  7c9f5c0b0dcd5f027708112fdb703e5410f705fd  # GH-4455: Fix BackOffFunction for batch listeners (190)
+  3a3be04b62905b7a16c5e4fca0d3f179c2e4e438  # GH-4439: Treat empty recordList same as null in batc (96)
+  5be5015a67952ab88891c05676b58489bac12ee2  # GH-4430: Wrong record content passed to KafkaStreams (292)
+  7fa54e2796549bd0df778bfc220a4e7849fb9132  # Attempt to fix flaky retry test in CI (22)
+  27b2b03f221ad88ebd36c7a675ae27f98a94f41e  # Fix code style in RetryableTopicAnnotationProcessorT (10)
+  cecc2f9a85d39ad2d0ab5ae91d04103fb9befd26  # GH-4327: Publish share container stop and failed-sta (337)
 )
 
-if [ "$MODE" = "full" ]; then
-  BUILD_TASKS=(test jacocoTestReport)
-  COVERAGE_ARGS=()
-else
-  BUILD_TASKS=(testClasses)
-  COVERAGE_ARGS=(-Pcodiqo.ignoreCoverage=true)
-fi
 
 export JAVA_HOME="$(/usr/libexec/java_home -v 25)"
 mkdir -p "$OUT"
@@ -47,20 +42,33 @@ cd "$SK"
 
 for sha in "${COMMITS[@]}"; do
   echo "==================== $sha ($MODE) ===================="
-  git checkout -q "$sha" || { echo "checkout failed for $sha (dirty tree?)"; continue; }
+  # force: prior iterations leave gradle.properties dirty (heap bump below), which aborts a plain checkout
+  git checkout -f -q "$sha" || { echo "checkout failed for $sha"; continue; }
   # per-commit: bump daemon heap (each checkout resets gradle.properties); restored by final checkout
   perl -i -pe 's/-Xmx1536M/-Xmx6g/' gradle.properties
   # force fresh classes for the checked-out sources — git checkout can leave same-content classes
   # with older mtimes, which trips the engine's staleness guard
   rm -rf spring-kafka*/build/classes spring-kafka*/build/jacoco
 
-  ./gradlew --init-script "$INIT" \
-    "${BUILD_TASKS[@]}" \
-    codiqoDumpAnalysis \
-    -Pcodiqo.commitId="$sha" \
-    -Pcodiqo.outputDirectory="$OUT" \
-    "${COVERAGE_ARGS[@]}" \
-    --console=plain || echo "!! build failed for $sha (continuing)"
+  if [ "$MODE" = "full" ]; then
+    # single invocation: the plugin makes codiqoDumpAnalysis mustRunAfter every Test task, so the dump
+    # reads build/jacoco/test.exec only after tests write it (correct even under org.gradle.parallel).
+    # --continue: a flaky test must not abort before the dump (mustRunAfter is ordering, not dependency).
+    ./gradlew --init-script "$INIT" --continue \
+      test jacocoTestReport \
+      codiqoDumpAnalysis \
+      -Pcodiqo.commitId="$sha" \
+      -Pcodiqo.outputDirectory="$OUT" \
+      --console=plain || echo "!! build failed for $sha (continuing)"
+  else
+    ./gradlew --init-script "$INIT" \
+      testClasses \
+      codiqoDumpAnalysis \
+      -Pcodiqo.commitId="$sha" \
+      -Pcodiqo.outputDirectory="$OUT" \
+      -Pcodiqo.ignoreCoverage=true \
+      --console=plain || echo "!! build failed for $sha (continuing)"
+  fi
 done
 
 git checkout -f "$RESTORE_REF"

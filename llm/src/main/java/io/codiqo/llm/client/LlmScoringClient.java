@@ -290,6 +290,7 @@ public class LlmScoringClient implements ScoringClient {
             }
 
             if (Objects.isNull(scoringResponse)) {
+                log.error(String.format("LLM response unusable after %d attempt(s): %s", maxRetries, lastError.getMessage()));
                 throw lastError;
             }
 
@@ -361,8 +362,8 @@ public class LlmScoringClient implements ScoringClient {
         } catch (IOException err) {
             File dumpFile = File.createTempFile("codiqo-llm-response-", ".json");
             FileUtils.write(dumpFile, rawContent, StandardCharsets.UTF_8);
-            log.error("failed to parse LLM response: " + err.getMessage());
-            log.error("raw LLM response dumped to: " + dumpFile.getAbsolutePath());
+            log.warn("failed to parse LLM response: " + err.getMessage());
+            log.warn("raw LLM response dumped to: " + dumpFile.getAbsolutePath());
             throw err;
         }
     }
@@ -386,6 +387,8 @@ public class LlmScoringClient implements ScoringClient {
                 }
                 if (attempt < maxRetries) {
                     log.warn(String.format("streaming attempt %d/%d failed: %s, retrying", attempt, maxRetries, err.getMessage()));
+                } else {
+                    log.error(String.format("streaming failed after %d attempt(s): %s", maxRetries, err.getMessage()));
                 }
             }
         }
