@@ -830,6 +830,11 @@
                 <artifactId>codiqo-maven-coverage-injector</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>io.codiqo</groupId>
+                <artifactId>codiqo-maven-build-eventspy</artifactId>
+                <version>${project.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
     <build>
@@ -1320,6 +1325,7 @@
         <module>lang-config</module>
         <module>maven-time-machine</module>
         <module>maven-coverage-injector</module>
+        <module>maven-build-eventspy</module>
         <module>submit</module>
         <module>maven-plugin</module>
         <module>gradle-plugin</module>

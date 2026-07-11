@@ -301,6 +301,10 @@ components:
           description: Structured exclusion category (build/dependency failure, revert commit, merge commit, branch/author filter, no relevant files, duplicate commit)
           allOf:
             - $ref: '#/components/schemas/AnalysisExcludeCategory'
+        detail:
+          type: string
+          nullable: true
+          description: Full (bounded) build/analysis error output captured for diagnostics, e.g. the compiler error block for a build failure
 
     AnalysisExcludeCategory:
       type: string

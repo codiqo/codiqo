@@ -141,15 +141,27 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             ProjectBuildingRequest buildingReq = Maven.buildingRequest(mavenSession);
             if (resolveDependenciesOffline(args) instanceof BuildOutcome.Skipped skipped) {
                 getLog().warn(String.format("commit %s skipped: %s", commitId, skipped.reason()));
-                doExcludeAnalysis(commitId, skipped.reason(), skipped.category());
+                doExcludeAnalysis(commitId, skipped.reason(), skipped.category(), skipped.detail());
                 return;
             }
 
-            InvocationRequest invocationReq = invocationRequest(args);
-            BuildOutcome buildOutcome = buildProject(args, invocationReq, buildingReq);
+            /**
+             * build with the time-machine snapshot resolver first, pinning each dependency's snapshot deploy closest
+             * to the commit date, so a reproducible commit is analyzed against its commit-date dependencies and emits
+             * snapshot metadata. if that build fails — the commit-date snapshot is unavailable, or the source no longer
+             * compiles against it — fall back to latest snapshots and analyze best-effort. when time-machine is
+             * disabled, only the latest build runs.
+             */
+            boolean timeMachine = args.isTimeMachineEnabled();
+            InvocationRequest firstReq = invocationRequest(args, timeMachine);
+            BuildOutcome buildOutcome = buildProject(args, firstReq, buildingReq);
+            if (buildOutcome instanceof BuildOutcome.Skipped skipped && timeMachine) {
+                getLog().warn(String.format("commit %s: time-machine build failed (%s), retrying with latest snapshots", commitId, skipped.reason()));
+                buildOutcome = buildProject(args, invocationRequest(args, false), buildingReq);
+            }
             if (buildOutcome instanceof BuildOutcome.Skipped skipped) {
                 getLog().warn(String.format("commit %s skipped: %s", commitId, skipped.reason()));
-                doExcludeAnalysis(commitId, skipped.reason(), skipped.category());
+                doExcludeAnalysis(commitId, skipped.reason(), skipped.category(), skipped.detail());
                 return;
             }
             ProjectBuildingResult result = ((BuildOutcome.Proceeded) buildOutcome).result();
@@ -160,7 +172,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             if (moduleOutcome.isPresent()) {
                 BuildOutcome.Skipped skipped = moduleOutcome.get();
                 getLog().warn(String.format("commit %s skipped: %s", commitId, skipped.reason()));
-                doExcludeAnalysis(commitId, skipped.reason(), skipped.category());
+                doExcludeAnalysis(commitId, skipped.reason(), skipped.category(), skipped.detail());
                 return;
             }
             try (ClassGraphSpec scan = scanProjects(args, reactors)) {

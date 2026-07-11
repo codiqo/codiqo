@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.commons.lang3.CharUtils;
 import org.junit.jupiter.api.Test;
 
 
@@ -56,7 +57,7 @@ class EffectiveLineParserTest {
     void walkVisitsAddedDeletedAndContextInOrder() {
         StringBuilder log = new StringBuilder();
         EffectiveLineParser.walk(DIFF, (kind, newLine, content) ->
-                log.append(kind).append('@').append(newLine).append(':').append(content).append('\n'));
+                log.append(kind).append('@').append(newLine).append(':').append(content).append(CharUtils.LF));
         String out = log.toString();
         assertTrue(out.contains("CONTEXT@1:package p;"));
         assertTrue(out.contains("DELETED@2:import x.Old;"));

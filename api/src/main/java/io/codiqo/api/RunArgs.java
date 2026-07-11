@@ -109,6 +109,8 @@ public class RunArgs {
     @Nullable
     private boolean skipOnBuildFailure = true;
     @Nullable
+    private int buildErrorCaptureLimit = 8 * 1024;
+    @Nullable
     private transient File javaHome;
     @Nullable
     private transient File mavenHome;
@@ -181,6 +183,8 @@ public class RunArgs {
     private transient File outputDirectory;
     @Nullable
     private transient File timeMachineMetaDir;
+    @Nullable
+    private transient File buildFailureReportFile;
     @Nullable
     private String includeBranches;
     @Nullable

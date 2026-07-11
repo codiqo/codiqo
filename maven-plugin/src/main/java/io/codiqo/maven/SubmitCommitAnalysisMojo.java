@@ -35,7 +35,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
         getLog().info(String.format("accepted analysis id: %s status: %s", response.getAnalysisId(), response.getStatus()));
     }
     @Override
-    protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category) throws Exception {
+    protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail) throws Exception {
         String resolvedApiKey = Env.resolveRequired(apiKey, "codiqo.apiKey");
 
         AnalysisSubmitter.exclude(
@@ -46,6 +46,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
                 commitSha,
                 reason,
                 category,
+                detail,
                 getLog());
     }
 }

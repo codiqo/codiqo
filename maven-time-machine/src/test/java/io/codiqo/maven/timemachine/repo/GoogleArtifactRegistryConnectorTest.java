@@ -56,10 +56,16 @@ class GoogleArtifactRegistryConnectorTest {
     }
 
     @Test
-    void supportsOnlyArtifactRegistryScheme() {
+    void supportsAnyGarHostRegardlessOfScheme() {
         assertTrue(connector.supports(garRepo));
-        RemoteRepository https = new RemoteRepository.Builder("central", "default", "https://repo.maven.apache.org/maven2/").build();
-        assertFalse(connector.supports(https));
+
+        // CI configures the same GAR registry with an https:// URL; it must still engage the REST enumerator,
+        // otherwise time-machine falls back to metadata (latest-only) and silently pins the newest snapshot.
+        RemoteRepository httpsGar = new RemoteRepository.Builder("artifact-registry", "default", "https://europe-maven.pkg.dev/patrianna-dev/nexus").build();
+        assertTrue(connector.supports(httpsGar));
+
+        RemoteRepository central = new RemoteRepository.Builder("central", "default", "https://repo.maven.apache.org/maven2/").build();
+        assertFalse(connector.supports(central));
     }
 
     @Test
