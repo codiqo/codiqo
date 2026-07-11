@@ -110,7 +110,21 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
     }
     @Override
     public boolean supports(RemoteRepository repo) {
-        return SCHEME.equals(repo.getProtocol());
+        /**
+         * engage for any Google Artifact Registry repository, identified by its *-maven.pkg.dev host — not only the
+         * artifactregistry:// scheme. CI configures the same registry as an https:// URL, and only this REST connector
+         * enumerates the full history of timestamped snapshot deploys; the metadata fallback exposes just the latest,
+         * which would silently pin the newest snapshot instead of the commit-date one.
+         */
+        if (SCHEME.equals(repo.getProtocol())) {
+            return true;
+        }
+        try {
+            String host = URI.create(repo.getUrl()).getHost();
+            return Objects.nonNull(host) && host.endsWith(HOST_SUFFIX);
+        } catch (IllegalArgumentException err) {
+            return false;
+        }
     }
     @Override
     public List<SnapshotVersion> listDeploys(RepositorySystemSession session, Artifact artifact, RemoteRepository repo) {

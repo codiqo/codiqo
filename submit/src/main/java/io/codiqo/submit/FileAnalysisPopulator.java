@@ -19,6 +19,7 @@ import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
+import org.apache.commons.lang3.CharUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.eclipse.lsp4j.CallHierarchyIncomingCall;
@@ -547,13 +548,13 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         }
     }
     private static Optional<String> extractCallerLines(String content, Range range) {
-        String[] lines = content.split("\n", -1);
+        String[] lines = content.split(CharUtils.toString(CharUtils.LF), -1);
         int startLine = range.getStart().getLine();
         if (startLine >= lines.length) {
             return Optional.empty();
         }
         int endLine = Math.min(range.getEnd().getLine(), lines.length - 1);
-        String body = String.join("\n", Arrays.copyOfRange(lines, startLine, endLine + 1));
+        String body = StringUtils.join(Arrays.copyOfRange(lines, startLine, endLine + 1), CharUtils.LF);
 
         /**
          * JDT LS includes java-doc in CallHierarchyItem.range; strip it so only the body is stored

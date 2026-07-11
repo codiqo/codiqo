@@ -15,6 +15,7 @@ import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -27,9 +28,13 @@ import java.util.ArrayList;
 import javax.inject.Inject;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.queue.CircularFifoQueue;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.io.IOUtils;
+import org.apache.commons.io.input.BoundedReader;
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.CharUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -102,6 +107,7 @@ import io.codiqo.maven.populator.ProjectModelPopulator;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.maven.populator.SubmissionSummaryPrinter;
 import io.codiqo.maven.coverage.CoverageInjectorConfig;
+import io.codiqo.maven.eventspy.BuildFailureConfig;
 import io.codiqo.maven.timemachine.TimeMachineConfig;
 import io.codiqo.submit.ScoringConfigs;
 import io.codiqo.util.Env;
@@ -123,6 +129,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     private static final String CODIQO_GROUP_ID = "io.codiqo";
     private static final String TIME_MACHINE_ARTIFACT_ID = "codiqo-maven-time-machine";
     private static final String COVERAGE_INJECTOR_ARTIFACT_ID = "codiqo-maven-coverage-injector";
+    private static final String BUILD_EVENTSPY_ARTIFACT_ID = "codiqo-maven-build-eventspy";
 
     private static final String JACOCO_GROUP_ID = "org.jacoco";
     private static final String JACOCO_AGENT_ARTIFACT_ID = "org.jacoco.agent";
@@ -130,8 +137,12 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
     private static final String MAVEN_EXT_CLASS_PATH = "maven.ext.class.path";
 
+    // StringUtils.abbreviate requires a width of at least 4 ("a...")
+    private static final int MIN_ABBREVIATE_WIDTH = 4;
+
     private Collection<File> timeMachineExtensionJars;
     private Collection<File> coverageInjectorJars;
+    private Collection<File> buildEventSpyJars;
     private File jacocoAgentJar;
 
     @Inject
@@ -223,6 +234,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
     @Parameter(property = "codiqo.skipOnBuildFailure", defaultValue = "true")
     protected boolean skipOnBuildFailure;
+
+    @Parameter(property = "codiqo.buildErrorCaptureLimit", defaultValue = "8192")
+    protected int buildErrorCaptureLimit;
 
     @Parameter(property = "codiqo.pmdMinPriority", defaultValue = "high")
     protected String pmdMinPriority;
@@ -359,6 +373,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setFailOnJdtlsError(failOnJdtlsError);
         args.setSkipOnUnresolvedDependencies(skipOnUnresolvedDependencies);
         args.setSkipOnBuildFailure(skipOnBuildFailure);
+        args.setBuildErrorCaptureLimit(Math.max(MIN_ABBREVIATE_WIDTH, buildErrorCaptureLimit));
         args.setPmdMinPriority(pmdMinPriority);
         if (StringUtils.isNotBlank(pmdRules)) {
             args.setPmdRules(Split.on(pmdRules, ','));
@@ -406,6 +421,17 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 args.getAgents().addAll(apply(agent));
             }
             timeMachineExtensionJars = apply(new DefaultArtifact(CODIQO_GROUP_ID, TIME_MACHINE_ARTIFACT_ID, JAR_EXTENSION, versions.get("codiqo.version").toString()));
+
+            /**
+             * best-effort: the build-failure EventSpy is a purely diagnostic extension injected on every fork. if it
+             * cannot be resolved (offline build, private mirror without the artifact), leave the jars null — buildProject
+             * then falls back to scraping the console log instead of aborting the whole analysis.
+             */
+            try {
+                buildEventSpyJars = apply(new DefaultArtifact(CODIQO_GROUP_ID, BUILD_EVENTSPY_ARTIFACT_ID, JAR_EXTENSION, versions.get("codiqo.version").toString()));
+            } catch (Exception err) {
+                getLog().debug("build-failure eventspy resolution failed", err);
+            }
 
             if (BooleanUtils.negate(ignoreCoverage)) {
                 /**
@@ -566,7 +592,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             }
         }
     }
-    protected InvocationRequest invocationRequest(RunArgs args) throws IOException {
+    protected InvocationRequest invocationRequest(RunArgs args, boolean timeMachineRequested) throws IOException {
         File rootPom = new File(args.getGit().getWorkTree(), "pom.xml");
         InvocationRequest request = new DefaultInvocationRequest();
         request.setPomFile(rootPom);
@@ -603,38 +629,48 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             request.setMavenHome(mavenHome);
         }
 
-        boolean timeMachineActive = BooleanUtils.and(new boolean[] { StringUtils.isNotBlank(args.getCommitId()), args.isTimeMachineEnabled() });
+        boolean timeMachineActive = BooleanUtils.and(new boolean[] { StringUtils.isNotBlank(args.getCommitId()), timeMachineRequested });
         boolean injectJacocoAgent = BooleanUtils.and(new boolean[] { BooleanUtils.negate(args.isIgnoreCoverage()), Objects.nonNull(jacocoAgentJar) });
 
         /**
-         * each codiqo core extension is loaded on maven.ext.class.path only when its own feature is active: the
-         * time-machine snapshot resolver ships in codiqo-maven-time-machine (with the Google/Aether stack), the JaCoCo
-         * agent injector ships in codiqo-maven-coverage-injector. keeping the jar sets separate means a coverage-only
-         * run never puts the time-machine resolver on the forked build's extension realm, and vice versa.
+         * codiqo core extensions are loaded on the forked build's maven.ext.class.path. the build-failure EventSpy is
+         * injected on every run so structured failure detail is always captured; the time-machine snapshot resolver
+         * (codiqo-maven-time-machine, with the Google/Aether stack) and the JaCoCo agent injector
+         * (codiqo-maven-coverage-injector) are added only when their own feature is active — so a coverage-only run
+         * never puts the time-machine resolver on the extension realm, and vice versa.
          */
-        if (BooleanUtils.or(new boolean[] { timeMachineActive, injectJacocoAgent })) {
-            List<String> extensionClasspath = new ArrayList<>();
-            Properties props = Optional.ofNullable(request.getProperties()).orElseGet(Properties::new);
+        List<String> extensionClasspath = new ArrayList<>();
+        Properties props = Optional.ofNullable(request.getProperties()).orElseGet(Properties::new);
 
-            if (timeMachineActive) {
-                extensionClasspath.addAll(extensionJarPaths(timeMachineExtensionJars));
+        if (CollectionUtils.isNotEmpty(buildEventSpyJars)) {
+            extensionClasspath.addAll(extensionJarPaths(buildEventSpyJars));
 
-                Instant ts = TimeMachineSupport.resolveCommitTimestamp(args);
-                File metaDir = Files.createTempDirectory("codiqo-tm-").toFile();
-                args.setTimeMachineMetaDir(metaDir);
+            File reportFile = File.createTempFile("codiqo-buildfail-", ".log");
+            reportFile.deleteOnExit();
+            args.setBuildFailureReportFile(reportFile);
+            props.setProperty(BuildFailureConfig.PROP_REPORT_FILE, reportFile.getAbsolutePath());
+        }
 
-                props.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, DateTimeFormatter.ISO_INSTANT.format(ts));
-                props.setProperty(TimeMachineConfig.PROP_META_DIR, metaDir.getAbsolutePath());
-                getLog().info(String.format("time-machine enabled for commit %s (timestamp: %s, metaDir: %s)", args.getCommitId(), ts, metaDir.getAbsolutePath()));
-            }
+        if (timeMachineActive) {
+            extensionClasspath.addAll(extensionJarPaths(timeMachineExtensionJars));
 
-            if (injectJacocoAgent) {
-                extensionClasspath.addAll(extensionJarPaths(coverageInjectorJars));
+            Instant ts = TimeMachineSupport.resolveCommitTimestamp(args);
+            File metaDir = Files.createTempDirectory("codiqo-tm-").toFile();
+            args.setTimeMachineMetaDir(metaDir);
 
-                props.setProperty(CoverageInjectorConfig.PROP_AGENT_JAR, jacocoAgentJar.getAbsolutePath());
-                getLog().info("JaCoCo agent injection enabled for modules without jacoco-maven-plugin: " + jacocoAgentJar.getAbsolutePath());
-            }
+            props.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, DateTimeFormatter.ISO_INSTANT.format(ts));
+            props.setProperty(TimeMachineConfig.PROP_META_DIR, metaDir.getAbsolutePath());
+            getLog().info(String.format("time-machine enabled for commit %s (timestamp: %s, metaDir: %s)", args.getCommitId(), ts, metaDir.getAbsolutePath()));
+        }
 
+        if (injectJacocoAgent) {
+            extensionClasspath.addAll(extensionJarPaths(coverageInjectorJars));
+
+            props.setProperty(CoverageInjectorConfig.PROP_AGENT_JAR, jacocoAgentJar.getAbsolutePath());
+            getLog().info("JaCoCo agent injection enabled for modules without jacoco-maven-plugin: " + jacocoAgentJar.getAbsolutePath());
+        }
+
+        if (CollectionUtils.isNotEmpty(extensionClasspath)) {
             props.setProperty(MAVEN_EXT_CLASS_PATH, StringUtils.join(extensionClasspath.stream().distinct().toList(), File.pathSeparator));
             request.setProperties(props);
         }
@@ -649,8 +685,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             ProjectBuildingRequest buildingRequest) throws Exception {
         File rootPom = new File(args.getGit().getWorkTree(), "pom.xml");
 
-        CapturingOutputHandler sysout = new CapturingOutputHandler(new PrintStreamHandler(System.out, false));
-        CapturingOutputHandler syserr = new CapturingOutputHandler(new PrintStreamHandler(System.err, false));
+        CapturingOutputHandler sysout = new CapturingOutputHandler(new PrintStreamHandler(System.out, false), args.getBuildErrorCaptureLimit());
+        CapturingOutputHandler syserr = new CapturingOutputHandler(new PrintStreamHandler(System.err, false), args.getBuildErrorCaptureLimit());
         request.setOutputHandler(sysout);
         request.setErrorHandler(syserr);
 
@@ -661,7 +697,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 if (args.isSkipOnBuildFailure()) {
                     String reason = "fork build timed out after " + args.getBuildTimeout();
                     getLog().warn(reason + ", skipping with category " + AnalysisExcludeCategory.BUILD_FAILURE);
-                    return new BuildOutcome.Skipped(reason, AnalysisExcludeCategory.BUILD_FAILURE);
+                    return new BuildOutcome.Skipped(reason, AnalysisExcludeCategory.BUILD_FAILURE, buildFailureDetail(args, sysout, syserr));
                 }
                 getLog().warn("maven build timed out after " + args.getBuildTimeout() + " — test coverage may be incomplete");
             } else if (args.isSkipOnBuildFailure()) {
@@ -673,12 +709,30 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 helpLines.addAll(syserr.helpUrlLines());
                 AnalysisExcludeCategory category = Maven.classifyForkFailure(helpLines);
                 getLog().warn(String.format("fork build failed (exit code %d), skipping with category %s: %s", result.getExitCode(), category, reason));
-                return new BuildOutcome.Skipped(reason, category);
+                return new BuildOutcome.Skipped(reason, category, buildFailureDetail(args, sysout, syserr));
             } else {
                 throw new MojoExecutionException("maven build failed in fork", result.getExecutionException());
             }
         }
         return new BuildOutcome.Proceeded(projectBuilder.build(rootPom, buildingRequest));
+    }
+    private String buildFailureDetail(RunArgs args, CapturingOutputHandler sysout, CapturingOutputHandler syserr) {
+        return readBuildFailureReport(args)
+                .or(sysout::capturedDetail)
+                .or(syserr::capturedDetail)
+                .orElse(null);
+    }
+    private Optional<String> readBuildFailureReport(RunArgs args) {
+        File reportFile = args.getBuildFailureReportFile();
+        if (Objects.nonNull(reportFile) && reportFile.isFile() && reportFile.length() > 0L) {
+            try (BoundedReader reader = new BoundedReader(Files.newBufferedReader(reportFile.toPath()), args.getBuildErrorCaptureLimit())) {
+                String content = IOUtils.toString(reader);
+                return StringUtils.isNotEmpty(content) ? Optional.of(content) : Optional.empty();
+            } catch (IOException err) {
+                getLog().debug("failed to read build-failure report " + reportFile, err);
+            }
+        }
+        return Optional.empty();
     }
     protected BuildOutcome resolveDependenciesOffline(RunArgs args) throws Exception {
         File rootPom = new File(args.getGit().getWorkTree(), "pom.xml");
@@ -821,7 +875,23 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     getLog().info(MemoryReport.snapshot("after index"));
                     registry.identifyAffectedSymbols(index, analysis);
                     getLog().info(MemoryReport.snapshot("after identify symbols"));
-                    registry.collectAndCapture(index, analysis);
+                    try {
+                        registry.collectAndCapture(index, analysis);
+                    } catch (IOException err) {
+                        /**
+                         * only the coverage-required capture failure surfaces as IOException; treat it as a build
+                         * failure. codiqo-internal defects (RuntimeExceptions from symbol capture, JDT, etc.) are not
+                         * caught here so they propagate and fail loudly instead of being mislabeled BUILD_FAILURE.
+                         */
+                        if (BooleanUtils.and(new boolean[] { StringUtils.isNotBlank(args.getCommitId()), args.isSkipOnBuildFailure() })) {
+                            String reason = StringUtils.defaultIfBlank(err.getMessage(), err.getClass().getSimpleName());
+                            getLog().warn(String.format("commit %s skipped: analysis failed after build: %s", args.getCommitId(), reason), err);
+                            doExcludeAnalysis(args.getCommitId(), reason, AnalysisExcludeCategory.BUILD_FAILURE,
+                                    StringUtils.abbreviate(ExceptionUtils.getStackTrace(err), args.getBuildErrorCaptureLimit()));
+                            return Optional.empty();
+                        }
+                        throw err;
+                    }
                     getLog().info(MemoryReport.snapshot("after collect capture"));
                     ClientInfoModel clientInfo = new ClientInfoModel();
                     clientInfo.setBuildTool(ClientInfoModel.BuildToolEnum.MAVEN);
@@ -865,6 +935,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         }
     }
     protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category) throws Exception {
+        doExcludeAnalysis(commitSha, reason, category, null);
+    }
+    protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail) throws Exception {
         getLog().debug(String.format("no exclusion handler, commit %s would be excluded with reason: %s (category: %s)", commitSha, reason, category));
     }
     @SuppressWarnings("deprecation")
@@ -919,37 +992,47 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         if (CollectionUtils.isNotEmpty(unresolved)) {
             String reason = "unresolved dependencies: " + StringUtils.join(unresolved, ", ");
             if (args.isSkipOnUnresolvedDependencies()) {
-                return new BuildOutcome.Skipped(reason, AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE);
+                return new BuildOutcome.Skipped(reason, AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, null);
             }
             throw new MojoExecutionException(reason, pbe);
         }
 
         Optional<String> structural = Maven.severeProblem(pbe.getResults().stream().flatMap(r -> r.getProblems().stream()));
         if (structural.isPresent()) {
-            return new BuildOutcome.Skipped(structural.get(), AnalysisExcludeCategory.BUILD_FAILURE);
+            return new BuildOutcome.Skipped(structural.get(), AnalysisExcludeCategory.BUILD_FAILURE, null);
         }
 
         throw new MojoExecutionException("project build failed: " + Objects.toString(pbe.getMessage(), pbe.getClass().getSimpleName()), pbe);
     }
 
     protected sealed interface BuildOutcome {
-        record Skipped(String reason, AnalysisExcludeCategory category) implements BuildOutcome {}
+        record Skipped(String reason, AnalysisExcludeCategory category, String detail) implements BuildOutcome {}
         record Proceeded(ProjectBuildingResult result) implements BuildOutcome {}
     }
 
     @RequiredArgsConstructor
     private static final class CapturingOutputHandler implements InvocationOutputHandler {
         private static final Pattern HELP_LINE = Pattern.compile("\\[ERROR\\]\\s+\\[Help\\s+\\d+\\]\\s+");
+        private static final int MAX_CAPTURED_ERROR_LINES = 500;
 
         private final InvocationOutputHandler delegate;
+        private final int captureLimit;
         private final List<String> helpUrlLines = new ArrayList<>();
+        private final Queue<String> capturedLines = new CircularFifoQueue<>(MAX_CAPTURED_ERROR_LINES);
         private String firstErrorLine;
+        private boolean capturing;
 
         @Override
         public void consumeLine(String line) throws IOException {
             delegate.consumeLine(line);
-            if (Objects.isNull(firstErrorLine) && Strings.CS.startsWithAny(line, "[FATAL]", "[ERROR]")) {
-                firstErrorLine = line;
+            if (Strings.CS.startsWithAny(line, "[FATAL]", "[ERROR]")) {
+                if (Objects.isNull(firstErrorLine)) {
+                    firstErrorLine = line;
+                }
+                capturing = true;
+            }
+            if (capturing) {
+                capturedLines.add(line);
             }
             if (HELP_LINE.matcher(line).find()) {
                 helpUrlLines.add(line);
@@ -960,6 +1043,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         }
         public List<String> helpUrlLines() {
             return helpUrlLines;
+        }
+        public Optional<String> capturedDetail() {
+            return capturedLines.isEmpty() ? Optional.empty() : Optional.of(StringUtils.abbreviate(StringUtils.join(capturedLines, CharUtils.LF), captureLimit));
         }
     }
 }

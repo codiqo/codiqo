@@ -11,6 +11,7 @@ import java.util.stream.Collectors;
 import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.CharUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.math3.util.Precision;
 import org.apache.maven.plugin.logging.Log;
@@ -108,7 +109,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
     @Override
     public void accept(SubmissionContext ctx) {
         log.info("");
-        logLines(StringUtils.stripEnd(renderTextSummary(ctx), "\n"));
+        logLines(StringUtils.stripEnd(renderTextSummary(ctx), CharUtils.toString(CharUtils.LF)));
         log.info("");
 
         log.info("max contributors:");
@@ -185,7 +186,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         return counts;
     }
     private void logLines(String text) {
-        for (String line : text.split("\n", -1)) {
+        for (String line : text.split(CharUtils.toString(CharUtils.LF), -1)) {
             log.info(line);
         }
     }

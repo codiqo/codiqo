@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.ArrayList;
 
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.CharUtils;
 import org.eclipse.jgit.diff.Edit;
 import org.eclipse.jgit.patch.FileHeader;
 import org.eclipse.jgit.patch.HunkHeader;
@@ -23,7 +24,7 @@ import lombok.experimental.UtilityClass;
 public class EffectiveLineParser {
     private static final byte ADDED_PREFIX = '+';
     private static final byte DELETED_PREFIX = '-';
-    private static final byte LF = '\n';
+    private static final byte LF = (byte) CharUtils.LF;
 
     public enum LineKind {
         CONTEXT,

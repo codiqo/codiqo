@@ -38,6 +38,7 @@ public class AnalysisSubmitter {
             String commitSha,
             String reason,
             AnalysisExcludeCategory category,
+            String detail,
             Log log) throws ApiException {
         AnalysisApi client = buildClient(apiUrl, apiKey, connectTimeoutSeconds, readTimeoutSeconds);
         log.info("excluding commit " + commitSha + " at " + apiUrl + " (reason: " + reason + ", category: " + category + ")");
@@ -45,6 +46,7 @@ public class AnalysisSubmitter {
         AnalysisExcludeModel body = new AnalysisExcludeModel();
         body.setReason(reason);
         body.setCategory(category);
+        body.setDetail(detail);
 
         ApiRetry.call(log, "excludeAnalysis", apiUrl, () -> {
             client.excludeAnalysis(commitSha, body);

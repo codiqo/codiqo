@@ -2,6 +2,7 @@ package io.codiqo.maven.timemachine;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -142,6 +143,20 @@ class TimeMachineVersionResolverTest {
 
         assertEquals("1.0-20240110.060000-1", result.getVersion());
         assertSame(repo, result.getRepository());
+        verify(delegate, never()).resolveVersion(any(), any());
+    }
+
+    @Test
+    void failsWhenNearestSnapshotIsFarForwardBeyondWindow() throws VersionResolutionException {
+        System.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, "2024-01-10T00:00:00Z");
+        VersionRequest request = snapshotRequest("1.0-SNAPSHOT");
+        when(client.closestSnapshotBefore(any(), any(), any(), any())).thenReturn(Optional.empty());
+        // nearest snapshot is deployed ~8 days after the commit — far beyond the P1D forward window; must fail loudly
+        Instant deployedAt = Instant.parse("2024-01-18T00:00:00Z");
+        when(client.closestSnapshotAfter(any(), any(), any(), any()))
+                .thenReturn(Optional.of(new SnapshotWithMetadata("1.0-20240118.000000-99", deployedAt, repo)));
+
+        assertThrows(VersionResolutionException.class, () -> resolver.resolveVersion(session, request));
         verify(delegate, never()).resolveVersion(any(), any());
     }
 

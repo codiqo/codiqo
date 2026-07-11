@@ -67,6 +67,30 @@ public class TimeMachineVersionResolver implements VersionResolver {
                     target);
             return delegate.resolveVersion(session, request);
         }
+
+        /**
+         * hardening: if the closest snapshot we can pin is deployed well AFTER the commit (beyond the forward
+         * window), we cannot reproduce the commit's dependencies — this degenerates into "use the latest snapshot".
+         * fail loudly rather than silently building against a far-forward snapshot, so a resolution gap (e.g. the
+         * GAR REST connector not engaging and the metadata fallback exposing only the latest deploy) surfaces as a
+         * clear time-machine error instead of a misleading downstream compilation failure.
+         */
+        Duration forwardGap = Duration.between(target, pick.getDeployedAt());
+        if (forwardGap.compareTo(TimeMachineConfig.forwardWindow()) > 0) {
+            throw new VersionResolutionException(new VersionResult(request), String.format(
+                    "time-machine: no snapshot of %s:%s:%s deployed at or before %s; nearest is %s (deployed %s, %s after the commit — beyond the forward window %s). "
+                            + "refusing to build against a far-forward snapshot: verify the artifact registry exposes historical snapshot deploys "
+                            + "(a *-maven.pkg.dev registry uses the GAR REST connector; other repositories expose only the latest snapshot in maven-metadata).",
+                    artifact.getGroupId(),
+                    artifact.getArtifactId(),
+                    artifact.getBaseVersion(),
+                    target,
+                    pick.getVersion(),
+                    pick.getDeployedAt(),
+                    forwardGap,
+                    TimeMachineConfig.forwardWindow()));
+        }
+
         logResult(artifact, target, pick);
         if (isExternalArtifact(session, artifact)) {
             TimeMachineConfig.metaDir().ifPresent(metaDir -> writeMetadata(artifact, target, pick, metaDir));

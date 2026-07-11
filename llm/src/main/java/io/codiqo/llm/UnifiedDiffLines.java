@@ -12,6 +12,7 @@ import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.CharUtils;
 
 
 import io.codiqo.api.diff.IneffectiveLineFilter;
@@ -43,7 +44,7 @@ import lombok.Value;
 @Getter
 public final class UnifiedDiffLines {
     private static final Pattern HUNK_HEADER = Pattern.compile("^@@ -(\\d+)(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@");
-    private static final String LF = "\n";
+    private static final String LF = CharUtils.toString(CharUtils.LF);
     private static final String ADDED_PREFIX = "+";
     private static final String DELETED_PREFIX = "-";
     private static final String NO_NEWLINE_MARKER = "\\";
