@@ -97,22 +97,28 @@ public class DiffClassificationDeriver {
         classification.setTotalLinesDeletedRaw(totalDeleted);
     }
     private FileDiffClassification deriveFile(FileChange fc, UnifiedDiffLines diffLines, FileDiffClassification llm, ConfirmedMoves confirmed) {
-        Set<Integer> cosmeticAdded = sanitizeCosmetic(
+        Set<Integer> cosmeticAdded = sanitizeCitedLines(
                 CollectionUtils.emptyIfNull(Objects.nonNull(llm) ? llm.getCosmeticAdded() : null),
                 diffLines.getCandidateAddedLines(), fc.getPath(), "cosmeticAdded");
-        Set<Integer> cosmeticDeleted = sanitizeCosmetic(
+        Set<Integer> cosmeticDeleted = sanitizeCitedLines(
                 CollectionUtils.emptyIfNull(Objects.nonNull(llm) ? llm.getCosmeticDeleted() : null),
                 diffLines.getCandidateDeletedLines(), fc.getPath(), "cosmeticDeleted");
+        Set<Integer> inPlaceCollapsedAdded = sanitizeCitedLines(
+                CollectionUtils.emptyIfNull(Objects.nonNull(llm) ? llm.getInPlaceCollapsedAdded() : null),
+                diffLines.getCandidateAddedLines(), fc.getPath(), "inPlaceCollapsedAdded");
 
         /**
-         * a line lives in exactly one bucket: a confirmed moved line beats a cosmetic citation,
+         * a line lives in exactly one bucket: a confirmed moved line beats any cited 0-effort
+         * bucket, and cosmetic beats an inPlaceCollapsedAdded citation of the same line —
          * otherwise the added/deleted totals double-count and the per-file factor invariant in
          * FinalScoreCalculator.computePerFileFactors breaks
          */
         Set<Integer> movedAdded = confirmed.addedFor(fc.getPath());
         Set<Integer> movedDeleted = confirmed.deletedFor(fc.getPath());
-        dropMovedFromCosmetic(cosmeticAdded, movedAdded, fc.getPath(), "cosmeticAdded");
-        dropMovedFromCosmetic(cosmeticDeleted, movedDeleted, fc.getPath(), "cosmeticDeleted");
+        dropMovedLines(cosmeticAdded, movedAdded, fc.getPath(), "cosmeticAdded");
+        dropMovedLines(cosmeticDeleted, movedDeleted, fc.getPath(), "cosmeticDeleted");
+        dropMovedLines(inPlaceCollapsedAdded, movedAdded, fc.getPath(), "inPlaceCollapsedAdded");
+        inPlaceCollapsedAdded.removeAll(cosmeticAdded);
 
         List<LinePair> inPlacePairs = new ArrayList<>();
         List<LinePair> trueModifyPairs = new ArrayList<>();
@@ -123,7 +129,7 @@ public class DiffClassificationDeriver {
                     .filter(n -> !cosmeticDeleted.contains(n) && !movedDeleted.contains(n))
                     .toList();
             List<Integer> added = block.getAddedLines().stream()
-                    .filter(n -> !cosmeticAdded.contains(n) && !movedAdded.contains(n))
+                    .filter(n -> !cosmeticAdded.contains(n) && !movedAdded.contains(n) && !inPlaceCollapsedAdded.contains(n))
                     .toList();
 
             int pairCount = Math.min(deleted.size(), added.size());
@@ -131,6 +137,7 @@ public class DiffClassificationDeriver {
             for (int i = 0; i < pairCount; i++) {
                 target.add(LinePair.builder().deleted(deleted.get(i)).added(added.get(i)).build());
             }
+
             pureDelete.addAll(deleted.subList(pairCount, deleted.size()));
             pureAdd.addAll(added.subList(pairCount, added.size()));
         }
@@ -144,6 +151,7 @@ public class DiffClassificationDeriver {
                 .trueModifyPairs(trueModifyPairs)
                 .pureAdd(pureAdd)
                 .pureDelete(pureDelete)
+                .inPlaceCollapsedAdded(new ArrayList<>(inPlaceCollapsedAdded))
                 .movedAdded(new ArrayList<>(movedAdded))
                 .movedDeleted(new ArrayList<>(movedDeleted))
                 .build();
@@ -206,11 +214,11 @@ public class DiffClassificationDeriver {
         }
         return new ConfirmedMoves(ids, pairs, deletedByFile, addedByFile);
     }
-    private void dropMovedFromCosmetic(Set<Integer> cosmetic, Set<Integer> moved, String file, String bucket) {
-        List<Integer> overlap = cosmetic.stream().filter(moved::contains).toList();
+    private void dropMovedLines(Set<Integer> cited, Set<Integer> moved, String file, String bucket) {
+        List<Integer> overlap = cited.stream().filter(moved::contains).toList();
         for (Integer line : overlap) {
-            cosmetic.remove(line);
-            log.warn("diffClassification.movedBeatsCosmetic file='%s' bucket=%s line=%d — confirmed moved line dropped from cosmetic", file, bucket, line);
+            cited.remove(line);
+            log.warn("diffClassification.movedBeatsCited file='%s' bucket=%s line=%d — confirmed moved line dropped from its cited bucket", file, bucket, line);
         }
     }
     private DiffClassification ensureClassification(LlmScoringResponse response) {
@@ -228,17 +236,17 @@ public class DiffClassificationDeriver {
         return classification;
     }
     /**
-     * Validation rejects unknown cosmetic citations and triggers a retry, but the retry budget is
+     * Validation rejects unknown line citations and triggers a retry, but the retry budget is
      * finite — whatever still points outside the candidate set after the last attempt is dropped
      * here so persisted coordinates stay correct.
      */
-    private Set<Integer> sanitizeCosmetic(Collection<Integer> cited, Set<Integer> candidates, String file, String bucket) {
+    private Set<Integer> sanitizeCitedLines(Collection<Integer> cited, Set<Integer> candidates, String file, String bucket) {
         Set<Integer> toReturn = new TreeSet<>();
         for (Integer line : cited) {
             if (Objects.nonNull(line) && candidates.contains(line)) {
                 toReturn.add(line);
             } else {
-                log.warn("diffClassification.droppedCosmetic file='%s' bucket=%s line=%d — not an effective changed line", file, bucket, line);
+                log.warn("diffClassification.droppedCitedLine file='%s' bucket=%s line=%d — not an effective changed line", file, bucket, line);
             }
         }
         return toReturn;

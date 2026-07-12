@@ -412,6 +412,7 @@ public class LlmResponseMapper {
         toReturn.setTrueModifyPairs(mapPairs(source.getTrueModifyPairs()));
         toReturn.setPureAdd(Optional.ofNullable(source.getPureAdd()).orElse(Collections.emptyList()));
         toReturn.setPureDelete(Optional.ofNullable(source.getPureDelete()).orElse(Collections.emptyList()));
+        toReturn.setInPlaceCollapsedAdded(Optional.ofNullable(source.getInPlaceCollapsedAdded()).orElse(Collections.emptyList()));
         toReturn.setMovedLines(source.getMovedLines());
         toReturn.setMovedAdded(Optional.ofNullable(source.getMovedAdded()).orElse(Collections.emptyList()));
         toReturn.setMovedDeleted(Optional.ofNullable(source.getMovedDeleted()).orElse(Collections.emptyList()));

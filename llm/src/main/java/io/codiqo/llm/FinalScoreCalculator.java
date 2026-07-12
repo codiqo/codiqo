@@ -313,10 +313,11 @@ public class FinalScoreCalculator {
             int trueModifyPairs = sizeOfPairs(entry.getTrueModifyPairs());
             int pureAddSize = sizeOfInts(entry.getPureAdd());
             int pureDeleteSize = sizeOfInts(entry.getPureDelete());
+            int inPlaceCollapsedAddedSize = sizeOfInts(entry.getInPlaceCollapsedAdded());
             int movedAddedSize = sizeOfInts(entry.getMovedAdded());
             int movedDeletedSize = sizeOfInts(entry.getMovedDeleted());
 
-            int addedTotal = cosmeticAddedSize + inPlacePairs + trueModifyPairs + pureAddSize + movedAddedSize;
+            int addedTotal = cosmeticAddedSize + inPlacePairs + trueModifyPairs + pureAddSize + inPlaceCollapsedAddedSize + movedAddedSize;
             int deletedTotal = cosmeticDeletedSize + inPlacePairs + trueModifyPairs + pureDeleteSize + movedDeletedSize;
 
             /**
@@ -447,11 +448,11 @@ public class FinalScoreCalculator {
     private static FileEffortView toFileEffortView(FileEffort fe, Map<String, FileDiffClassification> classificationByFile) {
         FileDiffClassification fileClassification = classificationByFile.get(fe.getFile());
         List<CodeBlockEffort> blocks = fe.getCodeBlockEfforts();
-        int[] collapsedPairs = collapsedPairsPerBlock(fileClassification, blocks);
+        int[] collapsed = collapsedLinesPerBlock(fileClassification, blocks);
 
         List<CodeBlockEffortView> blockViews = new ArrayList<>(blocks.size());
         for (int i = 0; i < blocks.size(); i++) {
-            blockViews.add(toCodeBlockEffortView(blocks.get(i), collapsedPairs[i]));
+            blockViews.add(toCodeBlockEffortView(blocks.get(i), collapsed[i]));
         }
 
         return FileEffortView.builder()
@@ -466,10 +467,10 @@ public class FinalScoreCalculator {
                 .fileFlaggedAsAbusive(fe.isFileFlaggedAsAbusive())
                 .build();
     }
-    private static CodeBlockEffortView toCodeBlockEffortView(CodeBlockEffort cbe, int collapsedPairs) {
-        int effectiveLinesChanged = Math.max(0, cbe.getEffectiveLinesChanged() - collapsedPairs);
+    private static CodeBlockEffortView toCodeBlockEffortView(CodeBlockEffort cbe, int collapsed) {
+        int effectiveLinesChanged = Math.max(0, cbe.getEffectiveLinesChanged() - collapsed);
         double changeRatio = cbe.getChangeRatio();
-        if (collapsedPairs > 0 && cbe.getBodyCodeLines() > 0) {
+        if (collapsed > 0 && cbe.getBodyCodeLines() > 0) {
             changeRatio = Math.min(1.0, (double) effectiveLinesChanged / cbe.getBodyCodeLines());
             changeRatio = Precision.round(changeRatio, ROUNDING_PRECISION);
         }
@@ -498,13 +499,20 @@ public class FinalScoreCalculator {
                 .globalCapDriver(cbe.isGlobalCapDriver())
                 .build();
     }
-    private static int[] collapsedPairsPerBlock(FileDiffClassification fileClassification, List<CodeBlockEffort> blocks) {
+    private static int[] collapsedLinesPerBlock(FileDiffClassification fileClassification, List<CodeBlockEffort> blocks) {
         int[] toReturn = new int[blocks.size()];
         if (Objects.isNull(fileClassification)) {
             return toReturn;
         }
         assignPairsToInnermostBlock(fileClassification.getInPlaceModifyPairs(), blocks, toReturn);
         assignPairsToInnermostBlock(fileClassification.getTrueModifyPairs(), blocks, toReturn);
+
+        for (Integer line : CollectionUtils.emptyIfNull(fileClassification.getInPlaceCollapsedAdded())) {
+            int innermost = innermostBlockForLine(blocks, line, 0, false);
+            if (innermost >= 0) {
+                toReturn[innermost]++;
+            }
+        }
         return toReturn;
     }
     /** A pair inside a nested block also falls within the enclosing block's body range — only the innermost block may collapse it. */
