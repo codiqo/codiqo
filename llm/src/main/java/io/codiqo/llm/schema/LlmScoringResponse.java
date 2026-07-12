@@ -254,6 +254,9 @@ public class LlmScoringResponse {
         private List<Integer> pureAdd = new ArrayList<>();
         @Builder.Default
         private List<Integer> pureDelete = new ArrayList<>();
+        // LLM-cited wrapped-continuation tail: added-side overflow of a lengthened statement whose tokens are carried over from the deleted form, 0 effort, counted as an in-place collapse rather than cosmetic
+        @Builder.Default
+        private List<Integer> inPlaceCollapsedAdded = new ArrayList<>();
         // server-derived from confirmed move candidates; a cross-file pair splits its sides across two entries
         @Builder.Default
         private List<Integer> movedAdded = new ArrayList<>();

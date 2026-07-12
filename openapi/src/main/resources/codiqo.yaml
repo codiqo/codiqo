@@ -2378,11 +2378,11 @@ components:
       type: object
       description: |
         Per-file breakdown of LLM diff classification. The line-number arrays (`cosmeticAdded`,
-        `cosmeticDeleted`, `inPlaceModifyPairs`, `trueModifyPairs`, `pureAdd`, `pureDelete`, `movedAdded`,
-        `movedDeleted`) are the source of truth; the count fields (`cosmeticLines`, `pairsCollapsed`,
-        `pureAddDeleteLines`, `movedLines`) are derived server-side and persisted for fast aggregation. Pair
-        balance is enforced structurally by the `LinePairModel` tuple type — a pair always carries both
-        `deleted` and `added` line numbers.
+        `cosmeticDeleted`, `inPlaceModifyPairs`, `trueModifyPairs`, `inPlaceCollapsedAdded`, `pureAdd`,
+        `pureDelete`, `movedAdded`, `movedDeleted`) are the source of truth; the count fields (`cosmeticLines`,
+        `pairsCollapsed`, `pureAddDeleteLines`, `movedLines`) are derived server-side and persisted for fast
+        aggregation. Pair balance is enforced structurally by the `LinePairModel` tuple type — a pair always
+        carries both `deleted` and `added` line numbers.
       properties:
         file:
           type: string
@@ -2439,6 +2439,17 @@ components:
         pureDelete:
           type: array
           description: Old-file line numbers removed with no replacement on the added side (genuine removal, dead-code purge, dropped method body). 1 effort per line.
+          items:
+            type: integer
+            minimum: 1
+        inPlaceCollapsedAdded:
+          type: array
+          description: |
+            New-file line numbers of wrapped-continuation overflow: when an edit lengthens a statement so it
+            spills onto extra physical lines, a tail line whose tokens are all carried over from the deleted
+            form carries no new logic. LLM-cited (like `cosmeticAdded`) and server-sanitized against the
+            candidate lines; added-side only. Effort weight 0 — folded into the in-place edit, counted under
+            `inPlaceLinesCollapsed`, NOT treated as cosmetic.
           items:
             type: integer
             minimum: 1

@@ -240,6 +240,74 @@ class DiffClassificationDeriverTest {
         assertEquals(3, classification.getTotalLinesDeletedRaw());
     }
 
+    @Test
+    void citedInPlaceCollapsedIsRemovedBeforePairing() {
+        LlmScoringResponse response = responseWith(FileDiffClassification.builder()
+                .file("Foo.java")
+                .inPlaceCollapsedAdded(new ArrayList<>(List.of(13)))
+                .build());
+        LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
+
+        new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request);
+
+        FileDiffClassification entry = soleEntry(response);
+        assertEquals(List.of(13), entry.getInPlaceCollapsedAdded(), "the LLM-cited wrapped tail is honored");
+        assertEquals(List.of(pair(11, 11)), entry.getTrueModifyPairs(),
+                "B2's only added line was cited as a collapsed continuation → no pair left in B2");
+        assertEquals(List.of(13, 14), entry.getPureDelete(), "B2's deletions both become pure once the added line is removed");
+        assertTrue(entry.getPureAdd().isEmpty());
+
+        int addedBuckets = entry.getCosmeticAdded().size() + entry.getInPlaceModifyPairs().size()
+                + entry.getTrueModifyPairs().size() + entry.getPureAdd().size()
+                + entry.getInPlaceCollapsedAdded().size() + entry.getMovedAdded().size();
+        assertEquals(2, addedBuckets, "the two added candidates (11, 13) each land in exactly one bucket — the FinalScoreCalculator reconciliation invariant");
+    }
+    @Test
+    void invalidInPlaceCollapsedCitationsAreDropped() {
+        LlmScoringResponse response = responseWith(FileDiffClassification.builder()
+                .file("Foo.java")
+                .inPlaceCollapsedAdded(new ArrayList<>(List.of(10, 999))) // context line and nonexistent line
+                .build());
+        LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
+
+        new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request);
+
+        FileDiffClassification entry = soleEntry(response);
+        assertTrue(entry.getInPlaceCollapsedAdded().isEmpty(), "citations outside the candidate set are dropped");
+        assertEquals(2, entry.getTrueModifyPairs().size(), "pairing unaffected by dropped citations");
+    }
+    @Test
+    void cosmeticBeatsInPlaceCollapsedForSameLine() {
+        LlmScoringResponse response = responseWith(FileDiffClassification.builder()
+                .file("Foo.java")
+                .cosmeticAdded(new ArrayList<>(List.of(13)))
+                .inPlaceCollapsedAdded(new ArrayList<>(List.of(13)))
+                .build());
+        LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
+
+        new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request);
+
+        FileDiffClassification entry = soleEntry(response);
+        assertEquals(List.of(13), entry.getCosmeticAdded());
+        assertTrue(entry.getInPlaceCollapsedAdded().isEmpty(),
+                "a line cited as both cosmetic and collapsed lands in exactly one bucket — cosmetic wins");
+    }
+    @Test
+    void movedBeatsInPlaceCollapsedCitation() {
+        LlmScoringResponse response = responseWith(FileDiffClassification.builder()
+                .file("Foo.java")
+                .inPlaceCollapsedAdded(new ArrayList<>(List.of(13)))
+                .build());
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M1")));
+        LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
+
+        new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request, List.of(candidate("M1", "Foo.java", 14, "Foo.java", 13)));
+
+        FileDiffClassification entry = soleEntry(response);
+        assertTrue(entry.getInPlaceCollapsedAdded().isEmpty(), "a confirmed moved line beats its collapsed citation");
+        assertEquals(List.of(13), entry.getMovedAdded());
+    }
+
     private static FileDiffClassification soleEntry(LlmScoringResponse response) {
         List<FileDiffClassification> perFile = response.getEffortBreakdown().getDiffClassification().getPerFile();
         assertEquals(1, perFile.size());
