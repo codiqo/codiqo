@@ -123,7 +123,7 @@ class IndexCommitsMojoTest {
                 .setMessage("merge feature")
                 .call();
 
-        List<CommitModel> commits = extract(new RunArgs(), "HEAD", EPOCH, "main");
+        List<CommitModel> commits = extract(allCommits(), "HEAD", EPOCH, "main");
         CommitModel mergeCommit = commits.stream()
                 .filter(c -> merge.getNewHead().getName().equals(c.getSha()))
                 .findFirst().orElseThrow();
@@ -196,7 +196,7 @@ class IndexCommitsMojoTest {
         git.checkout().setName("main").call();
         git.merge().include(repository.resolve("other")).setCommit(true).setMessage("merge other").call();
 
-        List<CommitModel> commits = extract(new RunArgs(), "HEAD", EPOCH, "main");
+        List<CommitModel> commits = extract(allCommits(), "HEAD", EPOCH, "main");
 
         long dupCount = commits.stream()
                 .filter(c -> first.getName().equals(c.getSha()) || second.getName().equals(c.getSha()))
@@ -217,7 +217,7 @@ class IndexCommitsMojoTest {
         git.checkout().setName("main").call();
         git.merge().include(repository.resolve("other")).setCommit(true).setMessage("merge other").call();
 
-        List<CommitModel> commits = extract(new RunArgs(), "HEAD", EPOCH, "main");
+        List<CommitModel> commits = extract(allCommits(), "HEAD", EPOCH, "main");
 
         long keptCount = commits.stream()
                 .filter(c -> first.getName().equals(c.getSha()) || second.getName().equals(c.getSha()))
@@ -236,8 +236,148 @@ class IndexCommitsMojoTest {
 
         assertEquals("https://bitbucket.org/turbospaces/turbospaces-boot.git", uri.toString());
     }
+    @Test
+    void firstParentOnlyExcludesMergedInBranchCommits() throws Exception {
+        RevCommit base = commit("a.txt", "base", "base");
+        git.checkout().setCreateBranch(true).setName("feature").call();
+        RevCommit featureWork = commit("b.txt", "feat", "feature work");
+        git.checkout().setName("main").call();
+        RevCommit mainWork = commit("c.txt", "main-side", "main work");
+        MergeResult merge = git.merge()
+                .include(repository.resolve("feature"))
+                .setCommit(true)
+                .setMessage("merge feature")
+                .call();
+
+        List<String> mainline = extract(new RunArgs(), "HEAD", EPOCH, "main")
+                .stream().map(CommitModel::getSha).toList();
+        assertTrue(mainline.contains(merge.getNewHead().getName()), "the merge node stays on the mainline");
+        assertTrue(mainline.contains(mainWork.getName()));
+        assertTrue(mainline.contains(base.getName()));
+        assertFalse(mainline.contains(featureWork.getName()), "merged-in feature-branch commit is dropped in first-parent mode");
+
+        List<String> all = extract(allCommits(), "HEAD", EPOCH, "main")
+                .stream().map(CommitModel::getSha).toList();
+        assertTrue(all.contains(featureWork.getName()), "feature-branch commit is indexed again when firstParentOnly=false");
+    }
+    @Test
+    void mergeCommitPrFirstParentKeepsMergeNodeAndDropsEveryFeatureCommit() throws Exception {
+        RevCommit base = commit("base.txt", "0", "base");
+        git.branchCreate().setName("feature").call();
+        git.checkout().setName("feature").call();
+        RevCommit f1 = commit("f1.txt", "1", "PR commit 1");
+        RevCommit f2 = commit("f2.txt", "2", "PR commit 2");
+        RevCommit f3 = commit("f3.txt", "3", "PR commit 3");
+        git.checkout().setName("main").call();
+        RevCommit m1 = commit("m1.txt", "m", "mainline divergence");
+        String mergeSha = git.merge().include(repository.resolve("feature"))
+                .setCommit(true).setMessage("Merge pull request #1").call().getNewHead().getName();
+
+        List<String> fp = shas(extract(new RunArgs(), "HEAD", EPOCH, "main"));
+        assertTrue(fp.contains(mergeSha), "the PR merge node stays on the mainline spine");
+        assertTrue(fp.contains(m1.getName()));
+        assertTrue(fp.contains(base.getName()));
+        assertFalse(fp.contains(f1.getName()), "PR feature commit 1 is dropped in first-parent mode");
+        assertFalse(fp.contains(f2.getName()), "PR feature commit 2 is dropped");
+        assertFalse(fp.contains(f3.getName()), "PR feature commit 3 is dropped");
+
+        List<String> all = shas(extract(allCommits(), "HEAD", EPOCH, "main"));
+        assertTrue(all.containsAll(List.of(f1.getName(), f2.getName(), f3.getName())),
+                "all-commits mode still indexes every feature-branch commit");
+    }
+    @Test
+    void squashPrIsASingleMainlineCommitAndTheUnmergedBranchStaysInvisible() throws Exception {
+        commit("base.txt", "0", "base");
+        git.branchCreate().setName("feature").call();
+        git.checkout().setName("feature").call();
+        RevCommit wip1 = commit("f.txt", "a", "wip 1");
+        RevCommit wip2 = commit("f.txt", "ab", "wip 2");
+        git.checkout().setName("main").call();
+        // a squash-merge produces one NEW single-parent commit on main; the branch is never merged in
+        RevCommit squash = commit("f.txt", "ab", "Squashed PR #2 (2 commits)");
+
+        for (RunArgs mode : List.of(new RunArgs(), allCommits())) {
+            List<String> got = shas(extract(mode, "HEAD", EPOCH, "main"));
+            assertTrue(got.contains(squash.getName()), "the squash commit is a normal single-parent mainline commit");
+            assertFalse(got.contains(wip1.getName()), "an unmerged PR-branch commit never reaches mainline");
+            assertFalse(got.contains(wip2.getName()));
+        }
+    }
+    @Test
+    void rebasePrLinearCommitsAllSurviveAndFirstParentEqualsAllCommits() throws Exception {
+        commit("base.txt", "0", "base");
+        // a rebase-merge replays the PR's commits linearly onto the tip — they ARE mainline commits
+        RevCommit r1 = commit("r1.txt", "1", "PR commit 1 (rebased)");
+        RevCommit r2 = commit("r2.txt", "2", "PR commit 2 (rebased)");
+        RevCommit r3 = commit("r3.txt", "3", "PR commit 3 (rebased)");
+
+        List<String> fp = shas(extract(new RunArgs(), "HEAD", EPOCH, "main"));
+        assertTrue(fp.containsAll(List.of(r1.getName(), r2.getName(), r3.getName())),
+                "rebased PR commits are linear mainline commits — first-parent keeps ALL of them (a rebase is not collapsed)");
+        assertEquals(shas(extract(allCommits(), "HEAD", EPOCH, "main")), fp,
+                "with no merges present, first-parent and all-commits produce an identical set");
+    }
+    @Test
+    void mixedStrategyHistoryFirstParentIsExactlyTheMainlineSpine() throws Exception {
+        RevCommit base = commit("base.txt", "0", "base");
+        RevCommit squash = commit("s.txt", "s", "Squashed PR #1");
+        RevCommit rebase1 = commit("r1.txt", "1", "Rebased PR #2 commit 1");
+        RevCommit rebase2 = commit("r2.txt", "2", "Rebased PR #2 commit 2");
+        git.branchCreate().setName("feature").call();
+        git.checkout().setName("feature").call();
+        RevCommit feat = commit("f.txt", "f", "merge-commit PR work");
+        git.checkout().setName("main").call();
+        RevCommit m1 = commit("m.txt", "m", "mainline");
+        String mergeSha = git.merge().include(repository.resolve("feature"))
+                .setCommit(true).setMessage("Merge pull request #3").call().getNewHead().getName();
+
+        List<String> fp = shas(extract(new RunArgs(), "HEAD", EPOCH, "main"));
+        assertTrue(fp.containsAll(List.of(base.getName(), squash.getName(), rebase1.getName(),
+                        rebase2.getName(), m1.getName(), mergeSha)),
+                "spine = base + squash + both rebased commits + mainline commit + merge node");
+        assertFalse(fp.contains(feat.getName()), "only the merge-commit PR's feature-branch commit is dropped");
+    }
+    @Test
+    void firstParentAuthorFilterOnABotAuthoredMergeDropsTheWholePr() throws Exception {
+        commit("base.txt", "0", "base");
+        git.branchCreate().setName("feature").call();
+        git.checkout().setName("feature").call();
+        RevCommit devWork = commitAs("f.txt", "f", "dev PR work", "Dev", "dev@corp.com");
+        git.checkout().setName("main").call();
+        commit("m.txt", "m", "mainline");
+        // a CI bot / merge queue authors the integration merge
+        String mergeSha = mergeAs("feature", "Merge pull request #9", "CI Bot", "bot@ci.com");
+
+        RunArgs onlyDev = new RunArgs();
+        onlyDev.setIncludeAuthorEmails("dev@corp.com");
+        List<String> fp = shas(extract(onlyDev, "HEAD", EPOCH, "main"));
+        assertFalse(fp.contains(mergeSha),
+                "the bot-authored merge node fails the dev author filter, and the dev feature commit is off the first-parent spine — so the whole PR is absent (known first-parent limitation for bot-merged PRs)");
+        assertFalse(fp.contains(devWork.getName()));
+    }
     private List<CommitModel> extract(RunArgs filter, String ref, Date cutoff, String branch) throws Exception {
         return CommitIndexer.extractCommits(repository, filter, ref, cutoff, branch);
+    }
+    private static RunArgs allCommits() {
+        RunArgs toReturn = new RunArgs();
+        toReturn.setFirstParentOnly(false);
+        return toReturn;
+    }
+    private static List<String> shas(List<CommitModel> commits) {
+        return commits.stream().map(CommitModel::getSha).toList();
+    }
+    private String mergeAs(String branch, String message, String authorName, String authorEmail) throws Exception {
+        repository.getConfig().setString("user", null, "name", authorName);
+        repository.getConfig().setString("user", null, "email", authorEmail);
+        repository.getConfig().save();
+        try {
+            return git.merge().include(repository.resolve(branch)).setCommit(true).setMessage(message).call()
+                    .getNewHead().getName();
+        } finally {
+            repository.getConfig().setString("user", null, "name", "Test Author");
+            repository.getConfig().setString("user", null, "email", "test@example.com");
+            repository.getConfig().save();
+        }
     }
     private RevCommit commit(String path, String content, String message) throws Exception {
         return commitAs(path, content, message, "Test Author", "test@example.com");

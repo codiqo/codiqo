@@ -29,7 +29,8 @@ import lombok.experimental.UtilityClass;
 /**
  * Build-tool-neutral git history indexing shared by the Maven and Gradle plugins: walks history
  * from a ref over a time window, applies branch/author filters, and drops squash/rebase duplicates
- * by patch-id.
+ * by patch-id. When {@code firstParentOnly} is set, the walk follows only first parents, so
+ * merged-in feature-branch commits are never indexed — only the mainline integration history.
  */
 @UtilityClass
 public class CommitIndexer {
@@ -47,6 +48,7 @@ public class CommitIndexer {
         try (RevWalk walk = new RevWalk(repo)) {
             walk.sort(RevSort.TOPO);
             walk.setRevFilter(CommitTimeRevFilter.after(cutoff.toInstant()));
+            walk.setFirstParent(filterArgs.isFirstParentOnly());
             walk.markStart(walk.parseCommit(startId));
 
             for (RevCommit commit : walk) {

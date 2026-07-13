@@ -191,6 +191,10 @@ public class RunArgs {
     private String includeAuthorEmails;
     @Nullable
     private String excludeAuthorEmails;
+
+    // when true (default), index only the first-parent (mainline) history — drops merged-in feature-branch commits
+    private boolean firstParentOnly = true;
+
     @Nullable
     private double sizeFactorDivisor = 100.0;
     @Nullable

@@ -8,7 +8,9 @@ import java.time.Period;
 import java.time.ZoneOffset;
 import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -43,6 +45,13 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
         RunArgs filter = new RunArgs();
         Optional.ofNullable(prop("codiqo.includeAuthorEmails", null)).ifPresent(filter::setIncludeAuthorEmails);
         Optional.ofNullable(prop("codiqo.excludeAuthorEmails", null)).ifPresent(filter::setExcludeAuthorEmails);
+        String firstParentValue = prop("codiqo.firstParentOnly", "true");
+        if (Set.of("true", "false").contains(firstParentValue.toLowerCase(Locale.ROOT))) {
+            filter.setFirstParentOnly(Boolean.parseBoolean(firstParentValue));
+        } else {
+            getLogger().warn("codiqo: unrecognized codiqo.firstParentOnly='" + firstParentValue + "'; defaulting to first-parent");
+            filter.setFirstParentOnly(true);
+        }
 
         try (Repository repo = JGit.openRepository(root.getProjectDir())) {
             String branch = resolveBranch(repo);
