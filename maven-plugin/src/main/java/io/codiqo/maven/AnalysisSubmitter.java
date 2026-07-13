@@ -1,6 +1,7 @@
 package io.codiqo.maven;
 
 import java.time.Duration;
+import java.util.List;
 
 import org.apache.commons.lang3.Strings;
 import org.apache.maven.plugin.logging.Log;
@@ -12,6 +13,7 @@ import io.codiqo.client.model.AnalysisAcceptedModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.AnalysisExcludeModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
+import io.codiqo.client.model.FileChangeModel;
 import lombok.experimental.UtilityClass;
 
 @UtilityClass
@@ -39,14 +41,16 @@ public class AnalysisSubmitter {
             String reason,
             AnalysisExcludeCategory category,
             String detail,
+            List<FileChangeModel> files,
             Log log) throws ApiException {
         AnalysisApi client = buildClient(apiUrl, apiKey, connectTimeoutSeconds, readTimeoutSeconds);
-        log.info("excluding commit " + commitSha + " at " + apiUrl + " (reason: " + reason + ", category: " + category + ")");
+        log.info("excluding commit " + commitSha + " at " + apiUrl + " (reason: " + reason + ", category: " + category + ", files: " + files.size() + ")");
 
         AnalysisExcludeModel body = new AnalysisExcludeModel();
         body.setReason(reason);
         body.setCategory(category);
         body.setDetail(detail);
+        body.setFiles(files);
 
         ApiRetry.call(log, "excludeAnalysis", apiUrl, () -> {
             client.excludeAnalysis(commitSha, body);

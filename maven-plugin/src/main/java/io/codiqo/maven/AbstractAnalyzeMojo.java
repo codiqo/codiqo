@@ -88,6 +88,7 @@ import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.ClientInfoModel;
+import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.core.ClassGraphWrapper;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
@@ -887,7 +888,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                             String reason = StringUtils.defaultIfBlank(err.getMessage(), err.getClass().getSimpleName());
                             getLog().warn(String.format("commit %s skipped: analysis failed after build: %s", args.getCommitId(), reason), err);
                             doExcludeAnalysis(args.getCommitId(), reason, AnalysisExcludeCategory.BUILD_FAILURE,
-                                    StringUtils.abbreviate(ExceptionUtils.getStackTrace(err), args.getBuildErrorCaptureLimit()));
+                                    StringUtils.abbreviate(ExceptionUtils.getStackTrace(err), args.getBuildErrorCaptureLimit()),
+                                    captureDiffFiles(args));
                             return Optional.empty();
                         }
                         throw err;
@@ -938,7 +940,33 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         doExcludeAnalysis(commitSha, reason, category, null);
     }
     protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail) throws Exception {
+        doExcludeAnalysis(commitSha, reason, category, detail, List.of());
+    }
+    protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files) throws Exception {
         getLog().debug(String.format("no exclusion handler, commit %s would be excluded with reason: %s (category: %s)", commitSha, reason, category));
+    }
+    protected List<FileChangeModel> captureDiffFiles(RunArgs args) throws Exception {
+        LogFactory logFactory = new MavenLogFactory(getLog());
+        Path workTree = args.getGit().getWorkTree().toPath().normalize();
+        CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
+
+        ClientInfoModel clientInfo = new ClientInfoModel();
+        clientInfo.setBuildTool(ClientInfoModel.BuildToolEnum.MAVEN);
+        clientInfo.setVersion(runtimeInformation.getMavenVersion());
+        clientInfo.setName("codiqo-maven-plugin");
+
+        SubmissionContext ctx = SubmissionContext.create(
+                args,
+                null,
+                analysis,
+                workTree,
+                logFactory,
+                project.getGroupId() + ":" + project.getArtifactId(),
+                project.getName(),
+                clientInfo);
+        new FileAnalysisPopulator().accept(ctx);
+
+        return ctx.getSubmissionModel().getFiles();
     }
     @SuppressWarnings("deprecation")
     private void purgeNonJavaSourceJars(RunArgs args) throws IOException {
