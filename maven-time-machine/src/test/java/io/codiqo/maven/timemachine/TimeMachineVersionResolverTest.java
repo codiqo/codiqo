@@ -31,6 +31,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
 
 import io.codiqo.maven.timemachine.repo.RepoClient;
 
@@ -57,6 +58,7 @@ class TimeMachineVersionResolverTest {
     void tearDown() {
         System.clearProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP);
         System.clearProperty(TimeMachineConfig.PROP_META_DIR);
+        System.clearProperty(TimeMachineConfig.PROP_TARGET_OFFSET);
     }
 
     @Test
@@ -208,6 +210,74 @@ class TimeMachineVersionResolverTest {
 
         assertEquals("1.0-20240105.143000-6", result.getVersion());
         assertEquals(1, metadataFileCount(metaDir));
+        assertEquals(0L, SnapshotMetadataStore.read(metaDir.toFile(), "com.example", "dep", "1.0-SNAPSHOT").orElseThrow().getTargetOffsetSeconds());
+    }
+
+    @Test
+    void offsetShiftsSelectionTarget() throws VersionResolutionException {
+        System.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, "2024-01-10T00:00:00Z");
+        System.setProperty(TimeMachineConfig.PROP_TARGET_OFFSET, "PT1H");
+        VersionRequest request = snapshotRequest("1.0-SNAPSHOT");
+        Instant deployedAt = Instant.parse("2024-01-05T14:30:00Z");
+        when(client.closestSnapshotBefore(any(), any(), any(), any()))
+                .thenReturn(Optional.of(new SnapshotWithMetadata("1.0-20240105.143000-6", deployedAt, repo)));
+
+        resolver.resolveVersion(session, request);
+
+        ArgumentCaptor<Instant> target = ArgumentCaptor.forClass(Instant.class);
+        verify(client).closestSnapshotBefore(any(), any(), any(), target.capture());
+        assertEquals(Instant.parse("2024-01-09T23:00:00Z"), target.getValue());
+    }
+
+    @Test
+    void metadataKeepsCommitTimestampUnderOffset() throws VersionResolutionException {
+        System.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, "2024-01-10T00:00:00Z");
+        System.setProperty(TimeMachineConfig.PROP_TARGET_OFFSET, "PT1H");
+        System.setProperty(TimeMachineConfig.PROP_META_DIR, metaDir.toString());
+        VersionRequest request = snapshotRequest("1.0-SNAPSHOT");
+        Instant deployedAt = Instant.parse("2024-01-05T14:30:00Z");
+        when(client.closestSnapshotBefore(any(), any(), any(), any()))
+                .thenReturn(Optional.of(new SnapshotWithMetadata("1.0-20240105.143000-6", deployedAt, repo)));
+
+        resolver.resolveVersion(session, request);
+
+        SnapshotMetadataStore.SnapshotResolution resolution =
+                SnapshotMetadataStore.read(metaDir.toFile(), "com.example", "dep", "1.0-SNAPSHOT").orElseThrow();
+        assertEquals(Instant.parse("2024-01-10T00:00:00Z"), resolution.getTargetTimestamp());
+        assertEquals(379800L, resolution.getStaleSeconds());
+        assertEquals(3600L, resolution.getTargetOffsetSeconds());
+    }
+
+    @Test
+    void forwardWindowMeasuredFromShiftedTargetRejectsFarForward() throws VersionResolutionException {
+        System.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, "2024-01-10T00:00:00Z");
+        System.setProperty(TimeMachineConfig.PROP_TARGET_OFFSET, "PT4H");
+        VersionRequest request = snapshotRequest("1.0-SNAPSHOT");
+        when(client.closestSnapshotBefore(any(), any(), any(), any())).thenReturn(Optional.empty());
+        // deployed 28h after the shifted target (2024-01-09T20:00) — beyond the P1D forward window
+        Instant deployedAt = Instant.parse("2024-01-11T00:00:00Z");
+        when(client.closestSnapshotAfter(any(), any(), any(), any()))
+                .thenReturn(Optional.of(new SnapshotWithMetadata("1.0-20240111.000000-9", deployedAt, repo)));
+
+        assertThrows(VersionResolutionException.class, () -> resolver.resolveVersion(session, request));
+        verify(delegate, never()).resolveVersion(any(), any());
+    }
+
+    @Test
+    void forwardWindowMeasuredFromShiftedTargetAcceptsNearPick() throws VersionResolutionException {
+        System.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, "2024-01-10T00:00:00Z");
+        System.setProperty(TimeMachineConfig.PROP_TARGET_OFFSET, "PT4H");
+        VersionRequest request = snapshotRequest("1.0-SNAPSHOT");
+        when(client.closestSnapshotBefore(any(), any(), any(), any())).thenReturn(Optional.empty());
+        // deployed 18h after the shifted target (2024-01-09T20:00) — within the P1D forward window
+        Instant deployedAt = Instant.parse("2024-01-10T14:00:00Z");
+        when(client.closestSnapshotAfter(any(), any(), any(), any()))
+                .thenReturn(Optional.of(new SnapshotWithMetadata("1.0-20240110.140000-2", deployedAt, repo)));
+
+        VersionResult result = resolver.resolveVersion(session, request);
+
+        assertEquals("1.0-20240110.140000-2", result.getVersion());
+        verify(delegate, never()).resolveVersion(any(), any());
     }
 
     private VersionRequest snapshotRequest(String version) {

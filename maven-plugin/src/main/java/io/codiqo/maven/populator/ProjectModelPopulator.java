@@ -182,6 +182,11 @@ public class ProjectModelPopulator implements SubmissionPopulator {
             toReturn.setStaleSeconds(Long.valueOf(staleSeconds));
         }
 
+        String targetOffsetSeconds = props.getProperty(SnapshotMetadataStore.KEY_TARGET_OFFSET_SECONDS);
+        if (StringUtils.isNotBlank(targetOffsetSeconds)) {
+            toReturn.setTargetOffsetSeconds(Long.valueOf(targetOffsetSeconds));
+        }
+
         String repositoryUrl = props.getProperty(SnapshotMetadataStore.KEY_REPOSITORY_URL);
         if (StringUtils.isNotBlank(repositoryUrl)) {
             toReturn.setRepositoryUrl(URI.create(repositoryUrl));

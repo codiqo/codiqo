@@ -15,6 +15,7 @@ public class TimeMachineConfig {
     public static final String PROP_HTTP_TIMEOUT_SECONDS = "codiqo.timemachine.httpTimeoutSeconds";
     public static final String PROP_MAX_STALENESS = "codiqo.timemachine.maxStaleness";
     public static final String PROP_FORWARD_WINDOW = "codiqo.timemachine.forwardWindow";
+    public static final String PROP_TARGET_OFFSET = "codiqo.timemachine.targetOffset";
     public static final String PROP_META_DIR = "codiqo.timemachine.metaDir";
 
     private static final int DEFAULT_HTTP_TIMEOUT_SECONDS = 30;
@@ -55,6 +56,13 @@ public class TimeMachineConfig {
             raw = DEFAULT_FORWARD_WINDOW;
         }
         return Duration.parse(raw);
+    }
+    public static Duration targetOffset() {
+        String raw = System.getProperty(PROP_TARGET_OFFSET);
+        if (isBlank(raw)) {
+            return Duration.ZERO;
+        }
+        return Duration.parse(raw.trim());
     }
     private static boolean isBlank(String s) {
         return Objects.isNull(s) || s.isBlank();

@@ -11,6 +11,7 @@ class TimeMachineConfigTest {
     @AfterEach
     void tearDown() {
         System.clearProperty(TimeMachineConfig.PROP_FORWARD_WINDOW);
+        System.clearProperty(TimeMachineConfig.PROP_TARGET_OFFSET);
     }
 
     @Test
@@ -22,5 +23,15 @@ class TimeMachineConfigTest {
     void forwardWindowReadsSystemProperty() {
         System.setProperty(TimeMachineConfig.PROP_FORWARD_WINDOW, "PT12H");
         assertEquals(Duration.ofHours(12), TimeMachineConfig.forwardWindow());
+    }
+    @Test
+    void targetOffsetDefaultsToZero() {
+        System.clearProperty(TimeMachineConfig.PROP_TARGET_OFFSET);
+        assertEquals(Duration.ZERO, TimeMachineConfig.targetOffset());
+    }
+    @Test
+    void targetOffsetReadsSystemProperty() {
+        System.setProperty(TimeMachineConfig.PROP_TARGET_OFFSET, "PT15M");
+        assertEquals(Duration.ofMinutes(15), TimeMachineConfig.targetOffset());
     }
 }
