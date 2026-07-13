@@ -141,7 +141,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             ProjectBuildingRequest buildingReq = Maven.buildingRequest(mavenSession);
             if (resolveDependenciesOffline(args) instanceof BuildOutcome.Skipped skipped) {
                 getLog().warn(String.format("commit %s skipped: %s", commitId, skipped.reason()));
-                doExcludeAnalysis(commitId, skipped.reason(), skipped.category(), skipped.detail());
+                doExcludeAnalysis(commitId, skipped.reason(), skipped.category(), skipped.detail(), captureDiffFiles(args));
                 return;
             }
 
@@ -161,7 +161,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             }
             if (buildOutcome instanceof BuildOutcome.Skipped skipped) {
                 getLog().warn(String.format("commit %s skipped: %s", commitId, skipped.reason()));
-                doExcludeAnalysis(commitId, skipped.reason(), skipped.category(), skipped.detail());
+                doExcludeAnalysis(commitId, skipped.reason(), skipped.category(), skipped.detail(), captureDiffFiles(args));
                 return;
             }
             ProjectBuildingResult result = ((BuildOutcome.Proceeded) buildOutcome).result();
@@ -172,7 +172,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             if (moduleOutcome.isPresent()) {
                 BuildOutcome.Skipped skipped = moduleOutcome.get();
                 getLog().warn(String.format("commit %s skipped: %s", commitId, skipped.reason()));
-                doExcludeAnalysis(commitId, skipped.reason(), skipped.category(), skipped.detail());
+                doExcludeAnalysis(commitId, skipped.reason(), skipped.category(), skipped.detail(), captureDiffFiles(args));
                 return;
             }
             try (ClassGraphSpec scan = scanProjects(args, reactors)) {
