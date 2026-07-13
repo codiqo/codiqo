@@ -3,7 +3,10 @@ package io.codiqo.maven;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.LinkedList;
 
@@ -16,7 +19,6 @@ import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
 import org.apache.maven.project.ProjectBuildingRequest;
 import org.apache.maven.project.ProjectBuildingResult;
-import org.apache.maven.shared.invoker.InvocationRequest;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ResetCommand;
 import org.eclipse.jgit.lib.ObjectId;
@@ -39,6 +41,13 @@ import io.codiqo.util.MemoryReport;
         threadSafe = true,
         aggregator = true)
 public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
+    /**
+     * back-off ladder mirroring how stale a developer's local snapshot copy may have been (Maven's default
+     * updatePolicy is daily): each rung steps the resolution target further back from the commit instant
+     */
+    private static final List<Duration> TIME_MACHINE_BACKOFF_LADDER = List.of(
+            Duration.ZERO, Duration.ofMinutes(15), Duration.ofHours(1), Duration.ofHours(4), Duration.ofDays(1));
+
     @Parameter(property = "codiqo.commitId", required = true)
     private String commitId;
 
@@ -149,16 +158,14 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
              * build with the time-machine snapshot resolver first, pinning each dependency's snapshot deploy closest
              * to the commit date, so a reproducible commit is analyzed against its commit-date dependencies and emits
              * snapshot metadata. if that build fails — the commit-date snapshot is unavailable, or the source no longer
-             * compiles against it — fall back to latest snapshots and analyze best-effort. when time-machine is
-             * disabled, only the latest build runs.
+             * compiles against it — step the resolution target back through the back-off ladder (the developer's
+             * daily-updating local repository may never have seen a snapshot deployed shortly before the commit),
+             * then fall back to latest snapshots and analyze best-effort. when time-machine is disabled, only the
+             * latest build runs.
              */
-            boolean timeMachine = args.isTimeMachineEnabled();
-            InvocationRequest firstReq = invocationRequest(args, timeMachine);
-            BuildOutcome buildOutcome = buildProject(args, firstReq, buildingReq);
-            if (buildOutcome instanceof BuildOutcome.Skipped skipped && timeMachine) {
-                getLog().warn(String.format("commit %s: time-machine build failed (%s), retrying with latest snapshots", commitId, skipped.reason()));
-                buildOutcome = buildProject(args, invocationRequest(args, false), buildingReq);
-            }
+            BuildOutcome buildOutcome = args.isTimeMachineEnabled()
+                    ? buildWithBackoff(args, buildingReq)
+                    : buildProject(args, invocationRequest(args, false, Duration.ZERO), buildingReq);
             if (buildOutcome instanceof BuildOutcome.Skipped skipped) {
                 getLog().warn(String.format("commit %s skipped: %s", commitId, skipped.reason()));
                 doExcludeAnalysis(commitId, skipped.reason(), skipped.category(), skipped.detail(), captureDiffFiles(args));
@@ -183,6 +190,37 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
         } finally {
             clone.close();
             FileUtils.deleteDirectory(temp);
+        }
+    }
+    private BuildOutcome buildWithBackoff(RunArgs args, ProjectBuildingRequest buildingReq) throws Exception {
+        Instant commitTimestamp = TimeMachineSupport.resolveCommitTimestamp(args);
+        Duration offset = Duration.ZERO;
+        for (;;) {
+            BuildOutcome outcome = buildProject(args, invocationRequest(args, true, offset), buildingReq);
+            if (outcome instanceof BuildOutcome.Proceeded) {
+                return outcome;
+            }
+
+            /**
+             * sidecars must be read before the next invocationRequest call — it deletes the superseded meta dir.
+             * a dependency-resolution failure (including the resolver's far-forward refusal) cannot be fixed by
+             * stepping further back, so the ladder short-circuits to the latest-snapshots attempt.
+             */
+            BuildOutcome.Skipped skipped = (BuildOutcome.Skipped) outcome;
+            Optional<Duration> next;
+            if (AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE == skipped.category()) {
+                next = Optional.empty();
+            } else {
+                List<Instant> pickedDeploys = TimeMachineBackoff.readPickedDeploys(args.getTimeMachineMetaDir());
+                next = TimeMachineBackoff.nextOffset(TIME_MACHINE_BACKOFF_LADDER, offset, commitTimestamp, pickedDeploys);
+            }
+            if (next.isEmpty()) {
+                getLog().warn(String.format("commit %s: time-machine build failed at offset %s (%s), retrying with latest snapshots", commitId, offset, skipped.reason()));
+                return buildProject(args, invocationRequest(args, false, Duration.ZERO), buildingReq);
+            }
+
+            offset = next.get();
+            getLog().warn(String.format("commit %s: time-machine build failed (%s), retrying with target offset %s", commitId, skipped.reason(), offset));
         }
     }
     private static String resolveAuthorEmail(RunArgs args) throws IOException {

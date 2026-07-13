@@ -593,7 +593,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             }
         }
     }
-    protected InvocationRequest invocationRequest(RunArgs args, boolean timeMachineRequested) throws IOException {
+    protected InvocationRequest invocationRequest(RunArgs args, boolean timeMachineRequested, Duration targetOffset) throws IOException {
         File rootPom = new File(args.getGit().getWorkTree(), "pom.xml");
         InvocationRequest request = new DefaultInvocationRequest();
         request.setPomFile(rootPom);
@@ -656,12 +656,23 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             extensionClasspath.addAll(extensionJarPaths(timeMachineExtensionJars));
 
             Instant ts = TimeMachineSupport.resolveCommitTimestamp(args);
+            FileUtils.deleteQuietly(args.getTimeMachineMetaDir());
             File metaDir = Files.createTempDirectory("codiqo-tm-").toFile();
             args.setTimeMachineMetaDir(metaDir);
 
             props.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, DateTimeFormatter.ISO_INSTANT.format(ts));
             props.setProperty(TimeMachineConfig.PROP_META_DIR, metaDir.getAbsolutePath());
-            getLog().info(String.format("time-machine enabled for commit %s (timestamp: %s, metaDir: %s)", args.getCommitId(), ts, metaDir.getAbsolutePath()));
+            if (targetOffset.compareTo(Duration.ZERO) > 0) {
+                props.setProperty(TimeMachineConfig.PROP_TARGET_OFFSET, targetOffset.toString());
+            }
+            getLog().info(String.format("time-machine enabled for commit %s (timestamp: %s, offset: %s, metaDir: %s)", args.getCommitId(), ts, targetOffset, metaDir.getAbsolutePath()));
+        } else {
+            /**
+             * a non-time-machine attempt may follow a failed time-machine attempt; drop the failed attempt's
+             * sidecar dir so ProjectModelPopulator never attaches its metadata to this build's submission
+             */
+            FileUtils.deleteQuietly(args.getTimeMachineMetaDir());
+            args.setTimeMachineMetaDir(null);
         }
 
         if (injectJacocoAgent) {

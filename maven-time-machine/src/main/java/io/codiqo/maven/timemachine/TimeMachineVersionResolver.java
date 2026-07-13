@@ -57,7 +57,10 @@ public class TimeMachineVersionResolver implements VersionResolver {
         if (targetOpt.isEmpty() || !artifact.isSnapshot() || resolvedByWorkspace(session, artifact)) {
             return delegate.resolveVersion(session, request);
         }
-        Instant target = targetOpt.get();
+        Instant commitTimestamp = targetOpt.get();
+        Duration offset = TimeMachineConfig.targetOffset();
+        Instant target = commitTimestamp.minus(offset);
+
         SnapshotWithMetadata pick = cache.computeIfAbsent(artifact, a -> resolvePick(session, a, request.getRepositories(), target));
         if (Objects.isNull(pick)) {
             log.warn("no snapshot of {}:{}:{} found before or after {} — falling back to default resolver",
@@ -78,22 +81,23 @@ public class TimeMachineVersionResolver implements VersionResolver {
         Duration forwardGap = Duration.between(target, pick.getDeployedAt());
         if (forwardGap.compareTo(TimeMachineConfig.forwardWindow()) > 0) {
             throw new VersionResolutionException(new VersionResult(request), String.format(
-                    "time-machine: no snapshot of %s:%s:%s deployed at or before %s; nearest is %s (deployed %s, %s after the commit — beyond the forward window %s). "
+                    "time-machine: no snapshot of %s:%s:%s deployed at or before %s%s; nearest is %s (deployed %s, %s after the target — beyond the forward window %s). "
                             + "refusing to build against a far-forward snapshot: verify the artifact registry exposes historical snapshot deploys "
                             + "(a *-maven.pkg.dev registry uses the GAR REST connector; other repositories expose only the latest snapshot in maven-metadata).",
                     artifact.getGroupId(),
                     artifact.getArtifactId(),
                     artifact.getBaseVersion(),
                     target,
+                    offsetSuffix(offset),
                     pick.getVersion(),
                     pick.getDeployedAt(),
                     forwardGap,
                     TimeMachineConfig.forwardWindow()));
         }
 
-        logResult(artifact, target, pick);
+        logResult(artifact, target, offset, pick);
         if (isExternalArtifact(session, artifact)) {
-            TimeMachineConfig.metaDir().ifPresent(metaDir -> writeMetadata(artifact, target, pick, metaDir));
+            TimeMachineConfig.metaDir().ifPresent(metaDir -> writeMetadata(artifact, commitTimestamp, offset, pick, metaDir));
         }
 
         VersionResult result = new VersionResult(request);
@@ -143,32 +147,37 @@ public class TimeMachineVersionResolver implements VersionResolver {
         Duration incumbentGap = Duration.between(incumbent.getDeployedAt(), target).abs();
         return candidateGap.compareTo(incumbentGap) < 0;
     }
-    private static void logResult(Artifact artifact, Instant target, SnapshotWithMetadata pick) {
+    private static void logResult(Artifact artifact, Instant target, Duration offset, SnapshotWithMetadata pick) {
         boolean forward = pick.getDeployedAt().isAfter(target);
         Duration gap = Duration.between(target, pick.getDeployedAt()).abs();
         Duration threshold = forward ? TimeMachineConfig.forwardWindow() : TimeMachineConfig.maxStaleness();
         if (gap.compareTo(threshold) > 0) {
-            log.warn("{}:{}:{} pinned {} to {} ({} {}; threshold {})",
+            log.warn("{}:{}:{} pinned {} to {} ({} {}; threshold {}){}",
                     artifact.getGroupId(),
                     artifact.getArtifactId(),
                     artifact.getBaseVersion(),
                     forward ? "forward" : "backward",
                     pick.getVersion(),
                     gap,
-                    forward ? "after commit" : "stale",
-                    threshold);
+                    forward ? "after target" : "stale",
+                    threshold,
+                    offsetSuffix(offset));
         } else {
-            log.info("{}:{}:{} -> {} ({} {} from {})",
+            log.info("{}:{}:{} -> {} ({} {} from {}){}",
                     artifact.getGroupId(),
                     artifact.getArtifactId(),
                     artifact.getBaseVersion(),
                     pick.getVersion(),
-                    forward ? "deployed after commit" : "deployed",
+                    forward ? "deployed after target" : "deployed",
                     pick.getDeployedAt(),
-                    pick.getRepository().getId());
+                    pick.getRepository().getId(),
+                    offsetSuffix(offset));
         }
     }
-    private static void writeMetadata(Artifact artifact, Instant target, SnapshotWithMetadata pick, File metaDir) {
+    private static String offsetSuffix(Duration offset) {
+        return offset.isZero() ? "" : String.format(" (target offset %s)", offset);
+    }
+    private static void writeMetadata(Artifact artifact, Instant commitTimestamp, Duration offset, SnapshotWithMetadata pick, File metaDir) {
         RemoteRepository repo = pick.getRepository();
         var resolution = SnapshotMetadataStore.SnapshotResolution
                 .builder()
@@ -177,8 +186,9 @@ public class TimeMachineVersionResolver implements VersionResolver {
                 .buildNumber(parseBuildNumber(pick.getVersion()))
                 .repositoryId(repo.getId())
                 .repositoryUrl(repo.getUrl())
-                .targetTimestamp(target)
-                .staleSeconds(Duration.between(pick.getDeployedAt(), target).getSeconds())
+                .targetTimestamp(commitTimestamp)
+                .staleSeconds(Duration.between(pick.getDeployedAt(), commitTimestamp).getSeconds())
+                .targetOffsetSeconds(offset.getSeconds())
                 .build();
 
         SnapshotMetadataStore.write(metaDir, artifact.getGroupId(), artifact.getArtifactId(), artifact.getBaseVersion(), resolution);

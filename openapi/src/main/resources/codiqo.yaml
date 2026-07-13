@@ -1086,6 +1086,10 @@ components:
           type: integer
           format: int64
           description: Seconds between the snapshot's deploy time and the commit timestamp
+        targetOffsetSeconds:
+          type: integer
+          format: int64
+          description: Back-off offset in seconds applied to the commit timestamp when this snapshot was pinned; 0 when the commit instant itself was the target
 
     MavenDependencyModel:
       type: object

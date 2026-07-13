@@ -27,6 +27,7 @@ class SnapshotMetadataStoreTest {
                 .repositoryUrl("https://europe-maven.pkg.dev/proj/snapshots")
                 .targetTimestamp(Instant.parse("2024-01-05T15:00:00Z"))
                 .staleSeconds(1800L)
+                .targetOffsetSeconds(900L)
                 .build();
         SnapshotMetadataStore.write(metaDir, "io.codiqo", "codiqo-api", "1.0-SNAPSHOT", written);
 
@@ -41,6 +42,7 @@ class SnapshotMetadataStoreTest {
         assertEquals("https://europe-maven.pkg.dev/proj/snapshots", actual.getRepositoryUrl());
         assertEquals(Instant.parse("2024-01-05T15:00:00Z"), actual.getTargetTimestamp());
         assertEquals(1800L, actual.getStaleSeconds());
+        assertEquals(900L, actual.getTargetOffsetSeconds());
     }
     @Test
     void readsEmptyForMissingCoordinate() {
@@ -62,5 +64,6 @@ class SnapshotMetadataStoreTest {
         assertNull(actual.getRepositoryId());
         assertNull(actual.getRepositoryUrl());
         assertEquals(3478L, actual.getStaleSeconds());
+        assertEquals(0L, actual.getTargetOffsetSeconds());
     }
 }

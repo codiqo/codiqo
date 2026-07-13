@@ -40,6 +40,7 @@ public class SnapshotMetadataStore {
     public static final String KEY_REPOSITORY_URL = "snapshot.repositoryUrl";
     public static final String KEY_TARGET_TIMESTAMP = "snapshot.targetTimestamp";
     public static final String KEY_STALE_SECONDS = "snapshot.staleSeconds";
+    public static final String KEY_TARGET_OFFSET_SECONDS = "snapshot.targetOffsetSeconds";
 
     private static final String COORDINATE_SEPARATOR = "__";
     private static final String FILE_SUFFIX = ".properties";
@@ -66,6 +67,7 @@ public class SnapshotMetadataStore {
                 }
                 props.setProperty(KEY_TARGET_TIMESTAMP, DateTimeFormatter.ISO_INSTANT.format(resolution.getTargetTimestamp()));
                 props.setProperty(KEY_STALE_SECONDS, Long.toString(resolution.getStaleSeconds()));
+                props.setProperty(KEY_TARGET_OFFSET_SECONDS, Long.toString(resolution.getTargetOffsetSeconds()));
 
                 Path tmp = Files.createTempFile(dir, "snapshot-", ".tmp");
                 try (OutputStream os = Files.newOutputStream(tmp)) {
@@ -104,6 +106,7 @@ public class SnapshotMetadataStore {
                         .repositoryUrl(props.getProperty(KEY_REPOSITORY_URL))
                         .targetTimestamp(parseInstant(props.getProperty(KEY_TARGET_TIMESTAMP)))
                         .staleSeconds(parseLong(props.getProperty(KEY_STALE_SECONDS)))
+                        .targetOffsetSeconds(parseLong(props.getProperty(KEY_TARGET_OFFSET_SECONDS)))
                         .build());
             } catch (Exception err) {
                 ExceptionUtils.wrapAndThrow(err);
@@ -134,5 +137,6 @@ public class SnapshotMetadataStore {
         String repositoryUrl;
         Instant targetTimestamp;
         long staleSeconds;
+        long targetOffsetSeconds;
     }
 }
