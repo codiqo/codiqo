@@ -100,6 +100,9 @@ public class IndexCommitsMojo extends AbstractMojo {
     @Parameter(property = "codiqo.readTimeoutSeconds", defaultValue = "60")
     private long readTimeoutSeconds;
 
+    @Parameter(property = "codiqo.firstParentOnly", defaultValue = "true")
+    private boolean firstParentOnly;
+
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try (Repository repo = JGit.openRepository(project.getBasedir())) {
@@ -113,11 +116,13 @@ public class IndexCommitsMojo extends AbstractMojo {
             RunArgs args = new RunArgs();
             Optional.ofNullable(includeAuthorEmails).ifPresent(args::setIncludeAuthorEmails);
             Optional.ofNullable(excludeAuthorEmails).ifPresent(args::setExcludeAuthorEmails);
+            args.setFirstParentOnly(firstParentOnly);
 
             Period window = Period.parse(commitWindow);
             Date cutoff = Date.from(LocalDate.now(ZoneOffset.UTC).minus(window).atStartOfDay(ZoneOffset.UTC).toInstant());
             List<CommitModel> commits = CommitIndexer.extractCommits(repo, args, indexRef, cutoff, resolvedBranch);
-            getLog().info("extracted " + commits.size() + " commits since " + cutoff + " (window=" + commitWindow + ")");
+            getLog().info("extracted " + commits.size() + " commits since " + cutoff + " (window=" + commitWindow
+                    + ", selection=" + (firstParentOnly ? "first-parent/mainline" : "all-commits") + ")");
 
             ProjectModel projectMetadata = buildProjectMetadata(projectId, repo);
 
