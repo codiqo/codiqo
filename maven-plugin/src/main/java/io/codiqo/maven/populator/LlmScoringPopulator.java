@@ -127,7 +127,9 @@ public class LlmScoringPopulator implements SubmissionPopulator {
                 .mergeCommit(Boolean.TRUE.equals(commit.getIsMerge()))
                 .revertCommit(Boolean.TRUE.equals(commit.getIsRevert()))
                 .revertedCommitId(commit.getRevertedCommitId())
-                .repositoryName(ctx.getIndex().getProjectRoot().getName())
+                .repositoryName(Objects.nonNull(ctx.getIndex())
+                        ? ctx.getIndex().getProjectRoot().getName()
+                        : submission.getProject().getName())
                 .llmModel(ctx.getLlmModel())
                 .analysisDuration(duration)
                 .criticalViolationsByModule(extractCriticalViolations(submission))
@@ -163,6 +165,7 @@ public class LlmScoringPopulator implements SubmissionPopulator {
         analysisResult.setProjectMetrics(submission.getProjectMetrics());
         analysisResult.setProjectQuality(submission.getProjectQuality());
         analysisResult.setFullProjectCoverage(submission.getFullProjectCoverage());
+        analysisResult.setBuildFailure(submission.getBuildFailure());
 
         LlmResponseMapper mapper = new LlmResponseMapper();
         mapper.mapToAnalysisResult(result.getResponse(), analysisResult);

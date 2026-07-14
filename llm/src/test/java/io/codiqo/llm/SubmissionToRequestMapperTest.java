@@ -19,6 +19,8 @@ import org.junit.jupiter.params.provider.EnumSource;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommentSyntax;
 import io.codiqo.api.diff.IneffectiveLineFilter;
+import io.codiqo.client.model.AnalysisBuildFailureModel;
+import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CloneLocationModel;
 import io.codiqo.client.model.CloneModel;
@@ -597,6 +599,42 @@ class SubmissionToRequestMapperTest {
                 "a diff with only imports and blank lines must be filtered by effectiveChanges()");
     }
 
+    @Test
+    void diffOnlyDegradedSubmissionMapsWithoutStaticSections() {
+        AnalysisSubmissionModel submission = diffOnlySubmission();
+
+        LlmScoringRequest request = mapper.apply(submission);
+
+        assertNull(request.getDuplication(), "no duplication section in the submission — request field must stay null");
+        assertNull(request.getCoverage(), "no coverage source in the submission — request field must stay null, not zeros");
+        assertNull(request.getBuildFailure());
+        assertTrue(request.getCodeBlockChanges().isEmpty(), "no code units — no code block changes");
+        assertEquals(1, request.getFileChanges().size());
+    }
+    @Test
+    void buildFailureMapsReasonCategoryAndAbbreviatedDetail() {
+        AnalysisSubmissionModel submission = diffOnlySubmission();
+        AnalysisBuildFailureModel buildFailure = new AnalysisBuildFailureModel();
+        buildFailure.setReason("[ERROR] COMPILATION ERROR");
+        buildFailure.setCategory(AnalysisExcludeCategory.BUILD_FAILURE);
+        buildFailure.setDetail(StringUtils.repeat('x', 10_000));
+        submission.setBuildFailure(buildFailure);
+
+        LlmScoringRequest request = mapper.apply(submission);
+
+        assertEquals("[ERROR] COMPILATION ERROR", request.getBuildFailure().getReason());
+        assertEquals("BUILD_FAILURE", request.getBuildFailure().getCategory());
+        assertEquals(4096, request.getBuildFailure().getDetail().length(),
+                "build-failure detail must be abbreviated to the prompt excerpt limit");
+    }
+
+    private static AnalysisSubmissionModel diffOnlySubmission() {
+        AnalysisSubmissionModel toReturn = baseSubmission();
+        toReturn.setDuplication(null);
+        toReturn.setFullProjectCoverage(null);
+        toReturn.getFiles().get(0).setCodeUnits(null);
+        return toReturn;
+    }
     private static AnalysisSubmissionModel baseSubmission() {
         CodeUnitModel method = new CodeUnitModel();
         method.setName("doWork");

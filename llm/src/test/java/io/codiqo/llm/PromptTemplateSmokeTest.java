@@ -195,6 +195,32 @@ class PromptTemplateSmokeTest {
                 "seniority band anchors missing");
     }
     @Test
+    void userPromptRendersDegradedBannerOnlyWithBuildFailure() {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+        PromptContext ctx = PromptContext.builder().args(new RunArgs()).build();
+
+        LlmScoringRequest degraded = degradedRequest();
+        String rendered = builder.buildUserMessageWithScores(degraded, ctx).getMessage();
+
+        assertTrue(rendered.contains("DEGRADED ANALYSIS — BUILD FAILED AT THIS COMMIT"), "degraded banner missing");
+        assertTrue(rendered.contains("BUILD_FAILURE"), "failure category missing");
+        assertTrue(rendered.contains("[ERROR] cannot find symbol"), "failure reason missing");
+        assertTrue(rendered.contains("symbol: class CurrencyMultiplier"), "failure detail excerpt missing");
+
+        degraded.setBuildFailure(null);
+        String normal = builder.buildUserMessageWithScores(degraded, ctx).getMessage();
+        assertFalse(normal.contains("DEGRADED ANALYSIS"), "degraded banner leaked into a normal analysis");
+    }
+    @Test
+    void systemPromptRendersDegradedModeSection() {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+        String rendered = builder.buildSystemPrompt(PromptContext.builder().args(new RunArgs()).build());
+
+        assertTrue(rendered.contains("DEGRADED MODE (build-failed commits)"), "degraded mode section missing");
+        assertTrue(rendered.contains("Quality multiplier must not exceed 1.0"), "degraded multiplier cap rule missing");
+    }
+
+    @Test
     void validationFeedbackRendersOneBulletPerFailureWithDistinctReasons() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
         FinalScoreCalculator.ValidationFailure unknownBlock = new FinalScoreCalculator.ValidationFailure(
@@ -272,5 +298,20 @@ class PromptTemplateSmokeTest {
                 .filter(line -> line.startsWith("- `") && line.contains(filePath))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("no bullet found for " + filePath));
+    }
+    private static LlmScoringRequest degradedRequest() {
+        return LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder()
+                        .linesAdded(5).linesDeleted(2).totalLinesChanged(7).totalFilesChanged(1).build())
+                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                        .path("Foo.java").changeType(FileChangeType.MODIFIED).language("java")
+                        .linesAdded(5).linesDeleted(2).linesJustificationRequired(true).diff("dummy").build())))
+                .codeBlockChanges(Collections.emptyList())
+                .buildFailure(LlmScoringRequest.BuildFailureInfo.builder()
+                        .reason("[ERROR] cannot find symbol")
+                        .category("BUILD_FAILURE")
+                        .detail("symbol: class CurrencyMultiplier")
+                        .build())
+                .build();
     }
 }

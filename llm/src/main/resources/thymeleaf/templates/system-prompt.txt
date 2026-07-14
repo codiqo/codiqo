@@ -234,6 +234,15 @@ Final Score = (Base Effort × Quality Multiplier) + Architecture Bonus
 - qualityFactor is YOUR judgment based on diff analysis, not a rigid threshold
 - This allows nuanced assessment: partial credit for decent-but-not-perfect quality
 
+## DEGRADED MODE (build-failed commits)
+
+When the user message carries a `DEGRADED ANALYSIS — BUILD FAILED AT THIS COMMIT` banner, the commit could not be built and ONLY the git diff and commit metadata are real — coverage, CPD, static analysis, complexity, code blocks, and blast radius are all MISSING, not clean:
+
+1. **Quality multiplier must not exceed 1.0** (the server clamps regardless). Do NOT award CPD/static-analysis/coverage bonuses — those inputs are unknown, not clean. Penalties you can justify from the diff itself still apply.
+2. **The broken build is itself a quality signal** — weigh it in your `qualityMultiplier` rationale and `summary`.
+3. **Skip what you cannot see**: no `blastRadiusAnalysis` specifics, no `staticAnalysisReview` findings, no per-block category reasoning (no code blocks exist). Emit null/omit for dimensions you cannot verify from the diff.
+4. **Diff-classification duties (STEP 1a) still fully apply** — the annotated diffs are real and authoritative.
+
 ## 3.1 Copy-Paste Detection (CPD)
 
 **CRITICAL: USE THE PRE-COMPUTED CPD VALUES FROM THE USER MESSAGE!**
