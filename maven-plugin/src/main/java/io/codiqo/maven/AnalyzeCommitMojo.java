@@ -5,8 +5,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.LinkedList;
 
@@ -147,7 +149,22 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
              * attempt to build the project at the specified commit ID (potentially completely different multiple modules structure).
              * this may require different JDK/MVN home since the project's build requirements may have changed since then.
              */
+            /**
+             * host-side ProjectBuilder calls (pre-flight, root/module model building) resolve snapshot parents and
+             * BOM imports in THIS JVM, where the time-machine only applies when the extension is loaded via the host
+             * maven.ext.class.path. pin those calls to the commit instant (shifted by the successful attempt's
+             * back-off offset) so a later snapshot deploy that breaks historical POM interpolation — e.g. a
+             * dependencyManagement removal — cannot fail the analysis of an older commit.
+             */
+            if (args.isTimeMachineEnabled()) {
+                args.setTimeMachineTargetOffset(Duration.ZERO);
+                warnIfHostTimeMachineMissing();
+            }
+
             ProjectBuildingRequest buildingReq = Maven.buildingRequest(mavenSession);
+            if (Objects.nonNull(args.getTimeMachineTargetOffset())) {
+                Maven.isolateRepositorySession(buildingReq);
+            }
             if (resolveDependenciesOffline(args) instanceof BuildOutcome.Skipped skipped) {
                 getLog().warn(String.format("commit %s skipped: %s", commitId, skipped.reason()));
                 doExcludeAnalysis(commitId, skipped.reason(), skipped.category(), skipped.detail(), captureDiffFiles(args));
@@ -194,8 +211,10 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     }
     private BuildOutcome buildWithBackoff(RunArgs args, ProjectBuildingRequest buildingReq) throws Exception {
         Instant commitTimestamp = TimeMachineSupport.resolveCommitTimestamp(args);
+        List<String> attemptFailures = new ArrayList<>();
         Duration offset = Duration.ZERO;
         for (;;) {
+            args.setTimeMachineTargetOffset(offset);
             BuildOutcome outcome = buildProject(args, invocationRequest(args, true, offset), buildingReq);
             if (outcome instanceof BuildOutcome.Proceeded) {
                 return outcome;
@@ -207,6 +226,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
              * stepping further back, so the ladder short-circuits to the latest-snapshots attempt.
              */
             BuildOutcome.Skipped skipped = (BuildOutcome.Skipped) outcome;
+            attemptFailures.add(String.format("offset %s: %s", offset, skipped.reason()));
             Optional<Duration> next;
             if (AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE == skipped.category()) {
                 next = Optional.empty();
@@ -216,12 +236,24 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             }
             if (next.isEmpty()) {
                 getLog().warn(String.format("commit %s: time-machine build failed at offset %s (%s), retrying with latest snapshots", commitId, offset, skipped.reason()));
-                return buildProject(args, invocationRequest(args, false, Duration.ZERO), buildingReq);
+                args.setTimeMachineTargetOffset(null);
+                BuildOutcome latest = buildProject(args, invocationRequest(args, false, Duration.ZERO), buildingReq);
+                if (latest instanceof BuildOutcome.Skipped lastSkipped) {
+                    return new BuildOutcome.Skipped(lastSkipped.reason(), lastSkipped.category(), appendAttemptHistory(lastSkipped.detail(), attemptFailures));
+                }
+                return latest;
             }
 
             offset = next.get();
             getLog().warn(String.format("commit %s: time-machine build failed (%s), retrying with target offset %s", commitId, skipped.reason(), offset));
         }
+    }
+    private static String appendAttemptHistory(String detail, List<String> attemptFailures) {
+        String history = "time-machine attempts:\n" + StringUtils.join(attemptFailures, "\n");
+        if (StringUtils.isBlank(detail)) {
+            return history;
+        }
+        return detail + "\n\n" + history;
     }
     private static String resolveAuthorEmail(RunArgs args) throws IOException {
         ObjectId objectId = args.getGit().resolve(args.getCommitId());

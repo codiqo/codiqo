@@ -34,6 +34,9 @@ import org.apache.maven.project.ProjectBuildingException;
 import org.apache.maven.project.ProjectBuildingRequest;
 import org.apache.maven.project.ProjectBuildingResult;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
+import org.eclipse.aether.DefaultRepositoryCache;
+import org.eclipse.aether.DefaultRepositorySystemSession;
+import org.eclipse.aether.DefaultSessionData;
 
 
 import io.codiqo.client.model.AnalysisExcludeCategory;
@@ -67,6 +70,17 @@ public class Maven {
         toReturn.setResolveDependencies(true);
         toReturn.setProcessPlugins(true);
         return toReturn;
+    }
+    /**
+     * host-side model building under time-machine pinning must not share resolution/model caches with the host
+     * session — the host may already have resolved the same snapshot coordinates to their latest deploys
+     */
+    public static void isolateRepositorySession(ProjectBuildingRequest request) {
+        DefaultRepositorySystemSession derived = new DefaultRepositorySystemSession(request.getRepositorySession());
+        derived.setCache(new DefaultRepositoryCache());
+        derived.setData(new DefaultSessionData());
+
+        request.setRepositorySession(derived);
     }
     public static File autoDetectJacocoDestFile(MavenProject reactor) {
         Predicate<Plugin> filter = plugin -> BooleanUtils.and(new boolean[] {

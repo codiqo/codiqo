@@ -43,7 +43,7 @@ public class TimeMachineVersionResolver implements VersionResolver {
 
     private final VersionResolver delegate;
     private final RepoClient repoClient;
-    private final Map<Artifact, SnapshotWithMetadata> cache = new ConcurrentHashMap<>();
+    private final Map<CacheKey, SnapshotWithMetadata> cache = new ConcurrentHashMap<>();
 
     @Inject
     public TimeMachineVersionResolver(@Named("default") VersionResolver delegate, RepoClient repoClient) {
@@ -61,7 +61,11 @@ public class TimeMachineVersionResolver implements VersionResolver {
         Duration offset = TimeMachineConfig.targetOffset();
         Instant target = commitTimestamp.minus(offset);
 
-        SnapshotWithMetadata pick = cache.computeIfAbsent(artifact, a -> resolvePick(session, a, request.getRepositories(), target));
+        /**
+         * keyed by artifact AND effective target: in the analyzing (host) JVM the resolver stays registered across
+         * commits and back-off rungs, so the same artifact may legitimately pin to different deploys per target
+         */
+        SnapshotWithMetadata pick = cache.computeIfAbsent(new CacheKey(artifact, target), k -> resolvePick(session, artifact, request.getRepositories(), target));
         if (Objects.isNull(pick)) {
             log.warn("no snapshot of {}:{}:{} found before or after {} — falling back to default resolver",
                     artifact.getGroupId(),
@@ -197,4 +201,6 @@ public class TimeMachineVersionResolver implements VersionResolver {
         Matcher matcher = BUILD_NUMBER_PATTERN.matcher(version);
         return matcher.find() ? Integer.valueOf(matcher.group(1)) : null;
     }
+
+    private record CacheKey(Artifact artifact, Instant target) {}
 }
