@@ -52,6 +52,9 @@ public class LlmResponseMapper {
                 .map(LlmResponseMapper::mapTaskTypes).orElse(Collections.emptyList()));
         result.setTaskComplexity(llmResponse.getTaskComplexity());
         result.setTaskComplexityRationale(llmResponse.getTaskComplexityRationale());
+        result.setTaskComplexityNew(llmResponse.getTaskComplexityNew());
+        result.setTaskComplexityModified(llmResponse.getTaskComplexityModified());
+        result.setTaskComplexityAttributionRationale(llmResponse.getTaskComplexityAttributionRationale());
         if (Objects.nonNull(llmResponse.getRiskAssessment())) {
             result.setRiskAssessment(mapRiskAssessment(llmResponse.getRiskAssessment()));
         }
@@ -366,6 +369,8 @@ public class LlmResponseMapper {
     private static VolumeScoreModel mapVolumeScore(LlmScoringResponse.VolumeScore volumeScore) {
         VolumeScoreModel toReturn = new VolumeScoreModel();
         toReturn.setLinesChanged(volumeScore.getLinesChanged());
+        toReturn.setLinesNew(volumeScore.getLinesNew());
+        toReturn.setLinesModified(volumeScore.getLinesModified());
         toReturn.setFilesChanged(volumeScore.getFilesChanged());
         toReturn.setFilesScopeMultiplier(volumeScore.getFilesScopeMultiplier());
         toReturn.setCodeBlocksModified(volumeScore.getCodeBlocksModified());

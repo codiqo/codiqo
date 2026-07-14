@@ -39,6 +39,9 @@ public class LlmScoringResponse {
 
     private Integer taskComplexity;
     private String taskComplexityRationale;
+    private Integer taskComplexityNew;
+    private Integer taskComplexityModified;
+    private String taskComplexityAttributionRationale;
     private String thinking;
     private Bugs bugs;
     private StaticAnalysisReview staticAnalysisReview;
@@ -186,6 +189,8 @@ public class LlmScoringResponse {
     @AllArgsConstructor
     public static class VolumeScore {
         private int linesChanged;
+        private int linesNew;
+        private int linesModified;
         private int filesChanged;
         private double filesScopeMultiplier;
         private int codeBlocksModified;

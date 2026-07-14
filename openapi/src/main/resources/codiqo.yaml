@@ -465,6 +465,25 @@ components:
         taskComplexityRationale:
           type: string
           description: One or two sentences naming the inputs that drove the taskComplexity score.
+        taskComplexityNew:
+          type: integer
+          minimum: 1
+          maximum: 10
+          description: |
+            Complexity attribution for the newly added code units, same 1-10 scale as
+            taskComplexity. Informational only — the headline taskComplexity stays
+            authoritative. Absent when the commit adds no code blocks.
+        taskComplexityModified:
+          type: integer
+          minimum: 1
+          maximum: 10
+          description: |
+            Complexity attribution for the modifications to existing code units, same 1-10
+            scale as taskComplexity. Informational only. Absent when the commit modifies
+            no code blocks.
+        taskComplexityAttributionRationale:
+          type: string
+          description: One sentence justifying how complexity splits between new and modified code.
         bugs:
           $ref: '#/components/schemas/BugsModel'
         riskAssessment:
@@ -2686,6 +2705,17 @@ components:
           type: integer
           minimum: 0
           description: Total effective lines of code changed (imports excluded)
+        linesNew:
+          type: integer
+          minimum: 0
+          description: |
+            Scaled lines billed by NEW code blocks (full body lines), config files excluded.
+            Together with linesModified gives the new-vs-modified split; intentionally does
+            not reconcile to linesChanged (which is diff-summary based).
+        linesModified:
+          type: integer
+          minimum: 0
+          description: Scaled lines billed by MODIFY code blocks (capped changed lines), config files excluded.
         filesChanged:
           type: integer
           minimum: 0
@@ -3433,10 +3463,16 @@ components:
         sizeFactorDivisor:
           type: number
           format: double
+        modifyMultiplierBase:
+          type: number
+          format: double
         modifyMultiplierScale:
           type: number
           format: double
         modifyMultiplierCap:
+          type: number
+          format: double
+        addMultiplierBase:
           type: number
           format: double
         addMultiplierScale:

@@ -58,8 +58,10 @@ public class ScoringConfigs {
         toReturn.setIncludeAuthorEmails(args.getIncludeAuthorEmails());
 
         toReturn.setSizeFactorDivisor(args.getSizeFactorDivisor());
+        toReturn.setModifyMultiplierBase(args.getModifyMultiplierBase());
         toReturn.setModifyMultiplierScale(args.getModifyMultiplierScale());
         toReturn.setModifyMultiplierCap(args.getModifyMultiplierCap());
+        toReturn.setAddMultiplierBase(args.getAddMultiplierBase());
         toReturn.setAddMultiplierScale(args.getAddMultiplierScale());
         toReturn.setQualityMultiplierMin(args.getQualityMultiplierMin());
         toReturn.setQualityMultiplierMax(args.getQualityMultiplierMax());

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
@@ -255,7 +256,9 @@ class VolumeScoreCalculatorTest {
     }
     private static RunArgs neutralMultiplierArgs() {
         RunArgs args = new RunArgs();
+        args.setAddMultiplierBase(1.0);
         args.setAddMultiplierScale(0.0);
+        args.setModifyMultiplierBase(1.0);
         args.setModifyMultiplierScale(0.0);
         args.setModifyMultiplierCap(0.0);
         return args;
@@ -342,6 +345,40 @@ class VolumeScoreCalculatorTest {
         assertEquals(0, scores.getTotalEffectiveStatements(),
                 "config lines are not statements and must not inflate effective statements");
     }
+    @Test
+    void lineSplitSumsScaledLinesByOperationExcludingConfig() {
+        RunArgs args = neutralMultiplierArgs();
+        DriverScaler scaler = uniformScaler(1, 100);
+        CodeBlockChange added = newMethodBlock(50, 50, 50, false);
+        CodeBlockChange modified = CodeBlockChange.builder()
+                .operation(Operation.MODIFY)
+                .name("tweak")
+                .file("Bar.java")
+                .nonCommentCodeLines(40)
+                .bodyCodeLines(40)
+                .nonCommentCodeStatements(30)
+                .totalLinesChanged(12)
+                .isConstructor(false)
+                .isTest(false)
+                .build();
+        FileChange pom = FileChange.builder().path("pom.xml").isConfig(true).linesAdded(500).linesDeleted(0).build();
+
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder().totalFilesChanged(3).build())
+                .codeBlockChanges(List.of(added, modified))
+                .fileChanges(List.of(pom))
+                .methodScalerProd(scaler).methodScalerTest(scaler)
+                .constructorScalerProd(scaler).constructorScalerTest(scaler)
+                .build();
+        PreComputedScores scores = new VolumeScoreCalculator(args).calculate(request, 1000, 100, 5, 0, 0, 0);
+
+        assertEquals(50, scores.getLinesNew(), "NEW block bills its full body lines");
+        assertEquals(12, scores.getLinesModified(), "MODIFY block bills its capped changed lines; config lines excluded");
+
+        PreComputedScores recomputed = new VolumeScoreCalculator(args).recompute(scores, Map.of(), Map.of(), Map.of());
+        assertEquals(50, recomputed.getLinesNew(), "recompute with neutral factors preserves linesNew");
+        assertEquals(12, recomputed.getLinesModified(), "recompute with neutral factors preserves linesModified");
+    }
     private static PreComputedScores calculateConfigOnly(RunArgs args, FileChange config) {
         LlmScoringRequest request = LlmScoringRequest.builder()
                 .changeSummary(ChangeSummary.builder().totalFilesChanged(1).build())
@@ -388,11 +425,13 @@ class VolumeScoreCalculatorTest {
 
         assertTrue(tinyAddMult > hugeAddMult,
                 "smaller projects should produce a larger addMult — add effort is dampened by size");
-        double ceiling = 1.0 + args.getAddMultiplierScale();
+        double ceiling = args.getAddMultiplierBase() + args.getAddMultiplierScale();
         assertTrue(tinyAddMult <= ceiling + 0.01,
-                "addMult must never exceed 1 + addMultiplierScale (the small-project limit)");
-        assertTrue(hugeAddMult > 1.0,
-                "addMult stays above 1.0 even for huge projects — the dampening never pushes it below neutral");
+                "addMult must never exceed addMultiplierBase + addMultiplierScale (the small-project limit)");
+        assertTrue(hugeAddMult > args.getAddMultiplierBase(),
+                "addMult approaches addMultiplierBase from above as the project grows");
+        assertTrue(hugeAddMult < 1.0,
+                "default addMultiplierBase below 1.0 discounts new code in large projects");
     }
     @Test
     void filesScopeMultiplierIsOneForSingleFile() {

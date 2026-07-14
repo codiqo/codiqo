@@ -203,9 +203,13 @@ public class RunArgs {
     @Nullable
     private double sizeFactorDivisor = 100.0;
     @Nullable
+    private double modifyMultiplierBase = 1.0;
+    @Nullable
     private double modifyMultiplierScale = 0.3;
     @Nullable
     private double modifyMultiplierCap = 0.2;
+    @Nullable
+    private double addMultiplierBase = 0.8;
     @Nullable
     private double addMultiplierScale = 0.1;
     @Nullable

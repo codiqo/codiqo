@@ -430,6 +430,8 @@ public class FinalScoreCalculator {
     private static VolumeScore toVolumeScore(PreComputedScores effective, DiffAdjustment adjustment) {
         VolumeScore toReturn = VolumeScore.builder()
                 .linesChanged(effective.getLinesChanged())
+                .linesNew(effective.getLinesNew())
+                .linesModified(effective.getLinesModified())
                 .filesChanged(effective.getFilesChanged())
                 .filesScopeMultiplier(Precision.round(effective.getFilesScopeMultiplier(), ROUNDING_PRECISION))
                 .codeBlocksModified(effective.getCodeBlocksModified())

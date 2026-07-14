@@ -46,8 +46,15 @@ public class VolumeScoreCalculator {
         ChangeSummary changeSummary = request.getChangeSummary();
         double testMult = args.getTestCodeScoreMultiplier();
         double sizeFactor = Math.cbrt(projectTotalStatements) / args.getSizeFactorDivisor();
-        double modifyMult = 1.0 + Math.min(sizeFactor * args.getModifyMultiplierScale(), args.getModifyMultiplierCap());
-        double addMult = 1.0 + args.getAddMultiplierScale() / (1.0 + sizeFactor);
+        /**
+         * saturating base+scale form: bases are the asymptotes and may sit below 1.0, so either
+         * operation can be discounted rather than only premium-priced. modify grows with project
+         * size (s/(1+s) saturates at 1, cap kept as a safety clamp); add decays toward its base —
+         * new code in a large codebase is priced below modifying entangled existing code
+         */
+        double modifyMult = args.getModifyMultiplierBase()
+                + Math.min(args.getModifyMultiplierScale() * sizeFactor / (1.0 + sizeFactor), args.getModifyMultiplierCap());
+        double addMult = args.getAddMultiplierBase() + args.getAddMultiplierScale() / (1.0 + sizeFactor);
 
         double maxDeviation = args.getDriverFactorMaxDeviation();
         List<CodeBlockEffort> initialEfforts = calculateCodeBlockEfforts(
@@ -83,6 +90,8 @@ public class VolumeScoreCalculator {
         int totalEffectiveStatements = (int) Math.round(codeBlockEfforts.stream()
                 .filter(cbe -> !cbe.isConfig())
                 .mapToDouble(CodeBlockEffort::getDriverScore).sum());
+        int linesNew = sumScaledLines(codeBlockEfforts, LlmScoringRequest.Operation.NEW);
+        int linesModified = sumScaledLines(codeBlockEfforts, LlmScoringRequest.Operation.MODIFY);
 
         CpdPreComputed cpd = calculateCpdPenalty(request);
         StaticAnalysisPreComputed sa = calculateStaticAnalysisPenalty(request);
@@ -98,6 +107,8 @@ public class VolumeScoreCalculator {
                 .modifyMult(Precision.round(modifyMult, ROUNDING_PRECISION))
                 .addMult(Precision.round(addMult, ROUNDING_PRECISION))
                 .linesChanged(changeSummary.getTotalLinesChanged())
+                .linesNew(linesNew)
+                .linesModified(linesModified)
                 .totalEffectiveStatements(totalEffectiveStatements)
                 .filesChanged(filesChanged)
                 .filesScopeMultiplier(Precision.round(filesScopeMultiplier, ROUNDING_PRECISION))
@@ -184,6 +195,8 @@ public class VolumeScoreCalculator {
                 .mapToDouble(CodeBlockEffort::getDriverScore).sum());
 
         return original.toBuilder()
+                .linesNew(sumScaledLines(codeBlockEfforts, LlmScoringRequest.Operation.NEW))
+                .linesModified(sumScaledLines(codeBlockEfforts, LlmScoringRequest.Operation.MODIFY))
                 .blockEffortSum(Precision.round(blockEffortSum, ROUNDING_PRECISION))
                 .totalEffortRaw(Precision.round(totalEffortRaw, ROUNDING_PRECISION))
                 .globalCapApplied(globalCapApplied)
@@ -404,6 +417,13 @@ public class VolumeScoreCalculator {
         }
         return toReturn;
     }
+    private static int sumScaledLines(List<CodeBlockEffort> blocks, LlmScoringRequest.Operation operation) {
+        return (int) Math.round(blocks.stream()
+                .filter(cbe -> !cbe.isConfig())
+                .filter(cbe -> cbe.getOperation() == operation)
+                .mapToDouble(CodeBlockEffort::getScaledLines)
+                .sum());
+    }
     private static double bucketRatio(DriverScaler.DimensionStats numerator, DriverScaler.DimensionStats denominator) {
         if (denominator.p50() <= 0.0) {
             return 0.0;
@@ -491,6 +511,8 @@ public class VolumeScoreCalculator {
         double modifyMult;
         double addMult;
         int linesChanged;
+        int linesNew;
+        int linesModified;
         int totalEffectiveStatements;
         int filesChanged;
         double filesScopeMultiplier;
