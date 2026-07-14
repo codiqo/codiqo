@@ -323,6 +323,22 @@ components:
         - FILTERED_BY_RULES
         - DUPLICATE_COMMIT
 
+    AnalysisBuildFailureModel:
+      type: object
+      required: [reason, category]
+      properties:
+        reason:
+          type: string
+          description: Headline build-failure reason, e.g. the first compiler error line or unresolved dependency coordinates
+        category:
+          description: Build-pipeline failure category (BUILD_FAILURE or DEPENDENCY_RESOLUTION_FAILURE)
+          allOf:
+            - $ref: '#/components/schemas/AnalysisExcludeCategory'
+        detail:
+          type: string
+          nullable: true
+          description: Full (bounded) build error output / time-machine attempt history captured for diagnostics
+
     AnalysisSubmissionModel:
       type: object
       required: [project, commit, files]
@@ -353,6 +369,10 @@ components:
           $ref: '#/components/schemas/FullProjectCoverageModel'
         scoringConfig:
           $ref: '#/components/schemas/ScoringConfigModel'
+        buildFailure:
+          description: Present when this is a diff-only degraded submission of a build-breaking commit — no coverage/static-analysis/duplication/code-unit data was collectable
+          allOf:
+            - $ref: '#/components/schemas/AnalysisBuildFailureModel'
 
     AnalysisAcceptedModel:
       type: object
@@ -408,6 +428,10 @@ components:
           format: date-time
         llmAnalysis:
           $ref: '#/components/schemas/LlmAnalysisModel'
+        buildFailure:
+          description: Present when this analysis was scored in diff-only degraded mode because the commit could not be built
+          allOf:
+            - $ref: '#/components/schemas/AnalysisBuildFailureModel'
         changeClassification:
           type: string
           enum: [trivial, small, medium, large, huge]

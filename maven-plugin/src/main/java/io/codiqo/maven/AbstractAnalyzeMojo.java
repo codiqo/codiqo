@@ -86,6 +86,7 @@ import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.LogFactory;
+import io.codiqo.client.model.AnalysisBuildFailureModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.ClientInfoModel;
 import io.codiqo.client.model.FileChangeModel;
@@ -236,6 +237,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.skipOnBuildFailure", defaultValue = "true")
     protected boolean skipOnBuildFailure;
 
+    @Parameter(property = "codiqo.scoreOnBuildFailure", defaultValue = "false")
+    protected boolean scoreOnBuildFailure;
+
     @Parameter(property = "codiqo.buildErrorCaptureLimit", defaultValue = "8192")
     protected int buildErrorCaptureLimit;
 
@@ -374,6 +378,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setFailOnJdtlsError(failOnJdtlsError);
         args.setSkipOnUnresolvedDependencies(skipOnUnresolvedDependencies);
         args.setSkipOnBuildFailure(skipOnBuildFailure);
+        args.setScoreOnBuildFailure(scoreOnBuildFailure);
         args.setBuildErrorCaptureLimit(Math.max(MIN_ABBREVIATE_WIDTH, buildErrorCaptureLimit));
         args.setPmdMinPriority(pmdMinPriority);
         if (StringUtils.isNotBlank(pmdRules)) {
@@ -913,10 +918,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                          */
                         if (BooleanUtils.and(new boolean[] { StringUtils.isNotBlank(args.getCommitId()), args.isSkipOnBuildFailure() })) {
                             String reason = StringUtils.defaultIfBlank(err.getMessage(), err.getClass().getSimpleName());
-                            getLog().warn(String.format("commit %s skipped: analysis failed after build: %s", args.getCommitId(), reason), err);
-                            doExcludeAnalysis(args.getCommitId(), reason, AnalysisExcludeCategory.BUILD_FAILURE,
-                                    StringUtils.abbreviate(ExceptionUtils.getStackTrace(err), args.getBuildErrorCaptureLimit()),
-                                    captureDiffFiles(args));
+                            getLog().warn(String.format("commit %s: analysis failed after build: %s", args.getCommitId(), reason), err);
+                            doDegradedAnalysis(args, reason, AnalysisExcludeCategory.BUILD_FAILURE,
+                                    StringUtils.abbreviate(ExceptionUtils.getStackTrace(err), args.getBuildErrorCaptureLimit()));
                             return Optional.empty();
                         }
                         throw err;
@@ -972,7 +976,43 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files) throws Exception {
         getLog().debug(String.format("no exclusion handler, commit %s would be excluded with reason: %s (category: %s)", commitSha, reason, category));
     }
-    protected List<FileChangeModel> captureDiffFiles(RunArgs args) throws Exception {
+    /**
+     * with codiqo.scoreOnBuildFailure enabled, a build-pipeline failure no longer excludes the commit
+     * outright: the git diff still represents real developer work, so score it in diff-only degraded mode.
+     * falls back to exclusion when the flag is off (default), when the commit has no analyzable diff files,
+     * and mirrors the revert gate that the successful-build path applies in doExecute. only reachable from
+     * historical commit analysis — analyze-uncommitted-changes never forks a build (it analyzes the working
+     * tree against the host session's already-resolved reactor), so it has no failure signal to degrade on.
+     */
+    protected void doDegradedAnalysis(RunArgs args, String reason, AnalysisExcludeCategory category, String detail) throws Exception {
+        SubmissionContext ctx = buildDegradedSubmission(args, reason, category, detail);
+        List<FileChangeModel> files = ctx.getSubmissionModel().getFiles();
+
+        if (args.isScoreOnBuildFailure()) {
+            if (CollectionUtils.isEmpty(files)) {
+                getLog().warn(String.format("commit %s skipped: build failed and no analyzable diff — %s", args.getCommitId(), reason));
+                doExcludeAnalysis(args.getCommitId(), reason, category, detail, files);
+                return;
+            }
+            if (ctx.getAnalysis().isRevertCommit()) {
+                getLog().warn(String.format("commit %s skipped: revert commit (no LLM scoring or submission)", args.getCommitId()));
+                doExcludeAnalysis(args.getCommitId(), "revert commit (no LLM scoring performed)", AnalysisExcludeCategory.REVERT_COMMIT);
+                return;
+            }
+            getLog().warn(String.format("commit %s: build failed (%s: %s) — running diff-only degraded analysis", args.getCommitId(), category, reason));
+            new OutputSerializer(preferYaml, ctx.getLogFactory().getLogger(OutputSerializer.class)).accept(ctx);
+            doLlmScoring(ctx);
+        } else {
+            getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), reason));
+            doExcludeAnalysis(args.getCommitId(), reason, category, detail, files);
+        }
+    }
+    /**
+     * strictly diff-only submission: git diff + commit metadata, no code units, no coverage, no PMD/CPD,
+     * no project-level metrics — even the build-independent analyzers stay off so the degraded score is
+     * derived from the diff alone. carries the buildFailure block that drives degraded LLM scoring.
+     */
+    protected SubmissionContext buildDegradedSubmission(RunArgs args, String reason, AnalysisExcludeCategory category, String detail) throws Exception {
         LogFactory logFactory = new MavenLogFactory(getLog());
         Path workTree = args.getGit().getWorkTree().toPath().normalize();
         CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
@@ -991,9 +1031,18 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 project.getGroupId() + ":" + project.getArtifactId(),
                 project.getName(),
                 clientInfo);
+        new ProjectModelPopulator(getLog()).accept(ctx);
+        new CommitModelPopulator().accept(ctx);
         new FileAnalysisPopulator().accept(ctx);
 
-        return ctx.getSubmissionModel().getFiles();
+        AnalysisBuildFailureModel buildFailure = new AnalysisBuildFailureModel();
+        buildFailure.setReason(reason);
+        buildFailure.setCategory(category);
+        buildFailure.setDetail(detail);
+
+        ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
+        ctx.getSubmissionModel().setBuildFailure(buildFailure);
+        return ctx;
     }
     @SuppressWarnings("deprecation")
     private void purgeNonJavaSourceJars(RunArgs args) throws IOException {

@@ -45,6 +45,7 @@ public class FinalScoreCalculator {
     private static final int ROUNDING_PRECISION = 2;
     private static final int MAX_ARCHITECTURE_IMPACT = 10;
     private static final String COMMIT_SCOPE = "(commit)";
+    private static final double DEGRADED_QUALITY_MULTIPLIER_MAX = 1.0;
 
     private final RunArgs args;
     private final VolumeScoreCalculator volumeScoreCalculator;
@@ -83,9 +84,18 @@ public class FinalScoreCalculator {
             rawQualityMultiplier = response.getQualityMultiplier().getFinalMultiplier();
         }
 
+        /**
+         * a diff-only degraded analysis (build failure) has no coverage/static-analysis/duplication data,
+         * so quality bonuses are unverifiable — and the commit broke the build. cap the multiplier at 1.0
+         */
+        double qualityMultiplierMax = args.getQualityMultiplierMax();
+        if (Objects.nonNull(request) && Objects.nonNull(request.getBuildFailure())) {
+            qualityMultiplierMax = Math.min(qualityMultiplierMax, DEGRADED_QUALITY_MULTIPLIER_MAX);
+        }
+
         double clampedQualityMultiplier = Math.max(
                 args.getQualityMultiplierMin(),
-                Math.min(args.getQualityMultiplierMax(), rawQualityMultiplier));
+                Math.min(qualityMultiplierMax, rawQualityMultiplier));
         if (Objects.isNull(response.getQualityMultiplier())) {
             response.setQualityMultiplier(QualityMultiplier.builder().finalMultiplier(clampedQualityMultiplier).build());
         } else {

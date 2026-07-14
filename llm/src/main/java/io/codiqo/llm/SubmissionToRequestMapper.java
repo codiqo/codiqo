@@ -32,6 +32,7 @@ import io.codiqo.api.diff.EffectiveLineParser.LineKind;
 import io.codiqo.api.diff.IneffectiveLineFilter;
 import io.codiqo.api.diff.NestedBlockRanges;
 import io.codiqo.api.metrics.DriverScaler;
+import io.codiqo.client.model.AnalysisBuildFailureModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CallerModel;
 import io.codiqo.client.model.CloneLocationModel;
@@ -71,6 +72,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     private static final String DEV_NULL = "/dev/null";
     private static final EnumSet<SymbolKindModel> METHOD_OR_CONSTRUCTOR = EnumSet.of(SymbolKindModel.METHOD, SymbolKindModel.CONSTRUCTOR);
     private static final int MAX_UNCOVERED_CHANGED_LINES = 20;
+    private static final int BUILD_FAILURE_DETAIL_LIMIT = 4096;
     private static final EnumSet<LineCoverageModel.StatusEnum> COVERED_LINE_STATUSES =
             EnumSet.of(LineCoverageModel.StatusEnum.COVERED, LineCoverageModel.StatusEnum.FULLY_COVERED);
     private static final EnumSet<LineCoverageModel.StatusEnum> PARTIAL_LINE_STATUSES =
@@ -88,6 +90,14 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         List<String> branches = submission.getCommit().getBranches();
         List<CodeBlockChange> codeBlockChanges = mapCodeBlockChanges(files, fileContext);
 
+        /**
+         * a diff-only degraded submission (build failure) carries no coverage or duplication sections —
+         * leave those request fields null so the prompt renders its "n/a" fallbacks instead of misleading zeros
+         */
+        boolean hasCoverageSource = BooleanUtils.or(new boolean[] {
+                Objects.nonNull(submission.getFullProjectCoverage()),
+                Objects.nonNull(submission.getProjectQuality()) });
+
         return LlmScoringRequest.builder()
                 .commitHash(submission.getCommit().getSha())
                 .commitMessage(submission.getCommit().getMessage())
@@ -100,9 +110,10 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .changeSummary(mapChangeSummary(files, codeBlockChanges))
                 .fileChanges(mapFileChanges(files))
                 .codeBlockChanges(codeBlockChanges)
-                .coverage(mapCoverage(submission))
+                .coverage(hasCoverageSource ? mapCoverage(submission) : null)
                 .complexity(mapComplexityMetrics(files))
-                .duplication(mapDuplication(submission.getDuplication(), fileContext))
+                .duplication(Objects.nonNull(submission.getDuplication()) ? mapDuplication(submission.getDuplication(), fileContext) : null)
+                .buildFailure(Objects.nonNull(submission.getBuildFailure()) ? mapBuildFailure(submission.getBuildFailure()) : null)
                 .methodScalerProd(scalers.methodProd())
                 .methodScalerTest(scalers.methodTest())
                 .constructorScalerProd(scalers.ctorProd())
@@ -154,6 +165,13 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         private DriverScaler ctorTest = DriverScaler.EMPTY;
     }
 
+    private static LlmScoringRequest.BuildFailureInfo mapBuildFailure(AnalysisBuildFailureModel buildFailure) {
+        return LlmScoringRequest.BuildFailureInfo.builder()
+                .reason(buildFailure.getReason())
+                .category(buildFailure.getCategory().getValue())
+                .detail(StringUtils.abbreviate(buildFailure.getDetail(), BUILD_FAILURE_DETAIL_LIMIT))
+                .build();
+    }
     private LlmScoringRequest.DuplicationInfo mapDuplication(DuplicationReportModel duplication, FileContext fileContext) {
         LlmScoringRequest.DuplicationInfo.DuplicationInfoBuilder builder = LlmScoringRequest.DuplicationInfo.builder()
                 .duplicatedPercentage(Optional.ofNullable(duplication.getDuplicatedPercentage()).orElse(0.0))
@@ -249,7 +267,9 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     }
     private CoverageInfo mapCoverage(AnalysisSubmissionModel submission) {
         CoverageInfo.CoverageInfoBuilder builder = CoverageInfo.builder();
-        mapProjectCoverage(submission.getFullProjectCoverage(), builder);
+        if (Objects.nonNull(submission.getFullProjectCoverage())) {
+            mapProjectCoverage(submission.getFullProjectCoverage(), builder);
+        }
         if (Objects.nonNull(submission.getProjectQuality())) {
             mapChangedCoverage(submission.getProjectQuality(), builder);
         }

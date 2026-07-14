@@ -14,6 +14,25 @@
 - **REVERT COMMIT:** This commit reverts commit [(${request.revertedCommitId})]
 [/]
 
+[# th:if="${request.buildFailure != null}"]
+---
+
+## ⚠ DEGRADED ANALYSIS — BUILD FAILED AT THIS COMMIT
+
+This commit could not be built ([(${request.buildFailure.category})]). Static analysis, code-unit parsing, test coverage, duplication detection, and blast-radius data are ALL UNAVAILABLE — only the raw git diff and commit metadata below are real. Sections reporting 0 or "n/a" for coverage, complexity, CPD, or code blocks reflect MISSING data, not clean results.
+
+- **Failure reason:** [(${request.buildFailure.reason})]
+[# th:if="${not #strings.isEmpty(request.buildFailure.detail)}"]
+- **Build error excerpt:**
+
+```
+[(${request.buildFailure.detail})]
+```
+[/]
+
+Apply the DEGRADED MODE rules from the system prompt: judge effort and quality from the diff alone; do NOT award coverage/CPD/static-analysis bonuses — treat those inputs as unknown, not clean; emit null for dimensions you cannot verify; weigh the broken build in your quality assessment and summary. Diff-classification duties (STEP 1a) still fully apply — the annotated diffs are real.
+[/]
+
 ---
 
 ## Change Summary

@@ -38,6 +38,7 @@ public class LlmScoringRequest {
     private CoverageInfo coverage;
     private ComplexityMetrics complexity;
     private DuplicationInfo duplication;
+    private BuildFailureInfo buildFailure;
 
     @Builder.Default
     private DriverScaler methodScalerProd = DriverScaler.EMPTY;
@@ -50,6 +51,20 @@ public class LlmScoringRequest {
 
     @Builder.Default
     private List<WebSearchContext> webSearchContext = Collections.emptyList();
+
+    /**
+     * Present when this is a diff-only degraded analysis of a build-breaking commit — no
+     * coverage/static-analysis/duplication/code-unit data was collectable.
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class BuildFailureInfo {
+        private String reason;
+        private String category;
+        private String detail;
+    }
 
     @Data
     @Builder

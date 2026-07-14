@@ -173,8 +173,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                 Maven.isolateRepositorySession(buildingReq);
             }
             if (resolveDependenciesOffline(args) instanceof BuildOutcome.Skipped skipped) {
-                getLog().warn(String.format("commit %s skipped: %s", commitId, skipped.reason()));
-                doExcludeAnalysis(commitId, skipped.reason(), skipped.category(), skipped.detail(), captureDiffFiles(args));
+                doDegradedAnalysis(args, skipped.reason(), skipped.category(), skipped.detail());
                 return;
             }
 
@@ -191,8 +190,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                     ? buildWithBackoff(args, buildingReq)
                     : buildProject(args, invocationRequest(args, false, Duration.ZERO), buildingReq);
             if (buildOutcome instanceof BuildOutcome.Skipped skipped) {
-                getLog().warn(String.format("commit %s skipped: %s", commitId, skipped.reason()));
-                doExcludeAnalysis(commitId, skipped.reason(), skipped.category(), skipped.detail(), captureDiffFiles(args));
+                doDegradedAnalysis(args, skipped.reason(), skipped.category(), skipped.detail());
                 return;
             }
             ProjectBuildingResult result = ((BuildOutcome.Proceeded) buildOutcome).result();
@@ -202,8 +200,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                     result.getProject(), clone.getWorkTree(), buildingReq, args, reactors);
             if (moduleOutcome.isPresent()) {
                 BuildOutcome.Skipped skipped = moduleOutcome.get();
-                getLog().warn(String.format("commit %s skipped: %s", commitId, skipped.reason()));
-                doExcludeAnalysis(commitId, skipped.reason(), skipped.category(), skipped.detail(), captureDiffFiles(args));
+                doDegradedAnalysis(args, skipped.reason(), skipped.category(), skipped.detail());
                 return;
             }
             try (ClassGraphSpec scan = scanProjects(args, reactors)) {

@@ -32,6 +32,8 @@ class MojoDefaultsDriftTest {
 
         assertEquals(String.valueOf(reference.getMaxRequests()), defaultValueOf(pluginXml, "maxRequests"));
         assertEquals(String.valueOf(reference.getMaxRequestsPerHost()), defaultValueOf(pluginXml, "maxRequestsPerHost"));
+
+        assertEquals(String.valueOf(reference.isScoreOnBuildFailure()), defaultValueOf(pluginXml, "scoreOnBuildFailure"));
     }
     private static Document parsePluginDescriptor() throws Exception {
         try (InputStream in = MojoDefaultsDriftTest.class.getResourceAsStream("/META-INF/maven/plugin.xml")) {

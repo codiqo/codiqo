@@ -21,6 +21,7 @@ import io.codiqo.llm.VolumeScoreCalculator.CodeBlockEffort;
 import io.codiqo.llm.VolumeScoreCalculator.FileEffort;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
 import io.codiqo.llm.schema.LlmScoringRequest;
+import io.codiqo.llm.schema.LlmScoringRequest.BuildFailureInfo;
 import io.codiqo.llm.schema.LlmScoringRequest.ChangeSummary;
 import io.codiqo.llm.schema.LlmScoringRequest.FileChange;
 import io.codiqo.llm.schema.LlmScoringRequest.Operation;
@@ -86,6 +87,41 @@ class FinalScoreCalculatorTest {
 
         assertNotNull(response.getQualityMultiplier(), "missing qualityMultiplier replaced by default");
         assertEquals(1.0, response.getQualityMultiplier().getFinalMultiplier(), 0.001);
+    }
+    @Test
+    void degradedBuildFailureCapsQualityMultiplierAtOne() {
+        RunArgs args = new RunArgs();
+        LlmScoringResponse response = new LlmScoringResponse();
+        response.setQualityMultiplier(QualityMultiplier.builder().finalMultiplier(1.15).build());
+
+        new FinalScoreCalculator(args, NoopLog.INSTANCE).apply(response, baseScores(100.0), degradedRequest());
+
+        assertEquals(1.0, response.getQualityMultiplier().getFinalMultiplier(), 0.001,
+                "diff-only degraded analysis caps the quality multiplier at 1.0 even when below qualityMultiplierMax");
+    }
+    @Test
+    void degradedBuildFailurePassesThroughMultiplierBelowOne() {
+        RunArgs args = new RunArgs();
+        LlmScoringResponse response = new LlmScoringResponse();
+        response.setQualityMultiplier(QualityMultiplier.builder().finalMultiplier(0.85).build());
+
+        new FinalScoreCalculator(args, NoopLog.INSTANCE).apply(response, baseScores(100.0), degradedRequest());
+
+        assertEquals(0.85, response.getQualityMultiplier().getFinalMultiplier(), 0.001,
+                "degraded cap only bounds the upside — penalties below 1.0 pass through");
+    }
+    @Test
+    void nonDegradedRequestKeepsFullMultiplierRange() {
+        RunArgs args = new RunArgs();
+        LlmScoringRequest request = degradedRequest();
+        request.setBuildFailure(null);
+        LlmScoringResponse response = new LlmScoringResponse();
+        response.setQualityMultiplier(QualityMultiplier.builder().finalMultiplier(1.15).build());
+
+        new FinalScoreCalculator(args, NoopLog.INSTANCE).apply(response, baseScores(100.0), request);
+
+        assertEquals(1.15, response.getQualityMultiplier().getFinalMultiplier(), 0.001,
+                "without a buildFailure the multiplier keeps the full [min, max] range");
     }
     @Test
     void architectureBonusComputedFromImpactAndQualityFactor() {
@@ -982,6 +1018,16 @@ class FinalScoreCalculatorTest {
                         + ") must be ≤ raw (" + vs.getLinesChangedRaw() + ")");
     }
 
+    private static LlmScoringRequest degradedRequest() {
+        return LlmScoringRequest.builder()
+                .fileChanges(List.of(FileChange.builder().path("Foo.java").diff("dummy").build()))
+                .codeBlockChanges(List.of())
+                .buildFailure(BuildFailureInfo.builder()
+                        .reason("[ERROR] COMPILATION ERROR")
+                        .category("BUILD_FAILURE")
+                        .build())
+                .build();
+    }
     private static PreComputedScores baseScores(double volumeAndBaseEffort) {
         return PreComputedScores.builder()
                 .volumeScore(volumeAndBaseEffort)
