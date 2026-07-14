@@ -692,18 +692,17 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         return jars.stream().map(File::getAbsolutePath).toList();
     }
     protected void warnIfHostTimeMachineMissing() {
-        try {
-            /**
-             * literal name on purpose: a class-literal reference would trigger loading, and the extension is
-             * provided-scope — the class is only loadable when codiqo-maven-time-machine sits on the HOST Maven's
-             * maven.ext.class.path, which is exactly what this probe detects
-             */
-            Class.forName("io.codiqo.maven.timemachine.TimeMachineVersionResolver");
-        } catch (ClassNotFoundException err) {
-            getLog().warn(String.format(
-                    "codiqo-maven-time-machine is not loaded in the host Maven — host-side POM model building resolves LATEST snapshots and may fail on historical commits whose POMs no longer interpolate against them. relaunch with: -Dmaven.ext.class.path=%s",
-                    StringUtils.join(extensionJarPaths(timeMachineExtensionJars), File.pathSeparator)));
+        /**
+         * the extension's core realm is not visible from the plugin realm, so a Class.forName probe always fails
+         * even when the extension is active; detect it the same way the relaunch hint loads it — via the host
+         * Maven's maven.ext.class.path
+         */
+        if (StringUtils.contains(System.getProperty(MAVEN_EXT_CLASS_PATH), TIME_MACHINE_ARTIFACT_ID)) {
+            return;
         }
+        getLog().warn(String.format(
+                "codiqo-maven-time-machine is not loaded in the host Maven — host-side POM model building resolves LATEST snapshots and may fail on historical commits whose POMs no longer interpolate against them. relaunch with: -Dmaven.ext.class.path=%s",
+                StringUtils.join(extensionJarPaths(timeMachineExtensionJars), File.pathSeparator)));
     }
     protected BuildOutcome buildProject(
             RunArgs args,

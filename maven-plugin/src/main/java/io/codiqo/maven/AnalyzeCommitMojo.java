@@ -13,6 +13,7 @@ import java.util.Optional;
 import java.util.LinkedList;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.CharUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.maven.plugins.annotations.Mojo;
@@ -49,6 +50,12 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
      */
     private static final List<Duration> TIME_MACHINE_BACKOFF_LADDER = List.of(
             Duration.ZERO, Duration.ofMinutes(15), Duration.ofHours(1), Duration.ofHours(4), Duration.ofDays(1));
+    /**
+     * per-attempt excerpt of the structured failure detail kept in the exclusion history — enough to carry the
+     * actual compiler/model errors (not just the first line) without ballooning the persisted detail
+     */
+    private static final int ATTEMPT_DETAIL_LIMIT = 4096;
+    private static final String ATTEMPT_SEPARATOR = StringUtils.repeat(CharUtils.LF, 2);
 
     @Parameter(property = "codiqo.commitId", required = true)
     private String commitId;
@@ -212,6 +219,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     private BuildOutcome buildWithBackoff(RunArgs args, ProjectBuildingRequest buildingReq) throws Exception {
         Instant commitTimestamp = TimeMachineSupport.resolveCommitTimestamp(args);
         List<String> attemptFailures = new ArrayList<>();
+        BuildOutcome.Skipped firstSkipped = null;
         Duration offset = Duration.ZERO;
         for (;;) {
             args.setTimeMachineTargetOffset(offset);
@@ -226,7 +234,10 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
              * stepping further back, so the ladder short-circuits to the latest-snapshots attempt.
              */
             BuildOutcome.Skipped skipped = (BuildOutcome.Skipped) outcome;
-            attemptFailures.add(String.format("offset %s: %s", offset, skipped.reason()));
+            if (Objects.isNull(firstSkipped)) {
+                firstSkipped = skipped;
+            }
+            attemptFailures.add(attemptEntry("offset " + offset, skipped));
             Optional<Duration> next;
             if (AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE == skipped.category()) {
                 next = Optional.empty();
@@ -239,7 +250,13 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                 args.setTimeMachineTargetOffset(null);
                 BuildOutcome latest = buildProject(args, invocationRequest(args, false, Duration.ZERO), buildingReq);
                 if (latest instanceof BuildOutcome.Skipped lastSkipped) {
-                    return new BuildOutcome.Skipped(lastSkipped.reason(), lastSkipped.category(), appendAttemptHistory(lastSkipped.detail(), attemptFailures));
+                    attemptFailures.add(attemptEntry("latest snapshots", lastSkipped));
+                    /**
+                     * the first attempt resolves commit-date snapshots and is the commit-faithful build — its failure
+                     * describes the commit's true state, while later attempts fail against increasingly anachronistic
+                     * dependency picks. headline the first failure; the full ladder lives in the detail.
+                     */
+                    return new BuildOutcome.Skipped(firstSkipped.reason(), firstSkipped.category(), attemptHistoryDetail(attemptFailures));
                 }
                 return latest;
             }
@@ -248,12 +265,15 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             getLog().warn(String.format("commit %s: time-machine build failed (%s), retrying with target offset %s", commitId, skipped.reason(), offset));
         }
     }
-    private static String appendAttemptHistory(String detail, List<String> attemptFailures) {
-        String history = "time-machine attempts:\n" + StringUtils.join(attemptFailures, "\n");
-        if (StringUtils.isBlank(detail)) {
-            return history;
+    private static String attemptEntry(String label, BuildOutcome.Skipped skipped) {
+        String toReturn = label + ": " + skipped.reason();
+        if (StringUtils.isNotBlank(skipped.detail())) {
+            toReturn += CharUtils.LF + StringUtils.abbreviate(skipped.detail(), ATTEMPT_DETAIL_LIMIT);
         }
-        return detail + "\n\n" + history;
+        return toReturn;
+    }
+    private static String attemptHistoryDetail(List<String> attemptFailures) {
+        return "time-machine attempts:" + ATTEMPT_SEPARATOR + StringUtils.join(attemptFailures, ATTEMPT_SEPARATOR);
     }
     private static String resolveAuthorEmail(RunArgs args) throws IOException {
         ObjectId objectId = args.getGit().resolve(args.getCommitId());
