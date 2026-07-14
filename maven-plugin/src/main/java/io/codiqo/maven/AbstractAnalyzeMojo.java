@@ -691,6 +691,20 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     private static List<String> extensionJarPaths(Collection<File> jars) {
         return jars.stream().map(File::getAbsolutePath).toList();
     }
+    protected void warnIfHostTimeMachineMissing() {
+        try {
+            /**
+             * literal name on purpose: a class-literal reference would trigger loading, and the extension is
+             * provided-scope — the class is only loadable when codiqo-maven-time-machine sits on the HOST Maven's
+             * maven.ext.class.path, which is exactly what this probe detects
+             */
+            Class.forName("io.codiqo.maven.timemachine.TimeMachineVersionResolver");
+        } catch (ClassNotFoundException err) {
+            getLog().warn(String.format(
+                    "codiqo-maven-time-machine is not loaded in the host Maven — host-side POM model building resolves LATEST snapshots and may fail on historical commits whose POMs no longer interpolate against them. relaunch with: -Dmaven.ext.class.path=%s",
+                    StringUtils.join(extensionJarPaths(timeMachineExtensionJars), File.pathSeparator)));
+        }
+    }
     protected BuildOutcome buildProject(
             RunArgs args,
             InvocationRequest request,
@@ -726,7 +740,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 throw new MojoExecutionException("maven build failed in fork", result.getExecutionException());
             }
         }
-        return new BuildOutcome.Proceeded(projectBuilder.build(rootPom, buildingRequest));
+        return new BuildOutcome.Proceeded(TimeMachineSupport.withHostPinning(args, getLog(), () -> projectBuilder.build(rootPom, buildingRequest)));
     }
     private String buildFailureDetail(RunArgs args, CapturingOutputHandler sysout, CapturingOutputHandler syserr) {
         return readBuildFailureReport(args)
@@ -760,9 +774,12 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         if (StringUtils.isNotBlank(args.getCommitId())) {
             request.setResolveDependencies(false);
         }
+        if (Objects.nonNull(args.getTimeMachineTargetOffset())) {
+            Maven.isolateRepositorySession(request);
+        }
 
         try {
-            return new BuildOutcome.Proceeded(projectBuilder.build(rootPom, request));
+            return new BuildOutcome.Proceeded(TimeMachineSupport.withHostPinning(args, getLog(), () -> projectBuilder.build(rootPom, request)));
         } catch (ProjectBuildingException pbe) {
             return classifyProjectBuildingException(pbe, args);
         }
@@ -782,7 +799,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             if (modulePom.exists()) {
                 ProjectBuildingResult moduleResult;
                 try {
-                    moduleResult = projectBuilder.build(modulePom, buildingRequest);
+                    moduleResult = TimeMachineSupport.withHostPinning(args, getLog(), () -> projectBuilder.build(modulePom, buildingRequest));
                 } catch (ProjectBuildingException pbe) {
                     return Optional.of(classifyProjectBuildingException(pbe, args));
                 }
@@ -1029,7 +1046,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     private static BuildOutcome.Skipped classifyProjectBuildingException(ProjectBuildingException pbe, RunArgs args) throws MojoExecutionException {
         List<String> unresolved = Maven.unresolvedDependencyCoords(pbe);
         if (CollectionUtils.isNotEmpty(unresolved)) {
-            String reason = "unresolved dependencies: " + StringUtils.join(unresolved, ", ");
+            String reason = "host model building: unresolved dependencies: " + StringUtils.join(unresolved, ", ");
             if (args.isSkipOnUnresolvedDependencies()) {
                 return new BuildOutcome.Skipped(reason, AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, null);
             }
@@ -1038,7 +1055,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
         Optional<String> structural = Maven.severeProblem(pbe.getResults().stream().flatMap(r -> r.getProblems().stream()));
         if (structural.isPresent()) {
-            return new BuildOutcome.Skipped(structural.get(), AnalysisExcludeCategory.BUILD_FAILURE, null);
+            return new BuildOutcome.Skipped("host model building: " + structural.get(), AnalysisExcludeCategory.BUILD_FAILURE, null);
         }
 
         throw new MojoExecutionException("project build failed: " + Objects.toString(pbe.getMessage(), pbe.getClass().getSimpleName()), pbe);

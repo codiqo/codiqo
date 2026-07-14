@@ -249,6 +249,21 @@ class TimeMachineVersionResolverTest {
     }
 
     @Test
+    void repinsWhenTargetOffsetChanges() throws VersionResolutionException {
+        System.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, "2024-01-10T00:00:00Z");
+        when(client.closestSnapshotBefore(any(), any(), any(), any()))
+                .thenReturn(Optional.of(new SnapshotWithMetadata("1.0-20240109.235000-7", Instant.parse("2024-01-09T23:50:00Z"), repo)))
+                .thenReturn(Optional.of(new SnapshotWithMetadata("1.0-20240105.143000-6", Instant.parse("2024-01-05T14:30:00Z"), repo)));
+
+        assertEquals("1.0-20240109.235000-7", resolver.resolveVersion(session, snapshotRequest("1.0-SNAPSHOT")).getVersion());
+
+        // same resolver instance, shifted target — the host JVM pins per commit/rung, so the cache must not reuse the offset-0 pick
+        System.setProperty(TimeMachineConfig.PROP_TARGET_OFFSET, "PT4H");
+        assertEquals("1.0-20240105.143000-6", resolver.resolveVersion(session, snapshotRequest("1.0-SNAPSHOT")).getVersion());
+        verify(client, times(2)).closestSnapshotBefore(any(), any(), any(), any());
+    }
+
+    @Test
     void forwardWindowMeasuredFromShiftedTargetRejectsFarForward() throws VersionResolutionException {
         System.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, "2024-01-10T00:00:00Z");
         System.setProperty(TimeMachineConfig.PROP_TARGET_OFFSET, "PT4H");

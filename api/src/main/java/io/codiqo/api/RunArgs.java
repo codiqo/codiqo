@@ -184,6 +184,8 @@ public class RunArgs {
     @Nullable
     private transient File timeMachineMetaDir;
     @Nullable
+    private transient Duration timeMachineTargetOffset;
+    @Nullable
     private transient File buildFailureReportFile;
     @Nullable
     private String includeBranches;
