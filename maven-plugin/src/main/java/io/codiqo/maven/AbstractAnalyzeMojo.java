@@ -896,8 +896,28 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     toApply.setFalse();
                 }
 
+                ClientInfoModel clientInfo = new ClientInfoModel();
+                clientInfo.setBuildTool(ClientInfoModel.BuildToolEnum.MAVEN);
+                clientInfo.setVersion(runtimeInformation.getMavenVersion());
+                clientInfo.setName("codiqo-maven-plugin");
+
                 if (Objects.nonNull(skipReason)) {
-                    doExcludeAnalysis(args.getCommitId(), skipReason, skipCategory);
+                    /**
+                     * excluded commits still carry the raw git diff so the backend persists per-file
+                     * changes (mirrors the build-failure exclusion path) — indexing has not run, so
+                     * the populator emits diff-only file models without code units or coverage
+                     */
+                    SubmissionContext excludeCtx = SubmissionContext.create(
+                            args,
+                            null,
+                            analysis,
+                            workTree,
+                            logFactory,
+                            project.getGroupId() + ":" + project.getArtifactId(),
+                            project.getName(),
+                            clientInfo);
+                    new FileAnalysisPopulator().accept(excludeCtx);
+                    doExcludeAnalysis(args.getCommitId(), skipReason, skipCategory, null, excludeCtx.getSubmissionModel().getFiles());
                 }
                 if (toApply.isTrue()) {
                     IndexingSummary index = registry.index(analysis);
@@ -922,10 +942,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                         throw err;
                     }
                     getLog().info(MemoryReport.snapshot("after collect capture"));
-                    ClientInfoModel clientInfo = new ClientInfoModel();
-                    clientInfo.setBuildTool(ClientInfoModel.BuildToolEnum.MAVEN);
-                    clientInfo.setVersion(runtimeInformation.getMavenVersion());
-                    clientInfo.setName("codiqo-maven-plugin");
 
                     SubmissionContext ctx = SubmissionContext.create(
                             args,
