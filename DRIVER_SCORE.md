@@ -307,6 +307,45 @@ A few rules that follow from the design:
 
 ---
 
+## Scoring layers — which mechanism owns which axis
+
+Several multiplicative mechanisms sit between a raw diff and the final score. Each exists to price exactly one axis; none may take over another's job. When tuning, change the owner of the axis you care about — never reach for a neighbouring layer because it "also moves the number".
+
+| Layer | Owns | Mechanism | Applied |
+|---|---|---|---|
+| Driver score | volume — how much | quantile-scaled lines/NCSS/invocations, per-block caps | per block |
+| Operation multiplier | line kind — new vs modified | `addMult = addBase + addScale/(1+s)` (≈0.88), `modifyMult = modifyBase + min(modifyScale·s/(1+s), cap)` (≈1.06) | per block |
+| Test weight | purpose — test vs production | `testCodeScoreMultiplier` (0.4) | per block |
+| Difficulty category | how hard | LLM label → coefficient 0.7–1.4 (effort only, never driver score) | per block |
+| Diff classification / moved lines | what really changed | cosmetic drop, in-place collapse, moved-line factor | per file / block |
+| Volume exponent | commit size — marginal volume | `blockEffortSum^volumeExponent` (default 0.85) | per commit |
+| Files scope | breadth | log bonus, ≤ ~1.1 | per commit |
+| Quality multiplier | outcomes | coverage / CPD / static analysis / architecture, clamped | per commit |
+| Architecture bonus | design uplift | impactScore × baseEffort × bonusFactor × qualityFactor | per commit |
+
+### Operation multiplier × volume exponent — orthogonal, not compounding
+
+The exponent applies **after** the per-block multipliers, so it slightly *dilutes* the add/modify spread rather than stacking on it. For operation-pure commits with equal driver volume `D`:
+
+```
+new:    (0.88·D)^0.85 = 0.897·D^0.85
+modify: (1.06·D)^0.85 = 1.051·D^0.85
+```
+
+The multipliers claim a 20.5% per-line spread (`1.06/0.88`); the realized score spread is `(1.06/0.88)^0.85 ≈ 17.1%`. Large new-code commits feel both mechanisms, but the compression comes from **size, not operation** — an equally large modify sweep is compressed harder in absolute terms, because its multiplier is higher. The two layers are orthogonal: multipliers cannot shape commit size, the exponent cannot distinguish line kinds.
+
+### Consolidation rule — "new code is easier" must have one owner
+
+The new-code discount currently rides in two places, and a third is planned:
+
+1. blanket `addMultiplierBase = 0.8` — every new line, indiscriminately;
+2. LLM difficulty category — `MECHANICAL` (0.7) fires precisely on boilerplate new code, so a trivial new block already stacks `0.88 × 0.7 ≈ 0.62` per driver point;
+3. the planned structural-similarity discount — adaptive, per block.
+
+**Rule: when the structural-similarity discount ships, `addMultiplierBase` returns to `1.0`.** The adaptive signal becomes the single owner of the axis and the blanket discount retires. Until then, widen neither of the two live discounts without re-checking the combined floor.
+
+---
+
 ## Config-file efforts (pom.xml, `.proto`)
 
 Some changed files carry real work but have **no code blocks** to drive — `pom.xml` and `.proto` files. Rather than ignore them, Codiqo scores them from **line count alone**: `VolumeScoreCalculator.calculateConfigFileEfforts` emits **one synthetic block per changed config file**, which then sits alongside the method/constructor blocks in the same `totalEffortRaw` / cap / volume accumulators.

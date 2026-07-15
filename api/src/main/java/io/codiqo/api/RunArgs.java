@@ -227,7 +227,7 @@ public class RunArgs {
     @Nullable
     private double qualityGatePenaltyCap = 0.1;
     @Nullable
-    private double volumeExponent = 0.98;
+    private double volumeExponent = 0.85;
     @Nullable
     private double filesScopeLogCoefficient = 0.02;
     @Nullable

@@ -1,7 +1,12 @@
 package io.codiqo.llm;
 
+import static java.util.function.Predicate.not;
+
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -9,15 +14,11 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.LinkedHashMap;
-import java.util.HashMap;
-import java.util.ArrayList;
+import java.util.regex.Pattern;
 
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
-
 
 import io.codiqo.api.logging.Log;
 import io.codiqo.llm.MovedLineDetector.MoveCandidate;
@@ -29,6 +30,7 @@ import io.codiqo.llm.schema.LlmScoringResponse.DiffClassification;
 import io.codiqo.llm.schema.LlmScoringResponse.EffortBreakdown;
 import io.codiqo.llm.schema.LlmScoringResponse.FileDiffClassification;
 import io.codiqo.llm.schema.LlmScoringResponse.LinePair;
+import lombok.RequiredArgsConstructor;
 import lombok.Value;
 
 /**
@@ -43,26 +45,21 @@ import lombok.Value;
  * persistence ({@code LlmResponseMapper}) consume coordinates that are correct by construction —
  * even for eligible files the LLM omitted.
  */
+@RequiredArgsConstructor
 public class DiffClassificationDeriver {
     private static final String KIND_IN_PLACE = "inplace";
     private static final String KIND_IN_PLACE_MODIFY = "inplacemodify";
     private static final String KIND_TRUE_MODIFY = "truemodify";
+    private static final Set<String> IN_PLACE_KINDS = Set.of(KIND_IN_PLACE, KIND_IN_PLACE_MODIFY);
+    private static final Pattern NON_LETTER_CHARS = Pattern.compile("[^a-z]");
 
     private final Log log;
 
-    public DiffClassificationDeriver(Log log) {
-        this.log = log;
-    }
     public void derive(LlmScoringResponse response, LlmScoringRequest request) {
         derive(response, request, Collections.emptyList());
     }
     public void derive(LlmScoringResponse response, LlmScoringRequest request, List<MoveCandidate> moveCandidates) {
-        if (Objects.isNull(request) || CollectionUtils.isEmpty(request.getFileChanges())) {
-            return;
-        }
-        List<FileChange> eligible = request
-                .getFileChanges()
-                .stream()
+        List<FileChange> eligible = CollectionUtils.emptyIfNull(request.getFileChanges()).stream()
                 .filter(FileChange::isLinesJustificationRequired)
                 .filter(fc -> StringUtils.isNotBlank(fc.getDiff()))
                 .toList();
@@ -97,15 +94,20 @@ public class DiffClassificationDeriver {
         classification.setTotalLinesDeletedRaw(totalDeleted);
     }
     private FileDiffClassification deriveFile(FileChange fc, UnifiedDiffLines diffLines, FileDiffClassification llm, ConfirmedMoves confirmed) {
-        Set<Integer> cosmeticAdded = sanitizeCitedLines(
-                CollectionUtils.emptyIfNull(Objects.nonNull(llm) ? llm.getCosmeticAdded() : null),
-                diffLines.getCandidateAddedLines(), fc.getPath(), "cosmeticAdded");
-        Set<Integer> cosmeticDeleted = sanitizeCitedLines(
-                CollectionUtils.emptyIfNull(Objects.nonNull(llm) ? llm.getCosmeticDeleted() : null),
-                diffLines.getCandidateDeletedLines(), fc.getPath(), "cosmeticDeleted");
-        Set<Integer> inPlaceCollapsedAdded = sanitizeCitedLines(
-                CollectionUtils.emptyIfNull(Objects.nonNull(llm) ? llm.getInPlaceCollapsedAdded() : null),
-                diffLines.getCandidateAddedLines(), fc.getPath(), "inPlaceCollapsedAdded");
+        Collection<Integer> citedCosmeticAdded = Collections.emptyList();
+        Collection<Integer> citedCosmeticDeleted = Collections.emptyList();
+        Collection<Integer> citedInPlaceCollapsedAdded = Collections.emptyList();
+        Map<String, String> blockKinds = new HashMap<>();
+        if (Objects.nonNull(llm)) {
+            citedCosmeticAdded = CollectionUtils.emptyIfNull(llm.getCosmeticAdded());
+            citedCosmeticDeleted = CollectionUtils.emptyIfNull(llm.getCosmeticDeleted());
+            citedInPlaceCollapsedAdded = CollectionUtils.emptyIfNull(llm.getInPlaceCollapsedAdded());
+            blockKinds = Optional.ofNullable(llm.getBlockKinds()).orElse(new HashMap<>());
+        }
+
+        Set<Integer> cosmeticAdded = sanitizeCitedLines(citedCosmeticAdded, diffLines.getCandidateAddedLines(), fc.getPath(), "cosmeticAdded");
+        Set<Integer> cosmeticDeleted = sanitizeCitedLines(citedCosmeticDeleted, diffLines.getCandidateDeletedLines(), fc.getPath(), "cosmeticDeleted");
+        Set<Integer> inPlaceCollapsedAdded = sanitizeCitedLines(citedInPlaceCollapsedAdded, diffLines.getCandidateAddedLines(), fc.getPath(), "inPlaceCollapsedAdded");
 
         /**
          * a line lives in exactly one bucket: a confirmed moved line beats any cited 0-effort
@@ -126,14 +128,17 @@ public class DiffClassificationDeriver {
         List<Integer> pureDelete = new ArrayList<>();
         for (ChangeBlock block : diffLines.getBlocks()) {
             List<Integer> deleted = block.getDeletedLines().stream()
-                    .filter(n -> !cosmeticDeleted.contains(n) && !movedDeleted.contains(n))
+                    .filter(not(cosmeticDeleted::contains))
+                    .filter(not(movedDeleted::contains))
                     .toList();
             List<Integer> added = block.getAddedLines().stream()
-                    .filter(n -> !cosmeticAdded.contains(n) && !movedAdded.contains(n) && !inPlaceCollapsedAdded.contains(n))
+                    .filter(not(cosmeticAdded::contains))
+                    .filter(not(movedAdded::contains))
+                    .filter(not(inPlaceCollapsedAdded::contains))
                     .toList();
 
             int pairCount = Math.min(deleted.size(), added.size());
-            List<LinePair> target = isInPlace(llm, block.getId(), fc.getPath()) ? inPlacePairs : trueModifyPairs;
+            List<LinePair> target = isInPlace(blockKinds, block.getId(), fc.getPath()) ? inPlacePairs : trueModifyPairs;
             for (int i = 0; i < pairCount; i++) {
                 target.add(LinePair.builder().deleted(deleted.get(i)).added(added.get(i)).build());
             }
@@ -144,7 +149,7 @@ public class DiffClassificationDeriver {
 
         return FileDiffClassification.builder()
                 .file(fc.getPath())
-                .blockKinds(Objects.nonNull(llm) ? llm.getBlockKinds() : new HashMap<>())
+                .blockKinds(blockKinds)
                 .cosmeticAdded(new ArrayList<>(cosmeticAdded))
                 .cosmeticDeleted(new ArrayList<>(cosmeticDeleted))
                 .inPlaceModifyPairs(inPlacePairs)
@@ -196,21 +201,21 @@ public class DiffClassificationDeriver {
             MovedPair pair = parsed.get();
             UnifiedDiffLines fromDiff = diffLinesByFile.get(pair.getFromFile());
             UnifiedDiffLines toDiff = diffLinesByFile.get(pair.getToFile());
-            if (Objects.isNull(fromDiff) || !fromDiff.getCandidateDeletedLines().contains(pair.getFromLine())
-                    || Objects.isNull(toDiff) || !toDiff.getCandidateAddedLines().contains(pair.getToLine())) {
+            boolean fromSideEffective = Objects.nonNull(fromDiff) && fromDiff.getCandidateDeletedLines().contains(pair.getFromLine());
+            boolean toSideEffective = Objects.nonNull(toDiff) && toDiff.getCandidateAddedLines().contains(pair.getToLine());
+            if (BooleanUtils.and(new boolean[] { fromSideEffective, toSideEffective })) {
+                Set<Integer> deletedSet = deletedByFile.computeIfAbsent(pair.getFromFile(), k -> new TreeSet<>());
+                Set<Integer> addedSet = addedByFile.computeIfAbsent(pair.getToFile(), k -> new TreeSet<>());
+                if (BooleanUtils.or(new boolean[] { deletedSet.contains(pair.getFromLine()), addedSet.contains(pair.getToLine()) })) {
+                    log.warn("diffClassification.droppedMovedPair pair='%s' — line already claimed by another confirmed relocation", raw);
+                } else {
+                    deletedSet.add(pair.getFromLine());
+                    addedSet.add(pair.getToLine());
+                    pairs.add(pair.format());
+                }
+            } else {
                 log.warn("diffClassification.droppedMovedPair pair='%s' — a side is not an effective changed line of an eligible file", raw);
-                continue;
             }
-
-            Set<Integer> deletedSet = deletedByFile.computeIfAbsent(pair.getFromFile(), k -> new TreeSet<>());
-            Set<Integer> addedSet = addedByFile.computeIfAbsent(pair.getToFile(), k -> new TreeSet<>());
-            if (BooleanUtils.or(new boolean[] { deletedSet.contains(pair.getFromLine()), addedSet.contains(pair.getToLine()) })) {
-                log.warn("diffClassification.droppedMovedPair pair='%s' — line already claimed by another confirmed relocation", raw);
-                continue;
-            }
-            deletedSet.add(pair.getFromLine());
-            addedSet.add(pair.getToLine());
-            pairs.add(pair.format());
         }
         return new ConfirmedMoves(ids, pairs, deletedByFile, addedByFile);
     }
@@ -220,20 +225,6 @@ public class DiffClassificationDeriver {
             cited.remove(line);
             log.warn("diffClassification.movedBeatsCited file='%s' bucket=%s line=%d — confirmed moved line dropped from its cited bucket", file, bucket, line);
         }
-    }
-    private DiffClassification ensureClassification(LlmScoringResponse response) {
-        EffortBreakdown breakdown = response.getEffortBreakdown();
-        if (Objects.isNull(breakdown)) {
-            breakdown = EffortBreakdown.builder().build();
-            response.setEffortBreakdown(breakdown);
-        }
-
-        DiffClassification classification = breakdown.getDiffClassification();
-        if (Objects.isNull(classification)) {
-            classification = DiffClassification.builder().build();
-            breakdown.setDiffClassification(classification);
-        }
-        return classification;
     }
     /**
      * Validation rejects unknown line citations and triggers a retry, but the retry budget is
@@ -251,16 +242,14 @@ public class DiffClassificationDeriver {
         }
         return toReturn;
     }
-    private boolean isInPlace(FileDiffClassification llm, String blockId, String file) {
-        if (Objects.isNull(llm) || MapUtils.isEmpty(llm.getBlockKinds())) {
-            return false;
-        }
-        String kind = llm.getBlockKinds().get(blockId);
+    private boolean isInPlace(Map<String, String> blockKinds, String blockId, String file) {
+        String kind = blockKinds.get(blockId);
         if (Objects.isNull(kind)) {
             return false;
         }
-        String normalized = kind.toLowerCase(Locale.ROOT).replaceAll("[^a-z]", "");
-        if (BooleanUtils.or(new boolean[] { KIND_IN_PLACE.equals(normalized), KIND_IN_PLACE_MODIFY.equals(normalized) })) {
+
+        String normalized = NON_LETTER_CHARS.matcher(kind.toLowerCase(Locale.ROOT)).replaceAll("");
+        if (IN_PLACE_KINDS.contains(normalized)) {
             return true;
         }
         if (KIND_TRUE_MODIFY.equals(normalized)) {
@@ -269,6 +258,20 @@ public class DiffClassificationDeriver {
 
         log.warn("diffClassification.unknownBlockKind file='%s' block=%s kind='%s' — defaulting to trueModify", file, blockId, kind);
         return false;
+    }
+    private static DiffClassification ensureClassification(LlmScoringResponse response) {
+        EffortBreakdown breakdown = response.getEffortBreakdown();
+        if (Objects.isNull(breakdown)) {
+            breakdown = EffortBreakdown.builder().build();
+            response.setEffortBreakdown(breakdown);
+        }
+
+        DiffClassification classification = breakdown.getDiffClassification();
+        if (Objects.isNull(classification)) {
+            classification = DiffClassification.builder().build();
+            breakdown.setDiffClassification(classification);
+        }
+        return classification;
     }
 
     @Value
