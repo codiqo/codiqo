@@ -130,6 +130,7 @@ public class ScoreFromFileMojo extends AbstractMojo {
 
             getLog().info("static analysis total: " + saPre.getErrorCount());
             getLog().info("static analysis introduced: " + saPre.getIntroducedCount());
+            getLog().info("static analysis testOnlyIntroduced: " + saPre.getTestOnlyIntroducedCount());
             getLog().info("static analysis preExisting: " + saPre.getPreExistingCount());
             getLog().info("static analysis recommendedImpact: " + saPre.getRecommendedImpact());
 

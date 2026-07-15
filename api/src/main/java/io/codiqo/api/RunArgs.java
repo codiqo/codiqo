@@ -76,7 +76,7 @@ public class RunArgs {
     @Nullable
     private List<String> pmdRules = new ArrayList<>(List.of(
             "category/java/bestpractices.xml",
-            "category/java/codestyle.xml",
+            "codiqo/pmd/java-codestyle.xml",
             "category/java/design.xml",
             "category/java/errorprone.xml",
             "category/java/performance.xml",

@@ -51,6 +51,7 @@ Base Effort (= Volume Score; this is pre-scaling — the server re-weights per-b
 ## STATIC ANALYSIS PRE-COMPUTED (MANDATORY - USE THESE EXACT VALUES):
   totalErrors: [(${scores.staticAnalysisErrorCount})] (only severity="error" counts)
   introducedErrors: [(${scores.staticAnalysisIntroducedCount})] (on lines you added/modified - FULL penalty)
+  testOnlyIntroducedErrors: [(${scores.staticAnalysisTestOnlyIntroducedCount})] (introduced only in test code - reduced weight, mirrors CPD test discount)
   preExistingErrors: [(${scores.staticAnalysisPreExistingCount})] (on unchanged lines - 1/5 penalty)
   category: [(${scores.staticAnalysisCategory})]
   >>> RECOMMENDED IMPACT: [(${#numbers.formatDecimal(scores.staticAnalysisRecommendedImpact, 1, 2)})] <<<

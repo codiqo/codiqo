@@ -3236,6 +3236,11 @@ components:
           type: string
           enum: [error, warning, info]
           description: Severity level - error (penalized), warning (informational), info (low priority)
+        toolSeverity:
+          type: string
+          enum: [error, warning, info]
+          nullable: true
+          description: Original tool-reported severity before LLM re-review; severity carries the confirmed level (kept or reduced, never raised)
 
     ReviewTagsModel:
       type: object

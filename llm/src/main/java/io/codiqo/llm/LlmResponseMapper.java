@@ -568,10 +568,33 @@ public class LlmResponseMapper {
         toReturn.setFile(finding.getFile());
         toReturn.setLine(finding.getLine());
         toReturn.setAssessment(finding.getAssessment());
-        toReturn.setSeverity(Optional.ofNullable(finding.getSeverity())
-                .map(LlmResponseMapper::mapFindingSeverity)
-                .orElse(StaticAnalysisFindingModel.SeverityEnum.INFO));
+
+        LlmScoringResponse.FindingSeverity reviewed = Optional.ofNullable(finding.getSeverity())
+                .orElse(LlmScoringResponse.FindingSeverity.INFO);
+        if (Objects.nonNull(finding.getToolSeverity())) {
+            toReturn.setToolSeverity(mapToolSeverity(finding.getToolSeverity()));
+            /**
+             * re-review may keep or reduce the tool level, never raise it — FindingSeverity ordinals
+             * order ERROR < WARNING < INFO, so a lower ordinal means a more severe level
+             */
+            if (reviewed.ordinal() < finding.getToolSeverity().ordinal()) {
+                reviewed = finding.getToolSeverity();
+            }
+        }
+        toReturn.setSeverity(mapFindingSeverity(reviewed));
         return toReturn;
+    }
+    private static StaticAnalysisFindingModel.ToolSeverityEnum mapToolSeverity(LlmScoringResponse.FindingSeverity severity) {
+        switch (severity) {
+            case ERROR:
+                return StaticAnalysisFindingModel.ToolSeverityEnum.ERROR;
+            case WARNING:
+                return StaticAnalysisFindingModel.ToolSeverityEnum.WARNING;
+            case INFO:
+                return StaticAnalysisFindingModel.ToolSeverityEnum.INFO;
+            default:
+                throw new IllegalArgumentException("Unknown tool severity: " + severity);
+        }
     }
     private static StaticAnalysisFindingModel.SeverityEnum mapFindingSeverity(LlmScoringResponse.FindingSeverity severity) {
         switch (severity) {

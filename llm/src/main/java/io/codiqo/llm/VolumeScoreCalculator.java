@@ -140,6 +140,7 @@ public class VolumeScoreCalculator {
                 .cpdTestOnlyClones(cpd.getTestOnlyClones())
                 .staticAnalysisErrorCount(sa.getErrorCount())
                 .staticAnalysisIntroducedCount(sa.getIntroducedCount())
+                .staticAnalysisTestOnlyIntroducedCount(sa.getTestOnlyIntroducedCount())
                 .staticAnalysisPreExistingCount(sa.getPreExistingCount())
                 .staticAnalysisCategory(sa.getCategory())
                 .staticAnalysisRecommendedImpact(sa.getRecommendedImpact())
@@ -248,7 +249,8 @@ public class VolumeScoreCalculator {
         return new CpdPreComputed(effectivePenalty, category, impact, total, introduced, testOnly);
     }
     public StaticAnalysisPreComputed calculateStaticAnalysisPenalty(LlmScoringRequest request) {
-        Set<String> introducedErrorRules = new HashSet<>();
+        Set<String> introducedProdErrorRules = new HashSet<>();
+        Set<String> introducedTestErrorRules = new HashSet<>();
         Set<String> preExistingErrorRules = new HashSet<>();
         if (Objects.nonNull(request.getCodeBlockChanges())) {
             for (CodeBlockChange codeBlock : request.getCodeBlockChanges()) {
@@ -257,7 +259,11 @@ public class VolumeScoreCalculator {
                         if (BooleanUtils
                                 .and(new boolean[] { diag.getSeverity() == LlmScoringRequest.DiagnosticSeverity.ERROR, Objects.nonNull(diag.getRuleId()) })) {
                             if (diag.isIntroducedInCommit()) {
-                                introducedErrorRules.add(diag.getRuleId());
+                                if (codeBlock.isTest()) {
+                                    introducedTestErrorRules.add(diag.getRuleId());
+                                } else {
+                                    introducedProdErrorRules.add(diag.getRuleId());
+                                }
                             } else {
                                 preExistingErrorRules.add(diag.getRuleId());
                             }
@@ -266,10 +272,20 @@ public class VolumeScoreCalculator {
                 }
             }
         }
-        preExistingErrorRules.removeAll(introducedErrorRules);
-        int introducedCount = introducedErrorRules.size();
+        /**
+         * a rule seen in both prod and test blocks counts as prod (full weight); test-only rules
+         * mirror the CPD test-clone discount and are weighted by testCodePenaltyWeight
+         */
+        introducedTestErrorRules.removeAll(introducedProdErrorRules);
+        preExistingErrorRules.removeAll(introducedProdErrorRules);
+        preExistingErrorRules.removeAll(introducedTestErrorRules);
+
+        int introducedProdCount = introducedProdErrorRules.size();
+        int testOnlyIntroducedCount = introducedTestErrorRules.size();
+        int introducedCount = introducedProdCount + testOnlyIntroducedCount;
         int preExistingCount = preExistingErrorRules.size();
         int totalCount = introducedCount + preExistingCount;
+
         StaticAnalysisCategory category;
         double impact;
         if (introducedCount == 0) {
@@ -277,11 +293,12 @@ public class VolumeScoreCalculator {
             impact = args.getStaticAnalysisCleanBonus();
         } else {
             category = StaticAnalysisCategory.HAS_VIOLATIONS;
+            double effectiveIntroduced = introducedProdCount + testOnlyIntroducedCount * args.getTestCodePenaltyWeight();
             impact = Math.max(-args.getStaticAnalysisPenaltyCap(),
-                    args.getStaticAnalysisIntroducedPenalty() * introducedCount +
+                    args.getStaticAnalysisIntroducedPenalty() * effectiveIntroduced +
                             args.getStaticAnalysisPreExistingPenalty() * preExistingCount);
         }
-        return new StaticAnalysisPreComputed(totalCount, introducedCount, preExistingCount, category, Precision.round(impact, ROUNDING_PRECISION));
+        return new StaticAnalysisPreComputed(totalCount, introducedCount, testOnlyIntroducedCount, preExistingCount, category, Precision.round(impact, ROUNDING_PRECISION));
     }
     static List<CodeBlockEffort> calculateCodeBlockEfforts(
             List<CodeBlockChange> codeBlocks,
@@ -544,6 +561,7 @@ public class VolumeScoreCalculator {
         int cpdTestOnlyClones;
         int staticAnalysisErrorCount;
         int staticAnalysisIntroducedCount;
+        int staticAnalysisTestOnlyIntroducedCount;
         int staticAnalysisPreExistingCount;
         StaticAnalysisCategory staticAnalysisCategory;
         double staticAnalysisRecommendedImpact;
@@ -580,6 +598,7 @@ public class VolumeScoreCalculator {
     public static class StaticAnalysisPreComputed {
         int errorCount;
         int introducedCount;
+        int testOnlyIntroducedCount;
         int preExistingCount;
         StaticAnalysisCategory category;
         double recommendedImpact;

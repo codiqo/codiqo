@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
 
+import org.apache.commons.math3.util.Precision;
 import org.junit.jupiter.api.Test;
 
 
@@ -16,9 +17,12 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.api.metrics.DriverScaler;
 import io.codiqo.llm.VolumeScoreCalculator.CodeBlockEffort;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
+import io.codiqo.llm.VolumeScoreCalculator.StaticAnalysisCategory;
+import io.codiqo.llm.VolumeScoreCalculator.StaticAnalysisPreComputed;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringRequest.ChangeSummary;
 import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
+import io.codiqo.llm.schema.LlmScoringRequest.DiagnosticInfo;
 import io.codiqo.llm.schema.LlmScoringRequest.FileChange;
 import io.codiqo.llm.schema.LlmScoringRequest.Operation;
 
@@ -629,6 +633,75 @@ class VolumeScoreCalculatorTest {
                 .isConstructor(false).isTest(false).build();
     }
 
+    @Test
+    void staticAnalysisProdErrorRuleCarriesFullPenalty() {
+        RunArgs args = new RunArgs();
+        CodeBlockChange prod = newMethodBlock(50, 50, 50, false);
+        prod.getDiagnostics().add(errorDiagnostic("AvoidThrowingRawExceptionTypes", true));
+
+        StaticAnalysisPreComputed sa = new VolumeScoreCalculator(args)
+                .calculateStaticAnalysisPenalty(LlmScoringRequest.builder().codeBlockChanges(List.of(prod)).build());
+
+        assertEquals(1, sa.getIntroducedCount());
+        assertEquals(0, sa.getTestOnlyIntroducedCount());
+        assertEquals(StaticAnalysisCategory.HAS_VIOLATIONS, sa.getCategory());
+        assertEquals(Precision.round(args.getStaticAnalysisIntroducedPenalty(), 2), sa.getRecommendedImpact(), 0.001);
+    }
+    @Test
+    void staticAnalysisTestOnlyErrorRuleIsDiscountedByTestCodePenaltyWeight() {
+        RunArgs args = new RunArgs();
+        CodeBlockChange test = newMethodBlock(50, 50, 50, true);
+        test.getDiagnostics().add(errorDiagnostic("MethodNamingConventions", true));
+
+        StaticAnalysisPreComputed sa = new VolumeScoreCalculator(args)
+                .calculateStaticAnalysisPenalty(LlmScoringRequest.builder().codeBlockChanges(List.of(test)).build());
+
+        assertEquals(1, sa.getIntroducedCount());
+        assertEquals(1, sa.getTestOnlyIntroducedCount());
+        assertEquals(StaticAnalysisCategory.HAS_VIOLATIONS, sa.getCategory());
+        assertEquals(Precision.round(args.getStaticAnalysisIntroducedPenalty() * args.getTestCodePenaltyWeight(), 2),
+                sa.getRecommendedImpact(), 0.001);
+        assertTrue(Math.abs(sa.getRecommendedImpact()) < Math.abs(args.getStaticAnalysisIntroducedPenalty()),
+                "test-only introduced rule must be penalized below the full introduced penalty");
+    }
+    @Test
+    void staticAnalysisRuleSeenInProdAndTestCountsAsProd() {
+        RunArgs args = new RunArgs();
+        CodeBlockChange prod = newMethodBlock(50, 50, 50, false);
+        CodeBlockChange test = newMethodBlock(50, 50, 50, true);
+        prod.getDiagnostics().add(errorDiagnostic("AvoidThrowingRawExceptionTypes", true));
+        test.getDiagnostics().add(errorDiagnostic("AvoidThrowingRawExceptionTypes", true));
+
+        StaticAnalysisPreComputed sa = new VolumeScoreCalculator(args)
+                .calculateStaticAnalysisPenalty(LlmScoringRequest.builder().codeBlockChanges(List.of(prod, test)).build());
+
+        assertEquals(1, sa.getIntroducedCount());
+        assertEquals(0, sa.getTestOnlyIntroducedCount());
+        assertEquals(Precision.round(args.getStaticAnalysisIntroducedPenalty(), 2), sa.getRecommendedImpact(), 0.001);
+    }
+    @Test
+    void staticAnalysisCleanWhenOnlyPreExistingErrors() {
+        RunArgs args = new RunArgs();
+        CodeBlockChange test = newMethodBlock(50, 50, 50, true);
+        test.getDiagnostics().add(errorDiagnostic("MethodNamingConventions", false));
+
+        StaticAnalysisPreComputed sa = new VolumeScoreCalculator(args)
+                .calculateStaticAnalysisPenalty(LlmScoringRequest.builder().codeBlockChanges(List.of(test)).build());
+
+        assertEquals(0, sa.getIntroducedCount());
+        assertEquals(0, sa.getTestOnlyIntroducedCount());
+        assertEquals(1, sa.getPreExistingCount());
+        assertEquals(StaticAnalysisCategory.CLEAN, sa.getCategory());
+        assertEquals(Precision.round(args.getStaticAnalysisCleanBonus(), 2), sa.getRecommendedImpact(), 0.001);
+    }
+    private static DiagnosticInfo errorDiagnostic(String ruleId, boolean introduced) {
+        return DiagnosticInfo.builder()
+                .tool("pmd")
+                .ruleId(ruleId)
+                .severity(LlmScoringRequest.DiagnosticSeverity.ERROR)
+                .introducedInCommit(introduced)
+                .build();
+    }
     private static CodeBlockChange newModifyBlock(int lines, int ncss, int invocations) {
         return CodeBlockChange.builder()
                 .operation(Operation.MODIFY)

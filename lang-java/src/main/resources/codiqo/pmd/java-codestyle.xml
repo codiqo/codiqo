@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ruleset name="Codiqo Java Code Style"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+    <description>
+        PMD java codestyle category with test-aware relaxations. JUnit test methods commonly use
+        underscore-separated names (e.g. testHandler_persistsRevenue, should_return_x_when_y) —
+        a legitimate convention that must not be reported as an error-severity violation.
+        Production (non-test) methods keep the standard camelCase enforcement.
+    </description>
+    <rule ref="category/java/codestyle.xml">
+        <exclude name="MethodNamingConventions"/>
+    </rule>
+    <rule ref="category/java/codestyle.xml/MethodNamingConventions">
+        <properties>
+            <property name="junit3TestPattern" value="test[A-Z0-9][a-zA-Z0-9_]*"/>
+            <property name="junit4TestPattern" value="[a-z][a-zA-Z0-9_]*"/>
+            <property name="junitJupiterTestPattern" value="[a-z][a-zA-Z0-9_]*"/>
+        </properties>
+    </rule>
+</ruleset>

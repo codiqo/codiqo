@@ -473,6 +473,7 @@ public class LlmScoringResponse {
         private Integer line;
         private String assessment;
         private FindingSeverity severity;
+        private FindingSeverity toolSeverity;
         private String suggestedFileFix;
         private String suggestedBlockCode;
     }

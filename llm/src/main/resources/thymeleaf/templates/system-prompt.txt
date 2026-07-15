@@ -347,6 +347,8 @@ When zero error-severity violations are **introduced** in the commit, the catego
 
 Only `severity: "error"` findings are penalized. Warnings, info, and notes are ZERO penalty.
 
+Error rules introduced ONLY in test code (blocks with `isTest: true`) are weighted at a reduced rate in the pre-computed impact — the same discount CPD applies to test-only clones. Rules introduced in production code always carry full weight.
+
 ### Severity Classification:
 
 | Issue Type | Per-Issue Impact | When to Apply |
@@ -936,7 +938,20 @@ Each diagnostic in the request JSON has an `introducedInCommit` field pre-comput
 For each finding:
 1. **Classify** into the correct list using `introducedInCommit` (see above)
 2. **Validate**: Is it a real issue or false positive? If false positive, move to `pmdFalsePositives`/`spotbugsFalsePositives`
-3. **Assess**: Severity based on actual impact (ERROR/WARNING/INFO)
+3. **Re-review the tool's level**: copy the diagnostic's `severity` from the request into `toolSeverity`, then set `severity` to the level YOU confirm after reading the code in context
+
+### Severity Re-Review (keep or reduce, NEVER raise)
+
+Static analysis tools apply generic defaults; you see the actual code. For every finding:
+- **Keep** the tool level when the finding genuinely warrants it (real NPE risk, resource leak, security issue)
+- **Reduce** the level (error → warning/info, warning → info) when the finding is technically valid but practically harmless in its context. Typical reductions:
+  - Naming/style conventions flagged in test code (e.g., underscore test method names)
+  - Null-risk findings that are already guarded by surrounding code
+  - Tool defaults that clearly do not fit the project's established conventions
+- **NEVER raise** a level above `toolSeverity` — the server clamps `severity` back to `toolSeverity` if you do
+- When you reduce, state the reason in `assessment` (e.g., "underscore naming is an accepted test-method convention; reduced from error")
+
+Severity re-review is informational for reviewers and dashboards. It does NOT change the pre-computed `staticAnalysisRecommendedImpact` — that value stays authoritative for scoring.
 
 ### Code Fix Generation (for static analysis findings)
 
@@ -1302,12 +1317,12 @@ Your entire response is parsed as JSON directly.
   },
   
   "staticAnalysisReview": {
-    "pmdInChangedLines": [{"rule": "<RULE_ID>", "file": "<path>", "line": <number>, "assessment": "<explanation>", "severity": "<error|warning|info>", "suggestedFileFix": "<explanation>", "suggestedBlockCode": "<code>"}],
-    "pmdPreExisting": [{"rule": "<RULE_ID>", "file": "<path>", "line": <number>, "assessment": "<explanation>", "severity": "<error|warning|info>", "suggestedFileFix": "<explanation>", "suggestedBlockCode": "<code>"}],
-    "pmdFalsePositives": [{"rule": "<RULE_ID>", "file": "<path>", "line": <number>, "assessment": "<explanation>", "severity": "<error|warning|info>"}],
-    "spotbugsInChangedLines": [{"rule": "<BUG_ID>", "file": "<path>", "line": <number>, "assessment": "<explanation>", "severity": "<error|warning|info>", "suggestedFileFix": "<explanation>", "suggestedBlockCode": "<code>"}],
-    "spotbugsPreExisting": [{"rule": "<BUG_ID>", "file": "<path>", "line": <number>, "assessment": "<explanation>", "severity": "<error|warning|info>", "suggestedFileFix": "<explanation>", "suggestedBlockCode": "<code>"}],
-    "spotbugsFalsePositives": [{"rule": "<BUG_ID>", "file": "<path>", "line": <number>, "assessment": "<explanation>", "severity": "<error|warning|info>"}]
+    "pmdInChangedLines": [{"rule": "<RULE_ID>", "file": "<path>", "line": <number>, "assessment": "<explanation>", "severity": "<error|warning|info>", "toolSeverity": "<error|warning|info>", "suggestedFileFix": "<explanation>", "suggestedBlockCode": "<code>"}],
+    "pmdPreExisting": [{"rule": "<RULE_ID>", "file": "<path>", "line": <number>, "assessment": "<explanation>", "severity": "<error|warning|info>", "toolSeverity": "<error|warning|info>", "suggestedFileFix": "<explanation>", "suggestedBlockCode": "<code>"}],
+    "pmdFalsePositives": [{"rule": "<RULE_ID>", "file": "<path>", "line": <number>, "assessment": "<explanation>", "severity": "<error|warning|info>", "toolSeverity": "<error|warning|info>"}],
+    "spotbugsInChangedLines": [{"rule": "<BUG_ID>", "file": "<path>", "line": <number>, "assessment": "<explanation>", "severity": "<error|warning|info>", "toolSeverity": "<error|warning|info>", "suggestedFileFix": "<explanation>", "suggestedBlockCode": "<code>"}],
+    "spotbugsPreExisting": [{"rule": "<BUG_ID>", "file": "<path>", "line": <number>, "assessment": "<explanation>", "severity": "<error|warning|info>", "toolSeverity": "<error|warning|info>", "suggestedFileFix": "<explanation>", "suggestedBlockCode": "<code>"}],
+    "spotbugsFalsePositives": [{"rule": "<BUG_ID>", "file": "<path>", "line": <number>, "assessment": "<explanation>", "severity": "<error|warning|info>", "toolSeverity": "<error|warning|info>"}]
   },
   
   "blastRadiusAnalysis": {
