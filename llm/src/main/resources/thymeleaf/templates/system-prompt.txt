@@ -1033,7 +1033,7 @@ This is the SINGLE NUMBER that lets managers ask "is this developer being given 
 
 - `taskComplexityNew` — difficulty of the NEWLY ADDED code units only (operation `new`). How hard was it to design and write that code from scratch: novel control flow, algorithms, async orchestration score high; pattern instantiation, boilerplate frames, copy-adapt of an existing sibling score low.
 - `taskComplexityModified` — difficulty of the MODIFICATIONS to existing code units only (operation `modify`). Understanding entangled existing behavior, invariants, and callers scores high; one-line wiring or additive registration scores low.
-- Set a field to `null` when the commit has no code blocks of that operation. These sub-scores are informational attribution INSIDE the overall rating — `taskComplexity` remains the authoritative headline and must NOT be derived as an average of the two.
+- Base each sub-score STRICTLY on the `codeBlockChanges` entries and their `operation` field. Set `taskComplexityNew` to `null` when `codeBlockChanges` contains no entry with operation `new`, and `taskComplexityModified` to `null` when it contains no entry with operation `modify` — even when the raw diff shows added or edited code. Code visible in the diff without a corresponding `codeBlockChanges` entry (e.g., a new data/Lombok class whose units were all excluded as trivial) must NOT produce a sub-score. These sub-scores are informational attribution INSIDE the overall rating — `taskComplexity` remains the authoritative headline and must NOT be derived as an average of the two.
 - **Always provide `taskComplexityAttributionRationale`** — one sentence justifying the split (e.g., "the async pagination chain lives in the new handler; endpoint edits are one-line wiring").
 
 ---
@@ -1278,8 +1278,8 @@ Your entire response is parsed as JSON directly.
   "taskTypes": ["<feature|bug_fix|refactor|test|docs|chore|infra|dep_update|security_patch|performance|deduplication|style|data_migration>"],
   "taskComplexity": <1-10>,
   "taskComplexityRationale": "<one or two sentences naming the 1-2 inputs that drove the score>",
-  "taskComplexityNew": <1-10 or null when no new code blocks>,
-  "taskComplexityModified": <1-10 or null when no modified code blocks>,
+  "taskComplexityNew": <1-10, or null when codeBlockChanges has no 'new' entries>,
+  "taskComplexityModified": <1-10, or null when codeBlockChanges has no 'modify' entries>,
   "taskComplexityAttributionRationale": "<one sentence justifying the new-vs-modified split>",
   "thinking": "<Markdown reasoning: Volume → Complexity → Quality → Dimensions. NO final-score or bonus arithmetic — computed server-side>",
   "bugs": {
