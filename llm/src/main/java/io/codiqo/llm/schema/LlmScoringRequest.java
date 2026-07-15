@@ -1,5 +1,7 @@
 package io.codiqo.llm.schema;
 
+import static java.util.function.Predicate.not;
+
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -246,7 +248,7 @@ public class LlmScoringRequest {
             return CollectionUtils.size(callers);
         }
         public long getProductionCallerCount() {
-            return Objects.nonNull(callers) ? callers.stream().filter(c -> !c.isTestCaller()).count() : 0;
+            return Objects.nonNull(callers) ? callers.stream().filter(not(CallerInfo::isTestCaller)).count() : 0;
         }
     }
 

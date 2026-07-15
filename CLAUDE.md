@@ -958,7 +958,31 @@ private static void populateReview(Context ctx, Review review) {
 }
 ```
 
-### 3. Use `Boolean.FALSE.equals()` only as last resort
+### 3. Stream filters — use `Predicate.not()` instead of lambda negation
+
+For negated stream filters (and `removeIf`/`anyMatch` predicates), use a statically imported `Predicate.not()` with a method reference instead of a negating lambda. Compound negations become chained filters:
+
+```java
+import static java.util.function.Predicate.not;
+
+// Good - negation is explicit and up front, no lambda variable
+blocks.stream().filter(not(CodeBlockEffort::isConfig))...
+callers.stream().filter(not(CallerInfo::isTestCaller)).count();
+
+// Good - compound negation becomes chained not() filters
+lines.stream()
+        .filter(not(cosmeticDeleted::contains))
+        .filter(not(movedDeleted::contains))
+        .toList();
+
+// Bad - negation buried inside a lambda
+blocks.stream().filter(cbe -> !cbe.isConfig())...
+lines.stream().filter(n -> !cosmeticDeleted.contains(n) && !movedDeleted.contains(n))...
+```
+
+Exception: when no method reference exists (the call takes an argument computed from the element, e.g. `name -> !name.contains("$")`), `Predicate.not` adds nothing — prefer a positive-form API (`StringUtils.isNotEmpty`, etc.) or keep the lambda.
+
+### 4. Use `Boolean.FALSE.equals()` only as last resort
 
 Only use when **both** conditions are met:
 - No positive-form API exists

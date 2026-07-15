@@ -1,5 +1,6 @@
 package io.codiqo.llm;
 
+import static java.util.function.Predicate.not;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -75,7 +76,7 @@ class VolumeScoreCalculatorTest {
                 10, 20, 0, 0,
                 ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP);
 
-        CodeBlockEffort prodEffort = efforts.stream().filter(e -> !e.isTest()).findFirst().orElseThrow();
+        CodeBlockEffort prodEffort = efforts.stream().filter(not(CodeBlockEffort::isTest)).findFirst().orElseThrow();
         CodeBlockEffort testEffort = efforts.stream().filter(CodeBlockEffort::isTest).findFirst().orElseThrow();
 
         assertEquals(10.0, prodEffort.getBucketBaseline(), 0.01);
@@ -303,7 +304,7 @@ class VolumeScoreCalculatorTest {
                 0, 0, 0, 0,
                 1.0, 1.0, args.getTestCodeScoreMultiplier(), args.getDriverFactorMaxDeviation());
 
-        double prodEffort = efforts.stream().filter(e -> !e.isTest()).findFirst().orElseThrow().getEffort();
+        double prodEffort = efforts.stream().filter(not(CodeBlockEffort::isTest)).findFirst().orElseThrow().getEffort();
         double testEffort = efforts.stream().filter(CodeBlockEffort::isTest).findFirst().orElseThrow().getEffort();
 
         assertEquals(prodEffort * args.getTestCodeScoreMultiplier(), testEffort, 0.01,

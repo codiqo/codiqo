@@ -64,7 +64,9 @@ public class FinalScoreCalculator {
     }
     public void apply(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
         dropMovedPairsWhenDetectionDisabled(response);
-        new DiffClassificationDeriver(log).derive(response, request, movedLineDetector.detect(request));
+        if (Objects.nonNull(request)) {
+            new DiffClassificationDeriver(log).derive(response, request, movedLineDetector.detect(request));
+        }
         DiffAdjustment adjustment = computeDiffAdjustment(response, preComputed, request);
         PreComputedScores effective = adjustment.getScores();
         Map<String, FileDiffClassification> classificationByFile = buildClassificationByFile(response);

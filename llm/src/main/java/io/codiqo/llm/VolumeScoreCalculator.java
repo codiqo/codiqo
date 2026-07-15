@@ -1,18 +1,19 @@
 package io.codiqo.llm;
 
+import static java.util.function.Predicate.not;
+
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
-import java.util.HashSet;
-import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.math3.util.Precision;
-
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.metrics.DriverScaler;
@@ -52,18 +53,24 @@ public class VolumeScoreCalculator {
          * size (s/(1+s) saturates at 1, cap kept as a safety clamp); add decays toward its base —
          * new code in a large codebase is priced below modifying entangled existing code
          */
-        double modifyMult = args.getModifyMultiplierBase()
-                + Math.min(args.getModifyMultiplierScale() * sizeFactor / (1.0 + sizeFactor), args.getModifyMultiplierCap());
+        double modifyMult = args.getModifyMultiplierBase() + Math.min(args.getModifyMultiplierScale() * sizeFactor / (1.0 + sizeFactor), args.getModifyMultiplierCap());
         double addMult = args.getAddMultiplierBase() + args.getAddMultiplierScale() / (1.0 + sizeFactor);
 
         double maxDeviation = args.getDriverFactorMaxDeviation();
         List<CodeBlockEffort> initialEfforts = calculateCodeBlockEfforts(
                 request.getCodeBlockChanges(),
-                request.getMethodScalerProd(), request.getMethodScalerTest(),
-                request.getConstructorScalerProd(), request.getConstructorScalerTest(),
-                methodCapQuantileProd, methodCapQuantileTest,
-                constructorCapQuantileProd, constructorCapQuantileTest,
-                addMult, modifyMult, testMult, maxDeviation);
+                request.getMethodScalerProd(),
+                request.getMethodScalerTest(),
+                request.getConstructorScalerProd(),
+                request.getConstructorScalerTest(),
+                methodCapQuantileProd,
+                methodCapQuantileTest,
+                constructorCapQuantileProd,
+                constructorCapQuantileTest,
+                addMult,
+                modifyMult,
+                testMult,
+                maxDeviation);
         initialEfforts.addAll(calculateConfigFileEfforts(request.getFileChanges(), modifyMult, args.getConfigFileScoreMultiplier()));
 
         double totalEffortRaw = initialEfforts.stream().mapToDouble(CodeBlockEffort::getEffort).sum();
@@ -88,7 +95,7 @@ public class VolumeScoreCalculator {
         double baseEffort = totalVolumeScore;
 
         int totalEffectiveStatements = (int) Math.round(codeBlockEfforts.stream()
-                .filter(cbe -> !cbe.isConfig())
+                .filter(not(CodeBlockEffort::isConfig))
                 .mapToDouble(CodeBlockEffort::getDriverScore).sum());
         int linesNew = sumScaledLines(codeBlockEfforts, LlmScoringRequest.Operation.NEW);
         int linesModified = sumScaledLines(codeBlockEfforts, LlmScoringRequest.Operation.MODIFY);
@@ -166,15 +173,34 @@ public class VolumeScoreCalculator {
             double movedFactor = perBlockMovedFactor.getOrDefault(key, 1.0);
             double scaledDriverScore = cbe.getDriverScore() * factor * movedFactor;
             double scaledEffort = cbe.getEffort() * factor * movedFactor * categoryCoeff;
-            rescaled.add(new CodeBlockEffort(cbe.getFile(), cbe.getName(), cbe.getSignature(),
-                    cbe.getOperation(), cbe.getNonCommentCodeStatements(), cbe.getDirectInvocationCount(),
-                    cbe.getEffectiveInvocationsChanged(), cbe.getNonCommentCodeLines(), cbe.getCommentLines(),
-                    cbe.getEffectiveLinesChanged(), cbe.getChangeRatio(),
-                    cbe.getScaledLines(), cbe.getScaledNcss(), cbe.getScaledInvocations(),
-                    scaledDriverScore, cbe.getCappedStatements(), scaledEffort, cbe.getBucketBaseline(), cbe.isTest(),
-                    cbe.getBlockRatioDeviationNcss(), cbe.getBlockRatioDeviationInvocations(), cbe.isBlockRatioOutlier(),
-                    0.0, false,
-                    cbe.getBodyStartLine(), cbe.getBodyEndLine(), cbe.getBodyCodeLines(), cbe.isConfig()));
+            rescaled.add(new CodeBlockEffort(cbe.getFile(),
+                    cbe.getName(),
+                    cbe.getSignature(),
+                    cbe.getOperation(),
+                    cbe.getNonCommentCodeStatements(),
+                    cbe.getDirectInvocationCount(),
+                    cbe.getEffectiveInvocationsChanged(),
+                    cbe.getNonCommentCodeLines(),
+                    cbe.getCommentLines(),
+                    cbe.getEffectiveLinesChanged(),
+                    cbe.getChangeRatio(),
+                    cbe.getScaledLines(),
+                    cbe.getScaledNcss(),
+                    cbe.getScaledInvocations(),
+                    scaledDriverScore,
+                    cbe.getCappedStatements(),
+                    scaledEffort,
+                    cbe.getBucketBaseline(),
+                    cbe.isTest(),
+                    cbe.getBlockRatioDeviationNcss(),
+                    cbe.getBlockRatioDeviationInvocations(),
+                    cbe.isBlockRatioOutlier(),
+                    0.0,
+                    false,
+                    cbe.getBodyStartLine(),
+                    cbe.getBodyEndLine(),
+                    cbe.getBodyCodeLines(),
+                    cbe.isConfig()));
         }
 
         double totalEffortRaw = rescaled.stream().mapToDouble(CodeBlockEffort::getEffort).sum();
@@ -192,7 +218,7 @@ public class VolumeScoreCalculator {
         double baseEffort = totalVolumeScore;
 
         int totalEffectiveStatements = (int) Math.round(codeBlockEfforts.stream()
-                .filter(cbe -> !cbe.isConfig())
+                .filter(not(CodeBlockEffort::isConfig))
                 .mapToDouble(CodeBlockEffort::getDriverScore).sum());
 
         return original.toBuilder()
@@ -379,9 +405,11 @@ public class VolumeScoreCalculator {
         }
         return toReturn;
     }
-    // non-code text files (pom.xml, proto) have no code blocks, so their effort is computed from line
-    // count alone: one synthetic block per file weighted by the config multiplier. The LLM diff
-    // classification later rescales these in recompute, collapsing cosmetic and in-place churn.
+    /**
+     * non-code text files (pom.xml, proto) have no code blocks, so their effort is computed from line
+     * count alone: one synthetic block per file weighted by the config multiplier. The LLM diff
+     * classification later rescales these in recompute, collapsing cosmetic and in-place churn.
+     */
     static List<CodeBlockEffort> calculateConfigFileEfforts(List<FileChange> fileChanges, double modifyMult, double configMult) {
         if (CollectionUtils.isEmpty(fileChanges)) {
             return new ArrayList<>();
@@ -392,9 +420,11 @@ public class VolumeScoreCalculator {
             if (!fc.isConfig()) {
                 continue;
             }
-            // seed from added + deleted (like a Java block's totalLinesChanged) so the diff
-            // classification factor effectiveLines/(added+deleted) collapses each delete+add pair
-            // exactly once in recompute — seeding with max() would collapse the pair a second time
+            /**
+             * seed from added + deleted (like a Java block's totalLinesChanged) so the diff
+             * classification factor effectiveLines/(added+deleted) collapses each delete+add pair
+             * exactly once in recompute — seeding with max() would collapse the pair a second time
+             */
             int rawLines = fc.getLinesAdded() + fc.getLinesDeleted();
             if (rawLines <= 0) {
                 continue;
@@ -402,8 +432,10 @@ public class VolumeScoreCalculator {
 
             double driverScore = rawLines;
             double effort = driverScore * modifyMult * configMult;
-            // bucketBaseline 0 keeps config out of the global-cap baseline; isConfig excludes it from
-            // the effective-statements metric
+            /**
+             * bucketBaseline 0 keeps config out of the global-cap baseline; isConfig excludes it from
+             * the effective-statements metric
+             */
             toReturn.add(new CodeBlockEffort(fc.getPath(), fc.getPath(), null,
                     LlmScoringRequest.Operation.MODIFY, 0, 0,
                     0, 0, 0, rawLines, 0.0,
@@ -436,7 +468,7 @@ public class VolumeScoreCalculator {
     }
     private static int sumScaledLines(List<CodeBlockEffort> blocks, LlmScoringRequest.Operation operation) {
         return (int) Math.round(blocks.stream()
-                .filter(cbe -> !cbe.isConfig())
+                .filter(not(CodeBlockEffort::isConfig))
                 .filter(cbe -> cbe.getOperation() == operation)
                 .mapToDouble(CodeBlockEffort::getScaledLines)
                 .sum());
@@ -490,14 +522,13 @@ public class VolumeScoreCalculator {
         return Math.min(ratio, 1.0);
     }
     public static String blockKey(String file, String signature) {
-        return file + " " + signature;
+        return file + "\0" + signature;
     }
     static List<FileEffort> groupByFile(List<CodeBlockEffort> blockEfforts, double maxDeviation) {
         if (CollectionUtils.isEmpty(blockEfforts)) {
             return new ArrayList<>();
         }
-        Map<String, List<CodeBlockEffort>> byFile = blockEfforts.stream()
-                .collect(Collectors.groupingBy(CodeBlockEffort::getFile, Collectors.toList()));
+        Map<String, List<CodeBlockEffort>> byFile = blockEfforts.stream().collect(Collectors.groupingBy(CodeBlockEffort::getFile, Collectors.toList()));
 
         return byFile.entrySet().stream().map(entry -> {
             List<CodeBlockEffort> blocks = entry.getValue();
@@ -510,8 +541,7 @@ public class VolumeScoreCalculator {
             double maxDevInvocs = blocks.stream().mapToDouble(CodeBlockEffort::getBlockRatioDeviationInvocations).max().orElse(0.0);
             boolean abusive = outliers * 2 > blocks.size();
 
-            return new FileEffort(entry.getKey(), totalEffort, isTest, blocks,
-                    outliers, capDrivers, maxDevNcss, maxDevInvocs, abusive);
+            return new FileEffort(entry.getKey(), totalEffort, isTest, blocks, outliers, capDrivers, maxDevNcss, maxDevInvocs, abusive);
         }).sorted(Comparator.comparingDouble(FileEffort::getTotalEffort).reversed()).collect(Collectors.toList());
     }
 
