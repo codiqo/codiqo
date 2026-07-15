@@ -231,9 +231,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.failOnJdtlsError", defaultValue = "false")
     protected boolean failOnJdtlsError;
 
-    @Parameter(property = "codiqo.skipOnUnresolvedDependencies", defaultValue = "false")
-    protected boolean skipOnUnresolvedDependencies;
-
     @Parameter(property = "codiqo.skipOnBuildFailure", defaultValue = "true")
     protected boolean skipOnBuildFailure;
 
@@ -376,7 +373,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setIgnoreDiagnostics(ignoreDiagnostics);
         args.setIgnoreComplexity(ignoreComplexity);
         args.setFailOnJdtlsError(failOnJdtlsError);
-        args.setSkipOnUnresolvedDependencies(skipOnUnresolvedDependencies);
         args.setSkipOnBuildFailure(skipOnBuildFailure);
         args.setScoreOnBuildFailure(scoreOnBuildFailure);
         args.setBuildErrorCaptureLimit(Math.max(MIN_ABBREVIATE_WIDTH, buildErrorCaptureLimit));
@@ -785,7 +781,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         try {
             return new BuildOutcome.Proceeded(TimeMachineSupport.withHostPinning(args, getLog(), () -> projectBuilder.build(rootPom, request)));
         } catch (ProjectBuildingException pbe) {
-            return classifyProjectBuildingException(pbe, args);
+            return classifyProjectBuildingException(pbe);
         }
     }
     protected Optional<BuildOutcome.Skipped> buildAndCollectModules(
@@ -805,7 +801,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 try {
                     moduleResult = TimeMachineSupport.withHostPinning(args, getLog(), () -> projectBuilder.build(modulePom, buildingRequest));
                 } catch (ProjectBuildingException pbe) {
-                    return Optional.of(classifyProjectBuildingException(pbe, args));
+                    return Optional.of(classifyProjectBuildingException(pbe));
                 }
 
                 MavenProject moduleProject = moduleResult.getProject();
@@ -1091,14 +1087,10 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             }
         }
     }
-    private static BuildOutcome.Skipped classifyProjectBuildingException(ProjectBuildingException pbe, RunArgs args) throws MojoExecutionException {
+    private static BuildOutcome.Skipped classifyProjectBuildingException(ProjectBuildingException pbe) throws MojoExecutionException {
         List<String> unresolved = Maven.unresolvedDependencyCoords(pbe);
         if (CollectionUtils.isNotEmpty(unresolved)) {
-            String reason = "host model building: unresolved dependencies: " + StringUtils.join(unresolved, ", ");
-            if (args.isSkipOnUnresolvedDependencies()) {
-                return new BuildOutcome.Skipped(reason, AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, null);
-            }
-            throw new MojoExecutionException(reason, pbe);
+            return new BuildOutcome.Skipped("host model building: unresolved dependencies: " + StringUtils.join(unresolved, ", "), AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, null);
         }
 
         Optional<String> structural = Maven.severeProblem(pbe.getResults().stream().flatMap(r -> r.getProblems().stream()));

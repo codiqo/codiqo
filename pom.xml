@@ -1298,7 +1298,6 @@
                         <configuration>
                             <rules>
                                 <bannedDependencies>
-                                    <!-- ban guava only in compile/runtime scope (codiqo's own classpath); provided-scope guava from maven-core is the Maven build runtime, not a codiqo dependency -->
                                     <excludes>
                                         <exclude>com.google.guava:guava:*:*:compile</exclude>
                                         <exclude>com.google.guava:guava:*:*:runtime</exclude>
