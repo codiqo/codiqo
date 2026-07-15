@@ -295,6 +295,57 @@ class LlmResponseMapperTest {
     }
 
     @Test
+    void staticAnalysisFindingReducedSeverityIsPreserved() {
+        LlmScoringResponse response = new LlmScoringResponse();
+        StaticAnalysisReview review = new StaticAnalysisReview();
+        review.setPmdInChangedLines(new ArrayList<>(List.of(
+                StaticAnalysisFinding.builder().rule("MethodNamingConventions")
+                        .severity(FindingSeverity.INFO).toolSeverity(FindingSeverity.ERROR).build())));
+        response.setStaticAnalysisReview(review);
+        AnalysisResultModel result = new AnalysisResultModel();
+
+        mapper.mapToAnalysisResult(response, result);
+
+        StaticAnalysisFindingModel finding = result.getAssessment().getStaticAnalysisReview().getPmdInChangedLines().iterator().next();
+        assertEquals(StaticAnalysisFindingModel.SeverityEnum.INFO, finding.getSeverity());
+        assertEquals(StaticAnalysisFindingModel.ToolSeverityEnum.ERROR, finding.getToolSeverity());
+    }
+
+    @Test
+    void staticAnalysisFindingRaisedSeverityIsClampedToToolSeverity() {
+        LlmScoringResponse response = new LlmScoringResponse();
+        StaticAnalysisReview review = new StaticAnalysisReview();
+        review.setPmdInChangedLines(new ArrayList<>(List.of(
+                StaticAnalysisFinding.builder().rule("R1")
+                        .severity(FindingSeverity.ERROR).toolSeverity(FindingSeverity.WARNING).build())));
+        response.setStaticAnalysisReview(review);
+        AnalysisResultModel result = new AnalysisResultModel();
+
+        mapper.mapToAnalysisResult(response, result);
+
+        StaticAnalysisFindingModel finding = result.getAssessment().getStaticAnalysisReview().getPmdInChangedLines().iterator().next();
+        assertEquals(StaticAnalysisFindingModel.SeverityEnum.WARNING, finding.getSeverity(),
+                "re-review must never raise severity above the tool-reported level");
+        assertEquals(StaticAnalysisFindingModel.ToolSeverityEnum.WARNING, finding.getToolSeverity());
+    }
+
+    @Test
+    void staticAnalysisFindingWithoutToolSeverityKeepsReviewedSeverity() {
+        LlmScoringResponse response = new LlmScoringResponse();
+        StaticAnalysisReview review = new StaticAnalysisReview();
+        review.setPmdInChangedLines(new ArrayList<>(List.of(
+                StaticAnalysisFinding.builder().rule("R1").severity(FindingSeverity.ERROR).build())));
+        response.setStaticAnalysisReview(review);
+        AnalysisResultModel result = new AnalysisResultModel();
+
+        mapper.mapToAnalysisResult(response, result);
+
+        StaticAnalysisFindingModel finding = result.getAssessment().getStaticAnalysisReview().getPmdInChangedLines().iterator().next();
+        assertEquals(StaticAnalysisFindingModel.SeverityEnum.ERROR, finding.getSeverity());
+        assertNull(finding.getToolSeverity());
+    }
+
+    @Test
     void architectureEffortBonusIsMappedEndToEnd() {
         LlmScoringResponse response = new LlmScoringResponse();
         response.setArchitectureEffortBonus(ArchitectureEffortBonus.builder()
