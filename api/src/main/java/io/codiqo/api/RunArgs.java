@@ -105,8 +105,6 @@ public class RunArgs {
     @Nullable
     private boolean failOnJdtlsError = false;
     @Nullable
-    private boolean skipOnUnresolvedDependencies = false;
-    @Nullable
     private boolean skipOnBuildFailure = true;
     @Nullable
     private boolean scoreOnBuildFailure = false;
