@@ -109,6 +109,8 @@ public class RunArgs {
     @Nullable
     private boolean scoreOnBuildFailure = false;
     @Nullable
+    private boolean excludeRevertedCommits = true;
+    @Nullable
     private int buildErrorCaptureLimit = 8 * 1024;
     @Nullable
     private transient File javaHome;
