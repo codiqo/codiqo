@@ -11,7 +11,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Optional;
@@ -29,6 +31,7 @@ import java.util.ArrayList;
 import javax.inject.Inject;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.ListUtils;
 import org.apache.commons.collections4.queue.CircularFifoQueue;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
@@ -166,6 +169,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
     @Parameter(defaultValue = "${project.remoteProjectRepositories}", readonly = true)
     protected List<RemoteRepository> remoteRepos;
+
+    @Parameter(defaultValue = "${project.remotePluginRepositories}", readonly = true)
+    protected List<RemoteRepository> remotePluginRepos;
 
     @Parameter(property = "codiqo.javaHome")
     protected File javaHome;
@@ -338,9 +344,19 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     public final Collection<File> apply(Artifact artifact) {
         for (;;) {
             try {
+                /**
+                 * codiqo extension artifacts (time-machine, coverage-injector, eventspy) are hosted on the repository
+                 * the plugin itself was resolved from (a pluginRepository, e.g. central-snapshots), which the analyzed
+                 * project's <repositories> typically does not list — so plugin repositories are consulted as fallback
+                 */
+                Map<String, RemoteRepository> repositories = new LinkedHashMap<>();
+                for (RemoteRepository repo : ListUtils.union(remoteRepos, remotePluginRepos)) {
+                    repositories.putIfAbsent(repo.getId(), repo);
+                }
+
                 CollectRequest collect = new CollectRequest();
                 collect.setRoot(new org.eclipse.aether.graph.Dependency(artifact, null));
-                collect.setRepositories(remoteRepos);
+                collect.setRepositories(List.copyOf(repositories.values()));
                 DependencyRequest req = new DependencyRequest(collect, null);
                 DependencyResult result = repositorySystem.resolveDependencies(mavenSession.getRepositorySession(), req);
                 return result
@@ -456,7 +472,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                             .findFirst()
                             .orElse(null);
                 } catch (Exception err) {
-                    getLog().debug("jacoco agent resolution failed", err);
+                    getLog().warn("coverage auto-injection artifact resolution failed", err);
                 }
                 if (Objects.isNull(jacocoAgentJar)) {
                     getLog().warn(String.format("could not resolve %s:%s:%s; coverage auto-injection disabled for projects without jacoco-maven-plugin", JACOCO_GROUP_ID, JACOCO_AGENT_ARTIFACT_ID, JACOCO_AGENT_CLASSIFIER));
