@@ -204,59 +204,71 @@ public class JavaLanguageSpec implements LanguageSpec {
                     try (TextFile file = TextFile.forCharSeq(source, fileId, language.getDefaultVersion())) {
                         try (TextDocument doc = TextDocument.create(file)) {
                             ParserTask task = new ParserTask(doc, errorReporter, processingRegistry);
-                            ASTCompilationUnit tree = (ASTCompilationUnit) pmd.parse(task);
+                            List<CodeBlockInfo> fileBlocks = new ArrayList<>();
 
-                            Consumer<ASTExecutableDeclaration> consumer = executable -> {
-                                ASTBlock block = executable.getBody();
-                                ASTTypeDeclaration enclosing = executable.getEnclosingType();
-                                ASTTypeDeclaration type = executable
-                                        .ancestors(ASTTypeDeclaration.class)
-                                        .filter(t -> BooleanUtils.negate(t instanceof ASTAnonymousClassDeclaration))
-                                        .first();
+                            /**
+                             * PMD's type inference can crash on valid code it fails to disambiguate
+                             * (e.g. diamond anonymous classes like "new TypeToken<>() {}", pmd/pmd#4436) —
+                             * degrade to zero code units for the offending file instead of failing the run
+                             */
+                            try {
+                                ASTCompilationUnit tree = (ASTCompilationUnit) pmd.parse(task);
 
-                                if (Objects.nonNull(block) && BooleanUtils.negate(block.isEmpty())) {
-                                    String body = executable.getText().toString();
-                                    FileLocation reportLocation = tree.getTextDocument().toLocation(executable.getTextRegion());
+                                Consumer<ASTExecutableDeclaration> consumer = executable -> {
+                                    ASTBlock block = executable.getBody();
+                                    ASTTypeDeclaration enclosing = executable.getEnclosingType();
+                                    ASTTypeDeclaration type = executable
+                                            .ancestors(ASTTypeDeclaration.class)
+                                            .filter(t -> BooleanUtils.negate(t instanceof ASTAnonymousClassDeclaration))
+                                            .first();
 
-                                    SourceLocation location = SourceLocation.builder()
-                                            .startLine(reportLocation.getStartLine())
-                                            .endLine(reportLocation.getEndLine())
-                                            .startColumn(reportLocation.getStartColumn())
-                                            .endColumn(reportLocation.getEndColumn())
-                                            .build();
+                                    if (Objects.nonNull(block) && BooleanUtils.negate(block.isEmpty())) {
+                                        String body = executable.getText().toString();
+                                        FileLocation reportLocation = tree.getTextDocument().toLocation(executable.getTextRegion());
 
-                                    NodeStream<JavaNode> calls = executable.descendants(JavaNode.class).filter(node -> node instanceof MethodUsage).cached();
-                                    Collection<JInvocationBlock> toAdd = outboundASTconverter.apply(calls);
+                                        SourceLocation location = SourceLocation.builder()
+                                                .startLine(reportLocation.getStartLine())
+                                                .endLine(reportLocation.getEndLine())
+                                                .startColumn(reportLocation.getStartColumn())
+                                                .endColumn(reportLocation.getEndColumn())
+                                                .build();
 
-                                    if (executable instanceof ASTMethodDeclaration) {
-                                        builder.add(JavaPmdMethodInfo.builder()
-                                                .file(destination)
-                                                .location(location)
-                                                .type(type)
-                                                .enclosingType(enclosing)
-                                                .node(executable)
-                                                .invocations(toAdd)
-                                                .body(body)
-                                                .build());
-                                    } else if (executable instanceof ASTConstructorDeclaration) {
-                                        builder.add(JavaPmdConstructorInfo.builder()
-                                                .file(destination)
-                                                .location(location)
-                                                .type(type)
-                                                .enclosingType(enclosing)
-                                                .node(executable)
-                                                .invocations(toAdd)
-                                                .body(body)
-                                                .build());
+                                        NodeStream<JavaNode> calls = executable.descendants(JavaNode.class).filter(node -> node instanceof MethodUsage).cached();
+                                        Collection<JInvocationBlock> toAdd = outboundASTconverter.apply(calls);
+
+                                        if (executable instanceof ASTMethodDeclaration) {
+                                            fileBlocks.add(JavaPmdMethodInfo.builder()
+                                                    .file(destination)
+                                                    .location(location)
+                                                    .type(type)
+                                                    .enclosingType(enclosing)
+                                                    .node(executable)
+                                                    .invocations(toAdd)
+                                                    .body(body)
+                                                    .build());
+                                        } else if (executable instanceof ASTConstructorDeclaration) {
+                                            fileBlocks.add(JavaPmdConstructorInfo.builder()
+                                                    .file(destination)
+                                                    .location(location)
+                                                    .type(type)
+                                                    .enclosingType(enclosing)
+                                                    .node(executable)
+                                                    .invocations(toAdd)
+                                                    .body(body)
+                                                    .build());
+                                        }
+
+                                        if (owner instanceof JvmProjectSpec jvm) {
+                                            toAdd.stream().forEach(signature -> signature.accept(jvm));
+                                        }
                                     }
+                                };
 
-                                    if (owner instanceof JvmProjectSpec jvm) {
-                                        toAdd.stream().forEach(signature -> signature.accept(jvm));
-                                    }
-                                }
-                            };
-
-                            collectExecutables(tree, consumer);
+                                collectExecutables(tree, consumer);
+                                builder.addAll(fileBlocks);
+                            } catch (RuntimeException err) {
+                                log.warn("PMD failed to analyze %s, skipping code unit indexing for this file: %s", destination, ExceptionUtils.getRootCauseMessage(err));
+                            }
                         }
                     }
                 }
