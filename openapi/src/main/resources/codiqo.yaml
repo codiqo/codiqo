@@ -298,7 +298,7 @@ components:
           type: string
           description: Optional human-readable reason for excluding this analysis
         category:
-          description: Structured exclusion category (build/dependency failure, revert commit, merge commit, branch/author filter, no relevant files, duplicate commit)
+          description: Structured exclusion category (build/dependency failure, revert commit, reverted original, merge commit, branch/author filter, no relevant files, duplicate commit)
           allOf:
             - $ref: '#/components/schemas/AnalysisExcludeCategory'
         detail:
@@ -319,6 +319,7 @@ components:
         - BUILD_FAILURE
         - NO_ANALYZABLE_DIFF
         - REVERT_COMMIT
+        - REVERTED
         - MERGE_COMMIT
         - FILTERED_BY_RULES
         - DUPLICATE_COMMIT

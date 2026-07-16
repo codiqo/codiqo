@@ -3,6 +3,7 @@ package io.codiqo.maven;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -86,6 +87,7 @@ import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.LogFactory;
+import io.codiqo.client.ApiException;
 import io.codiqo.client.model.AnalysisBuildFailureModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.ClientInfoModel;
@@ -237,6 +239,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.scoreOnBuildFailure", defaultValue = "false")
     protected boolean scoreOnBuildFailure;
 
+    @Parameter(property = "codiqo.excludeRevertedCommits", defaultValue = "true")
+    protected boolean excludeRevertedCommits;
+
     @Parameter(property = "codiqo.buildErrorCaptureLimit", defaultValue = "8192")
     protected int buildErrorCaptureLimit;
 
@@ -375,6 +380,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setFailOnJdtlsError(failOnJdtlsError);
         args.setSkipOnBuildFailure(skipOnBuildFailure);
         args.setScoreOnBuildFailure(scoreOnBuildFailure);
+        args.setExcludeRevertedCommits(excludeRevertedCommits);
         args.setBuildErrorCaptureLimit(Math.max(MIN_ABBREVIATE_WIDTH, buildErrorCaptureLimit));
         args.setPmdMinPriority(pmdMinPriority);
         if (StringUtils.isNotBlank(pmdRules)) {
@@ -841,8 +847,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         if (opt.isPresent()) {
             SubmissionContext ctx = opt.get();
             if (ctx.getAnalysis().isRevertCommit()) {
-                getLog().warn(String.format("commit %s skipped: revert commit (no LLM scoring or submission)", args.getCommitId()));
-                doExcludeAnalysis(args.getCommitId(), "revert commit (no LLM scoring performed)", AnalysisExcludeCategory.REVERT_COMMIT);
+                doExcludeRevertCommit(args, ctx);
             } else {
                 doLlmScoring(ctx);
             }
@@ -979,6 +984,29 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             executor.shutdown();
         }
     }
+    /**
+     * shared revert gate for the successful-build and degraded paths: the revert itself is excluded
+     * unconditionally, and with codiqo.excludeRevertedCommits enabled the original (reverted) commit
+     * is retroactively excluded too — the backend flips its already-scored analysis to excluded, so
+     * reverted work stops counting toward effort. 404 means the original predates the indexing window
+     */
+    protected void doExcludeRevertCommit(RunArgs args, SubmissionContext ctx) throws Exception {
+        getLog().warn(String.format("commit %s skipped: revert commit (no LLM scoring or submission)", args.getCommitId()));
+        doExcludeAnalysis(args.getCommitId(), "revert commit (no LLM scoring performed)", AnalysisExcludeCategory.REVERT_COMMIT);
+
+        if (args.isExcludeRevertedCommits()) {
+            String revertedSha = ctx.getAnalysis().getRevertedCommitId();
+            try {
+                doExcludeAnalysis(revertedSha, String.format("reverted by commit %s", JGit.shortSha(args.getCommitId())), AnalysisExcludeCategory.REVERTED);
+            } catch (ApiException err) {
+                if (err.getCode() == HttpURLConnection.HTTP_NOT_FOUND) {
+                    getLog().warn(String.format("reverted commit %s not known to backend (outside indexing window?) — skipping its exclusion", revertedSha));
+                } else {
+                    throw err;
+                }
+            }
+        }
+    }
     protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category) throws Exception {
         doExcludeAnalysis(commitSha, reason, category, null);
     }
@@ -1007,8 +1035,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 return;
             }
             if (ctx.getAnalysis().isRevertCommit()) {
-                getLog().warn(String.format("commit %s skipped: revert commit (no LLM scoring or submission)", args.getCommitId()));
-                doExcludeAnalysis(args.getCommitId(), "revert commit (no LLM scoring performed)", AnalysisExcludeCategory.REVERT_COMMIT);
+                doExcludeRevertCommit(args, ctx);
                 return;
             }
             getLog().warn(String.format("commit %s: build failed (%s: %s) — running diff-only degraded analysis", args.getCommitId(), category, reason));

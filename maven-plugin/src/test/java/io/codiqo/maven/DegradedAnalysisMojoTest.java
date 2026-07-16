@@ -6,9 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
+import java.net.HttpURLConnection;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 
 import org.apache.commons.collections4.CollectionUtils;
@@ -26,10 +29,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.client.ApiException;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.submit.SubmissionContext;
+import io.codiqo.util.JGit;
 
 /**
  * Behavioral coverage for the build-failure degraded path: scoreOnBuildFailure=false must keep the
@@ -99,10 +104,12 @@ class DegradedAnalysisMojoTest {
         mojo.doDegradedAnalysis(argsFor(second), "[ERROR] COMPILATION ERROR", AnalysisExcludeCategory.BUILD_FAILURE, "cannot find symbol");
 
         assertNull(mojo.scoredCtx, "flag off (default) must not run degraded scoring");
-        assertEquals("[ERROR] COMPILATION ERROR", mojo.excludedReason);
-        assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, mojo.excludedCategory);
-        assertEquals("cannot find symbol", mojo.excludedDetail);
-        assertTrue(CollectionUtils.isNotEmpty(mojo.excludedFiles), "exclusion must carry the captured diff files");
+        assertEquals(1, mojo.exclusions.size());
+        Exclusion exclusion = mojo.exclusions.iterator().next();
+        assertEquals("[ERROR] COMPILATION ERROR", exclusion.reason());
+        assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, exclusion.category());
+        assertEquals("cannot find symbol", exclusion.detail());
+        assertTrue(CollectionUtils.isNotEmpty(exclusion.files()), "exclusion must carry the captured diff files");
     }
     @Test
     void flagOnBuildFailureScoresDiffOnlySubmission() throws Exception {
@@ -113,7 +120,7 @@ class DegradedAnalysisMojoTest {
 
         mojo.doDegradedAnalysis(args, "[ERROR] COMPILATION ERROR", AnalysisExcludeCategory.BUILD_FAILURE, "cannot find symbol");
 
-        assertNull(mojo.excludedReason, "flag on with an analyzable diff must not exclude");
+        assertTrue(mojo.exclusions.isEmpty(), "flag on with an analyzable diff must not exclude");
         assertNotNull(mojo.scoredCtx, "degraded scoring must run");
 
         AnalysisSubmissionModel submission = mojo.scoredCtx.getSubmissionModel();
@@ -137,7 +144,7 @@ class DegradedAnalysisMojoTest {
         assertNull(submission.getIndex());
     }
     @Test
-    void flagOnRevertCommitFallsBackToRevertExclusion() throws Exception {
+    void flagOnRevertCommitExcludesRevertAndOriginal() throws Exception {
         commitFile(JAVA_V1, "first");
         RevCommit second = commitFile(JAVA_V2, "second");
         RevCommit revert = commitFile(JAVA_V1, "Revert \"second\"\n\nThis reverts commit " + second.getName() + ".");
@@ -147,7 +154,47 @@ class DegradedAnalysisMojoTest {
         mojo.doDegradedAnalysis(args, "[ERROR] COMPILATION ERROR", AnalysisExcludeCategory.BUILD_FAILURE, null);
 
         assertNull(mojo.scoredCtx, "revert commits must not be scored even in degraded mode");
-        assertEquals(AnalysisExcludeCategory.REVERT_COMMIT, mojo.excludedCategory);
+        assertEquals(2, mojo.exclusions.size());
+
+        Iterator<Exclusion> it = mojo.exclusions.iterator();
+        Exclusion revertExclusion = it.next();
+        assertEquals(revert.getName(), revertExclusion.commitSha());
+        assertEquals(AnalysisExcludeCategory.REVERT_COMMIT, revertExclusion.category());
+
+        Exclusion originalExclusion = it.next();
+        assertEquals(second.getName(), originalExclusion.commitSha());
+        assertEquals(AnalysisExcludeCategory.REVERTED, originalExclusion.category());
+        assertEquals("reverted by commit " + JGit.shortSha(revert.getName()), originalExclusion.reason());
+    }
+    @Test
+    void excludeRevertedCommitsOffExcludesOnlyRevertItself() throws Exception {
+        commitFile(JAVA_V1, "first");
+        RevCommit second = commitFile(JAVA_V2, "second");
+        RevCommit revert = commitFile(JAVA_V1, "Revert \"second\"\n\nThis reverts commit " + second.getName() + ".");
+        RunArgs args = argsFor(revert);
+        args.setScoreOnBuildFailure(true);
+        args.setExcludeRevertedCommits(false);
+
+        mojo.doDegradedAnalysis(args, "[ERROR] COMPILATION ERROR", AnalysisExcludeCategory.BUILD_FAILURE, null);
+
+        assertEquals(1, mojo.exclusions.size());
+        Exclusion exclusion = mojo.exclusions.iterator().next();
+        assertEquals(revert.getName(), exclusion.commitSha());
+        assertEquals(AnalysisExcludeCategory.REVERT_COMMIT, exclusion.category());
+    }
+    @Test
+    void originalCommitUnknownToBackendIsTolerated() throws Exception {
+        commitFile(JAVA_V1, "first");
+        RevCommit second = commitFile(JAVA_V2, "second");
+        RevCommit revert = commitFile(JAVA_V1, "Revert \"second\"\n\nThis reverts commit " + second.getName() + ".");
+        RunArgs args = argsFor(revert);
+        args.setScoreOnBuildFailure(true);
+        mojo.notFoundSha = second.getName();
+
+        mojo.doDegradedAnalysis(args, "[ERROR] COMPILATION ERROR", AnalysisExcludeCategory.BUILD_FAILURE, null);
+
+        assertEquals(1, mojo.exclusions.size());
+        assertEquals(AnalysisExcludeCategory.REVERT_COMMIT, mojo.exclusions.iterator().next().category());
     }
 
     private RunArgs argsFor(RevCommit commit) {
@@ -164,21 +211,21 @@ class DegradedAnalysisMojoTest {
 
     private static final class RecordingMojo extends AbstractAnalyzeMojo {
         private SubmissionContext scoredCtx;
-        private String excludedReason;
-        private AnalysisExcludeCategory excludedCategory;
-        private String excludedDetail;
-        private List<FileChangeModel> excludedFiles;
+        private String notFoundSha;
+        private final List<Exclusion> exclusions = new ArrayList<>();
 
         @Override
         protected void doLlmScoring(SubmissionContext ctx) {
             scoredCtx = ctx;
         }
         @Override
-        protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files) {
-            excludedReason = reason;
-            excludedCategory = category;
-            excludedDetail = detail;
-            excludedFiles = files;
+        protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files) throws ApiException {
+            if (commitSha.equals(notFoundSha)) {
+                throw new ApiException(HttpURLConnection.HTTP_NOT_FOUND, "analysis not found: " + commitSha);
+            }
+            exclusions.add(new Exclusion(commitSha, reason, category, detail, files));
         }
+    }
+    private record Exclusion(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files) {
     }
 }
