@@ -338,7 +338,7 @@ class IndexCommitsMojoTest {
         assertFalse(fp.contains(feat.getName()), "only the merge-commit PR's feature-branch commit is dropped");
     }
     @Test
-    void firstParentAuthorFilterOnABotAuthoredMergeDropsTheWholePr() throws Exception {
+    void firstParentBotAuthoredMergeIsCreditedToTheSideBranchAuthor() throws Exception {
         commit("base.txt", "0", "base");
         git.branchCreate().setName("feature").call();
         git.checkout().setName("feature").call();
@@ -350,10 +350,29 @@ class IndexCommitsMojoTest {
 
         RunArgs onlyDev = new RunArgs();
         onlyDev.setIncludeAuthorEmails("dev@corp.com");
-        List<String> fp = shas(extract(onlyDev, "HEAD", EPOCH, "main"));
-        assertFalse(fp.contains(mergeSha),
-                "the bot-authored merge node fails the dev author filter, and the dev feature commit is off the first-parent spine — so the whole PR is absent (known first-parent limitation for bot-merged PRs)");
-        assertFalse(fp.contains(devWork.getName()));
+        List<CommitModel> fp = extract(onlyDev, "HEAD", EPOCH, "main");
+
+        CommitModel mergeNode = fp.stream().filter(c -> mergeSha.equals(c.getSha())).findFirst().orElseThrow();
+        assertEquals("dev@corp.com", mergeNode.getAuthorEmail(),
+                "the merge node is credited to the side-branch sole author, so the dev author filter keeps the PR");
+        assertEquals("Dev", mergeNode.getAuthor());
+        assertFalse(shas(fp).contains(devWork.getName()), "the dev feature commit itself stays off the first-parent spine");
+    }
+    @Test
+    void mixedAuthorSideBranchMergeKeepsTheMergeAuthor() throws Exception {
+        commit("base.txt", "0", "base");
+        git.branchCreate().setName("feature").call();
+        git.checkout().setName("feature").call();
+        commitAs("f1.txt", "1", "PR commit 1", "Dev", "dev@corp.com");
+        commitAs("f2.txt", "2", "PR commit 2", "Other", "other@corp.com");
+        git.checkout().setName("main").call();
+        commit("m.txt", "m", "mainline");
+        String mergeSha = mergeAs("feature", "Merge pull request #10", "CI Bot", "bot@ci.com");
+
+        List<CommitModel> fp = extract(new RunArgs(), "HEAD", EPOCH, "main");
+
+        CommitModel mergeNode = fp.stream().filter(c -> mergeSha.equals(c.getSha())).findFirst().orElseThrow();
+        assertEquals("bot@ci.com", mergeNode.getAuthorEmail(), "no sole side-branch author — the merge author is kept");
     }
     private List<CommitModel> extract(RunArgs filter, String ref, Date cutoff, String branch) throws Exception {
         return CommitIndexer.extractCommits(repository, filter, ref, cutoff, branch);

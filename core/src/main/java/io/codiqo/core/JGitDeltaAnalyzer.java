@@ -29,6 +29,7 @@ import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectLoader;
 import org.eclipse.jgit.lib.ObjectReader;
+import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.patch.FileHeader;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
@@ -158,8 +159,17 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
             toReturn.setRevertedCommitId(sha);
         });
 
-        toReturn.setAuthor(commit.getAuthorIdent().getName());
-        toReturn.setAuthorEmail(commit.getAuthorIdent().getEmailAddress());
+        /**
+         * a merge node's parent[0] delta is the merged-in branch's net change, so credit goes to the
+         * side-branch sole author (the developer whose PR landed), not whoever clicked merge. the
+         * merge's own timestamp is kept — attribution changes who, not when
+         */
+        PersonIdent effectiveAuthor = commit.getAuthorIdent();
+        if (JGit.isMerge(commit)) {
+            effectiveAuthor = JGit.mergeSideSoleAuthor(args.getGit(), commit).orElse(effectiveAuthor);
+        }
+        toReturn.setAuthor(effectiveAuthor.getName());
+        toReturn.setAuthorEmail(effectiveAuthor.getEmailAddress());
         toReturn.setAuthorTimestamp(Date.from(commit.getAuthorIdent().getWhenAsInstant()));
 
         toReturn.setCommitter(commit.getCommitterIdent().getName());

@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import org.apache.commons.lang3.BooleanUtils;
 import org.eclipse.jgit.diff.PatchIdDiffFormatter;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevSort;
@@ -53,9 +54,20 @@ public class CommitIndexer {
 
             for (RevCommit commit : walk) {
                 List<String> branches = branchIndex.getOrDefault(commit.getName(), Collections.emptyList());
+
+                /**
+                 * merge nodes are credited to the side-branch sole author (the developer whose PR
+                 * landed), so the author filter must not drop a PR just because a bot or a teammate
+                 * clicked merge
+                 */
+                PersonIdent author = commit.getAuthorIdent();
+                if (JGit.isMerge(commit)) {
+                    author = JGit.mergeSideSoleAuthor(repo, commit).orElse(author);
+                }
+
                 if (BooleanUtils.or(new boolean[] {
                         BooleanUtils.negate(branches.contains(branch)),
-                        BooleanUtils.negate(filterArgs.isAuthorAllowed(commit.getAuthorIdent().getEmailAddress()))
+                        BooleanUtils.negate(filterArgs.isAuthorAllowed(author.getEmailAddress()))
                 })) {
                     continue;
                 }
@@ -68,7 +80,7 @@ public class CommitIndexer {
                 if (commit.getParentCount() == 1 && BooleanUtils.isFalse(seenPatchIds.add(patchId(repo, commit)))) {
                     continue;
                 }
-                toReturn.add(toCommitModel(commit, branches));
+                toReturn.add(toCommitModel(commit, branches, author));
             }
         }
         return toReturn;
@@ -84,13 +96,13 @@ public class CommitIndexer {
             return formatter.getCalulatedPatchId();
         }
     }
-    private static CommitModel toCommitModel(RevCommit commit, List<String> branches) {
+    private static CommitModel toCommitModel(RevCommit commit, List<String> branches, PersonIdent author) {
         CommitModel toReturn = new CommitModel();
 
         toReturn.setSha(commit.getName());
         toReturn.setMessage(commit.getFullMessage());
-        toReturn.setAuthor(commit.getAuthorIdent().getName());
-        toReturn.setAuthorEmail(commit.getAuthorIdent().getEmailAddress());
+        toReturn.setAuthor(author.getName());
+        toReturn.setAuthorEmail(author.getEmailAddress());
         toReturn.setTimestamp(commit.getAuthorIdent().getWhenAsInstant().atOffset(ZoneOffset.UTC));
 
         toReturn.setParents(JGit.parentShas(commit));

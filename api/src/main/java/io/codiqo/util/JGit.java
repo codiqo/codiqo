@@ -22,6 +22,7 @@ import org.eclipse.jgit.api.ListBranchCommand.ListMode;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.StoredConfig;
@@ -102,6 +103,43 @@ public class JGit {
     }
     public static boolean isMerge(RevCommit commit) {
         return commit.getParentCount() > BigDecimal.ONE.intValue();
+    }
+    /**
+     * the merged-in branch's own commits: reachable from the merge's second parent but not from the
+     * first (mainline) parent. for a PR merge node this is exactly the set of commits the PR brought in
+     */
+    public static List<RevCommit> mergeSideCommits(Repository repo, RevCommit merge) throws IOException {
+        List<RevCommit> toReturn = new ArrayList<>();
+
+        try (RevWalk walk = new RevWalk(repo)) {
+            walk.markStart(walk.parseCommit(merge.getParent(1)));
+            walk.markUninteresting(walk.parseCommit(merge.getParent(0)));
+            for (RevCommit commit : walk) {
+                toReturn.add(commit);
+            }
+        }
+        return toReturn;
+    }
+    /**
+     * derives who to credit for a merge node's parent[0] delta: the single author of every side-branch
+     * commit. empty for octopus merges (ambiguous mainline delta), empty side sets (nothing new merged
+     * in) and mixed-author side branches (no sole owner of the net change)
+     */
+    public static Optional<PersonIdent> mergeSideSoleAuthor(Repository repo, RevCommit merge) throws IOException {
+        if (merge.getParentCount() != 2) {
+            return Optional.empty();
+        }
+
+        PersonIdent soleAuthor = null;
+        for (RevCommit commit : mergeSideCommits(repo, merge)) {
+            PersonIdent author = commit.getAuthorIdent();
+            if (Objects.isNull(soleAuthor)) {
+                soleAuthor = author;
+            } else if (BooleanUtils.negate(StringUtils.equalsIgnoreCase(soleAuthor.getEmailAddress(), author.getEmailAddress()))) {
+                return Optional.empty();
+            }
+        }
+        return Optional.ofNullable(soleAuthor);
     }
     public static List<String> branchesContaining(Repository repo, String commitSha) throws Exception {
         Set<String> toReturn = new LinkedHashSet<>();
