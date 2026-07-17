@@ -169,6 +169,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             }
 
             ProjectBuildingRequest buildingReq = Maven.buildingRequest(mavenSession);
+            Maven.pinMultiModuleProjectDirectory(buildingReq, clone.getWorkTree());
             if (Objects.nonNull(args.getTimeMachineTargetOffset())) {
                 Maven.isolateRepositorySession(buildingReq);
             }
