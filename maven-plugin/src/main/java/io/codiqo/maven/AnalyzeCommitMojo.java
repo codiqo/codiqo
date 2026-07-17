@@ -25,9 +25,11 @@ import org.apache.maven.project.ProjectBuildingResult;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ResetCommand;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.StoredConfig;
+import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.RefSpec;
@@ -60,20 +62,28 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     @Parameter(property = "codiqo.commitId", required = true)
     private String commitId;
 
+    @Parameter(property = "codiqo.firstParentOnly", defaultValue = "true")
+    private boolean firstParentOnly;
+
     @Override
     protected void doPrepare(RunArgs args) throws Exception {
         super.doPrepare(args);
 
         args.setCommitId(commitId);
+        args.setFirstParentOnly(firstParentOnly);
         resolveCommit(args, commitId);
     }
     @Override
     protected void doExecute(RunArgs args) throws Exception {
         if (JGit.isMerge(args.getGit(), commitId)) {
-            String reason = "merge commit (multiple parents)";
-            getLog().warn(String.format("commit %s skipped: %s", commitId, reason));
-            doExcludeAnalysis(commitId, reason, AnalysisExcludeCategory.MERGE_COMMIT);
-            return;
+            Optional<String> mergeSkip = mergeSkipReason(args);
+            if (mergeSkip.isPresent()) {
+                getLog().warn(String.format("commit %s skipped: %s", commitId, mergeSkip.get()));
+                doExcludeAnalysis(commitId, mergeSkip.get(), AnalysisExcludeCategory.MERGE_COMMIT);
+                return;
+            }
+            getLog().info(String.format("merge commit %s analyzed via first-parent delta, credited to side-branch author %s",
+                    commitId, resolveAuthorEmail(args)));
         }
 
         if (args.isExcludedAuthor(resolveAuthorEmail(args))) {
@@ -273,10 +283,52 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     private static String attemptHistoryDetail(List<String> attemptFailures) {
         return "time-machine attempts:" + ATTEMPT_SEPARATOR + StringUtils.join(attemptFailures, ATTEMPT_SEPARATOR);
     }
+    /**
+     * in first-parent mode the merge node is the only mainline record of a merge-commit PR, so its
+     * parent[0] delta is analyzable when the side branch has a sole author to credit. in all-commits
+     * mode the side-branch commits are indexed individually and analyzing the merge would double-count
+     */
+    static Optional<String> mergeSkipReason(RunArgs args) throws IOException {
+        if (args.isFirstParentOnly()) {
+            ObjectId objectId = args.getGit().resolve(args.getCommitId());
+            try (RevWalk walk = new RevWalk(args.getGit())) {
+                RevCommit merge = walk.parseCommit(objectId);
+
+                /**
+                 * identical trees mean the merge landed nothing on the mainline (side changes already
+                 * integrated, or an ours-strategy merge that discarded them) — a guaranteed zero score,
+                 * so skip before the expensive clone/build/LLM pipeline
+                 */
+                RevCommit parent0 = walk.parseCommit(merge.getParent(0));
+                if (merge.getTree().getId().equals(parent0.getTree().getId())) {
+                    return Optional.of("merge introduces no mainline changes");
+                }
+
+                if (merge.getParentCount() > 2) {
+                    return Optional.of(String.format("octopus merge (%d parents)", merge.getParentCount()));
+                }
+                if (JGit.mergeSideCommits(args.getGit(), merge).isEmpty()) {
+                    return Optional.of("merge introduces no side-branch commits");
+                }
+                if (JGit.mergeSideSoleAuthor(args.getGit(), merge).isEmpty()) {
+                    return Optional.of("merge side-branch commits have multiple authors");
+                }
+                return Optional.empty();
+            }
+        }
+        return Optional.of("merge commit (multiple parents)");
+    }
     private static String resolveAuthorEmail(RunArgs args) throws IOException {
         ObjectId objectId = args.getGit().resolve(args.getCommitId());
         try (RevWalk walk = new RevWalk(args.getGit())) {
-            return walk.parseCommit(objectId).getAuthorIdent().getEmailAddress();
+            RevCommit commit = walk.parseCommit(objectId);
+            if (JGit.isMerge(commit)) {
+                Optional<PersonIdent> sideAuthor = JGit.mergeSideSoleAuthor(args.getGit(), commit);
+                if (sideAuthor.isPresent()) {
+                    return sideAuthor.get().getEmailAddress();
+                }
+            }
+            return commit.getAuthorIdent().getEmailAddress();
         }
     }
 }
