@@ -10,8 +10,10 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -25,8 +27,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import java.util.LinkedHashSet;
-import java.util.ArrayList;
 
 import javax.inject.Inject;
 
@@ -100,23 +100,23 @@ import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.lang.config.ConfigFiles;
 import io.codiqo.llm.client.DaemonExecutors;
+import io.codiqo.maven.coverage.CoverageInjectorConfig;
+import io.codiqo.maven.eventspy.BuildFailureConfig;
 import io.codiqo.maven.logging.MavenLogFactory;
+import io.codiqo.maven.populator.LlmScoringPopulator;
+import io.codiqo.maven.populator.ProjectModelPopulator;
+import io.codiqo.maven.populator.SubmissionSummaryPrinter;
+import io.codiqo.maven.timemachine.TimeMachineConfig;
 import io.codiqo.submit.CommitModelPopulator;
 import io.codiqo.submit.DuplicationReportPopulator;
 import io.codiqo.submit.EffectiveChangePopulator;
 import io.codiqo.submit.FileAnalysisPopulator;
 import io.codiqo.submit.IndexModelPopulator;
-import io.codiqo.maven.populator.LlmScoringPopulator;
 import io.codiqo.submit.MetricsAggregator;
 import io.codiqo.submit.ModuleLevelMetricsPopulator;
 import io.codiqo.submit.OutputSerializer;
-import io.codiqo.maven.populator.ProjectModelPopulator;
-import io.codiqo.submit.SubmissionContext;
-import io.codiqo.maven.populator.SubmissionSummaryPrinter;
-import io.codiqo.maven.coverage.CoverageInjectorConfig;
-import io.codiqo.maven.eventspy.BuildFailureConfig;
-import io.codiqo.maven.timemachine.TimeMachineConfig;
 import io.codiqo.submit.ScoringConfigs;
+import io.codiqo.submit.SubmissionContext;
 import io.codiqo.util.Env;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
@@ -717,10 +717,10 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     protected void warnIfHostTimeMachineMissing() {
         /**
          * the extension's core realm is not visible from the plugin realm, so a Class.forName probe always fails
-         * even when the extension is active; detect it the same way the relaunch hint loads it — via the host
+         * even when the extension is active; detect it the same way the re-launch hint loads it — via the host
          * Maven's maven.ext.class.path
          */
-        if (StringUtils.contains(System.getProperty(MAVEN_EXT_CLASS_PATH), TIME_MACHINE_ARTIFACT_ID)) {
+        if (Strings.CS.contains(System.getProperty(MAVEN_EXT_CLASS_PATH), TIME_MACHINE_ARTIFACT_ID)) {
             return;
         }
         getLog().warn(String.format(
@@ -792,6 +792,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         }
         systemProperties.putAll(Maven.detectOsProperties());
         request.setSystemProperties(systemProperties);
+        Maven.pinMultiModuleProjectDirectory(request, args.getGit().getWorkTree());
 
         if (StringUtils.isNotBlank(args.getCommitId())) {
             request.setResolveDependencies(false);

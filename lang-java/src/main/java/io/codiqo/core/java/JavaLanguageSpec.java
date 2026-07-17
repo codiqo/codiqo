@@ -14,28 +14,29 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.EnumSet;
 import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.LinkedHashSet;
-import java.util.LinkedHashMap;
-import java.util.HashSet;
-import java.util.HashMap;
-import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FilenameUtils;
@@ -71,8 +72,8 @@ import edu.umd.cs.findbugs.config.UserPreferences;
 import edu.umd.cs.findbugs.plugins.DuplicatePluginIdException;
 import io.codiqo.api.IncomingCallsResolver;
 import io.codiqo.api.IndexingSummary;
-import io.codiqo.api.LanguageSpec;
 import io.codiqo.api.JvmProjectSpec;
+import io.codiqo.api.LanguageSpec;
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.code.CodeBlockInfo;
@@ -311,8 +312,10 @@ public class JavaLanguageSpec implements LanguageSpec {
         StopWatch stopWatch = StopWatch.createStarted();
 
         ExecFileLoader loader = new ExecFileLoader();
-        List<File> outputDirectories = new ArrayList<>();
-        List<String> uninstrumentedModules = new ArrayList<>();
+
+        List<File> outputDirectories = new CopyOnWriteArrayList<>();
+        List<String> uninstrumentedModules = new CopyOnWriteArrayList<>();
+        Set<File> loadedCoverageFiles = ConcurrentHashMap.newKeySet();
 
         for (ProjectSpec project : summary.getProjects()) {
             Optional<File> coverage = project.coverage();
@@ -341,7 +344,13 @@ public class JavaLanguageSpec implements LanguageSpec {
                         }
                     }
                 }
-                loader.load(file);
+                /**
+                 * aggregated destFile configurations point every module at the same file — load it once.
+                 * the per-module staleness check above still runs for each module.
+                 */
+                if (loadedCoverageFiles.add(file)) {
+                    loader.load(file);
+                }
                 if (project.getOutputDirectory().exists()) {
                     outputDirectories.add(project.getOutputDirectory());
                 }
