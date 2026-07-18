@@ -185,7 +185,7 @@ public class FinalScoreCalculator {
             return DiffAdjustment.unchanged(preComputed);
         }
 
-        PreComputedScores adjusted = volumeScoreCalculator.recompute(preComputed, perFile.getFactors(), perBlockCoeff, perBlockMovedFactor);
+        PreComputedScores adjusted = volumeScoreCalculator.recompute(preComputed, perFile.getFactors(), perFile.getDeletionFactors(), perBlockCoeff, perBlockMovedFactor);
         return DiffAdjustment.applied(adjusted, perFile.getBookkeeping());
     }
     /**
@@ -303,6 +303,7 @@ public class FinalScoreCalculator {
         populatePerFileScalars(classification);
 
         Map<String, Double> perFileFactor = new HashMap<>();
+        Map<String, Double> perFileDeletionFactor = new HashMap<>();
         int totalCosmetic = 0;
         int totalPairsCollapsed = 0;
         int totalMovedLines = 0;
@@ -368,6 +369,15 @@ public class FinalScoreCalculator {
             double factor = effectiveLines / rawLines;
             perFileFactor.put(entry.getFile(), factor);
 
+            /**
+             * deletion-reward blocks are credited only for genuine removals: moved-out lines are
+             * already scored on the added side (commit-wide move detection), so they contribute 0 here
+             * rather than the movedLineCoefficient/2 the general factor charges — a method relocated to
+             * another file earns nothing on the deleted side
+             */
+            double deletionFactor = pureDeleteSize / (double) rawLines;
+            perFileDeletionFactor.put(entry.getFile(), deletionFactor);
+
             totalCosmetic += cosmeticAddedSize + cosmeticDeletedSize;
             totalPairsCollapsed += pairsCount;
             totalMovedLines += movedAddedSize + movedDeletedSize;
@@ -395,7 +405,7 @@ public class FinalScoreCalculator {
                 totalCosmetic,
                 totalPairsCollapsed,
                 totalMovedLines);
-        return new PerFileResult(perFileFactor, bookkeeping);
+        return new PerFileResult(perFileFactor, perFileDeletionFactor, bookkeeping);
     }
     private static void populatePerFileScalars(DiffClassification classification) {
         for (FileDiffClassification entry : classification.getPerFile()) {
@@ -797,10 +807,11 @@ public class FinalScoreCalculator {
     @Value
     private static class PerFileResult {
         Map<String, Double> factors;
+        Map<String, Double> deletionFactors;
         DiffBookkeeping bookkeeping;
 
         static PerFileResult empty() {
-            return new PerFileResult(new HashMap<>(), DiffBookkeeping.zero());
+            return new PerFileResult(new HashMap<>(), new HashMap<>(), DiffBookkeeping.zero());
         }
     }
 

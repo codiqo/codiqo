@@ -71,7 +71,10 @@ public class VolumeScoreCalculator {
                 modifyMult,
                 testMult,
                 maxDeviation);
+        Set<String> scoredCodeFiles = initialEfforts.stream().map(CodeBlockEffort::getFile).collect(Collectors.toSet());
         initialEfforts.addAll(calculateConfigFileEfforts(request.getFileChanges(), modifyMult, args.getConfigFileScoreMultiplier()));
+        initialEfforts.addAll(calculateDeletionOnlyFileEfforts(request.getFileChanges(), scoredCodeFiles,
+                request.getMethodScalerProd(), request.getMethodScalerTest(), modifyMult, testMult, args.getDeleteRewardWeight()));
 
         double totalEffortRaw = initialEfforts.stream().mapToDouble(CodeBlockEffort::getEffort).sum();
         double totalBaseline = initialEfforts.stream().mapToDouble(CodeBlockEffort::getBucketBaseline).sum();
@@ -96,6 +99,7 @@ public class VolumeScoreCalculator {
 
         int totalEffectiveStatements = (int) Math.round(codeBlockEfforts.stream()
                 .filter(not(CodeBlockEffort::isConfig))
+                .filter(cbe -> cbe.getOperation() != LlmScoringRequest.Operation.DELETE)
                 .mapToDouble(CodeBlockEffort::getDriverScore).sum());
         int linesNew = sumScaledLines(codeBlockEfforts, LlmScoringRequest.Operation.NEW);
         int linesModified = sumScaledLines(codeBlockEfforts, LlmScoringRequest.Operation.MODIFY);
@@ -155,13 +159,16 @@ public class VolumeScoreCalculator {
                 .fileEfforts(fileEfforts)
                 .build();
     }
-    public PreComputedScores recompute(PreComputedScores original, Map<String, Double> perFileEffectiveLineFactor, Map<String, Double> perBlockCoeff, Map<String, Double> perBlockMovedFactor) {
+    public PreComputedScores recompute(PreComputedScores original, Map<String, Double> perFileEffectiveLineFactor, Map<String, Double> perFileDeletionFactor, Map<String, Double> perBlockCoeff, Map<String, Double> perBlockMovedFactor) {
         double maxDeviation = args.getDriverFactorMaxDeviation();
 
         List<CodeBlockEffort> rescaled = new ArrayList<>(original.getCodeBlockEfforts().size());
         for (CodeBlockEffort cbe : original.getCodeBlockEfforts()) {
             String key = blockKey(cbe.getFile(), cbe.getSignature());
             double factor = perFileEffectiveLineFactor.getOrDefault(cbe.getFile(), 1.0);
+            if (cbe.getOperation() == LlmScoringRequest.Operation.DELETE) {
+                factor = perFileDeletionFactor.getOrDefault(cbe.getFile(), 1.0);
+            }
             /**
              * the per-block difficulty category weights effort only, never the driver score: volume stays
              * a pure measure so category remains independent of the volume axis. the per-block moved
@@ -219,6 +226,7 @@ public class VolumeScoreCalculator {
 
         int totalEffectiveStatements = (int) Math.round(codeBlockEfforts.stream()
                 .filter(not(CodeBlockEffort::isConfig))
+                .filter(cbe -> cbe.getOperation() != LlmScoringRequest.Operation.DELETE)
                 .mapToDouble(CodeBlockEffort::getDriverScore).sum());
 
         return original.toBuilder()
@@ -443,6 +451,57 @@ public class VolumeScoreCalculator {
                     driverScore, (int) Math.round(driverScore), effort, 0.0, false,
                     0.0, 0.0, false, 0.0, false,
                     0, 0, 0, true));
+        }
+        return toReturn;
+    }
+    /**
+     * a surviving file whose only effective change is deletion and that produced no scored code block
+     * (scoredCodeFiles) yields no effort for its removed lines by default — deletions inside a surviving
+     * MODIFY block are already billed there, so those files are excluded to avoid double counting. when
+     * deleteRewardWeight &gt; 0 the remaining deletion-only files (change type MODIFIED, structured code,
+     * non-config, no scored block) are credited with one synthetic effort priced like an in-place modify
+     * of the removed lines (forModify, line-parity) scaled by the fractional weight — so a removal earns
+     * at most that share of a same-size true_modify. files with any effective added line are skipped;
+     * config deletions are already line-count scored; whole-file removals (change type DELETED) are
+     * excluded. cosmetic/moved deletions are discounted later by the per-file diff-classification factor
+     * in recompute, exactly as for real blocks.
+     */
+    static List<CodeBlockEffort> calculateDeletionOnlyFileEfforts(List<FileChange> fileChanges, Set<String> scoredCodeFiles,
+            DriverScaler methodScalerProd, DriverScaler methodScalerTest,
+            double modifyMult, double testMult, double deleteRewardWeight) {
+        if (BooleanUtils.or(new boolean[] { deleteRewardWeight <= 0.0, CollectionUtils.isEmpty(fileChanges) })) {
+            return new ArrayList<>();
+        }
+
+        List<CodeBlockEffort> toReturn = new ArrayList<>();
+        for (FileChange fc : fileChanges) {
+            boolean deletionOnly = BooleanUtils.and(new boolean[] {
+                    fc.getChangeType() == LlmScoringRequest.FileChangeType.MODIFIED,
+                    fc.isLinesJustificationRequired(),
+                    !fc.isConfig(),
+                    !scoredCodeFiles.contains(fc.getPath()),
+                    fc.getLinesAdded() == 0,
+                    fc.getLinesDeleted() > 0 });
+            if (!deletionOnly) {
+                continue;
+            }
+
+            DriverScaler scaler = fc.isTest() ? methodScalerTest : methodScalerProd;
+            double driverScore = DriverScore.forModify(scaler, fc.getLinesDeleted(), 0);
+            double testWeight = fc.isTest() ? testMult : 1.0;
+            double effort = driverScore * modifyMult * testWeight * deleteRewardWeight;
+
+            /**
+             * bucketBaseline 0 keeps deletion out of the global-cap baseline (like config); operation
+             * DELETE excludes it from both the added/modified scaled-line split and effective statements
+             */
+            toReturn.add(new CodeBlockEffort(fc.getPath(), fc.getPath(), null,
+                    LlmScoringRequest.Operation.DELETE, 0, 0,
+                    0, 0, 0, fc.getLinesDeleted(), 0.0,
+                    0.0, 0.0, 0.0,
+                    driverScore, (int) Math.round(driverScore), effort, 0.0, fc.isTest(),
+                    0.0, 0.0, false, 0.0, false,
+                    0, 0, 0, false));
         }
         return toReturn;
     }

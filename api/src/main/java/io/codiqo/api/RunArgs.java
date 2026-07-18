@@ -212,6 +212,13 @@ public class RunArgs {
     private double addMultiplierBase = 0.8;
     @Nullable
     private double addMultiplierScale = 0.1;
+    /**
+     * fraction of an equivalent in-place modify that a deletion-only file earns (delete effort ÷ the
+     * same-size true_modify effort). only applies to surviving files whose change is purely deletion.
+     * clamped to [0, 0.20] in validate() — a removal is worth at most ~20% of changing the same lines.
+     */
+    @Nullable
+    private double deleteRewardWeight = 0.2;
     @Nullable
     private double qualityMultiplierMin = 0.5;
     @Nullable
@@ -481,6 +488,7 @@ public class RunArgs {
     }
     public void validate() {
         this.statsQuantile = Math.max(0.85, this.statsQuantile);
+        this.deleteRewardWeight = Math.min(0.20, Math.max(0.0, this.deleteRewardWeight));
         this.llmMaxRetries = (short) Math.max(1, this.llmMaxRetries);
         this.llmValidationMaxRetries = (short) Math.max(0, this.llmValidationMaxRetries);
     }

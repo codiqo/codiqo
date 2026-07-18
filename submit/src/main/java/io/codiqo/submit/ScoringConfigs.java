@@ -63,6 +63,7 @@ public class ScoringConfigs {
         toReturn.setModifyMultiplierCap(args.getModifyMultiplierCap());
         toReturn.setAddMultiplierBase(args.getAddMultiplierBase());
         toReturn.setAddMultiplierScale(args.getAddMultiplierScale());
+        toReturn.setDeleteRewardWeight(args.getDeleteRewardWeight());
         toReturn.setQualityMultiplierMin(args.getQualityMultiplierMin());
         toReturn.setQualityMultiplierMax(args.getQualityMultiplierMax());
 
