@@ -141,6 +141,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     private static final String JACOCO_GROUP_ID = "org.jacoco";
     private static final String JACOCO_AGENT_ARTIFACT_ID = "org.jacoco.agent";
     private static final String JACOCO_AGENT_CLASSIFIER = "runtime";
+    private static final String JACOCO_EXEC_FILE = "jacoco.exec";
 
     private static final String MAVEN_EXT_CLASS_PATH = "maven.ext.class.path";
 
@@ -531,7 +532,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     if (Objects.nonNull(prj.getParent())) {
                         toReturn.setParent(Optional.of(prj.getParent().getId()));
                     }
-                    File jacocoDestFile = Maven.autoDetectJacocoDestFile(prj);
+                    File jacocoDestFile = new File(prj.getBuild().getDirectory(), JACOCO_EXEC_FILE);
                     if (jacocoDestFile.exists()) {
                         toReturn.setCoverage(Optional.of(jacocoDestFile));
                     }
@@ -631,12 +632,18 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         } else {
             long surefireTimeout = args.getTestTimeout().getSeconds();
             long surefireExitTimeout = args.getBuildTimeout().minusMinutes(1).getSeconds();
+            /**
+             * jacoco.skip=true is deliberate: codiqo owns coverage in the fork. the injector extension attaches its
+             * own agent to every module (uniform per-module destfile) and strips dangling agent-property tokens, so
+             * the project's jacoco — whatever its shape: per-module, aggregated destFile, or misconfigured argLine —
+             * never runs and never interferes.
+             */
             request.addArgs(List.of(
                     "clean",
                     "verify",
                     "-DskipTests=false",
                     "-DfailIfNoTests=false",
-                    "-Djacoco.skip=false",
+                    "-Djacoco.skip=true",
                     "-Dmaven.test.failure.ignore=true",
                     "-Dmaven.javadoc.skip=true",
                     "-Dmdep.analyze.skip=true",

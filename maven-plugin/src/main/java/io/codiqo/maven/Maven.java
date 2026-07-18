@@ -1,7 +1,6 @@
 package io.codiqo.maven;
 
 import java.io.File;
-import java.nio.file.Paths;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -10,31 +9,24 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
-import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.artifact.resolver.ArtifactNotFoundException;
 import org.apache.maven.artifact.resolver.ArtifactResolutionException;
 import org.apache.maven.execution.MavenSession;
-import org.apache.maven.model.Plugin;
-import org.apache.maven.model.PluginExecution;
-import org.apache.maven.model.PluginManagement;
 import org.apache.maven.model.building.ModelProblem;
 import org.apache.maven.model.resolution.UnresolvableModelException;
 import org.apache.maven.project.DefaultProjectBuildingRequest;
 import org.apache.maven.project.DependencyResolutionException;
-import org.apache.maven.project.MavenProject;
 import org.apache.maven.project.ProjectBuildingException;
 import org.apache.maven.project.ProjectBuildingRequest;
 import org.apache.maven.project.ProjectBuildingResult;
-import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.eclipse.aether.DefaultRepositoryCache;
 import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.DefaultSessionData;
@@ -46,10 +38,6 @@ import lombok.experimental.UtilityClass;
 
 @UtilityClass
 public class Maven {
-    private static final String JACOCO_GROUP_ID = "org.jacoco";
-    private static final String JACOCO_MAVEN_PLUGIN_ARTIFACT_ID = "jacoco-maven-plugin";
-    private static final String JACOCO_MAVEN_PLUGIN_DEST_FILE = "destFile";
-    private static final String JACOCO_MAVEN_PLUGIN_DEST_FILE_DEFAULT_VALUE = "jacoco.exec";
 
     private static final Pattern HELP_URL_PATTERN = Pattern.compile("cwiki\\.apache\\.org/confluence/display/MAVEN/([A-Za-z]+Exception)");
 
@@ -85,8 +73,8 @@ public class Maven {
     }
     /**
      * host-side model building interpolates ${maven.multiModuleProjectDirectory} from the request's system properties,
-     * which carry the HOST session root — clone-POM values rooted at the reactor directory (e.g. an aggregated jacoco
-     * destFile) would otherwise interpolate into the host tree instead of the analyzed clone the fork actually built
+     * which carry the HOST session root — clone-POM values rooted at the reactor directory would otherwise interpolate
+     * into the host tree instead of the analyzed clone the fork actually built
      */
     public static void pinMultiModuleProjectDirectory(ProjectBuildingRequest request, File analyzedRoot) {
         Properties systemProperties = new Properties();
@@ -96,49 +84,6 @@ public class Maven {
         systemProperties.setProperty("maven.multiModuleProjectDirectory", analyzedRoot.getAbsolutePath());
 
         request.setSystemProperties(systemProperties);
-    }
-    public static File autoDetectJacocoDestFile(MavenProject reactor) {
-        Predicate<Plugin> filter = plugin -> BooleanUtils.and(new boolean[] {
-                JACOCO_GROUP_ID.equals(plugin.getGroupId()),
-                JACOCO_MAVEN_PLUGIN_ARTIFACT_ID.equals(plugin.getArtifactId())
-        });
-        Optional<Plugin> opt = reactor.getBuild().getPlugins().stream().filter(filter).findAny();
-        if (opt.isEmpty()) {
-            PluginManagement pluginManagement = reactor.getBuild().getPluginManagement();
-            if (Objects.nonNull(pluginManagement)) {
-                opt = pluginManagement.getPlugins().stream().filter(filter).findAny();
-            }
-        }
-        if (opt.isPresent()) {
-            Optional<String> destFile = destFileValue(opt.get());
-            if (destFile.isPresent()) {
-                return Paths.get(destFile.get()).toFile();
-            }
-        }
-        return Paths.get(reactor.getBuild().getDirectory(), JACOCO_MAVEN_PLUGIN_DEST_FILE_DEFAULT_VALUE).toFile();
-    }
-    private static Optional<String> destFileValue(Plugin plugin) {
-        /**
-         * jacoco's prepare-agent writes to the execution-level destFile when one is configured (execution config
-         * overrides plugin-level), so executions are consulted first — aggregated-coverage projects (loyalty, reward,
-         * quest) declare destFile only inside the prepare-agent execution
-         */
-        for (PluginExecution execution : plugin.getExecutions()) {
-            Optional<String> toReturn = destFileChild((Xpp3Dom) execution.getConfiguration());
-            if (toReturn.isPresent()) {
-                return toReturn;
-            }
-        }
-        return destFileChild((Xpp3Dom) plugin.getConfiguration());
-    }
-    private static Optional<String> destFileChild(Xpp3Dom config) {
-        if (Objects.nonNull(config)) {
-            Xpp3Dom destFileNode = config.getChild(JACOCO_MAVEN_PLUGIN_DEST_FILE);
-            if (Objects.nonNull(destFileNode)) {
-                return Optional.ofNullable(StringUtils.trimToNull(destFileNode.getValue()));
-            }
-        }
-        return Optional.empty();
     }
     public static Optional<String> severeProblem(Stream<ModelProblem> problems) {
         return problems

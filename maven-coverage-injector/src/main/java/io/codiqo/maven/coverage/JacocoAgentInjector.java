@@ -1,8 +1,12 @@
 package io.codiqo.maven.coverage;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import javax.inject.Named;
 import javax.inject.Singleton;
@@ -20,10 +24,13 @@ import org.codehaus.plexus.util.xml.Xpp3Dom;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * core extension that attaches the JaCoCo agent to the surefire/failsafe fork of every reactor module that does not
- * already declare the jacoco-maven-plugin. it runs inside the codiqo-forked build (loaded via maven.ext.class.path) and
- * merges the agent into the resolved argLine, so it survives projects that set an explicit argLine (e.g. a shared
- * parent's {@code ${jvm.unsafe.options}}). the codiqo plugin supplies the agent jar path through
+ * core extension that makes codiqo the sole owner of coverage in the analysis fork: the fork runs with
+ * -Djacoco.skip=true (the project's own jacoco never executes, whatever its shape — per-module, aggregated destFile,
+ * or misconfigured), and this participant attaches the JaCoCo agent to the surefire/failsafe fork of EVERY non-pom
+ * reactor module with a uniform per-module destfile. because the project's prepare-agent is skipped, any argLine
+ * reference to its agent property (@{argLine}, ${argLine}, or a configured propertyName) would reach the test JVM as
+ * literal text and abort it — those tokens are stripped before the agent is appended. it runs inside the codiqo-forked
+ * build (loaded via maven.ext.class.path); the codiqo plugin supplies the agent jar path through
  * {@link CoverageInjectorConfig#PROP_AGENT_JAR}; the extension stays inert when that property is absent.
  */
 @Slf4j
@@ -39,6 +46,7 @@ public class JacocoAgentInjector extends AbstractMavenLifecycleParticipant {
 
     private static final String CONFIGURATION = "configuration";
     private static final String ARG_LINE = "argLine";
+    private static final String PROPERTY_NAME = "propertyName";
     private static final String JACOCO_EXEC = "jacoco.exec";
     private static final String POM_PACKAGING = "pom";
 
@@ -55,10 +63,6 @@ public class JacocoAgentInjector extends AbstractMavenLifecycleParticipant {
         if (POM_PACKAGING.equals(project.getPackaging())) {
             return;
         }
-        if (hasJacocoPlugin(project)) {
-            log.info("[codiqo] {} already declares jacoco-maven-plugin; leaving coverage to the project", project.getArtifactId());
-            return;
-        }
 
         String destFile = new File(project.getBuild().getDirectory(), JACOCO_EXEC).getAbsolutePath();
 
@@ -69,12 +73,15 @@ public class JacocoAgentInjector extends AbstractMavenLifecycleParticipant {
          */
         String javaAgent = org.codehaus.plexus.util.StringUtils.quoteAndEscape("-javaagent:" + agentJar + "=destfile=" + destFile + ",append=true", '"');
 
-        injectAgent(resolveSurefire(project), javaAgent);
-        findDeclaredPlugin(project, FAILSAFE_ARTIFACT_ID).ifPresent(failsafe -> injectAgent(failsafe, javaAgent));
+        Set<String> agentPropertyNames = jacocoAgentPropertyNames(project);
+        String argLineProperty = StringUtils.trimToEmpty(project.getProperties().getProperty(ARG_LINE));
+
+        injectAgent(resolveSurefire(project), javaAgent, agentPropertyNames, argLineProperty);
+        findDeclaredPlugin(project, FAILSAFE_ARTIFACT_ID).ifPresent(failsafe -> injectAgent(failsafe, javaAgent, agentPropertyNames, argLineProperty));
 
         log.info("[codiqo] injected JaCoCo agent into {} test argLine (destfile: {})", project.getArtifactId(), destFile);
     }
-    private static void injectAgent(Plugin plugin, String javaAgent) {
+    private static void injectAgent(Plugin plugin, String javaAgent, Set<String> agentPropertyNames, String argLineProperty) {
         /**
          * append to the plugin-level argLine (applies to executions that do not declare their own argLine) and to every
          * execution that sets its own argLine — an execution-level value overrides the plugin-level one, so a shared
@@ -85,23 +92,75 @@ public class JacocoAgentInjector extends AbstractMavenLifecycleParticipant {
             config = new Xpp3Dom(CONFIGURATION);
             plugin.setConfiguration(config);
         }
-        appendAgent(config, javaAgent);
+        appendAgent(config, javaAgent, agentPropertyNames, argLineProperty);
 
         for (PluginExecution execution : plugin.getExecutions()) {
             Xpp3Dom executionConfig = (Xpp3Dom) execution.getConfiguration();
             if (Objects.nonNull(executionConfig) && Objects.nonNull(executionConfig.getChild(ARG_LINE))) {
-                appendAgent(executionConfig, javaAgent);
+                appendAgent(executionConfig, javaAgent, agentPropertyNames, argLineProperty);
             }
         }
     }
-    private static void appendAgent(Xpp3Dom config, String javaAgent) {
+    private static void appendAgent(Xpp3Dom config, String javaAgent, Set<String> agentPropertyNames, String argLineProperty) {
+        /**
+         * the agent deliberately goes LAST: running jacoco before another transforming -javaagent (e.g. allure's
+         * aspectjweaver) was verified to destroy recording in that JVM entirely (aggregator-server 448 -> 0 covered
+         * methods), while jacoco-last only shifts the class ids of the few classes the other agent rewrites — those
+         * are excluded from coverage by the analysis-side mismatch guard
+         */
         Xpp3Dom argLine = config.getChild(ARG_LINE);
         if (Objects.isNull(argLine)) {
             argLine = new Xpp3Dom(ARG_LINE);
             config.addChild(argLine);
+
+            /**
+             * with no explicit argLine surefire falls back to the ${argLine} PROJECT property; the injected value
+             * replaces that fallback, so a static argLine property (JVM opts some projects define there) must be
+             * carried over
+             */
+            argLine.setValue(StringUtils.isBlank(argLineProperty) ? javaAgent : argLineProperty + " " + javaAgent);
+            return;
         }
-        String base = argLine.getValue();
+
+        String base = stripAgentPropertyTokens(StringUtils.defaultString(argLine.getValue()), agentPropertyNames);
         argLine.setValue(StringUtils.isBlank(base) ? javaAgent : base + " " + javaAgent);
+    }
+    private static String stripAgentPropertyTokens(String argLine, Set<String> agentPropertyNames) {
+        /**
+         * the analysis fork runs with -Djacoco.skip=true, so the project's prepare-agent never populates its agent
+         * property — a leftover @{argLine}/${propertyName} reference would reach the test JVM as literal text and
+         * abort the fork with "Unrecognized option"
+         */
+        String toReturn = argLine;
+        for (String name : agentPropertyNames) {
+            toReturn = StringUtils.replace(toReturn, "@{" + name + "}", "");
+            toReturn = StringUtils.replace(toReturn, "${" + name + "}", "");
+        }
+        return toReturn.trim();
+    }
+    private static Set<String> jacocoAgentPropertyNames(MavenProject project) {
+        Set<String> toReturn = new HashSet<>();
+        toReturn.add(ARG_LINE);
+
+        List<Plugin> declared = new ArrayList<>(project.getBuild().getPlugins());
+        PluginManagement pluginManagement = project.getBuild().getPluginManagement();
+        if (Objects.nonNull(pluginManagement)) {
+            declared.addAll(pluginManagement.getPlugins());
+        }
+
+        declared.stream().filter(JacocoAgentInjector::isJacoco).forEach(plugin -> {
+            addPropertyName(toReturn, (Xpp3Dom) plugin.getConfiguration());
+            plugin.getExecutions().forEach(execution -> addPropertyName(toReturn, (Xpp3Dom) execution.getConfiguration()));
+        });
+        return toReturn;
+    }
+    private static void addPropertyName(Set<String> names, Xpp3Dom config) {
+        if (Objects.nonNull(config)) {
+            Xpp3Dom propertyName = config.getChild(PROPERTY_NAME);
+            if (Objects.nonNull(propertyName) && StringUtils.isNotBlank(propertyName.getValue())) {
+                names.add(propertyName.getValue().trim());
+            }
+        }
     }
     private static Plugin resolveSurefire(MavenProject project) {
         Optional<Plugin> declared = findDeclaredPlugin(project, SUREFIRE_ARTIFACT_ID);
@@ -130,13 +189,6 @@ public class JacocoAgentInjector extends AbstractMavenLifecycleParticipant {
                     .findFirst();
         }
         return Optional.empty();
-    }
-    private static boolean hasJacocoPlugin(MavenProject project) {
-        /**
-         * only a jacoco-maven-plugin activated in <build><plugins> binds prepare-agent; a pluginManagement-only
-         * declaration supplies version/config defaults and never attaches the agent, so it must not suppress injection.
-         */
-        return project.getBuild().getPlugins().stream().anyMatch(JacocoAgentInjector::isJacoco);
     }
     private static boolean isJacoco(Plugin plugin) {
         return BooleanUtils.and(new boolean[] { JACOCO_GROUP_ID.equals(plugin.getGroupId()), JACOCO_MAVEN_PLUGIN_ARTIFACT_ID.equals(plugin.getArtifactId()) });

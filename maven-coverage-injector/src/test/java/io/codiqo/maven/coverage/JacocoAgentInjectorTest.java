@@ -2,12 +2,12 @@ package io.codiqo.maven.coverage;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.Objects;
 
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Build;
@@ -61,7 +61,7 @@ class JacocoAgentInjectorTest {
     }
 
     @Test
-    void skipsModuleWithActiveJacocoPlugin() {
+    void injectsEvenWhenModuleDeclaresJacoco() {
         Build build = build();
         Plugin surefire = plugin(MAVEN_PLUGINS, SUREFIRE);
         build.addPlugin(surefire);
@@ -69,7 +69,56 @@ class JacocoAgentInjectorTest {
 
         runInjector(build, "/opt/agent/jacoco.jar");
 
-        assertNull(surefire.getConfiguration(), "a module that activates jacoco itself must be left untouched");
+        assertTrue(argLine(surefire).contains("-javaagent:"), "the fork disables project jacoco, so codiqo's agent must be injected regardless");
+    }
+    @Test
+    void stripsDanglingDefaultArgLineToken() {
+        Build build = build();
+        Plugin surefire = plugin(MAVEN_PLUGINS, SUREFIRE);
+        surefire.setConfiguration(configurationWithArgLine("@{argLine} ${jvm.unsafe.options}"));
+        build.addPlugin(surefire);
+        build.addPlugin(plugin(JACOCO_GROUP_ID, JACOCO_PLUGIN));
+
+        runInjector(build, "/opt/agent/jacoco.jar");
+
+        String result = argLine(surefire);
+        assertFalse(result.contains("@{argLine}"), "a dangling @{argLine} token would abort the test JVM once jacoco is skipped");
+        assertTrue(result.contains("${jvm.unsafe.options}"), "unrelated argLine content must be preserved");
+        assertTrue(result.contains("-javaagent:"), "the agent must replace the stripped token");
+    }
+    @Test
+    void stripsDanglingCustomPropertyNameToken() {
+        Plugin jacoco = plugin(JACOCO_GROUP_ID, JACOCO_PLUGIN);
+        Xpp3Dom jacocoConfig = new Xpp3Dom("configuration");
+        Xpp3Dom propertyName = new Xpp3Dom("propertyName");
+        propertyName.setValue("jacoco.agent.argLine");
+        jacocoConfig.addChild(propertyName);
+        jacoco.setConfiguration(jacocoConfig);
+
+        Build build = build();
+        Plugin surefire = plugin(MAVEN_PLUGINS, SUREFIRE);
+        surefire.setConfiguration(configurationWithArgLine("${jacoco.agent.argLine} ${jvm.unsafe.options}"));
+        build.addPlugin(surefire);
+        build.addPlugin(jacoco);
+
+        runInjector(build, "/opt/agent/jacoco.jar");
+
+        String result = argLine(surefire);
+        assertFalse(result.contains("${jacoco.agent.argLine}"), "a dangling custom propertyName token must be stripped");
+        assertTrue(result.contains("${jvm.unsafe.options}"), "unrelated argLine content must be preserved");
+        assertTrue(result.contains("-javaagent:"), "the agent must replace the stripped token");
+    }
+    @Test
+    void seedsCreatedArgLineWithStaticArgLineProperty() {
+        Build build = build();
+        Plugin surefire = plugin(MAVEN_PLUGINS, SUREFIRE);
+        build.addPlugin(surefire);
+
+        runInjector(build, "jar", "/opt/agent/jacoco.jar", "-Xmx1g -Dfoo=bar");
+
+        String result = argLine(surefire);
+        assertTrue(result.startsWith("-Xmx1g -Dfoo=bar "), "a static argLine POM property must be carried into the created argLine");
+        assertTrue(result.contains("-javaagent:"), "the agent must be appended after the property value");
     }
 
     @Test
@@ -155,14 +204,21 @@ class JacocoAgentInjectorTest {
     }
 
     private static void runInjector(Build build, String agentJar) {
-        runInjector(build, "jar", agentJar);
+        runInjector(build, "jar", agentJar, null);
     }
 
     private static void runInjector(Build build, String packaging, String agentJar) {
+        runInjector(build, packaging, agentJar, null);
+    }
+
+    private static void runInjector(Build build, String packaging, String agentJar, String argLineProperty) {
         Model model = new Model();
         model.setArtifactId("module-under-test");
         model.setPackaging(packaging);
         model.setBuild(build);
+        if (Objects.nonNull(argLineProperty)) {
+            model.addProperty("argLine", argLineProperty);
+        }
         MavenProject project = new MavenProject(model);
 
         MavenSession session = mock(MavenSession.class);
@@ -170,6 +226,15 @@ class JacocoAgentInjectorTest {
 
         System.setProperty(CoverageInjectorConfig.PROP_AGENT_JAR, agentJar);
         new JacocoAgentInjector().afterProjectsRead(session);
+    }
+
+    private static Xpp3Dom configurationWithArgLine(String value) {
+        Xpp3Dom argLine = new Xpp3Dom("argLine");
+        argLine.setValue(value);
+
+        Xpp3Dom config = new Xpp3Dom("configuration");
+        config.addChild(argLine);
+        return config;
     }
 
     private static Build build() {

@@ -44,6 +44,31 @@ class JavaLanguageSpecCoverageTest {
     }
 
     @Test
+    void expectsCoverageWhenGradleClassesAndTestResultsExist(@TempDir Path dir) throws IOException {
+        File classes = dir(dir, "build/classes/java/main");
+        Files.createFile(classes.toPath().resolve("Foo.class"));
+        File reports = dir(dir, "build/test-results/test");
+        Files.createFile(reports.toPath().resolve("TEST-fraud.FooTest.xml"));
+
+        JvmProjectSpec project = mock(JvmProjectSpec.class);
+        when(project.getOutputDirectory()).thenReturn(classes);
+
+        assertTrue(JavaLanguageSpec.expectsCoverage(project));
+    }
+
+    @Test
+    void doesNotExpectCoverageForGradleModuleWithoutTestResults(@TempDir Path dir) throws IOException {
+        File classes = dir(dir, "build/classes/java/main");
+        Files.createFile(classes.toPath().resolve("Foo.class"));
+        dir(dir, "build/test-results/test");
+
+        JvmProjectSpec project = mock(JvmProjectSpec.class);
+        when(project.getOutputDirectory()).thenReturn(classes);
+
+        assertFalse(JavaLanguageSpec.expectsCoverage(project));
+    }
+
+    @Test
     void doesNotExpectCoverageWhenTestSourcesRunNoTests(@TempDir Path dir) throws IOException {
         /**
          * modules whose only src/test source is a main()-style helper (dev-server starter, migration generator)

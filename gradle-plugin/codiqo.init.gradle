@@ -1,6 +1,8 @@
 // Applies the Codiqo Gradle plugin to a target build WITHOUT editing its build files, and
-// force-applies the jacoco plugin so coverage is produced even when the target project does not
-// configure jacoco itself (e.g. spring-kafka).
+// force-applies the jacoco plugin to every java project. Codiqo OWNS coverage in the analysis
+// build: the plugin normalizes every Test task's jacoco extension (enabled + uniform per-module
+// exec file) at task-graph-ready, so the target project's own jacoco configuration — absent,
+// customized destinationFile, or disabled tasks — never affects what the analysis reads.
 //
 // Usage (from the target project, e.g. a spring-kafka checkout):
 //   ./gradlew --init-script /path/to/codiqo.init.gradle \
