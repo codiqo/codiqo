@@ -2593,8 +2593,8 @@ components:
           description: Full method signature
         operation:
           type: string
-          enum: [NEW, MODIFY]
-          description: Whether this code block was newly added or modified
+          enum: [NEW, MODIFY, DELETE]
+          description: Whether this code block was newly added, modified, or removed
         nonCommentCodeStatements:
           type: integer
           minimum: 0
@@ -3482,6 +3482,9 @@ components:
           type: number
           format: double
         addMultiplierScale:
+          type: number
+          format: double
+        deleteRewardWeight:
           type: number
           format: double
         qualityMultiplierMin:

@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.commons.math3.util.Precision;
 import org.junit.jupiter.api.Test;
@@ -351,6 +352,124 @@ class VolumeScoreCalculatorTest {
                 "config lines are not statements and must not inflate effective statements");
     }
     @Test
+    void defaultDeleteRewardWeightIsPointTwo() {
+        assertEquals(0.2, new RunArgs().getDeleteRewardWeight(), 0.0,
+                "deletion-only files are rewarded at 20% of an equivalent modify by default");
+    }
+    @Test
+    void deletionOnlyFileEarnsConfiguredFractionOfEquivalentModify() {
+        DriverScaler scaler = uniformScaler(1, 100);
+        double weight = 0.2;
+
+        double deleteEffort = VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
+                List.of(deletionOnlyFile(40, false)), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, weight)
+                .get(0).getEffort();
+        double modifyEffort = VolumeScoreCalculator.calculateCodeBlockEfforts(
+                List.of(newModifyBlock(40, 40, 0)), scaler, scaler, scaler, scaler,
+                0, 0, 0, 0, ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP)
+                .get(0).getEffort();
+
+        assertEquals(weight * modifyEffort, deleteEffort, 0.001,
+                "a deletion-only file must earn exactly deleteRewardWeight × the same-size true_modify effort (≤ 20%)");
+        assertTrue(deleteEffort < modifyEffort, "a removal must always score below the equivalent in-place modification");
+    }
+    @Test
+    void deletionRewardProducesNothingWhenWeightZero() {
+        DriverScaler scaler = uniformScaler(1, 100);
+        assertTrue(VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
+                List.of(deletionOnlyFile(40, false)), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.0).isEmpty(),
+                "weight 0 disables the deletion reward");
+    }
+    @Test
+    void fileWithAnyAddedLineIsNotDeletionOnly() {
+        DriverScaler scaler = uniformScaler(1, 100);
+        FileChange mixed = FileChange.builder().path("Foo.java")
+                .changeType(LlmScoringRequest.FileChangeType.MODIFIED).isConfig(false)
+                .linesJustificationRequired(true).linesAdded(3).linesDeleted(20).build();
+
+        assertTrue(VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
+                List.of(mixed), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2).isEmpty(),
+                "a file with any added line keeps existing behavior — no separate deletion reward");
+    }
+    @Test
+    void configAndWholeFileDeletionsAreExcluded() {
+        DriverScaler scaler = uniformScaler(1, 100);
+        FileChange config = FileChange.builder().path("pom.xml")
+                .changeType(LlmScoringRequest.FileChangeType.MODIFIED).isConfig(true)
+                .linesJustificationRequired(false).linesAdded(0).linesDeleted(20).build();
+        FileChange removed = FileChange.builder().path("Gone.java")
+                .changeType(LlmScoringRequest.FileChangeType.DELETED).isConfig(false)
+                .linesJustificationRequired(true).linesAdded(0).linesDeleted(200).build();
+
+        assertTrue(VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
+                List.of(config, removed), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2).isEmpty(),
+                "config deletions are line-count scored elsewhere; whole-file removals are excluded");
+    }
+    @Test
+    void deletionOnlyFileWithAScoredBlockIsNotRewardedAgain() {
+        DriverScaler scaler = uniformScaler(1, 100);
+
+        assertTrue(VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
+                List.of(deletionOnlyFile(40, false)), Set.of("Foo.java"), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2).isEmpty(),
+                "a deletion-only file that already produced a scored code block must not be credited a second time");
+    }
+    @Test
+    void deletionOnlyFileFlowsIntoBaseEffortViaCalculate() {
+        DriverScaler scaler = uniformScaler(1, 100);
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder().totalFilesChanged(1).build())
+                .codeBlockChanges(List.of())
+                .fileChanges(List.of(deletionOnlyFile(40, false)))
+                .methodScalerProd(scaler).methodScalerTest(scaler)
+                .constructorScalerProd(scaler).constructorScalerTest(scaler)
+                .build();
+
+        RunArgs off = new RunArgs();
+        off.setDeleteRewardWeight(0.0);
+        RunArgs on = new RunArgs();
+        PreComputedScores offScores = new VolumeScoreCalculator(off).calculate(request, 1000, 100, 0, 0, 0, 0);
+        PreComputedScores onScores = new VolumeScoreCalculator(on).calculate(request, 1000, 100, 0, 0, 0, 0);
+
+        assertEquals(0.0, offScores.getBaseEffort(), 0.001,
+                "with the reward disabled a deletion-only commit still scores zero base effort");
+        assertTrue(onScores.getBaseEffort() > 0.0,
+                "the default reward gives a deletion-only commit positive base effort");
+    }
+    @Test
+    void movedOutDeletionsEarnNothingWhileGenuineRemovalsKeepTheReward() {
+        RunArgs args = new RunArgs();
+        DriverScaler scaler = uniformScaler(1, 100);
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder().totalFilesChanged(1).build())
+                .codeBlockChanges(List.of())
+                .fileChanges(List.of(deletionOnlyFile(40, false)))
+                .methodScalerProd(scaler).methodScalerTest(scaler)
+                .constructorScalerProd(scaler).constructorScalerTest(scaler)
+                .build();
+        PreComputedScores pre = new VolumeScoreCalculator(args).calculate(request, 1000, 100, 0, 0, 0, 0);
+
+        PreComputedScores allMovedOut = new VolumeScoreCalculator(args)
+                .recompute(pre, Map.of(), Map.of("Foo.java", 0.0), Map.of(), Map.of());
+        PreComputedScores genuineRemoval = new VolumeScoreCalculator(args)
+                .recompute(pre, Map.of(), Map.of("Foo.java", 1.0), Map.of(), Map.of());
+
+        assertEquals(0.0, allMovedOut.getBaseEffort(), 0.001,
+                "a file whose deletions are all moved-out (deletion factor 0) earns no deletion reward — the move is scored on the added side");
+        assertTrue(genuineRemoval.getBaseEffort() > 0.0,
+                "a genuine removal (deletion factor 1.0) keeps the full deletion reward");
+    }
+    private static FileChange deletionOnlyFile(int deletedLines, boolean isTest) {
+        return FileChange.builder()
+                .path("Foo.java")
+                .changeType(LlmScoringRequest.FileChangeType.MODIFIED)
+                .isConfig(false)
+                .isTest(isTest)
+                .linesJustificationRequired(true)
+                .linesAdded(0)
+                .linesDeleted(deletedLines)
+                .build();
+    }
+    @Test
     void lineSplitSumsScaledLinesByOperationExcludingConfig() {
         RunArgs args = neutralMultiplierArgs();
         DriverScaler scaler = uniformScaler(1, 100);
@@ -380,7 +499,7 @@ class VolumeScoreCalculatorTest {
         assertEquals(50, scores.getLinesNew(), "NEW block bills its full body lines");
         assertEquals(12, scores.getLinesModified(), "MODIFY block bills its capped changed lines; config lines excluded");
 
-        PreComputedScores recomputed = new VolumeScoreCalculator(args).recompute(scores, Map.of(), Map.of(), Map.of());
+        PreComputedScores recomputed = new VolumeScoreCalculator(args).recompute(scores, Map.of(), Map.of(), Map.of(), Map.of());
         assertEquals(50, recomputed.getLinesNew(), "recompute with neutral factors preserves linesNew");
         assertEquals(12, recomputed.getLinesModified(), "recompute with neutral factors preserves linesModified");
     }
