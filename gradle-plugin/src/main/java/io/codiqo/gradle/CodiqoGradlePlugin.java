@@ -7,6 +7,7 @@ import java.util.concurrent.Callable;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.tasks.testing.Test;
+import org.gradle.testing.jacoco.plugins.JacocoTaskExtension;
 
 public class CodiqoGradlePlugin implements Plugin<Project> {
     private static final String EXTENSION_NAME = "codiqo";
@@ -40,6 +41,27 @@ public class CodiqoGradlePlugin implements Plugin<Project> {
                 task.setRequest(GradleModelCollector.collect(project.getRootProject(), ext));
             }
         });
+
+        /**
+         * codiqo owns coverage in the analysis build (mirrors the Maven coverage-injector): every Test task's jacoco
+         * extension is normalized to enabled + the uniform per-module exec file the analysis reads, so a project's
+         * own jacoco customization (custom destinationFile, disabled tasks) cannot hide the coverage data. runs at
+         * task-graph-ready — after all project configuration — so the project's own settings never win the race;
+         * the jacoco agent resolves its JVM argument from the extension only at process fork.
+         */
+        project.getGradle().getTaskGraph().whenReady(graph -> graph.getAllTasks().stream()
+                .filter(Test.class::isInstance)
+                .map(Test.class::cast)
+                .forEach(CodiqoGradlePlugin::ownJacoco));
+    }
+
+    private static void ownJacoco(Test test) {
+        // absent only when the jacoco plugin is not applied to the task's project (non-java projects)
+        JacocoTaskExtension jacoco = test.getExtensions().findByType(JacocoTaskExtension.class);
+        if (jacoco != null) {
+            jacoco.setEnabled(true);
+            jacoco.setDestinationFile(GradleBuildSupport.jacocoExec(test.getProject()));
+        }
     }
 
     private static List<Test> allTestTasks(Project project) {

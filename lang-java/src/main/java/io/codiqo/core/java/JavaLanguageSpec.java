@@ -40,6 +40,7 @@ import java.util.stream.Stream;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.BooleanUtils;
@@ -381,15 +382,25 @@ public class JavaLanguageSpec implements LanguageSpec {
         }
 
         /**
-         * well this is crucial - if there are any class id mismatches between the execution data and the compiled classes,
-         * we can not trust the coverage results at all, so we have to fail the analysis here.
-         * otherwise risk assessment might be completely off which is unacceptable whatsoever.
+         * a class id mismatch means the execution data was recorded against different bytes than target/classes —
+         * runtime-transforming agents (e.g. allure's aspectjweaver rewriting @Aspect classes) cause benign isolated
+         * mismatches, so untrusted classes are excluded from coverage (conservatively uncovered) instead of failing
+         * the analysis. the guard stays absolute for the code being SCORED: a mismatch on one of the commit's changed
+         * files would corrupt its risk assessment, so that still fails hard.
          */
         Collection<IClassCoverage> noMatch = coverageBuilder.getNoMatchClasses();
         if (CollectionUtils.isNotEmpty(noMatch)) {
-            log.error("class id mismatch: %d classes have execution data that doesn't match compiled classes", noMatch.size());
-            noMatch.stream().forEach(cls -> log.error("  - %s", cls.getName()));
-            throw new IOException("coverage analysis failed due to class id mismatches in total " + noMatch.size() + " classes");
+            List<IClassCoverage> changedFileMismatches = noMatch.stream()
+                    .filter(cls -> touchesAnalyzedFile(cls, analysis))
+                    .toList();
+            if (CollectionUtils.isNotEmpty(changedFileMismatches)) {
+                changedFileMismatches.forEach(cls -> log.error("  - %s", cls.getName()));
+                throw new IOException(String.format(
+                        "coverage analysis failed: %d of the commit's changed classes have execution data that doesn't match compiled classes — the compiled output appears stale, please rebuild the project and rerun the tests",
+                        changedFileMismatches.size()));
+            }
+            log.warn("class id mismatch: %d classes excluded from coverage (none among the commit's changed files) — typically another -javaagent (e.g. aspectjweaver) transformed them at load time", noMatch.size());
+            noMatch.stream().forEach(cls -> log.warn("  - %s", cls.getName()));
         }
 
         int totalLines = 0;
@@ -738,19 +749,52 @@ public class JavaLanguageSpec implements LanguageSpec {
         if (project instanceof JvmProjectSpec) {
             File outputDir = project.getOutputDirectory();
             if (outputDir.isDirectory() && hasFilesWithExtension(outputDir, "class")) {
-                return ranTests(outputDir.getParentFile());
+                return ranTests(outputDir);
             }
         }
         return false;
     }
-    private static boolean ranTests(File buildDirectory) {
+    private static boolean ranTests(File outputDir) {
+        /**
+         * maven layout: target/classes with junit xml in target/{surefire,failsafe}-reports;
+         * gradle layout: build/classes/<lang>/<sourceSet> with junit xml in build/test-results/<task>
+         */
+        File mavenBuildDir = outputDir.getParentFile();
         for (String reportDir : new String[] { "surefire-reports", "failsafe-reports" }) {
-            File dir = new File(buildDirectory, reportDir);
-            if (dir.isDirectory()) {
-                File[] results = dir.listFiles((d, name) -> name.startsWith("TEST-") && name.endsWith(".xml"));
-                if (ArrayUtils.isNotEmpty(results)) {
+            if (containsJunitReports(new File(mavenBuildDir, reportDir))) {
+                return true;
+            }
+        }
+
+        File gradleBuildDir = Optional.ofNullable(mavenBuildDir.getParentFile()).map(File::getParentFile).orElse(null);
+        if (Objects.nonNull(gradleBuildDir)) {
+            File[] taskDirs = new File(gradleBuildDir, "test-results").listFiles(File::isDirectory);
+            for (File taskDir : ArrayUtils.nullToEmpty(taskDirs, File[].class)) {
+                if (containsJunitReports(taskDir)) {
                     return true;
                 }
+            }
+        }
+        return false;
+    }
+    private static boolean containsJunitReports(File dir) {
+        if (dir.isDirectory()) {
+            return ArrayUtils.isNotEmpty(dir.listFiles((d, name) -> name.startsWith("TEST-") && name.endsWith(".xml")));
+        }
+        return false;
+    }
+    private static boolean touchesAnalyzedFile(IClassCoverage cls, CommitAnalysis analysis) {
+        /**
+         * jacoco reports the source file when debug info is present; otherwise derive it from the outer class name so
+         * a mismatched class can still be matched against the commit's changed file locations
+         */
+        String sourceFile = Optional.ofNullable(cls.getSourceFileName())
+                .orElse(StringUtils.substringBefore(StringUtils.substringAfterLast(cls.getName(), "/"), "$") + ".java");
+        String relative = cls.getPackageName() + "/" + sourceFile;
+
+        for (File location : analysis.locations()) {
+            if (FilenameUtils.separatorsToUnix(location.getPath()).endsWith(relative)) {
+                return true;
             }
         }
         return false;

@@ -75,7 +75,7 @@ public class GradleModelCollector {
             module.setDescription(project.getDescription());
             module.setBaseDirectory(project.getProjectDir().getAbsolutePath());
             module.setOutputDirectory(main.getJava().getClassesDirectory().get().getAsFile().getAbsolutePath());
-            module.setCoveragePath(GradleBuildSupport.autoDetectJacocoExec(project).getAbsolutePath());
+            module.setCoveragePath(GradleBuildSupport.jacocoExec(project).getAbsolutePath());
 
             for (File dir : main.getJava().getSrcDirs()) {
                 module.getCompileSourceRoots().add(dir.getAbsolutePath());

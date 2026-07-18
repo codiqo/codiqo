@@ -21,7 +21,7 @@ import io.codiqo.api.logging.Log;
 
 public class LlmTokenizers implements AutoCloseable {
     private final Log log;
-    private final Encoding fallback = Encodings.newLazyEncodingRegistry().getEncoding(EncodingType.O200K_BASE);
+    private static final Encoding FALLBACK = Encodings.newLazyEncodingRegistry().getEncoding(EncodingType.O200K_BASE);
     private final ConcurrentMap<String, Optional<HuggingFaceTokenizer>> loaded = new ConcurrentHashMap<>();
     private final Map<String, String> loadOptions = Map.of(
             "addSpecialTokens", Boolean.FALSE.toString(),
@@ -45,7 +45,7 @@ public class LlmTokenizers implements AutoCloseable {
                 }
             }
         }
-        return fallback.countTokensOrdinary(text);
+        return FALLBACK.countTokensOrdinary(text);
     }
     @Override
     public void close() {
