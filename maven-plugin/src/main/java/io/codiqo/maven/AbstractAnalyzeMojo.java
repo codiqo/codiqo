@@ -827,6 +827,15 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         for (String moduleName : parent.getModules()) {
             File modulePom = new File(new File(baseDir, moduleName), "pom.xml");
             if (modulePom.exists()) {
+                /**
+                 * fresh isolated session per module build: resolveDependencies=true on an earlier module reads
+                 * REMOTE sibling POMs (latest snapshot deploys) whose lineage shares GAVs with the local checkout
+                 * (e.g. crm-parent:26.04.2-SNAPSHOT) — those raw models enter the shared session model cache and a
+                 * later module's parent/import chain then assembles against the anachronistic remote lineage,
+                 * dropping managed versions ('dependencies.dependency.version is missing' broken-POM failures)
+                 */
+                Maven.isolateRepositorySession(buildingRequest);
+
                 ProjectBuildingResult moduleResult;
                 try {
                     moduleResult = TimeMachineSupport.withHostPinning(args, getLog(), () -> projectBuilder.build(modulePom, buildingRequest));
