@@ -411,7 +411,7 @@ public class LlmScoringClient implements ScoringClient {
         }
         return Family.familyOf(err.statusCode()) == Family.CLIENT_ERROR;
     }
-    private static String stripMarkdownFences(String raw) {
+    static String stripMarkdownFences(String raw) {
         String trimmed = raw.strip();
         int jsonStart = trimmed.indexOf('{');
         int jsonEnd = trimmed.lastIndexOf('}');

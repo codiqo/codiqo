@@ -1100,18 +1100,19 @@ You do NOT have the parent commit's absolute numbers, so this is the direction a
 
 ---
 
-# COMMIT TAGGING (REQUIRED - Be Specific!)
+# COMMIT TAGGING (REQUIRED - Reuse First!)
 
-**IMPORTANT:** Generate SPECIFIC, DETAILED tags that accurately describe the commit. Generic tags like "refactoring" or "testing" alone are NOT acceptable.
+**IMPORTANT:** Tags form a stable, minimal vocabulary reused across commits. Reuse beats novelty: a slightly-less-precise existing tag is ALWAYS better than a new near-duplicate.
 
-**Requirements:**
-- **Technical tags**: List ALL specific technologies/frameworks touched (e.g., "spring-boot-4", "kafka-4.x", "webflux", "protobuf")
-- **Functional tags**: List the business domains affected
-- **Version-specific**: When updating dependencies, include version info (e.g., "spring-boot-3-to-4-migration")
-- **Minimum 4-6 tags** for non-trivial commits
+**Rules (in priority order):**
+1. **Reuse existing tags**: If an existing tag (lists below) reasonably covers the change, you MUST use it verbatim. NEVER create synonyms, plurals, or reworded variants of an existing tag.
+2. **Vocabulary cap**: The tag vocabulary must stay at or below [(${tags_vocabulary_cap})] tags per category. When the existing list already contains [(${tags_vocabulary_cap})] or more tags, do NOT invent new tags — pick the closest existing ones.
+3. **New tags are exceptional**: Coin a new tag ONLY when no existing tag fits and the cap allows. Prefer the canonical tags from the tables below before inventing anything.
+4. **No versions in tags**: Never embed version numbers. Use the base technology tag plus "dependency-update" (e.g., "spring-boot" + "dependency-update", NOT "spring-boot-4" or "spring-boot-3-to-4-migration").
+5. **3-6 total tags** per commit covering the most significant aspects only — not everything touched.
 
-**Existing Technical Tags (reuse when applicable):** [(${#strings.isEmpty(technical_tags) ? 'none yet' : technical_tags})]
-**Existing Functional Tags (reuse when applicable):** [(${#strings.isEmpty(functional_tags) ? 'none yet' : functional_tags})]
+**Existing Technical Tags (MUST reuse verbatim when applicable):** [(${#strings.isEmpty(technical_tags) ? 'none yet' : technical_tags})]
+**Existing Functional Tags (MUST reuse verbatim when applicable):** [(${#strings.isEmpty(functional_tags) ? 'none yet' : functional_tags})]
 
 ## Technical Tags (Engineering Aspects)
 

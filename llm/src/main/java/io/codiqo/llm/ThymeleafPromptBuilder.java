@@ -247,6 +247,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         ctx.setVariable("code_units_affected", promptContext.getCodeUnitsAffected());
         ctx.setVariable("technical_tags", String.join(", ", promptContext.getTechnicalTags()));
         ctx.setVariable("functional_tags", String.join(", ", promptContext.getFunctionalTags()));
+        ctx.setVariable("tags_vocabulary_cap", promptContext.getTagsVocabularyCap());
         ctx.setVariable("web_search_enabled", args.isLlmEnableWebSearchTool());
         ctx.setVariable("architecture_bonus_factor", args.getArchitectureBonusFactor());
         ctx.setVariable("quality_multiplier_min", args.getQualityMultiplierMin());

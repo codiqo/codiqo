@@ -25,6 +25,8 @@ public interface PromptBuilder {
         List<String> technicalTags = Collections.emptyList();
         @Builder.Default
         List<String> functionalTags = Collections.emptyList();
+        @Builder.Default
+        int tagsVocabularyCap = 30;
 
         @Builder.Default
         long projectTotalStatements = 0;
