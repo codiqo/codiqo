@@ -183,9 +183,14 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             if (Objects.nonNull(args.getTimeMachineTargetOffset())) {
                 Maven.isolateRepositorySession(buildingReq);
             }
+            /**
+             * pre-flight host model building is advisory only: the host JVM lacks the analyzed project's
+             * .mvn/extensions.xml environment (artifactregistry:// transport, env-injected sysEnvRepo*
+             * repositories), so its resolution failures are not authoritative — the fork build decides, and a
+             * genuine dependency problem resurfaces there with the full back-off ladder recorded
+             */
             if (resolveDependenciesOffline(args) instanceof BuildOutcome.Skipped skipped) {
-                doDegradedAnalysis(args, skipped.reason(), skipped.category(), skipped.detail());
-                return;
+                getLog().warn(String.format("pre-flight host model building failed (%s), deferring to fork build", skipped.reason()));
             }
 
             /**
