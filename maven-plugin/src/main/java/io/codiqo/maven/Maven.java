@@ -30,6 +30,7 @@ import org.apache.maven.project.ProjectBuildingResult;
 import org.eclipse.aether.DefaultRepositoryCache;
 import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.DefaultSessionData;
+import org.eclipse.aether.util.repository.SimpleResolutionErrorPolicy;
 
 
 import io.codiqo.client.model.AnalysisExcludeCategory;
@@ -62,12 +63,15 @@ public class Maven {
     }
     /**
      * host-side model building under time-machine pinning must not share resolution/model caches with the host
-     * session — the host may already have resolved the same snapshot coordinates to their latest deploys
+     * session — the host may already have resolved the same snapshot coordinates to their latest deploys.
+     * resolution-error caching is disabled on the derived session so on-disk .lastUpdated markers recorded by
+     * other resolution contexts (fork builds, earlier analyses) neither block host retries nor get written by them
      */
     public static void isolateRepositorySession(ProjectBuildingRequest request) {
         DefaultRepositorySystemSession derived = new DefaultRepositorySystemSession(request.getRepositorySession());
         derived.setCache(new DefaultRepositoryCache());
         derived.setData(new DefaultSessionData());
+        derived.setResolutionErrorPolicy(new SimpleResolutionErrorPolicy(false, false));
 
         request.setRepositorySession(derived);
     }
