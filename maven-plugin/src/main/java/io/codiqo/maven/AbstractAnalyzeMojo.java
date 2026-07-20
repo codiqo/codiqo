@@ -106,6 +106,7 @@ import io.codiqo.maven.logging.MavenLogFactory;
 import io.codiqo.maven.populator.LlmScoringPopulator;
 import io.codiqo.maven.populator.ProjectModelPopulator;
 import io.codiqo.maven.populator.SubmissionSummaryPrinter;
+import io.codiqo.maven.surefire.SurefireInjectorConfig;
 import io.codiqo.maven.timemachine.TimeMachineConfig;
 import io.codiqo.submit.CommitModelPopulator;
 import io.codiqo.submit.DuplicationReportPopulator;
@@ -136,6 +137,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     private static final String CODIQO_GROUP_ID = "io.codiqo";
     private static final String TIME_MACHINE_ARTIFACT_ID = "codiqo-maven-time-machine";
     private static final String COVERAGE_INJECTOR_ARTIFACT_ID = "codiqo-maven-coverage-injector";
+    private static final String SUREFIRE_INJECTOR_ARTIFACT_ID = "codiqo-maven-surefire-injector";
     private static final String BUILD_EVENTSPY_ARTIFACT_ID = "codiqo-maven-build-eventspy";
 
     private static final String JACOCO_GROUP_ID = "org.jacoco";
@@ -150,6 +152,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
     private Collection<File> timeMachineExtensionJars;
     private Collection<File> coverageInjectorJars;
+    private Collection<File> surefireInjectorJars;
     private Collection<File> buildEventSpyJars;
     private File jacocoAgentJar;
 
@@ -183,11 +186,14 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.preferYaml", defaultValue = "true")
     protected boolean preferYaml;
 
-    @Parameter(property = "codiqo.buildTimeoutMinutes", defaultValue = "30")
+    @Parameter(property = "codiqo.buildTimeoutMinutes", defaultValue = "60")
     protected long buildTimeoutMinutes;
 
-    @Parameter(property = "codiqo.testTimeoutMinutes", defaultValue = "10")
+    @Parameter(property = "codiqo.testTimeoutMinutes", defaultValue = "30")
     protected long testTimeoutMinutes;
+
+    @Parameter(property = "codiqo.perTestTimeoutMinutes")
+    protected Long perTestTimeoutMinutes;
 
     @Parameter(property = "codiqo.importTimeoutMinutes", defaultValue = "15")
     protected long importTimeoutMinutes;
@@ -378,6 +384,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         Optional.ofNullable(mavenHome).ifPresent(args::setMavenHome);
         args.setBuildTimeout(Duration.ofMinutes(buildTimeoutMinutes));
         args.setTestTimeout(Duration.ofMinutes(testTimeoutMinutes));
+        Optional.ofNullable(perTestTimeoutMinutes).ifPresent(minutes -> args.setPerTestTimeout(Duration.ofMinutes(minutes)));
         args.setImportTimeout(Duration.ofMinutes(importTimeoutMinutes));
         args.setLspQueryTimeout(Duration.ofSeconds(lspQueryTimeoutSeconds));
         args.setConnectTimeout(Duration.ofSeconds(connectTimeoutSeconds));
@@ -477,6 +484,19 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 }
                 if (Objects.isNull(jacocoAgentJar)) {
                     getLog().warn(String.format("could not resolve %s:%s:%s; coverage auto-injection disabled for projects without jacoco-maven-plugin", JACOCO_GROUP_ID, JACOCO_AGENT_ARTIFACT_ID, JACOCO_AGENT_CLASSIFIER));
+                }
+
+                /**
+                 * best-effort like the other extensions: apply() sneaky-throws on an unresolvable artifact, so catch it
+                 * and leave the jars null — the per-test timeout then stays off instead of aborting the analysis. only
+                 * resolved when the timeout is actually going to be applied (tests run only on this coverage path).
+                 */
+                if (Objects.nonNull(args.getPerTestTimeout()) && args.getPerTestTimeout().compareTo(Duration.ZERO) > 0) {
+                    try {
+                        surefireInjectorJars = apply(new DefaultArtifact(CODIQO_GROUP_ID, SUREFIRE_INJECTOR_ARTIFACT_ID, JAR_EXTENSION, versions.get("codiqo.version").toString()));
+                    } catch (Exception err) {
+                        getLog().warn("per-test timeout injector artifact resolution failed", err);
+                    }
                 }
             }
         } catch (IOException err) {
@@ -662,13 +682,17 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
         boolean timeMachineActive = BooleanUtils.and(new boolean[] { StringUtils.isNotBlank(args.getCommitId()), timeMachineRequested });
         boolean injectJacocoAgent = BooleanUtils.and(new boolean[] { BooleanUtils.negate(args.isIgnoreCoverage()), Objects.nonNull(jacocoAgentJar) });
+        boolean perTestTimeoutActive = BooleanUtils.negate(args.isIgnoreCoverage())
+                && Objects.nonNull(args.getPerTestTimeout())
+                && args.getPerTestTimeout().compareTo(Duration.ZERO) > 0;
 
         /**
          * codiqo core extensions are loaded on the forked build's maven.ext.class.path. the build-failure EventSpy is
          * injected on every run so structured failure detail is always captured; the time-machine snapshot resolver
-         * (codiqo-maven-time-machine, with the Google/Aether stack) and the JaCoCo agent injector
-         * (codiqo-maven-coverage-injector) are added only when their own feature is active — so a coverage-only run
-         * never puts the time-machine resolver on the extension realm, and vice versa.
+         * (codiqo-maven-time-machine, with the Google/Aether stack), the JaCoCo agent injector
+         * (codiqo-maven-coverage-injector), and the per-test timeout injector (codiqo-maven-surefire-injector) are
+         * added only when their own feature is active — so a coverage-only run never puts the time-machine resolver on
+         * the extension realm, and vice versa.
          */
         List<String> extensionClasspath = new ArrayList<>();
         Properties props = Optional.ofNullable(request.getProperties()).orElseGet(Properties::new);
@@ -710,6 +734,18 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
             props.setProperty(CoverageInjectorConfig.PROP_AGENT_JAR, jacocoAgentJar.getAbsolutePath());
             getLog().info("JaCoCo agent injection enabled for modules without jacoco-maven-plugin: " + jacocoAgentJar.getAbsolutePath());
+        }
+
+        if (perTestTimeoutActive) {
+            if (CollectionUtils.isNotEmpty(surefireInjectorJars)) {
+                extensionClasspath.addAll(extensionJarPaths(surefireInjectorJars));
+
+                long perTestSeconds = args.getPerTestTimeout().getSeconds();
+                props.setProperty(SurefireInjectorConfig.PROP_PER_TEST_TIMEOUT_SECONDS, String.valueOf(perTestSeconds));
+                getLog().info(String.format("per-test timeout injection enabled: %ds per JUnit 5 test method (SEPARATE_THREAD)", perTestSeconds));
+            } else {
+                getLog().warn("per-test timeout requested but codiqo-maven-surefire-injector could not be resolved — per-test timeout not applied");
+            }
         }
 
         if (CollectionUtils.isNotEmpty(extensionClasspath)) {

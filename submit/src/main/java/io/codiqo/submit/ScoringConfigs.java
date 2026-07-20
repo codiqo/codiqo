@@ -31,6 +31,7 @@ public class ScoringConfigs {
 
         toReturn.setBuildTimeout(Optional.ofNullable(args.getBuildTimeout()).map(Duration::toString).orElse(null));
         toReturn.setTestTimeout(Optional.ofNullable(args.getTestTimeout()).map(Duration::toString).orElse(null));
+        toReturn.setPerTestTimeout(Optional.ofNullable(args.getPerTestTimeout()).map(Duration::toString).orElse(null));
         toReturn.setImportTimeout(Optional.ofNullable(args.getImportTimeout()).map(Duration::toString).orElse(null));
         toReturn.setLspQueryTimeout(Optional.ofNullable(args.getLspQueryTimeout()).map(Duration::toString).orElse(null));
         toReturn.setConnectTimeout(Optional.ofNullable(args.getConnectTimeout()).map(Duration::toString).orElse(null));

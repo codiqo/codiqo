@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Duration;
+
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.DefaultParser;
 import org.junit.jupiter.api.Test;
@@ -31,6 +33,31 @@ class RunArgsCliTest {
         assertEquals((short) 5, args.getLlmMaxRetries());
         assertEquals(1024, args.getLlmMaxTokens());
         assertEquals(0.5, args.getLlmTemperature(), 0.001);
+    }
+    @Test
+    void perTestTimeoutDerivesHalfOfTestTimeoutWhenUnset() {
+        RunArgs args = new RunArgs();
+        args.validate();
+
+        assertEquals(Duration.ofMinutes(60), args.getBuildTimeout());
+        assertEquals(Duration.ofMinutes(30), args.getTestTimeout());
+        assertEquals(Duration.ofMinutes(15), args.getPerTestTimeout());
+    }
+    @Test
+    void perTestTimeoutHonorsExplicitValue() throws Exception {
+        CommandLine cmd = new DefaultParser().parse(RunArgs.options(), new String[]{"--per-test-timeout", "PT3M"});
+
+        RunArgs args = RunArgs.from(cmd);
+
+        assertEquals(Duration.ofMinutes(3), args.getPerTestTimeout());
+    }
+    @Test
+    void perTestTimeoutZeroStaysDisabledAndIsNotDerived() throws Exception {
+        CommandLine cmd = new DefaultParser().parse(RunArgs.options(), new String[]{"--per-test-timeout", "PT0S"});
+
+        RunArgs args = RunArgs.from(cmd);
+
+        assertEquals(Duration.ZERO, args.getPerTestTimeout());
     }
     @Test
     void jdtlsBaseUrlDefaultsToVersionedMilestones() {

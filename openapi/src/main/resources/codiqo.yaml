@@ -3409,7 +3409,10 @@ components:
           description: ISO-8601 duration — hard kill-switch on the forked Maven build process
         testTimeout:
           type: string
-          description: ISO-8601 duration — per-test timeout passed to Surefire
+          description: ISO-8601 duration — whole-fork test-process timeout passed to Surefire
+        perTestTimeout:
+          type: string
+          description: ISO-8601 duration — per-test-method default timeout injected as JUnit 5 configuration (SEPARATE_THREAD) into the fork's Surefire/Failsafe
         importTimeout:
           type: string
           description: ISO-8601 duration

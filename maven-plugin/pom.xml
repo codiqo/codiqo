@@ -167,6 +167,11 @@
         </dependency>
         <dependency>
             <groupId>${project.groupId}</groupId>
+            <artifactId>codiqo-maven-surefire-injector</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
             <artifactId>codiqo-maven-build-eventspy</artifactId>
             <scope>provided</scope>
         </dependency>
