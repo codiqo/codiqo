@@ -8,6 +8,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.Objects;
 
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Build;
@@ -25,8 +26,8 @@ class JUnitTimeoutInjectorTest {
     private static final String MAVEN_PLUGINS = "org.apache.maven.plugins";
 
     private static final long TIMEOUT_SECONDS = 900L;
-    private static final String DEFAULT_PARAM = "junit.jupiter.execution.timeout.default = 900";
-    private static final String THREAD_MODE_PARAM = "junit.jupiter.execution.timeout.thread.mode.default = SEPARATE_THREAD";
+    private static final String DEFAULT_ARG = "-Djunit.jupiter.execution.timeout.default=900";
+    private static final String THREAD_MODE_ARG = "-Djunit.jupiter.execution.timeout.thread.mode.default=SEPARATE_THREAD";
 
     @AfterEach
     void clearTimeoutProperty() {
@@ -34,16 +35,16 @@ class JUnitTimeoutInjectorTest {
     }
 
     @Test
-    void injectsTimeoutIntoSurefire() {
+    void injectsTimeoutArgsIntoSurefire() {
         Build build = build();
         Plugin surefire = plugin(MAVEN_PLUGINS, SUREFIRE);
         build.addPlugin(surefire);
 
         runInjector(build, TIMEOUT_SECONDS);
 
-        String params = configParams(surefire);
-        assertTrue(params.contains(DEFAULT_PARAM), "surefire must receive the default per-test timeout");
-        assertTrue(params.contains(THREAD_MODE_PARAM), "surefire must receive SEPARATE_THREAD so hung tests are interrupted");
+        String argLine = argLine(surefire);
+        assertTrue(argLine.contains(DEFAULT_ARG), "surefire argLine must carry the default per-test timeout system property");
+        assertTrue(argLine.contains(THREAD_MODE_ARG), "surefire argLine must carry SEPARATE_THREAD so hung tests are interrupted");
     }
 
     @Test
@@ -55,7 +56,7 @@ class JUnitTimeoutInjectorTest {
 
         runInjector(build, TIMEOUT_SECONDS);
 
-        assertTrue(configParams(failsafe).contains(DEFAULT_PARAM), "declared failsafe must also receive the timeout");
+        assertTrue(argLine(failsafe).contains(DEFAULT_ARG), "declared failsafe must also receive the timeout args");
     }
 
     @Test
@@ -71,35 +72,47 @@ class JUnitTimeoutInjectorTest {
     }
 
     @Test
-    void appendsAfterExistingConfigurationParameters() {
+    void preservesExistingArgLine() {
         Build build = build();
         Plugin surefire = plugin(MAVEN_PLUGINS, SUREFIRE);
-        surefire.setConfiguration(configurationWithConfigParameters("junit.jupiter.execution.timeout.default = 5"));
+        surefire.setConfiguration(configurationWithArgLine("-Xmx1g"));
         build.addPlugin(surefire);
 
         runInjector(build, TIMEOUT_SECONDS);
 
-        String params = configParams(surefire);
-        assertTrue(params.contains("junit.jupiter.execution.timeout.default = 5"), "the project's existing parameters must be preserved");
-        assertTrue(params.contains(DEFAULT_PARAM), "codiqo's cap must be added");
-        assertTrue(params.indexOf(DEFAULT_PARAM) > params.indexOf("= 5"), "codiqo's cap must be appended last so it wins on the duplicate key");
+        String argLine = argLine(surefire);
+        assertTrue(argLine.startsWith("-Xmx1g "), "the project's existing argLine must be preserved");
+        assertTrue(argLine.contains(DEFAULT_ARG), "the timeout args must be appended after the existing argLine");
     }
 
     @Test
-    void appendsToExecutionLevelConfigurationParameters() {
+    void seedsCreatedArgLineWithStaticArgLineProperty() {
         Build build = build();
         Plugin surefire = plugin(MAVEN_PLUGINS, SUREFIRE);
-        surefire.addExecution(executionWithConfigParameters("default-test", "junit.jupiter.execution.parallel.enabled = true"));
+        build.addPlugin(surefire);
+
+        runInjector(build, "jar", TIMEOUT_SECONDS, "-Duser.timezone=UTC");
+
+        String argLine = argLine(surefire);
+        assertTrue(argLine.startsWith("-Duser.timezone=UTC "), "a static argLine POM property must be carried into the created argLine");
+        assertTrue(argLine.contains(THREAD_MODE_ARG), "the timeout args must follow the carried-over property");
+    }
+
+    @Test
+    void appendsToExecutionLevelArgLineOverride() {
+        Build build = build();
+        Plugin surefire = plugin(MAVEN_PLUGINS, SUREFIRE);
+        surefire.addExecution(executionWithArgLine("default-test", "-Dfoo=bar"));
         build.addPlugin(surefire);
 
         runInjector(build, TIMEOUT_SECONDS);
 
-        assertTrue(configParams(surefire).contains(DEFAULT_PARAM), "plugin-level configuration must receive the timeout");
+        assertTrue(argLine(surefire).contains(DEFAULT_ARG), "plugin-level argLine must receive the timeout args");
 
         Xpp3Dom executionConfig = (Xpp3Dom) surefire.getExecutions().get(0).getConfiguration();
-        String executionParams = executionConfig.getChild("properties").getChild("configurationParameters").getValue();
-        assertTrue(executionParams.contains(DEFAULT_PARAM), "an execution that overrides configurationParameters must also receive the timeout");
-        assertTrue(executionParams.contains("junit.jupiter.execution.parallel.enabled = true"), "the original execution parameters must be preserved");
+        String executionArgLine = executionConfig.getChild("argLine").getValue();
+        assertTrue(executionArgLine.contains(DEFAULT_ARG), "an execution that overrides argLine must also receive the timeout args");
+        assertTrue(executionArgLine.contains("-Dfoo=bar"), "the original execution argLine must be preserved");
     }
 
     @Test
@@ -112,7 +125,7 @@ class JUnitTimeoutInjectorTest {
                 .filter(p -> SUREFIRE.equals(p.getArtifactId()))
                 .findFirst()
                 .orElseThrow();
-        assertTrue(configParams(surefire).contains(DEFAULT_PARAM), "a module with no test plugin must get a fabricated surefire carrying the timeout");
+        assertTrue(argLine(surefire).contains(DEFAULT_ARG), "a module with no test plugin must get a fabricated surefire carrying the timeout args");
         assertFalse(build.getPlugins().stream().anyMatch(p -> FAILSAFE.equals(p.getArtifactId())), "failsafe must not be fabricated");
     }
 
@@ -120,7 +133,7 @@ class JUnitTimeoutInjectorTest {
     void skipsPomPackagingAggregator() {
         Build build = build();
 
-        runInjector(build, "pom", TIMEOUT_SECONDS);
+        runInjector(build, "pom", TIMEOUT_SECONDS, null);
 
         assertTrue(build.getPlugins().isEmpty(), "pom aggregator must not get a fabricated surefire plugin");
     }
@@ -148,24 +161,27 @@ class JUnitTimeoutInjectorTest {
     }
 
     private static void runInjector(Build build, long seconds) {
-        runInjector(build, "jar", seconds);
+        runInjector(build, "jar", seconds, null);
     }
 
-    private static void runInjector(Build build, String packaging, long seconds) {
+    private static void runInjector(Build build, String packaging, long seconds, String argLineProperty) {
         System.setProperty(SurefireInjectorConfig.PROP_PER_TEST_TIMEOUT_SECONDS, String.valueOf(seconds));
-        afterProjectsRead(build, packaging);
+        afterProjectsRead(build, packaging, argLineProperty);
     }
 
     private static void runInjectorWithoutTimeout(Build build) {
         System.clearProperty(SurefireInjectorConfig.PROP_PER_TEST_TIMEOUT_SECONDS);
-        afterProjectsRead(build, "jar");
+        afterProjectsRead(build, "jar", null);
     }
 
-    private static void afterProjectsRead(Build build, String packaging) {
+    private static void afterProjectsRead(Build build, String packaging, String argLineProperty) {
         Model model = new Model();
         model.setArtifactId("module-under-test");
         model.setPackaging(packaging);
         model.setBuild(build);
+        if (Objects.nonNull(argLineProperty)) {
+            model.addProperty("argLine", argLineProperty);
+        }
         MavenProject project = new MavenProject(model);
 
         MavenSession session = mock(MavenSession.class);
@@ -174,15 +190,12 @@ class JUnitTimeoutInjectorTest {
         new JUnitTimeoutInjector().afterProjectsRead(session);
     }
 
-    private static Xpp3Dom configurationWithConfigParameters(String value) {
-        Xpp3Dom configurationParameters = new Xpp3Dom("configurationParameters");
-        configurationParameters.setValue(value);
-
-        Xpp3Dom properties = new Xpp3Dom("properties");
-        properties.addChild(configurationParameters);
+    private static Xpp3Dom configurationWithArgLine(String value) {
+        Xpp3Dom argLine = new Xpp3Dom("argLine");
+        argLine.setValue(value);
 
         Xpp3Dom config = new Xpp3Dom("configuration");
-        config.addChild(properties);
+        config.addChild(argLine);
         return config;
     }
 
@@ -199,20 +212,18 @@ class JUnitTimeoutInjectorTest {
         return plugin;
     }
 
-    private static PluginExecution executionWithConfigParameters(String id, String value) {
+    private static PluginExecution executionWithArgLine(String id, String value) {
         PluginExecution execution = new PluginExecution();
         execution.setId(id);
-        execution.setConfiguration(configurationWithConfigParameters(value));
+        execution.setConfiguration(configurationWithArgLine(value));
         return execution;
     }
 
-    private static String configParams(Plugin plugin) {
+    private static String argLine(Plugin plugin) {
         Xpp3Dom config = (Xpp3Dom) plugin.getConfiguration();
         assertNotNull(config, "expected an injected configuration on " + plugin.getArtifactId());
-        Xpp3Dom properties = config.getChild("properties");
-        assertNotNull(properties, "expected injected properties on " + plugin.getArtifactId());
-        Xpp3Dom configurationParameters = properties.getChild("configurationParameters");
-        assertNotNull(configurationParameters, "expected injected configurationParameters on " + plugin.getArtifactId());
-        return configurationParameters.getValue();
+        Xpp3Dom argLine = config.getChild("argLine");
+        assertNotNull(argLine, "expected an injected argLine on " + plugin.getArtifactId());
+        return argLine.getValue();
     }
 }
