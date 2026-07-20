@@ -19,15 +19,19 @@ import org.codehaus.plexus.util.xml.Xpp3Dom;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * core extension that caps every JUnit 5 test with a default per-test timeout so a single hanging test does not consume
- * the whole-fork budget and abort the module's analysis. it injects the JUnit Platform configuration parameters into
- * the surefire/failsafe plugin of every non-pom reactor module. the timeout is measured per testable/lifecycle method
- * and, with SEPARATE_THREAD mode, actually interrupts a hung test (I/O, lock, sleep waits) — a timed-out test is a test
- * FAILURE, which the fork's -Dmaven.test.failure.ignore=true tolerates, so the build proceeds. it runs inside the
- * codiqo-forked build (loaded via maven.ext.class.path); the codiqo plugin supplies the timeout through
+ * core extension that caps every JUnit 5/6 test with a default per-test timeout so a single hanging test does not
+ * consume the whole-fork budget and abort the module's analysis. the timeout is delivered as JUnit Platform
+ * configuration parameters passed as {@code -D} system properties on the surefire/failsafe {@code argLine} of every
+ * non-pom reactor module — JUnit reads configuration parameters from JVM system properties, so this reaches the launcher
+ * even in JUnit 6. (the {@code <properties><configurationParameters>} element is NOT usable here: a lifecycle
+ * participant that adds it at runtime is silently dropped by surefire's mojo configurator, whereas argLine — the same
+ * channel the JaCoCo agent injector uses — is honored.) with SEPARATE_THREAD mode a hung test (I/O, lock, sleep, an
+ * un-timed HTTP call) is preemptively interrupted and reported as a FAILURE, which the fork's
+ * -Dmaven.test.failure.ignore=true tolerates, so the build proceeds. it runs inside the codiqo-forked build (loaded via
+ * maven.ext.class.path); the codiqo plugin supplies the timeout through
  * {@link SurefireInjectorConfig#PROP_PER_TEST_TIMEOUT_SECONDS}; the extension stays inert when that property is absent
- * or non-positive. JUnit 4 and TestNG have no equivalent global default and are unaffected; a pure CPU spin is only
- * reaped by the whole-fork surefire.timeout backstop.
+ * or non-positive. JUnit 4 and TestNG have no equivalent global default and simply ignore the unknown -D; a pure CPU
+ * spin is only reaped by the whole-fork surefire.timeout backstop.
  */
 @Slf4j
 @Singleton
@@ -38,14 +42,12 @@ public class JUnitTimeoutInjector extends AbstractMavenLifecycleParticipant {
     private static final String FAILSAFE_ARTIFACT_ID = "maven-failsafe-plugin";
 
     private static final String CONFIGURATION = "configuration";
-    private static final String PROPERTIES = "properties";
-    private static final String CONFIGURATION_PARAMETERS = "configurationParameters";
+    private static final String ARG_LINE = "argLine";
     private static final String POM_PACKAGING = "pom";
 
     private static final String TIMEOUT_DEFAULT_KEY = "junit.jupiter.execution.timeout.default";
     private static final String TIMEOUT_THREAD_MODE_KEY = "junit.jupiter.execution.timeout.thread.mode.default";
     private static final String SEPARATE_THREAD = "SEPARATE_THREAD";
-    private static final String NEWLINE = "\n";
 
     @Override
     public void afterProjectsRead(MavenSession session) {
@@ -61,62 +63,54 @@ public class JUnitTimeoutInjector extends AbstractMavenLifecycleParticipant {
             return;
         }
 
-        String parameters = timeoutParameters(timeoutSeconds);
+        String timeoutArgs = timeoutArgs(timeoutSeconds);
+        String argLineProperty = StringUtils.trimToEmpty(project.getProperties().getProperty(ARG_LINE));
 
-        injectConfigurationParameters(resolveSurefire(project), parameters);
-        findDeclaredPlugin(project, FAILSAFE_ARTIFACT_ID).ifPresent(failsafe -> injectConfigurationParameters(failsafe, parameters));
+        injectArgLine(resolveSurefire(project), timeoutArgs, argLineProperty);
+        findDeclaredPlugin(project, FAILSAFE_ARTIFACT_ID).ifPresent(failsafe -> injectArgLine(failsafe, timeoutArgs, argLineProperty));
 
         log.info("[codiqo] injected JUnit per-test timeout into {} ({}s, SEPARATE_THREAD)", project.getArtifactId(), timeoutSeconds);
     }
-    private static void injectConfigurationParameters(Plugin plugin, String parameters) {
+    private static void injectArgLine(Plugin plugin, String timeoutArgs, String argLineProperty) {
         /**
-         * set the timeout on the plugin-level configuration (applies to executions that do not declare their own
-         * configurationParameters) and on every execution that declares its own — an execution-level value overrides
-         * the plugin-level one under Maven's leaf merge, so a parent's explicit configurationParameters would
-         * otherwise drop the timeout.
+         * append to the plugin-level argLine (applies to executions that do not declare their own argLine) and to every
+         * execution that sets its own argLine — an execution-level value overrides the plugin-level one, so a shared
+         * parent's default-test execution would otherwise drop the timeout. mirrors the JaCoCo agent injector.
          */
         Xpp3Dom config = (Xpp3Dom) plugin.getConfiguration();
         if (Objects.isNull(config)) {
             config = new Xpp3Dom(CONFIGURATION);
             plugin.setConfiguration(config);
         }
-        appendConfigurationParameters(config, parameters);
+        appendArgs(config, timeoutArgs, argLineProperty);
 
         for (PluginExecution execution : plugin.getExecutions()) {
             Xpp3Dom executionConfig = (Xpp3Dom) execution.getConfiguration();
-            if (Objects.nonNull(executionConfig) && hasConfigurationParameters(executionConfig)) {
-                appendConfigurationParameters(executionConfig, parameters);
+            if (Objects.nonNull(executionConfig) && Objects.nonNull(executionConfig.getChild(ARG_LINE))) {
+                appendArgs(executionConfig, timeoutArgs, argLineProperty);
             }
         }
     }
-    private static void appendConfigurationParameters(Xpp3Dom config, String parameters) {
-        /**
-         * codiqo's parameters go LAST in the newline-separated properties text so that on a duplicate key the JUnit
-         * Platform properties parse resolves to codiqo's value — the safety cap stays authoritative even when the
-         * project already declares its own timeout configurationParameters.
-         */
-        Xpp3Dom properties = config.getChild(PROPERTIES);
-        if (Objects.isNull(properties)) {
-            properties = new Xpp3Dom(PROPERTIES);
-            config.addChild(properties);
+    private static void appendArgs(Xpp3Dom config, String timeoutArgs, String argLineProperty) {
+        Xpp3Dom argLine = config.getChild(ARG_LINE);
+        if (Objects.isNull(argLine)) {
+            argLine = new Xpp3Dom(ARG_LINE);
+            config.addChild(argLine);
+
+            /**
+             * with no explicit argLine surefire falls back to the ${argLine} PROJECT property; the created value
+             * replaces that fallback, so a static argLine property (JVM opts, and the coverage injector's carry-over)
+             * must be preserved ahead of the timeout flags.
+             */
+            argLine.setValue(StringUtils.isBlank(argLineProperty) ? timeoutArgs : argLineProperty + " " + timeoutArgs);
+            return;
         }
 
-        Xpp3Dom configurationParameters = properties.getChild(CONFIGURATION_PARAMETERS);
-        if (Objects.isNull(configurationParameters)) {
-            configurationParameters = new Xpp3Dom(CONFIGURATION_PARAMETERS);
-            properties.addChild(configurationParameters);
-        }
-
-        String base = StringUtils.trimToEmpty(configurationParameters.getValue());
-        configurationParameters.setValue(StringUtils.isBlank(base) ? parameters : base + NEWLINE + parameters);
+        String base = StringUtils.defaultString(argLine.getValue());
+        argLine.setValue(StringUtils.isBlank(base) ? timeoutArgs : base + " " + timeoutArgs);
     }
-    private static String timeoutParameters(long timeoutSeconds) {
-        return TIMEOUT_DEFAULT_KEY + " = " + timeoutSeconds + NEWLINE
-                + TIMEOUT_THREAD_MODE_KEY + " = " + SEPARATE_THREAD;
-    }
-    private static boolean hasConfigurationParameters(Xpp3Dom config) {
-        Xpp3Dom properties = config.getChild(PROPERTIES);
-        return Objects.nonNull(properties) && Objects.nonNull(properties.getChild(CONFIGURATION_PARAMETERS));
+    private static String timeoutArgs(long timeoutSeconds) {
+        return "-D" + TIMEOUT_DEFAULT_KEY + "=" + timeoutSeconds + " -D" + TIMEOUT_THREAD_MODE_KEY + "=" + SEPARATE_THREAD;
     }
     private static Plugin resolveSurefire(MavenProject project) {
         Optional<Plugin> declared = findDeclaredPlugin(project, SUREFIRE_ARTIFACT_ID);

@@ -30,16 +30,20 @@ public final class OpenAIClientFactory {
     private OpenAIClientFactory() {}
 
     public static OpenAIClient buildStreamingClient(RunArgs args, ExecutorService executor, Map<String, String> additionalHeaders) {
-        // The read timeout is applied as a per-chunk idle guard (connect/read/write); the total-call
-        // timeout is disabled (request = ZERO). OkHttp's callTimeout budgets the ENTIRE call — including
-        // reading the full stream — so a long but steadily-streaming completion would otherwise be
-        // aborted mid-generation with "Stream failed" the moment total elapsed time exceeds the budget.
+        /**
+         * The read timeout is applied as a per-chunk idle guard (connect/read/write); the total-call
+         * timeout is disabled (request = ZERO). OkHttp's callTimeout budgets the ENTIRE call — including
+         * reading the full stream — so a long but steadily-streaming completion would otherwise be
+         * aborted mid-generation with "Stream failed" the moment total elapsed time exceeds the budget.
+         */
         Duration readTimeout = args.getLlmReadTimeout();
 
-        // OpenAIClient.close() shuts down whatever executor it is handed (both the OkHttp dispatcher
-        // pool and the stream-handler executor). These clients are closed per call while the executor
-        // is a shared, bean-managed platform pool, so guard it against shutdown — the owning bean
-        // disposes the real pool in its own lifecycle.
+        /**
+         * OpenAIClient.close() shuts down whatever executor it is handed (both the OkHttp dispatcher
+         * pool and the stream-handler executor). These clients are closed per call while the executor
+         * is a shared, bean-managed platform pool, so guard it against shutdown — the owning bean
+         * disposes the real pool in its own lifecycle.
+         */
         ExecutorService guardedExecutor = new NonShutdownExecutorService(executor);
 
         OpenAIOkHttpClient.Builder builder = OpenAIOkHttpClient.builder()
@@ -119,8 +123,10 @@ public final class OpenAIClientFactory {
         public List<Runnable> shutdownNow() {
             return Collections.emptyList();
         }
-        // no @Override: ExecutorService.close() is a JDK19+ AutoCloseable default, absent under the JDK17 compile
-        // target; the method still overrides it at runtime on JDK19+, so the no-op shutdown guard holds either way
+        /**
+         * no @Override: ExecutorService.close() is a JDK19+ AutoCloseable default, absent under the JDK17 compile
+         * target; the method still overrides it at runtime on JDK19+, so the no-op shutdown guard holds either way
+         */
         public void close() {}
     }
 }

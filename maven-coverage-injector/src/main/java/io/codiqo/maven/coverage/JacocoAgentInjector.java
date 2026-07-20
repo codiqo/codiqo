@@ -13,6 +13,7 @@ import javax.inject.Singleton;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.maven.AbstractMavenLifecycleParticipant;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Plugin;
@@ -133,8 +134,8 @@ public class JacocoAgentInjector extends AbstractMavenLifecycleParticipant {
          */
         String toReturn = argLine;
         for (String name : agentPropertyNames) {
-            toReturn = StringUtils.replace(toReturn, "@{" + name + "}", "");
-            toReturn = StringUtils.replace(toReturn, "${" + name + "}", "");
+            toReturn = Strings.CS.replace(toReturn, "@{" + name + "}", "");
+            toReturn = Strings.CS.replace(toReturn, "${" + name + "}", "");
         }
         return toReturn.trim();
     }
