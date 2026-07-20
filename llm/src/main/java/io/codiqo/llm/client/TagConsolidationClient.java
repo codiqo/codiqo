@@ -10,7 +10,6 @@ import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 
 import org.apache.commons.collections4.MapUtils;
-import org.apache.commons.lang3.StringUtils;
 import org.thymeleaf.TemplateEngine;
 import org.thymeleaf.context.Context;
 import org.thymeleaf.templatemode.TemplateMode;
@@ -22,7 +21,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.openai.client.OpenAIClient;
-import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.core.JsonValue;
 import com.openai.models.ResponseFormatJsonObject;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
@@ -61,20 +59,7 @@ public class TagConsolidationClient implements Closeable {
     public TagConsolidationClient(RunArgs args, ExecutorService executor, Log log, Map<String, String> additionalHeaders) {
         this.log = Objects.requireNonNull(log);
 
-        OpenAIOkHttpClient.Builder builder = OpenAIOkHttpClient.builder();
-        builder.timeout(args.getLlmReadTimeout());
-        builder.dispatcherExecutorService(executor);
-        builder.streamHandlerExecutor(executor);
-        if (StringUtils.isNotEmpty(args.getLlmApiKey())) {
-            builder = builder.apiKey(args.getLlmApiKey());
-        }
-        if (StringUtils.isNotEmpty(args.getLlmBaseUrl())) {
-            builder = builder.baseUrl(args.getLlmBaseUrl());
-        }
-        for (Map.Entry<String, String> header : additionalHeaders.entrySet()) {
-            builder.putHeader(header.getKey(), header.getValue());
-        }
-        this.client = builder.build();
+        this.client = OpenAIClientFactory.buildStreamingClient(args, executor, additionalHeaders);
         this.wrapper = new OpenAIClientWrapper(client);
 
         this.model = args.getLlmModel();
@@ -113,7 +98,6 @@ public class TagConsolidationClient implements Closeable {
         }
         paramsBuilder.responseFormat(ResponseFormatJsonObject.builder().build());
 
-        // Ollama honors sampling knobs only through its native `options` object (see LlmScoringClient)
         Map<String, Object> options = new LinkedHashMap<>();
         if (Objects.nonNull(numCtx)) {
             options.put("num_ctx", numCtx);
@@ -128,8 +112,7 @@ public class TagConsolidationClient implements Closeable {
         Exception lastError = null;
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                StreamingResult result = wrapper.stream(paramsBuilder.build(), new OpenAIClientWrapper.StreamingHandler() {
-                });
+                StreamingResult result = wrapper.stream(paramsBuilder.build(), new OpenAIClientWrapper.StreamingHandler() {});
                 if (FINISH_REASON_STOP.equals(result.getFinishReason())) {
                     return objectMapper.readValue(LlmScoringClient.stripMarkdownFences(result.getContent().toString()), TagConsolidationResponse.class);
                 }
