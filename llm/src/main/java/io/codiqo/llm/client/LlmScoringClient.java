@@ -27,7 +27,6 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.apache.commons.lang3.Validate;
 import com.openai.client.OpenAIClient;
-import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.core.JsonValue;
 import com.openai.errors.OpenAIServiceException;
 import com.openai.errors.RateLimitException;
@@ -88,21 +87,7 @@ public class LlmScoringClient implements ScoringClient {
 
         log.info("configuring LLM client with timeout " + args.getLlmReadTimeout());
 
-        OpenAIOkHttpClient.Builder builder = OpenAIOkHttpClient.builder();
-        builder.timeout(args.getLlmReadTimeout());
-        builder.dispatcherExecutorService(executor);
-        builder.streamHandlerExecutor(executor);
-
-        if (StringUtils.isNotEmpty(args.getLlmApiKey())) {
-            builder = builder.apiKey(args.getLlmApiKey());
-        }
-        if (StringUtils.isNotEmpty(args.getLlmBaseUrl())) {
-            builder = builder.baseUrl(args.getLlmBaseUrl());
-        }
-        for (Map.Entry<String, String> header : additionalHeaders.entrySet()) {
-            builder.putHeader(header.getKey(), header.getValue());
-        }
-        this.client = builder.build();
+        this.client = OpenAIClientFactory.buildStreamingClient(args, executor, additionalHeaders);
         this.wrapper = new OpenAIClientWrapper(client);
         this.tokenizers = new LlmTokenizers(log);
         this.promptBuilder = new ThymeleafPromptBuilder(args, log, tokenizers);
