@@ -119,7 +119,8 @@ public final class OpenAIClientFactory {
         public List<Runnable> shutdownNow() {
             return Collections.emptyList();
         }
-        @Override
+        // no @Override: ExecutorService.close() is a JDK19+ AutoCloseable default, absent under the JDK17 compile
+        // target; the method still overrides it at runtime on JDK19+, so the no-op shutdown guard holds either way
         public void close() {}
     }
 }
