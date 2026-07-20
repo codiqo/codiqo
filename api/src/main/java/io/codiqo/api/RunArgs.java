@@ -121,9 +121,11 @@ public class RunArgs {
     @Nullable
     private transient ClassGraphSpec classGraph;
     @Nullable
-    private Duration buildTimeout = Duration.ofMinutes(30);
+    private Duration buildTimeout = Duration.ofMinutes(60);
     @Nullable
-    private Duration testTimeout = Duration.ofMinutes(10);
+    private Duration testTimeout = Duration.ofMinutes(30);
+    @Nullable
+    private Duration perTestTimeout;
     @Nullable
     private Duration importTimeout = Duration.ofMinutes(15);
     @Nullable
@@ -487,6 +489,9 @@ public class RunArgs {
         });
     }
     public void validate() {
+        if (Objects.isNull(this.perTestTimeout)) {
+            this.perTestTimeout = this.testTimeout.dividedBy(2);
+        }
         this.statsQuantile = Math.max(0.85, this.statsQuantile);
         this.deleteRewardWeight = Math.min(0.20, Math.max(0.0, this.deleteRewardWeight));
         this.llmMaxRetries = (short) Math.max(1, this.llmMaxRetries);
