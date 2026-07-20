@@ -60,6 +60,23 @@ class RunArgsCliTest {
         assertEquals(Duration.ZERO, args.getPerTestTimeout());
     }
     @Test
+    void perTestTimeoutDerivationIsHardCappedAt15Minutes() {
+        RunArgs args = new RunArgs();
+        args.setTestTimeout(Duration.ofHours(2));
+        args.validate();
+
+        assertEquals(RunArgs.PER_TEST_TIMEOUT_MAX, args.getPerTestTimeout());
+        assertEquals(Duration.ofMinutes(15), args.getPerTestTimeout());
+    }
+    @Test
+    void perTestTimeoutExplicitValueAboveCapIsClamped() throws Exception {
+        CommandLine cmd = new DefaultParser().parse(RunArgs.options(), new String[]{"--per-test-timeout", "PT40M"});
+
+        RunArgs args = RunArgs.from(cmd);
+
+        assertEquals(Duration.ofMinutes(15), args.getPerTestTimeout());
+    }
+    @Test
     void jdtlsBaseUrlDefaultsToVersionedMilestones() {
         RunArgs args = new RunArgs();
 

@@ -46,6 +46,7 @@ public class RunArgs {
     public static final String DEFAULT_API_URL = "https://api.codiqo.io";
     public static final int DEFAULT_NUM_CTX = 256 * 1024;
     public static final int DEFAULT_SEED = 42;
+    public static final Duration PER_TEST_TIMEOUT_MAX = Duration.ofMinutes(15);
     public static final Map<String, String> JDTLS_CONFIG = Map.of(
             "osx-x86_64", "config_mac",
             "osx-aarch_64", "config_mac_arm",
@@ -491,6 +492,10 @@ public class RunArgs {
     public void validate() {
         if (Objects.isNull(this.perTestTimeout)) {
             this.perTestTimeout = this.testTimeout.dividedBy(2);
+        }
+        // hard ceiling: neither the testTimeout/2 derivation nor an explicit value may exceed PER_TEST_TIMEOUT_MAX (a 0/negative value stays disabled)
+        if (this.perTestTimeout.compareTo(PER_TEST_TIMEOUT_MAX) > 0) {
+            this.perTestTimeout = PER_TEST_TIMEOUT_MAX;
         }
         this.statsQuantile = Math.max(0.85, this.statsQuantile);
         this.deleteRewardWeight = Math.min(0.20, Math.max(0.0, this.deleteRewardWeight));
