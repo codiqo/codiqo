@@ -24,6 +24,7 @@ import com.openai.client.OpenAIClient;
 import com.openai.core.JsonValue;
 import com.openai.models.ResponseFormatJsonObject;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
+import com.openai.models.chat.completions.ChatCompletionStreamOptions;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
@@ -75,7 +76,7 @@ public class TagConsolidationClient implements Closeable {
                 .enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_ENUMS)
                 .build();
     }
-    public TagConsolidationResponse consolidate(List<String> technicalTags, List<String> functionalTags, int vocabularyCap) throws Exception {
+    public TagConsolidationResult consolidate(List<String> technicalTags, List<String> functionalTags, int vocabularyCap) throws Exception {
         Context ctx = new Context();
         ctx.setVariable("technical_tags", String.join(", ", technicalTags));
         ctx.setVariable("functional_tags", String.join(", ", functionalTags));
@@ -90,6 +91,7 @@ public class TagConsolidationClient implements Closeable {
         ChatCompletionCreateParams.Builder paramsBuilder = ChatCompletionCreateParams.builder();
         paramsBuilder.model(model);
         paramsBuilder.addUserMessage(prompt);
+        paramsBuilder.streamOptions(ChatCompletionStreamOptions.builder().includeUsage(true).build());
         if (Objects.nonNull(temperature)) {
             paramsBuilder.temperature(temperature);
         }
@@ -114,7 +116,8 @@ public class TagConsolidationClient implements Closeable {
             try {
                 StreamingResult result = wrapper.stream(paramsBuilder.build(), new OpenAIClientWrapper.StreamingHandler() {});
                 if (FINISH_REASON_STOP.equals(result.getFinishReason())) {
-                    return objectMapper.readValue(LlmScoringClient.stripMarkdownFences(result.getContent().toString()), TagConsolidationResponse.class);
+                    TagConsolidationResponse response = objectMapper.readValue(LlmScoringClient.stripMarkdownFences(result.getContent().toString()), TagConsolidationResponse.class);
+                    return new TagConsolidationResult(response, result.getPromptTokens(), result.getCompletionTokens(), result.getTotalTokens());
                 }
                 lastError = new IOException("unexpected finishReason: " + result.getFinishReason());
             } catch (Exception err) {
@@ -131,5 +134,12 @@ public class TagConsolidationClient implements Closeable {
         if (Objects.nonNull(client)) {
             client.close();
         }
+    }
+
+    public record TagConsolidationResult(
+            TagConsolidationResponse response,
+            int promptTokens,
+            int completionTokens,
+            int totalTokens) {
     }
 }
