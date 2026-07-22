@@ -46,15 +46,36 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
 
     private final CompletableFuture<JdtLspClient> clientFuture = new CompletableFuture<>();
     private final AtomicReference<JdtLspClient> curr = new AtomicReference<>();
+    private final LogFactory logFactory;
     private final Log log;
     private final RunArgs args;
-    private final int port;
-    private final JdtLspProcess jdt;
-    private final ServerSocket serverSocket;
+    private final Fetch fetch;
+    private int port;
+    private JdtLspProcess jdt;
+    private ServerSocket serverSocket;
 
-    public JdtLspProjectImporter(LogFactory logFactory, RunArgs args, Fetch fetch) throws IOException {
+    public JdtLspProjectImporter(LogFactory logFactory, RunArgs args, Fetch fetch) {
+        this.logFactory = logFactory;
         this.log = logFactory.getLogger(getClass());
         this.args = Objects.requireNonNull(args);
+        this.fetch = fetch;
+    }
+    @Override
+    public void load() {
+        StopWatch stopWatch = StopWatch.createStarted();
+        try {
+            start();
+
+            JdtLspClient c = getClient();
+            c.initialize();
+            c.ready().get(args.getImportTimeout().getSeconds(), TimeUnit.SECONDS);
+            stopWatch.stop();
+            log.info("JDT loaded project: %s in: %s ", args.getGit().getWorkTree(), stopWatch);
+        } catch (Throwable err) {
+            ExceptionUtils.wrapAndThrow(err);
+        }
+    }
+    private void start() throws IOException {
         try (ServerSocket socket = new ServerSocket(0)) {
             this.port = socket.getLocalPort();
         }
@@ -87,19 +108,6 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
         }, "jdt-lsp-accept");
         acceptThread.setDaemon(true);
         acceptThread.start();
-    }
-    @Override
-    public void load() {
-        StopWatch stopWatch = StopWatch.createStarted();
-        try {
-            JdtLspClient c = getClient();
-            c.initialize();
-            c.ready().get(args.getImportTimeout().getSeconds(), TimeUnit.SECONDS);
-            stopWatch.stop();
-            log.info("JDT loaded project: %s in: %s ", args.getGit().getWorkTree(), stopWatch);
-        } catch (Throwable err) {
-            ExceptionUtils.wrapAndThrow(err);
-        }
     }
     @Override
     public CompletableFuture<List<? extends WorkspaceSymbol>> symbol(String query) {

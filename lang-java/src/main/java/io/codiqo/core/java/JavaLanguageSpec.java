@@ -153,31 +153,23 @@ public class JavaLanguageSpec implements LanguageSpec {
         });
         return List.copyOf(builder);
     };
-    private final LogFactory logFactory;
-    private final Fetch fetch;
-    private IncomingCallsResolver incomingCallsResolver;
-    private JdtLspProjectImporter jdt;
+    private final IncomingCallsResolver incomingCallsResolver;
+    private final JdtLspProjectImporter jdt;
 
     public JavaLanguageSpec(LogFactory logFactory, RunArgs args, Fetch fetch) {
         this.log = logFactory.getLogger(getClass());
         this.args = Objects.requireNonNull(args);
-        this.logFactory = logFactory;
-        this.fetch = fetch;
+        this.jdt = new JdtLspProjectImporter(logFactory, args, fetch);
+        this.incomingCallsResolver = new JdtIncomingCallsResolver(log, args, jdt);
     }
     @Override
     public void load() {
         /**
-         * JDT is constructed here rather than in the constructor so that source-only callers
-         * (degraded build-failure scoring) can run index()/identifyAffectedSymbols() — pure PMD
-         * passes — without ever downloading or spawning the JDT language server
+         * construction stays cheap (no download, no fork) so source-only callers — degraded
+         * build-failure scoring running index()/identifyAffectedSymbols() — never spawn the JDT
+         * language server; only load() downloads and forks it
          */
-        try {
-            this.jdt = new JdtLspProjectImporter(logFactory, args, fetch);
-            this.incomingCallsResolver = new JdtIncomingCallsResolver(log, args, jdt);
-            jdt.load();
-        } catch (IOException err) {
-            ExceptionUtils.wrapAndThrow(err);
-        }
+        jdt.load();
     }
     @Override
     public Language lang() {
