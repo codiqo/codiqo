@@ -16,9 +16,8 @@ import io.codiqo.llm.schema.LlmScoringRequest.FileChange;
 
 class MovedLineDetectorTest {
     /**
-     * modeled on a real channel lifecycle split: a method body is
-     * deleted and re-added lower in the same file with re-qualified receivers (props.X →
-     * channel.props.X). deleted lines are old-file 11-14, added lines are new-file 25-28
+     * a method body is deleted and re-added lower in the same file with re-qualified receivers
+     * (props.X → channel.props.X). deleted lines are old-file 11-14, added lines are new-file 25-28
      */
     private static final String RELOCATION_DIFF = String.join("\n",
             "--- a/Channel.java",

@@ -97,17 +97,13 @@ import org.slf4j.event.Level;
 
 
 import io.codiqo.api.RunArgs;
-import io.codiqo.api.common.AsFlux;
 import io.codiqo.api.jdtls.ServiceStatus;
 import io.codiqo.api.jdtls.ServiceStatusAdapter;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Sinks;
-import reactor.core.publisher.Sinks.EmitResult;
 
-class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<LanguageServer>, Closeable {
-    private final Sinks.Many<StatusReport> processor = Sinks.many().multicast().directBestEffort();
+class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeable {
+    private final CompletableFuture<StatusReport> ready = new CompletableFuture<>();
     private final ExecutorService executor = Executors.newCachedThreadPool();
     private final Log log;
     private final RunArgs args;
@@ -127,9 +123,8 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
                 .create();
         this.startListening = launcher.startListening();
     }
-    @Override
-    public Flux<StatusReport> asFlux() {
-        return processor.asFlux();
+    public CompletableFuture<StatusReport> ready() {
+        return ready;
     }
     @Override
     public LanguageServer get() {
@@ -141,10 +136,7 @@ class JdtLspClient implements LanguageClient, AsFlux<StatusReport>, Supplier<Lan
 
         switch (params.getType()) {
             case SERVICE_READY: {
-                EmitResult emitNext = processor.tryEmitNext(params);
-                if (emitNext.isSuccess()) {
-
-                }
+                ready.complete(params);
                 break;
             }
             case ERROR:

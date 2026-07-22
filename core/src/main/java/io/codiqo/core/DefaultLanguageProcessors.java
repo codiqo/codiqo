@@ -10,24 +10,26 @@ import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.SortedSet;
+import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
-import java.util.TreeSet;
-import java.util.LinkedHashSet;
-import java.util.LinkedHashMap;
-import java.util.HashSet;
-import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.MultiValuedMap;
+import org.apache.commons.collections4.multimap.HashSetValuedHashMap;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
@@ -37,9 +39,6 @@ import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.lib.Repository;
 
-
-import org.apache.commons.collections4.MultiValuedMap;
-import org.apache.commons.collections4.multimap.HashSetValuedHashMap;
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.IndexingSummary.IndexingSummaryBuilder;
 import io.codiqo.api.LanguageProcessors;
@@ -70,7 +69,6 @@ import net.sourceforge.pmd.cpd.Match;
 import net.sourceforge.pmd.internal.util.IOUtil;
 import net.sourceforge.pmd.lang.LanguageProcessorRegistry.LanguageTerminationException;
 import net.sourceforge.pmd.lang.LanguageRegistry;
-import reactor.core.publisher.Mono;
 
 public class DefaultLanguageProcessors implements LanguageProcessors {
     private final Log log;
@@ -78,7 +76,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     private final List<LanguageSpec> processors;
     private final Set<String> extensions = new HashSet<>();
 
-    public DefaultLanguageProcessors(LogFactory logFactory, RunArgs args, Fetch fetch) throws IOException {
+    public DefaultLanguageProcessors(LogFactory logFactory, RunArgs args, Fetch fetch) {
         this.log = logFactory.getLogger(getClass());
         this.args = Objects.requireNonNull(args);
         this.processors = new ArrayList<>(List.of(new JavaLanguageSpec(logFactory, args, fetch)));
@@ -113,8 +111,8 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         return processors.iterator();
     }
     @Override
-    public Mono<?> load() {
-        return Mono.zip(processors.stream().map(LanguageSpec::load).toList(), objects -> processors.size());
+    public void load() {
+        processors.forEach(LanguageSpec::load);
     }
     @Override
     public IndexingSummary index(CommitAnalysis analysis) throws IOException {

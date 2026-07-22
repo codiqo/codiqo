@@ -8,13 +8,11 @@ import java.util.Collection;
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.diff.CommitAnalysis;
 import net.sourceforge.pmd.lang.Language;
-import reactor.core.publisher.Mono;
 
 public interface LanguageSpec extends Closeable {
     Language lang();
     boolean supportsCpd();
-    default Mono<?> load() {
-        return Mono.empty();
+    default void load() {
     }
     Collection<CodeBlockInfo> parse(ProjectSpec owner, Collection<File> files) throws IOException;
     void captureCoverage(IndexingSummary summary, CommitAnalysis analysis) throws IOException;

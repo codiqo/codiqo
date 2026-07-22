@@ -129,8 +129,8 @@ class RunArgsCliTest {
         RunArgs args = new RunArgs();
         args.setExcludeAuthorEmails("jenkins@*");
 
-        assertTrue(args.isExcludedAuthor("jenkins@jenkins-slave-medium-abc.europe-west2-a.c.dev-lotto2.internal"));
-        assertTrue(args.isExcludedAuthor("jenkins@example.org"));
+        assertTrue(args.isExcludedAuthor("jenkins@ci-host-abc.internal"));
+        assertTrue(args.isExcludedAuthor("jenkins@build.example.com"));
         assertFalse(args.isExcludedAuthor("alice@example.com"));
     }
     @Test
@@ -143,10 +143,10 @@ class RunArgsCliTest {
     @Test
     void isExcludedAuthorMixesWildcardAndExactEntries() {
         RunArgs args = new RunArgs();
-        args.setExcludeAuthorEmails("jenkins@*, ci@jenkins.example.net");
+        args.setExcludeAuthorEmails("jenkins@*, ci@ci.example.org");
 
-        assertTrue(args.isExcludedAuthor("jenkins@example-release-xq0xgz.internal"));
-        assertTrue(args.isExcludedAuthor("ci@jenkins.example.net"));
+        assertTrue(args.isExcludedAuthor("jenkins@release-host.internal"));
+        assertTrue(args.isExcludedAuthor("ci@ci.example.org"));
         assertFalse(args.isExcludedAuthor("bob@example.com"));
     }
     @Test

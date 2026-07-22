@@ -12,10 +12,6 @@
     <description>Codiqo public API: core models, scoring types and entry points shared across modules.</description>
     <dependencies>
         <dependency>
-            <groupId>io.projectreactor</groupId>
-            <artifactId>reactor-core</artifactId>
-        </dependency>
-        <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
         </dependency>
