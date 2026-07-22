@@ -40,7 +40,7 @@ import com.openai.models.chat.completions.ChatCompletionToolMessageParam;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.llm.FinalScoreCalculator;
-import io.codiqo.llm.LlmTokenizers;
+import io.codiqo.llm.DefaultLlmTokenizers;
 import io.codiqo.llm.PromptBuilder;
 import io.codiqo.llm.PromptBuilder.PromptContext;
 import io.codiqo.llm.PromptBuilder.UserMessageResult;
@@ -64,7 +64,8 @@ public class LlmScoringClient implements ScoringClient {
     private final OpenAIClient client;
     private final OpenAIClientWrapper wrapper;
     private final PromptBuilder promptBuilder;
-    private final LlmTokenizers tokenizers;
+    private final DefaultLlmTokenizers tokenizers;
+    private final boolean ownsTokenizers;
     private final FinalScoreCalculator finalScoreCalculator;
     private final ObjectMapper objectMapper;
     private final OllamaWebSearchClient webSearchClient;
@@ -83,13 +84,20 @@ public class LlmScoringClient implements ScoringClient {
         this(args, executor, log, Collections.emptyMap());
     }
     public LlmScoringClient(RunArgs args, ExecutorService executor, Log log, Map<String, String> additionalHeaders) {
+        this(args, executor, log, additionalHeaders, new DefaultLlmTokenizers(log), true);
+    }
+    public LlmScoringClient(RunArgs args, ExecutorService executor, Log log, Map<String, String> additionalHeaders, DefaultLlmTokenizers tokenizers) {
+        this(args, executor, log, additionalHeaders, tokenizers, false);
+    }
+    private LlmScoringClient(RunArgs args, ExecutorService executor, Log log, Map<String, String> additionalHeaders, DefaultLlmTokenizers tokenizers, boolean ownsTokenizers) {
         this.log = Objects.requireNonNull(log);
 
         log.info("configuring LLM client with timeout " + args.getLlmReadTimeout());
 
         this.client = OpenAIClientFactory.buildStreamingClient(args, executor, additionalHeaders);
         this.wrapper = new OpenAIClientWrapper(client);
-        this.tokenizers = new LlmTokenizers(log);
+        this.tokenizers = tokenizers;
+        this.ownsTokenizers = ownsTokenizers;
         this.promptBuilder = new ThymeleafPromptBuilder(args, log, tokenizers);
         this.finalScoreCalculator = new FinalScoreCalculator(args, log);
         this.model = args.getLlmModel();
@@ -333,13 +341,21 @@ public class LlmScoringClient implements ScoringClient {
     }
     @Override
     public void close() {
-        if (Objects.nonNull(client)) {
-            client.close();
+        try {
+            if (Objects.nonNull(client)) {
+                client.close();
+            }
+        } finally {
+            try {
+                if (Objects.nonNull(webSearchClient)) {
+                    webSearchClient.close();
+                }
+            } finally {
+                if (ownsTokenizers) {
+                    tokenizers.close();
+                }
+            }
         }
-        if (Objects.nonNull(webSearchClient)) {
-            webSearchClient.close();
-        }
-        tokenizers.close();
     }
     private LlmScoringResponse deserializeResponse(String rawContent) throws Exception {
         try {

@@ -65,12 +65,12 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private final Log log;
     private final VolumeScoreCalculator volumeCalculator;
     private final MovedLineDetector movedLineDetector;
-    private final LlmTokenizers tokenizers;
+    private final DefaultLlmTokenizers tokenizers;
 
     public ThymeleafPromptBuilder(RunArgs args, Log log) {
-        this(args, log, new LlmTokenizers(log));
+        this(args, log, new DefaultLlmTokenizers(log));
     }
-    public ThymeleafPromptBuilder(RunArgs args, Log log, LlmTokenizers tokenizers) {
+    public ThymeleafPromptBuilder(RunArgs args, Log log, DefaultLlmTokenizers tokenizers) {
         this.log = log;
         this.tokenizers = tokenizers;
         volumeCalculator = new VolumeScoreCalculator(args);
