@@ -14,6 +14,7 @@ import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.AnalysisExcludeModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.FileChangeModel;
+import io.codiqo.client.model.ProjectMetricsModel;
 import lombok.experimental.UtilityClass;
 
 @UtilityClass
@@ -42,6 +43,7 @@ public class AnalysisSubmitter {
             AnalysisExcludeCategory category,
             String detail,
             List<FileChangeModel> files,
+            ProjectMetricsModel projectMetrics,
             Log log) throws ApiException {
         AnalysisApi client = buildClient(apiUrl, apiKey, connectTimeoutSeconds, readTimeoutSeconds);
         log.info("excluding commit " + commitSha + " at " + apiUrl + " (reason: " + reason + ", category: " + category + ", files: " + files.size() + ")");
@@ -51,6 +53,7 @@ public class AnalysisSubmitter {
         body.setCategory(category);
         body.setDetail(detail);
         body.setFiles(files);
+        body.setProjectMetrics(projectMetrics);
 
         ApiRetry.call(log, "excludeAnalysis", apiUrl, () -> {
             client.excludeAnalysis(commitSha, body);

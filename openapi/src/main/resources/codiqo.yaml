@@ -310,6 +310,10 @@ components:
           description: Per-file git diffs captured for build-failure exclusions, where the diff is available even though coverage/PMD/SpotBugs analysis could not run. Empty for exclusions with no analyzable diff.
           items:
             $ref: '#/components/schemas/FileChangeModel'
+        projectMetrics:
+          description: Whole-project driver-score statistics (scalers, totals, cap quantiles) captured for a source-only build-failure exclusion, so a later degraded re-score prices real code volume instead of config lines. Null for exclusions without a source index.
+          allOf:
+            - $ref: '#/components/schemas/ProjectMetricsModel'
 
     AnalysisExcludeCategory:
       type: string
