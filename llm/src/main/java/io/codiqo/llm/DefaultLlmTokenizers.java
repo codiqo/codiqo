@@ -17,9 +17,10 @@ import com.knuddels.jtokkit.api.Encoding;
 import com.knuddels.jtokkit.api.EncodingType;
 
 import ai.djl.huggingface.tokenizers.HuggingFaceTokenizer;
+import io.codiqo.api.LlmTokenizers;
 import io.codiqo.api.logging.Log;
 
-public class LlmTokenizers implements AutoCloseable {
+public class DefaultLlmTokenizers implements LlmTokenizers, AutoCloseable {
     private final Log log;
     private static final Encoding FALLBACK = Encodings.newLazyEncodingRegistry().getEncoding(EncodingType.O200K_BASE);
     private final ConcurrentMap<String, Optional<HuggingFaceTokenizer>> loaded = new ConcurrentHashMap<>();
@@ -32,9 +33,10 @@ public class LlmTokenizers implements AutoCloseable {
             "glm", "zai-org/GLM-4.6",
             "kimi", "Zaynoid/Kimi-K2-Thinking-Tokenizer");
 
-    public LlmTokenizers(Log log) {
+    public DefaultLlmTokenizers(Log log) {
         this.log = log;
     }
+    @Override
     public int estimateTokens(String model, String text) {
         String normalized = StringUtils.lowerCase(StringUtils.defaultString(model));
         for (String family : tokenizerRepos.keySet()) {
@@ -64,7 +66,7 @@ public class LlmTokenizers implements AutoCloseable {
 
         String resource = "/tokenizers/" + family + ".json";
         for (;;) {
-            try (InputStream is = LlmTokenizers.class.getResourceAsStream(resource)) {
+            try (InputStream is = DefaultLlmTokenizers.class.getResourceAsStream(resource)) {
                 if (Objects.nonNull(is)) {
                     log.info("loaded %s tokenizer from bundled resource %s", family, resource);
                     return Optional.of(HuggingFaceTokenizer.newInstance(is, loadOptions));
