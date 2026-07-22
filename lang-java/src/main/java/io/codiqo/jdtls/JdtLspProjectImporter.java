@@ -3,16 +3,16 @@ package io.codiqo.jdtls;
 import java.io.Closeable;
 import java.io.IOException;
 import java.net.ServerSocket;
-import java.net.Socket;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.Validate;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.eclipse.lsp4j.CallHierarchyIncomingCall;
 import org.eclipse.lsp4j.CallHierarchyIncomingCallsParams;
@@ -23,7 +23,6 @@ import org.eclipse.lsp4j.DefinitionParams;
 import org.eclipse.lsp4j.DocumentSymbol;
 import org.eclipse.lsp4j.DocumentSymbolParams;
 import org.eclipse.lsp4j.ImplementationParams;
-import org.eclipse.lsp4j.InitializeResult;
 import org.eclipse.lsp4j.Location;
 import org.eclipse.lsp4j.ReferenceContext;
 import org.eclipse.lsp4j.ReferenceParams;
@@ -35,32 +34,23 @@ import org.eclipse.lsp4j.services.LanguageServer;
 import org.eclipse.lsp4j.services.TextDocumentService;
 import org.eclipse.lsp4j.services.WorkspaceService;
 
-import org.apache.commons.lang3.Validate;
-
 import io.codiqo.api.LanguageServerProjectImporter;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.util.Fetch;
-import reactor.core.Disposable;
-import reactor.core.publisher.Mono;
-import reactor.core.publisher.Sinks;
-import reactor.core.publisher.Sinks.EmitResult;
-import reactor.core.scheduler.Schedulers;
 
 public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectImporter, Closeable {
     public static final int EXIT_OK = 0;
     public static final int EXIT_SIGTERM = 143;
 
-    private final Sinks.Many<Integer> processor = Sinks.many().replay().latest();
-    private final Sinks.Many<JdtLspClient> client = Sinks.many().replay().latest();
+    private final CompletableFuture<JdtLspClient> clientFuture = new CompletableFuture<>();
     private final AtomicReference<JdtLspClient> curr = new AtomicReference<>();
     private final Log log;
     private final RunArgs args;
     private final int port;
     private final JdtLspProcess jdt;
     private final ServerSocket serverSocket;
-    private Disposable disposable;
 
     public JdtLspProjectImporter(LogFactory logFactory, RunArgs args, Fetch fetch) throws IOException {
         this.log = logFactory.getLogger(getClass());
@@ -70,64 +60,46 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
         }
         this.serverSocket = new ServerSocket(port);
         this.jdt = new JdtLspProcess(logFactory, args, fetch, port);
-        this.jdt.asFlux().subscribe(exitCode -> {
+        this.jdt.onExit().thenAccept(exitCode -> {
             switch (exitCode) {
                 case EXIT_OK:
-                case EXIT_SIGTERM: {
+                case EXIT_SIGTERM:
                     break;
-                }
-                default: {
-                    EmitResult result = processor.tryEmitNext(exitCode);
-                    if (result.isSuccess()) {
-                        log.error("JDT LSP process exited with code: " + exitCode);
-                        client.tryEmitError(new IllegalStateException("JDT LSP process exited with code: " + exitCode));
-                    }
+                default:
+                    log.error("JDT LSP process exited with code: " + exitCode);
+                    clientFuture.completeExceptionally(new IllegalStateException("JDT LSP process exited with code: " + exitCode));
                     break;
-                }
             }
         });
-        this.disposable = Mono.defer((Supplier<Mono<Socket>>) () -> {
+
+        Thread acceptThread = new Thread(() -> {
             try {
-                return Mono.just(serverSocket.accept());
-            } catch (IOException err) {
-                return serverSocket.isClosed() ? Mono.empty() : Mono.error(err);
-            }
-        }).subscribeOn(Schedulers.boundedElastic()).subscribe(accept -> {
-            try {
-                JdtLspClient toSet = new JdtLspClient(logFactory, args, accept);
-                EmitResult result = client.tryEmitNext(toSet);
-                if (result.isSuccess()) {
-                    log.info("JDT LSP client connected on port :" + port);
-                    curr.set(toSet);
+                JdtLspClient toSet = new JdtLspClient(logFactory, args, serverSocket.accept());
+                curr.set(toSet);
+                clientFuture.complete(toSet);
+                log.info("JDT LSP client connected on port :" + port);
+            } catch (Throwable err) {
+                if (serverSocket.isClosed()) {
+                    return;
                 }
-            } catch (IOException err) {
-                client.tryEmitError(err);
+                clientFuture.completeExceptionally(err);
             }
-        }, err -> log.error(err.getMessage(), err));
+        }, "jdt-lsp-accept");
+        acceptThread.setDaemon(true);
+        acceptThread.start();
     }
     @Override
-    public Mono<?> load() {
-        return Mono.defer(() -> {
-            StopWatch stopWatch = StopWatch.createStarted();
-            CompletableFuture<StatusReport> future = new CompletableFuture<>();
-            Disposable subscription = null;
-
-            try {
-                JdtLspClient c = getClient();
-                subscription = c.asFlux().subscribe(future::complete, future::completeExceptionally);
-                InitializeResult result = c.initialize();
-                future.get(args.getImportTimeout().getSeconds(), TimeUnit.SECONDS);
-                stopWatch.stop();
-                log.info("JDT loaded project: %s in: %s ", args.getGit().getWorkTree(), stopWatch);
-                return Mono.just(result);
-            } catch (Throwable err) {
-                return Mono.error(err);
-            } finally {
-                if (Objects.nonNull(subscription)) {
-                    subscription.dispose();
-                }
-            }
-        }).subscribeOn(Schedulers.boundedElastic());
+    public void load() {
+        StopWatch stopWatch = StopWatch.createStarted();
+        try {
+            JdtLspClient c = getClient();
+            c.initialize();
+            c.ready().get(args.getImportTimeout().getSeconds(), TimeUnit.SECONDS);
+            stopWatch.stop();
+            log.info("JDT loaded project: %s in: %s ", args.getGit().getWorkTree(), stopWatch);
+        } catch (Throwable err) {
+            ExceptionUtils.wrapAndThrow(err);
+        }
     }
     @Override
     public CompletableFuture<List<? extends WorkspaceSymbol>> symbol(String query) {
@@ -215,9 +187,6 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
     @Override
     public void close() throws IOException {
         try {
-            if (Objects.nonNull(disposable)) {
-                disposable.dispose();
-            }
             JdtLspClient toClose = curr.get();
             if (Objects.nonNull(toClose)) {
                 toClose.close();
@@ -236,7 +205,13 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
         }
     }
     private JdtLspClient getClient() {
-        return client.asFlux().blockFirst();
+        for (;;) {
+            try {
+                return clientFuture.get(args.getImportTimeout().getSeconds(), TimeUnit.SECONDS);
+            } catch (Exception err) {
+                ExceptionUtils.wrapAndThrow(err);
+            }
+        }
     }
     private LanguageServer getLangServer() {
         return getClient().get();

@@ -52,7 +52,7 @@ class GoogleArtifactRegistryConnectorTest {
                 .setApplicationName("test")
                 .build();
         connector = new GoogleArtifactRegistryConnector(client);
-        garRepo = new RemoteRepository.Builder("artifact-registry", "default", "artifactregistry://europe-maven.pkg.dev/patrianna-dev/nexus").build();
+        garRepo = new RemoteRepository.Builder("artifact-registry", "default", "artifactregistry://europe-maven.pkg.dev/example-project/example-repo").build();
     }
 
     @Test
@@ -61,7 +61,7 @@ class GoogleArtifactRegistryConnectorTest {
 
         // CI configures the same GAR registry with an https:// URL; it must still engage the REST enumerator,
         // otherwise time-machine falls back to metadata (latest-only) and silently pins the newest snapshot.
-        RemoteRepository httpsGar = new RemoteRepository.Builder("artifact-registry", "default", "https://europe-maven.pkg.dev/patrianna-dev/nexus").build();
+        RemoteRepository httpsGar = new RemoteRepository.Builder("artifact-registry", "default", "https://europe-maven.pkg.dev/example-project/example-repo").build();
         assertTrue(connector.supports(httpsGar));
 
         RemoteRepository central = new RemoteRepository.Builder("central", "default", "https://repo.maven.apache.org/maven2/").build();
@@ -70,9 +70,9 @@ class GoogleArtifactRegistryConnectorTest {
 
     @Test
     void enumeratesEveryHistoricalBuildFromRealGarPayload() throws Exception {
-        transport.respondWith(readFixture("gar-files-bootstrap-core.json"));
+        transport.respondWith(readFixture("gar-files-sample-lib.json"));
 
-        Artifact artifact = new DefaultArtifact("com.turbospaces.boot", "bootstrap-core", StringUtils.EMPTY, "jar", "2.0.97-SNAPSHOT");
+        Artifact artifact = new DefaultArtifact("com.example.lib", "sample-lib", StringUtils.EMPTY, "jar", "2.0.97-SNAPSHOT");
         List<SnapshotVersion> deploys = connector.listDeploys(mock(RepositorySystemSession.class), artifact, garRepo);
 
         Map<String, SnapshotVersion> mainJars = deploys.stream()
@@ -127,15 +127,15 @@ class GoogleArtifactRegistryConnectorTest {
     void sendsCorrectFilterAndUrl() {
         transport.respondWith("{}");
 
-        Artifact artifact = new DefaultArtifact("com.turbospaces.boot", "bootstrap-core", StringUtils.EMPTY, "jar", "2.0.97-SNAPSHOT");
+        Artifact artifact = new DefaultArtifact("com.example.lib", "sample-lib", StringUtils.EMPTY, "jar", "2.0.97-SNAPSHOT");
         connector.listDeploys(mock(RepositorySystemSession.class), artifact, garRepo);
 
         URI uri = URI.create(transport.lastUrl());
         assertEquals("artifactregistry.googleapis.com", uri.getHost());
-        assertTrue(uri.getPath().contains("/projects/patrianna-dev/locations/europe/repositories/nexus/files"),
+        assertTrue(uri.getPath().contains("/projects/example-project/locations/europe/repositories/example-repo/files"),
                 "expected file list path, got: " + uri.getPath());
         String decodedQuery = URLDecoder.decode(uri.getQuery(), StandardCharsets.UTF_8);
-        assertTrue(decodedQuery.contains("com/turbospaces/boot/bootstrap-core/2.0.97-SNAPSHOT/*"),
+        assertTrue(decodedQuery.contains("com/example/lib/sample-lib/2.0.97-SNAPSHOT/*"),
                 "filter should target the snapshot folder, got: " + decodedQuery);
     }
 

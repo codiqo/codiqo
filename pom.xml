@@ -72,7 +72,6 @@
         <guava.version>33.6.0-jre</guava.version>
         <vavr.version>1.0.0</vavr.version>
         <jgit.version>7.7.0.202606012155-r</jgit.version>
-        <reactor.version>2025.0.6</reactor.version>
         <ztzip.version>1.18.2</ztzip.version>
         <ztkill.version>1.12.0</ztkill.version>
         <ztexec.version>1.13.0</ztexec.version>
@@ -182,13 +181,6 @@
                 <groupId>com.squareup.okhttp3</groupId>
                 <artifactId>okhttp-bom</artifactId>
                 <version>${okhttp.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <dependency>
-                <groupId>io.projectreactor</groupId>
-                <artifactId>reactor-bom</artifactId>
-                <version>${reactor.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

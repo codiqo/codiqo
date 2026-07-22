@@ -35,7 +35,7 @@ import io.codiqo.submit.CommitIndexer;
 
 /**
  * end-to-end mimic of the production history shape that produced the merge-commit PR scoring gap
- * (85 unscored "Merge pull request #N" nodes across 18 projects, reported on localization PR #7):
+ * (unscored "Merge pull request #N" nodes that carried the only record of each PR):
  * a `dev` mainline receiving direct pushes plus GitHub-style --no-ff PR merges — a single-commit PR
  * whose author also clicked merge, a multi-commit PR merged by a different developer, a pull-sync
  * merge ("Merge branch 'dev' of github...") whose side commits fell off the first-parent spine, and
@@ -71,11 +71,11 @@ class MergeCommitPrHistoryMimicTest {
     private List<String> directPushShas;
 
     @BeforeEach
-    void buildLocalizationShapedHistory() throws Exception {
+    void buildExampleShapedHistory() throws Exception {
         git = Git.init().setInitialBranch("dev").setDirectory(tempDir.toFile()).call();
         repository = new FileRepositoryBuilder().setGitDir(new File(tempDir.toFile(), ".git")).build();
 
-        RevCommit base = commitAs("pom.xml", "<project/>", "initial localization service setup", DEV_A_NAME, DEV_A);
+        RevCommit base = commitAs("pom.xml", "<project/>", "initial example service setup", DEV_A_NAME, DEV_A);
         commitAs("src/main/resources/application.yaml", "locale: en-US", "base config", DEV_A_NAME, DEV_A);
         RevCommit direct1 = commitAs("pom.xml", "<project><!-- no debezium --></project>",
                 "Remove Debezium and Zookeeper dependencies and related configurations", DEV_B_NAME, DEV_B);
@@ -84,35 +84,35 @@ class MergeCommitPrHistoryMimicTest {
          * PR #1 mimic: a multi-commit PR authored entirely by Dev B, merged by Dev A — the
          * cross-author case the pre-fix design misattributed to whoever clicked merge
          */
-        git.branchCreate().setName("feature/MN-6914-localization-service").call();
-        git.checkout().setName("feature/MN-6914-localization-service").call();
-        pr1Work1 = commitAs("src/main/java/io/localization/LocalizationService.java", "class LocalizationService {}",
-                "MN-6914 Localization service skeleton", DEV_B_NAME, DEV_B);
-        pr1Work2 = commitAs("src/main/java/io/localization/TranslationRepository.java", "class TranslationRepository {}",
-                "MN-6914 Repository layer", DEV_B_NAME, DEV_B);
+        git.branchCreate().setName("feature/PROJ-100-example-service").call();
+        git.checkout().setName("feature/PROJ-100-example-service").call();
+        pr1Work1 = commitAs("src/main/java/io/example/ExampleService.java", "class ExampleService {}",
+                "PROJ-100 Example service skeleton", DEV_B_NAME, DEV_B);
+        pr1Work2 = commitAs("src/main/java/io/example/TranslationRepository.java", "class TranslationRepository {}",
+                "PROJ-100 Repository layer", DEV_B_NAME, DEV_B);
         git.checkout().setName("dev").call();
         RevCommit direct2 = commitAs("pom.xml", "<project><!-- deps aligned --></project>",
-                "MN-6917 Fix build. Dependencies.", DEV_A_NAME, DEV_A);
-        pr1MergeSha = mergeAs("feature/MN-6914-localization-service",
-                "Merge pull request #1 from patrianna/feature/MN-6914-localization-service\n\nMN-6914 Localization service",
+                "PROJ-101 Fix build. Dependencies.", DEV_A_NAME, DEV_A);
+        pr1MergeSha = mergeAs("feature/PROJ-100-example-service",
+                "Merge pull request #1 from acme/feature/PROJ-100-example-service\n\nPROJ-100 Example service",
                 DEV_A_NAME, DEV_A);
 
         /**
          * PR #7 mimic — the reported production bug: a single-commit PR whose author also clicked
          * merge, previously excluded as merge_commit with the work commit never indexed
          */
-        git.branchCreate().setName("MN-6917-snapshot-translations-gcs-bucket-job").call();
-        git.checkout().setName("MN-6917-snapshot-translations-gcs-bucket-job").call();
-        Files.createDirectories(tempDir.resolve("src/main/java/io/localization"));
+        git.branchCreate().setName("PROJ-101-snapshot-translations-gcs-bucket-job").call();
+        git.checkout().setName("PROJ-101-snapshot-translations-gcs-bucket-job").call();
+        Files.createDirectories(tempDir.resolve("src/main/java/io/example"));
         pr7Work = commitTwoFilesAs(
-                "src/main/java/io/localization/SnapshotPublisher.java", "class SnapshotPublisher {}",
+                "src/main/java/io/example/SnapshotPublisher.java", "class SnapshotPublisher {}",
                 "src/main/resources/application.yaml", "locale: en-US\ngcs-bucket: snapshots",
-                "MN-6917 Publishing snapshot translations to gcs bucket", DEV_A_NAME, DEV_A);
+                "PROJ-101 Publishing snapshot translations to gcs bucket", DEV_A_NAME, DEV_A);
         git.checkout().setName("dev").call();
         RevCommit direct3 = commitAs("pom.xml", "<project><!-- protobuf 4.35.1 --></project>",
                 "chore: bump Protobuf to version 4.35.1 in pom.xml", DEV_B_NAME, DEV_B);
-        pr7MergeSha = mergeAs("MN-6917-snapshot-translations-gcs-bucket-job",
-                "Merge pull request #7 from patrianna/MN-6917-snapshot-translations-gcs-bucket-job\n\nMN-6917 Publishing snapshot translations to gcs bucket",
+        pr7MergeSha = mergeAs("PROJ-101-snapshot-translations-gcs-bucket-job",
+                "Merge pull request #7 from acme/PROJ-101-snapshot-translations-gcs-bucket-job\n\nPROJ-101 Publishing snapshot translations to gcs bucket",
                 DEV_A_NAME, DEV_A);
 
         /**
@@ -122,13 +122,13 @@ class MergeCommitPrHistoryMimicTest {
          */
         git.branchCreate().setName("remote-dev").call();
         git.checkout().setName("remote-dev").call();
-        syncRemoteWork = commitAs("src/main/java/io/localization/SnapshotStorageLayout.java", "class SnapshotStorageLayout {}",
+        syncRemoteWork = commitAs("src/main/java/io/example/SnapshotStorageLayout.java", "class SnapshotStorageLayout {}",
                 "Fixed SnapshotStorageLayout", DEV_A_NAME, DEV_A);
         git.checkout().setName("dev").call();
         commitAs("src/main/resources/application.yaml", "locale: en-GB\ngcs-bucket: snapshots",
                 "Change default local to en-GB", DEV_A_NAME, DEV_A);
         syncMergeSha = mergeAs("remote-dev",
-                "Merge branch 'dev' of github.com:patrianna/localization into dev", DEV_A_NAME, DEV_A);
+                "Merge branch 'dev' of github.com:acme/example into dev", DEV_A_NAME, DEV_A);
 
         /**
          * PR #18 mimic: a one-file PR by a third developer, merged by Dev A
@@ -138,7 +138,7 @@ class MergeCommitPrHistoryMimicTest {
         pr18Work = commitAs("CODEOWNERS", "* @platform-team", "Add CODEOWNERS", DEV_C_NAME, DEV_C);
         git.checkout().setName("dev").call();
         pr18MergeSha = mergeAs("add-codeowners",
-                "Merge pull request #18 from patrianna/add-codeowners\n\nAdd CODEOWNERS", DEV_A_NAME, DEV_A);
+                "Merge pull request #18 from acme/add-codeowners\n\nAdd CODEOWNERS", DEV_A_NAME, DEV_A);
 
         directPushShas = List.of(base.getName(), direct1.getName(), direct2.getName(), direct3.getName());
     }
@@ -201,7 +201,7 @@ class MergeCommitPrHistoryMimicTest {
         Set<String> changedPaths = analysis.getFiles().stream()
                 .map(FileAnalysis::getNewPath).collect(Collectors.toSet());
         assertEquals(Set.of(
-                "src/main/java/io/localization/SnapshotPublisher.java",
+                "src/main/java/io/example/SnapshotPublisher.java",
                 "src/main/resources/application.yaml"), changedPaths,
                 "the merge's parent[0] delta is exactly the PR's net change — nothing from the mainline leaks in");
 
@@ -216,8 +216,8 @@ class MergeCommitPrHistoryMimicTest {
         assertEquals(DEV_B, analysis.getAuthorEmail(), "Dev A clicked merge; the credit belongs to Dev B");
         assertEquals(DEV_B_NAME, analysis.getAuthor());
         assertEquals(Set.of(
-                "src/main/java/io/localization/LocalizationService.java",
-                "src/main/java/io/localization/TranslationRepository.java"),
+                "src/main/java/io/example/ExampleService.java",
+                "src/main/java/io/example/TranslationRepository.java"),
                 analysis.getFiles().stream().map(FileAnalysis::getNewPath).collect(Collectors.toSet()));
     }
     @Test
@@ -225,7 +225,7 @@ class MergeCommitPrHistoryMimicTest {
         GitCommitAnalysis analysis = analyzeMerge(syncMergeSha);
 
         assertEquals(DEV_A, analysis.getAuthorEmail());
-        assertEquals(Set.of("src/main/java/io/localization/SnapshotStorageLayout.java"),
+        assertEquals(Set.of("src/main/java/io/example/SnapshotStorageLayout.java"),
                 analysis.getFiles().stream().map(FileAnalysis::getNewPath).collect(Collectors.toSet()),
                 "the remote-side commit dropped from the spine is recovered through the sync merge's delta");
     }

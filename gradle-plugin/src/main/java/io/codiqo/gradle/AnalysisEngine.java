@@ -164,7 +164,7 @@ public class AnalysisEngine {
         Path workTree = args.getGit().getWorkTree().toPath().normalize();
         try (Fetch fetch = new Fetch(args)) {
             try (LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, args, fetch)) {
-                registry.load().block();
+                registry.load();
 
                 DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, args);
                 CommitAnalysis analysis = analyzer.analyze();

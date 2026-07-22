@@ -53,10 +53,6 @@ public class MetricsAggregator implements SubmissionPopulator {
         int fullTotalBranches = 0;
         int fullCoveredBranches = 0;
         int fullMissedBranches = 0;
-        int fullTotalStatementsInProject = 0;
-        int fullTotalClasses = 0;
-        double fullTotalComplexity = 0.0;
-        int fullComplexityCount = 0;
 
         for (ModuleModel moduleModel : ctx.getProjectModel().getModules()) {
             ModuleQualityTracker tracker = ctx.getQualityTrackers().get(moduleModel.getId());
@@ -110,12 +106,6 @@ public class MetricsAggregator implements SubmissionPopulator {
                 fullTotalBranches += tracker.moduleTotalBranches().intValue();
                 fullCoveredBranches += tracker.moduleCoveredBranches().intValue();
                 fullMissedBranches += tracker.moduleMissedBranches().intValue();
-                fullTotalStatementsInProject += tracker.moduleTotalStatements().intValue();
-                fullTotalClasses += tracker.moduleTotalClasses();
-                if (tracker.moduleComplexityCount().intValue() > 0) {
-                    fullTotalComplexity += tracker.moduleTotalComplexity().doubleValue();
-                    fullComplexityCount += tracker.moduleComplexityCount().intValue();
-                }
 
                 moduleModel.setQuality(qualityModel);
 
@@ -190,6 +180,35 @@ public class MetricsAggregator implements SubmissionPopulator {
 
         fullProjectCoverageModel.setByModule(ctx.getModuleFullCoverages());
         ctx.getSubmissionModel().setFullProjectCoverage(fullProjectCoverageModel);
+
+        populateDriverMetrics(ctx);
+    }
+    /**
+     * project totals + driver-score statistics (scalers, cap quantiles) derived from the whole-project
+     * index. kept separate from the coverage/quality aggregates so the source-only degraded path can
+     * price code volume without emitting a fabricated 0% coverage or an all-zero quality summary.
+     */
+    public static void populateDriverMetrics(SubmissionContext ctx) {
+        int fullTotalStatementsInProject = 0;
+        int fullTotalClasses = 0;
+        int fullTotalExecutableLines = 0;
+        int fullCoveredLines = 0;
+        double fullTotalComplexity = 0.0;
+        int fullComplexityCount = 0;
+
+        for (ModuleModel moduleModel : ctx.getProjectModel().getModules()) {
+            ModuleQualityTracker tracker = ctx.getQualityTrackers().get(moduleModel.getId());
+            if (Objects.nonNull(tracker)) {
+                fullTotalStatementsInProject += tracker.moduleTotalStatements().intValue();
+                fullTotalClasses += tracker.moduleTotalClasses();
+                fullTotalExecutableLines += tracker.moduleTotalExecutableLines().intValue();
+                fullCoveredLines += tracker.moduleCoveredLines().intValue();
+                if (tracker.moduleComplexityCount().intValue() > 0) {
+                    fullTotalComplexity += tracker.moduleTotalComplexity().doubleValue();
+                    fullComplexityCount += tracker.moduleComplexityCount().intValue();
+                }
+            }
+        }
 
         ProjectMetricsModel projectMetricsModel = new ProjectMetricsModel();
         projectMetricsModel.setTotalFiles(ctx.getIndex().getTotalFiles().size());

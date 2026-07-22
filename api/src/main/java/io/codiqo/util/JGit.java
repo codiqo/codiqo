@@ -3,6 +3,8 @@ package io.codiqo.util;
 import java.io.File;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -11,8 +13,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.HashMap;
-import java.util.ArrayList;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -29,7 +29,6 @@ import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
-
 
 import lombok.experimental.UtilityClass;
 
@@ -106,7 +105,7 @@ public class JGit {
     }
     /**
      * the merged-in branch's own commits: reachable from the merge's second parent but not from the
-     * first (mainline) parent. for a PR merge node this is exactly the set of commits the PR brought in
+     * first (main line) parent. for a PR merge node this is exactly the set of commits the PR brought in
      */
     public static List<RevCommit> mergeSideCommits(Repository repo, RevCommit merge) throws IOException {
         List<RevCommit> toReturn = new ArrayList<>();
@@ -122,7 +121,7 @@ public class JGit {
     }
     /**
      * derives who to credit for a merge node's parent[0] delta: the single author of every side-branch
-     * commit. empty for octopus merges (ambiguous mainline delta), empty side sets (nothing new merged
+     * commit. empty for octopus merges (ambiguous main line delta), empty side sets (nothing new merged
      * in) and mixed-author side branches (no sole owner of the net change)
      */
     public static Optional<PersonIdent> mergeSideSoleAuthor(Repository repo, RevCommit merge) throws IOException {
@@ -135,7 +134,7 @@ public class JGit {
             PersonIdent author = commit.getAuthorIdent();
             if (Objects.isNull(soleAuthor)) {
                 soleAuthor = author;
-            } else if (BooleanUtils.negate(StringUtils.equalsIgnoreCase(soleAuthor.getEmailAddress(), author.getEmailAddress()))) {
+            } else if (BooleanUtils.negate(Strings.CI.equals(soleAuthor.getEmailAddress(), author.getEmailAddress()))) {
                 return Optional.empty();
             }
         }

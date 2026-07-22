@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
 import java.util.Properties;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import java.util.ArrayList;
@@ -28,17 +29,13 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.util.Fetch;
-import lombok.experimental.Delegate;
-import reactor.core.publisher.Sinks;
-import reactor.core.publisher.Sinks.EmitResult;
 
 class JdtLspProcess implements Closeable {
     private static final int MIN_JDK_ZGC = 15;
     private static final int MIN_JDK_NATIVE_ACCESS = 16;
     private static final int MIN_JDK_SUN_MISC_UNSAFE_FLAG = 23;
 
-    @Delegate
-    private final Sinks.Many<Integer> processor = Sinks.many().multicast().directBestEffort();
+    private final CompletableFuture<Integer> exitFuture = new CompletableFuture<>();
     private final Log log;
     private final JavaProcess process;
 
@@ -172,15 +169,13 @@ class JdtLspProcess implements Closeable {
         Process fork = builder.start();
         this.process = Processes.newJavaProcess(fork);
 
-        fork.onExit().thenAccept(p -> {
-            EmitResult result = processor.tryEmitNext(p.exitValue());
-            if (result.isSuccess()) {
-
-            }
-        });
+        fork.onExit().thenAccept(p -> exitFuture.complete(p.exitValue()));
         stopWatch.stop();
 
         log.info("JDTLS process started in %s data: %s, port: %d", stopWatch, data.toUri().toURL().toExternalForm(), port);
+    }
+    public CompletableFuture<Integer> onExit() {
+        return exitFuture;
     }
     @Override
     public void close() throws IOException {

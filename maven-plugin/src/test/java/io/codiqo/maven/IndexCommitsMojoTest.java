@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
+import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -31,7 +32,8 @@ import io.codiqo.util.RepositoryUrls;
 
 class IndexCommitsMojoTest {
     private static final Date EPOCH = new Date(0);
-    private static final String BITBUCKET_SCM_URL = "scm:git:git@bitbucket.org:turbospaces/turbospaces-boot/tree/master";
+    private static final String BITBUCKET_SCM_URL = "scm:git:git@bitbucket.org:acme/sample-repo/tree/master";
+    private static final int GIT_OBJECT_FANOUT_LENGTH = 2;
 
     @TempDir
     Path tempDir;
@@ -169,6 +171,56 @@ class IndexCommitsMojoTest {
         assertEquals(0, selection.skippedMissingParentCount());
     }
     @Test
+    void missingAnalysisSelectionSkipsFullShaAbsentFromObjectDb() throws Exception {
+        RevCommit kept = commit("a.txt", "v1", "initial");
+        String absentFullSha = StringUtils.repeat('b', 40);
+
+        IndexCommitsMojo.MissingAnalysesSelection selection = IndexCommitsMojo.selectAnalyzableMissingAnalyses(
+                repository,
+                List.of(absentFullSha, kept.getName()));
+
+        assertEquals(List.of(kept.getName()), selection.analyzableShas());
+        assertEquals(1, selection.skippedMissingCommitCount());
+        assertEquals(0, selection.skippedMissingParentCount());
+    }
+    @Test
+    void missingAnalysisSelectionCountsCommitWithAbsentFirstParent() throws Exception {
+        RevCommit parent = commit("a.txt", "v1", "root");
+        RevCommit child = commit("a.txt", "v2", "child of root");
+
+        // truncated history (shallow clone / removed branch): the first-parent object is gone locally
+        deleteLooseObject(parent);
+
+        try (Repository truncated = reopenRepository()) {
+            IndexCommitsMojo.MissingAnalysesSelection selection = IndexCommitsMojo.selectAnalyzableMissingAnalyses(
+                    truncated,
+                    List.of(child.getName()));
+
+            assertEquals(List.of(), selection.analyzableShas(), "a commit whose first parent is missing cannot be analyzed");
+            assertEquals(0, selection.skippedMissingCommitCount());
+            assertEquals(1, selection.skippedMissingParentCount());
+        }
+    }
+    @Test
+    void missingAnalysisSelectionPartitionsMixedBatch() throws Exception {
+        RevCommit parent = commit("a.txt", "v1", "root");
+        RevCommit child = commit("a.txt", "v2", "child of root");
+        RevCommit standalone = commit("b.txt", "b1", "analyzable commit");
+        String absentFullSha = StringUtils.repeat('c', 40);
+
+        deleteLooseObject(parent);
+
+        try (Repository truncated = reopenRepository()) {
+            IndexCommitsMojo.MissingAnalysesSelection selection = IndexCommitsMojo.selectAnalyzableMissingAnalyses(
+                    truncated,
+                    List.of(absentFullSha, child.getName(), standalone.getName()));
+
+            assertEquals(List.of(standalone.getName()), selection.analyzableShas());
+            assertEquals(1, selection.skippedMissingCommitCount());
+            assertEquals(1, selection.skippedMissingParentCount());
+        }
+    }
+    @Test
     void revertCommitPopulatesRevertFields() throws Exception {
         commit("a.txt", "v1", "initial");
         String fakeRevertedSha = StringUtils.repeat('a', 40);
@@ -228,13 +280,13 @@ class IndexCommitsMojoTest {
     void toUriNormalizesScpStyleGitUrls() throws Exception {
         URI uri = RepositoryUrls.toUri(BITBUCKET_SCM_URL);
 
-        assertEquals("https://bitbucket.org/turbospaces/turbospaces-boot/tree/master", uri.toString());
+        assertEquals("https://bitbucket.org/acme/sample-repo/tree/master", uri.toString());
     }
     @Test
     void toUriPreservesStandardUris() throws Exception {
-        URI uri = RepositoryUrls.toUri("scm:git:https://bitbucket.org/turbospaces/turbospaces-boot.git");
+        URI uri = RepositoryUrls.toUri("scm:git:https://bitbucket.org/acme/sample-repo.git");
 
-        assertEquals("https://bitbucket.org/turbospaces/turbospaces-boot.git", uri.toString());
+        assertEquals("https://bitbucket.org/acme/sample-repo.git", uri.toString());
     }
     @Test
     void firstParentOnlyExcludesMergedInBranchCommits() throws Exception {
@@ -411,5 +463,19 @@ class IndexCommitsMojoTest {
         } catch (GitAPIException err) {
             throw new IllegalStateException(err);
         }
+    }
+    /**
+     * reopen the on-disk repo with a fresh handle so selectAnalyzableMissingAnalyses reads the
+     * object store directly: the repository opened in initRepo has an UnpackedObjectCache that
+     * would still report a just-deleted loose object as present
+     */
+    private Repository reopenRepository() throws IOException {
+        return new FileRepositoryBuilder().setGitDir(new File(tempDir.toFile(), ".git")).build();
+    }
+    private void deleteLooseObject(RevCommit commit) throws IOException {
+        String sha = commit.getName();
+        Path looseObject = tempDir.resolve(".git").resolve("objects")
+                .resolve(sha.substring(0, GIT_OBJECT_FANOUT_LENGTH)).resolve(sha.substring(GIT_OBJECT_FANOUT_LENGTH));
+        Files.delete(looseObject);
     }
 }

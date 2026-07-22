@@ -32,6 +32,7 @@ import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
@@ -237,14 +238,15 @@ public class IndexCommitsMojo extends AbstractMojo {
         int skippedMissingParent = 0;
 
         try (RevWalk walk = new RevWalk(repo)) {
+            ObjectReader reader = walk.getObjectReader();
             for (String sha : shas) {
                 ObjectId commitId = repo.resolve(sha);
-                if (Objects.isNull(commitId)) {
+                if (Objects.isNull(commitId) || !reader.has(commitId)) {
                     skippedMissingCommit++;
                     continue;
                 }
                 RevCommit commit = walk.parseCommit(commitId);
-                if (commit.getParentCount() > 0 && Objects.isNull(repo.resolve(commit.getParent(0).getId().getName()))) {
+                if (commit.getParentCount() > 0 && !reader.has(commit.getParent(0))) {
                     skippedMissingParent++;
                     continue;
                 }

@@ -31,11 +31,11 @@ import net.sourceforge.pmd.util.log.PmdReporter;
 class PmdTypeInferenceCrashTest {
     private static final JavaLanguageModule LANG = new JavaLanguageModule();
     private static final String DIAMOND_ANONYMOUS_SNIPPET = """
-            package offerchain;
+            package example;
 
             import java.util.List;
 
-            public class OfferChainServerProperties {
+            public class ScopedServerProperties {
                 abstract static class TypeToken<T> {
                     protected TypeToken() {}
                 }
@@ -46,8 +46,8 @@ class PmdTypeInferenceCrashTest {
 
                 private final List<Theme> themes;
 
-                public OfferChainServerProperties(PropertyFactory pf) {
-                    this.themes = pf.getScoped("offerchain.autoconfiguration.themes",
+                public ScopedServerProperties(PropertyFactory pf) {
+                    this.themes = pf.getScoped("example.autoconfiguration.themes",
                             new TypeToken<>() {}, List.of(new Theme("test", "Test", "Test")));
                 }
             }
@@ -62,7 +62,7 @@ class PmdTypeInferenceCrashTest {
         LanguagePropertyBundle bundle = LANG.newPropertyBundle();
         bundle.setProperty(JavaLanguageProperties.FIRST_CLASS_LOMBOK, true);
 
-        FileId fileId = FileId.fromPathLikeString("OfferChainServerProperties.java");
+        FileId fileId = FileId.fromPathLikeString("ScopedServerProperties.java");
         try (TextFile file = TextFile.forCharSeq(source, fileId, LANG.getDefaultVersion())) {
             try (TextDocument doc = TextDocument.create(file)) {
                 LanguageRegistry registry = LanguageRegistry.singleton(LANG);

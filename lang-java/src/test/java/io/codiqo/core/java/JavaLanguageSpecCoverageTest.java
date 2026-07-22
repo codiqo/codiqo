@@ -22,7 +22,7 @@ class JavaLanguageSpecCoverageTest {
         File classes = dir(dir, "target/classes");
         Files.createFile(classes.toPath().resolve("Foo.class"));
         File reports = dir(dir, "target/surefire-reports");
-        Files.createFile(reports.toPath().resolve("TEST-fraud.FooTest.xml"));
+        Files.createFile(reports.toPath().resolve("TEST-com.example.FooTest.xml"));
 
         JvmProjectSpec project = mock(JvmProjectSpec.class);
         when(project.getOutputDirectory()).thenReturn(classes);
@@ -48,7 +48,7 @@ class JavaLanguageSpecCoverageTest {
         File classes = dir(dir, "build/classes/java/main");
         Files.createFile(classes.toPath().resolve("Foo.class"));
         File reports = dir(dir, "build/test-results/test");
-        Files.createFile(reports.toPath().resolve("TEST-fraud.FooTest.xml"));
+        Files.createFile(reports.toPath().resolve("TEST-com.example.FooTest.xml"));
 
         JvmProjectSpec project = mock(JvmProjectSpec.class);
         when(project.getOutputDirectory()).thenReturn(classes);
@@ -87,7 +87,7 @@ class JavaLanguageSpecCoverageTest {
     void doesNotExpectCoverageWithoutMainClasses(@TempDir Path dir) throws IOException {
         File classes = dir(dir, "target/classes");
         File reports = dir(dir, "target/surefire-reports");
-        Files.createFile(reports.toPath().resolve("TEST-fraud.FooTest.xml"));
+        Files.createFile(reports.toPath().resolve("TEST-com.example.FooTest.xml"));
 
         JvmProjectSpec project = mock(JvmProjectSpec.class);
         when(project.getOutputDirectory()).thenReturn(classes);

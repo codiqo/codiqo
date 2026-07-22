@@ -1,4 +1,4 @@
-package com.turbospaces.jdtls;
+package io.codiqo.core.jdtls;
 
 import java.util.Objects;
 
@@ -41,7 +41,7 @@ public class GitDeltaAnalysisMicroDemo {
 
         try (Fetch fetch = new Fetch(run)) {
             try (LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, run, fetch)) {
-                registry.load().block();
+                registry.load();
 
                 DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, run);
                 CommitAnalysis analysis = analyzer.analyze();

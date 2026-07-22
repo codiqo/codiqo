@@ -865,8 +865,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             if (modulePom.exists()) {
                 /**
                  * fresh isolated session per module build: resolveDependencies=true on an earlier module reads
-                 * REMOTE sibling POMs (latest snapshot deploys) whose lineage shares GAVs with the local checkout
-                 * (e.g. crm-parent:26.04.2-SNAPSHOT) — those raw models enter the shared session model cache and a
+                 * REMOTE sibling POMs (latest snapshot deploys) whose lineage shares GAVs with the local
+                 * checkout — those raw models enter the shared session model cache and a
                  * later module's parent/import chain then assembles against the anachronistic remote lineage,
                  * dropping managed versions ('dependencies.dependency.version is missing' broken-POM failures)
                  */
@@ -930,7 +930,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         try (Fetch fetch = new Fetch(args)) {
             try (LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, args, fetch)) {
                 getLog().info(MemoryReport.snapshot("before language server load"));
-                registry.load().block();
+                registry.load();
                 getLog().info(MemoryReport.snapshot("after language server load"));
                 MutableBoolean toApply = new MutableBoolean();
                 DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, args);
@@ -1087,7 +1087,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     }
     /**
      * with codiqo.scoreOnBuildFailure enabled, a build-pipeline failure no longer excludes the commit
-     * outright: the git diff still represents real developer work, so score it in diff-only degraded mode.
+     * outright: the change still represents real developer work, so score it in degraded mode instead.
      * falls back to exclusion when the flag is off (default), when the commit has no analyzable diff files,
      * and mirrors the revert gate that the successful-build path applies in doExecute. only reachable from
      * historical commit analysis — analyze-uncommitted-changes never forks a build (it analyzes the working
@@ -1107,7 +1107,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 doExcludeRevertCommit(args, ctx);
                 return;
             }
-            getLog().warn(String.format("commit %s: build failed (%s: %s) — running diff-only degraded analysis", args.getCommitId(), category, reason));
+            getLog().warn(String.format("commit %s: build failed (%s: %s) — running degraded analysis", args.getCommitId(), category, reason));
             new OutputSerializer(preferYaml, ctx.getLogFactory().getLogger(OutputSerializer.class)).accept(ctx);
             doLlmScoring(ctx);
         } else {
@@ -1116,11 +1116,77 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         }
     }
     /**
-     * strictly diff-only submission: git diff + commit metadata, no code units, no coverage, no PMD/CPD,
-     * no project-level metrics — even the build-independent analyzers stay off so the degraded score is
-     * derived from the diff alone. carries the buildFailure block that drives degraded LLM scoring.
+     * degraded submission for a build-failed commit. a failed build leaves no resolved reactor, so a
+     * synthetic whole-worktree owner drives a source-only PMD index (no JDT, no coverage, no CPD) that
+     * still yields the driver-score statistics and the changed-code blocks the volume scorer needs, so
+     * genuine code volume is measured rather than scored from config lines alone. any failure of that
+     * best-effort pass falls back to the strictly diff-only submission (git diff + commit metadata).
      */
     protected SubmissionContext buildDegradedSubmission(RunArgs args, String reason, AnalysisExcludeCategory category, String detail) throws Exception {
+        boolean hadProjectModel = CollectionUtils.isNotEmpty(args.getProjects());
+        try {
+            return buildSourceOnlyDegradedSubmission(args, reason, category, detail);
+        } catch (IOException err) {
+            /**
+             * only an I/O failure of the best-effort source index degrades to diff-only; codiqo-internal
+             * defects (RuntimeExceptions from the populators) are not caught here so they propagate and
+             * fail loudly rather than silently masking a bug as a config-only score
+             */
+            getLog().warn(String.format("commit %s: source-only degraded index failed (%s) — falling back to diff-only scoring",
+                    args.getCommitId(), ExceptionUtils.getRootCauseMessage(err)), err);
+            if (BooleanUtils.negate(hadProjectModel)) {
+                args.getProjects().clear();
+            }
+            return buildDiffOnlyDegradedSubmission(args, reason, category, detail);
+        }
+    }
+    protected SubmissionContext buildSourceOnlyDegradedSubmission(RunArgs args, String reason, AnalysisExcludeCategory category, String detail) throws Exception {
+        LogFactory logFactory = new MavenLogFactory(getLog());
+        Path workTree = args.getGit().getWorkTree().toPath().normalize();
+
+        if (CollectionUtils.isEmpty(args.getProjects())) {
+            args.getProjects().add(SourceOnlyProjectSpec.forWorkTree(args.getGit().getWorkTree(), project));
+        }
+
+        CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
+        IndexingSummary index = buildSourceOnlyIndex(args, analysis, logFactory);
+
+        ClientInfoModel clientInfo = new ClientInfoModel();
+        clientInfo.setBuildTool(ClientInfoModel.BuildToolEnum.MAVEN);
+        clientInfo.setVersion(runtimeInformation.getMavenVersion());
+        clientInfo.setName("codiqo-maven-plugin");
+
+        SubmissionContext ctx = SubmissionContext.create(
+                args,
+                index,
+                analysis,
+                workTree,
+                logFactory,
+                project.getGroupId() + ":" + project.getArtifactId(),
+                project.getName(),
+                clientInfo);
+        new ProjectModelPopulator(getLog()).accept(ctx);
+        new CommitModelPopulator().accept(ctx);
+        new ModuleLevelMetricsPopulator().accept(ctx);
+        new FileAnalysisPopulator().accept(ctx);
+        new EffectiveChangePopulator().accept(ctx);
+
+        /**
+         * only the driver-score statistics (project totals + scalers) are populated — no coverage, PMD,
+         * or CPD is captured for a failed build, so the quality and coverage aggregates are left absent
+         * (rendered n/a) rather than fabricated as zeros
+         */
+        MetricsAggregator.populateDriverMetrics(ctx);
+
+        applyBuildFailure(ctx, args, reason, category, detail);
+        return ctx;
+    }
+    /**
+     * strictly diff-only submission: git diff + commit metadata, no code units, no coverage, no PMD/CPD,
+     * no project-level metrics. the degraded score is derived from the diff alone. carries the
+     * buildFailure block that drives degraded LLM scoring.
+     */
+    protected SubmissionContext buildDiffOnlyDegradedSubmission(RunArgs args, String reason, AnalysisExcludeCategory category, String detail) throws Exception {
         LogFactory logFactory = new MavenLogFactory(getLog());
         Path workTree = args.getGit().getWorkTree().toPath().normalize();
         CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
@@ -1143,13 +1209,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         new CommitModelPopulator().accept(ctx);
         new FileAnalysisPopulator().accept(ctx);
 
-        AnalysisBuildFailureModel buildFailure = new AnalysisBuildFailureModel();
-        buildFailure.setReason(reason);
-        buildFailure.setCategory(category);
-        buildFailure.setDetail(detail);
-
-        ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
-        ctx.getSubmissionModel().setBuildFailure(buildFailure);
+        applyBuildFailure(ctx, args, reason, category, detail);
         return ctx;
     }
     @SuppressWarnings("deprecation")
@@ -1211,6 +1271,27 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         }
 
         throw new MojoExecutionException("project build failed: " + Objects.toString(pbe.getMessage(), pbe.getClass().getSimpleName()), pbe);
+    }
+    private static IndexingSummary buildSourceOnlyIndex(RunArgs args, CommitAnalysis analysis, LogFactory logFactory) throws IOException {
+        try (Fetch fetch = new Fetch(args);
+                LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, args, fetch)) {
+            /**
+             * no registry.load(): index() and identifyAffectedSymbols() are pure source (PMD) passes, so
+             * the JDT language server is never downloaded or started for a build-failed commit
+             */
+            IndexingSummary index = registry.index(analysis);
+            registry.identifyAffectedSymbols(index, analysis);
+            return index;
+        }
+    }
+    private static void applyBuildFailure(SubmissionContext ctx, RunArgs args, String reason, AnalysisExcludeCategory category, String detail) {
+        AnalysisBuildFailureModel buildFailure = new AnalysisBuildFailureModel();
+        buildFailure.setReason(reason);
+        buildFailure.setCategory(category);
+        buildFailure.setDetail(detail);
+
+        ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
+        ctx.getSubmissionModel().setBuildFailure(buildFailure);
     }
 
     protected sealed interface BuildOutcome {

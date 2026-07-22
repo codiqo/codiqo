@@ -40,10 +40,10 @@ import java.util.stream.Stream;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FilenameUtils;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.commons.lang3.time.StopWatch;
@@ -122,7 +122,6 @@ import net.sourceforge.pmd.lang.java.types.JTypeMirror;
 import net.sourceforge.pmd.lang.java.types.OverloadSelectionResult;
 import net.sourceforge.pmd.lang.rule.RulePriority;
 import net.sourceforge.pmd.reporting.Report;
-import reactor.core.publisher.Mono;
 
 public class JavaLanguageSpec implements LanguageSpec {
     public static final EnumSet<SymbolKind> TYPES = EnumSet.of(SymbolKind.Class, SymbolKind.Interface, SymbolKind.Enum);
@@ -154,18 +153,31 @@ public class JavaLanguageSpec implements LanguageSpec {
         });
         return List.copyOf(builder);
     };
-    private final IncomingCallsResolver incomingCallsResolver;
-    private final JdtLspProjectImporter jdt;
+    private final LogFactory logFactory;
+    private final Fetch fetch;
+    private IncomingCallsResolver incomingCallsResolver;
+    private JdtLspProjectImporter jdt;
 
-    public JavaLanguageSpec(LogFactory logFactory, RunArgs args, Fetch fetch) throws IOException {
+    public JavaLanguageSpec(LogFactory logFactory, RunArgs args, Fetch fetch) {
         this.log = logFactory.getLogger(getClass());
         this.args = Objects.requireNonNull(args);
-        this.jdt = new JdtLspProjectImporter(logFactory, args, fetch);
-        this.incomingCallsResolver = new JdtIncomingCallsResolver(log, args, jdt);
+        this.logFactory = logFactory;
+        this.fetch = fetch;
     }
     @Override
-    public Mono<?> load() {
-        return jdt.load();
+    public void load() {
+        /**
+         * JDT is constructed here rather than in the constructor so that source-only callers
+         * (degraded build-failure scoring) can run index()/identifyAffectedSymbols() — pure PMD
+         * passes — without ever downloading or spawning the JDT language server
+         */
+        try {
+            this.jdt = new JdtLspProjectImporter(logFactory, args, fetch);
+            this.incomingCallsResolver = new JdtIncomingCallsResolver(log, args, jdt);
+            jdt.load();
+        } catch (IOException err) {
+            ExceptionUtils.wrapAndThrow(err);
+        }
     }
     @Override
     public Language lang() {
