@@ -35,6 +35,7 @@ import io.codiqo.client.ApiException;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.FileChangeModel;
+import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.util.JGit;
 
@@ -128,6 +129,15 @@ class DegradedAnalysisMojoTest {
         assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, exclusion.category());
         assertEquals("cannot find symbol", exclusion.detail());
         assertTrue(CollectionUtils.isNotEmpty(exclusion.files()), "exclusion must carry the captured diff files");
+
+        /**
+         * the source-only exclude payload now carries whole-project driver-score statistics so a later
+         * degraded re-score prices real code volume instead of config lines (capture-at-exclude fix)
+         */
+        assertNotNull(exclusion.projectMetrics(), "build-failure exclusion must carry projectMetrics");
+        assertNotNull(exclusion.projectMetrics().getDriverScalers());
+        assertTrue(exclusion.projectMetrics().getDriverScalers().getMethodScalerProd().getPopulation() > 0,
+                "exclusion projectMetrics must carry a non-empty driver-scaler population");
     }
     @Test
     void flagOnBuildFailureScoresSourceOnlySubmission() throws Exception {
@@ -284,13 +294,13 @@ class DegradedAnalysisMojoTest {
             return super.buildSourceOnlyDegradedSubmission(args, reason, category, detail);
         }
         @Override
-        protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files) throws ApiException {
+        protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files, ProjectMetricsModel projectMetrics) throws ApiException {
             if (commitSha.equals(notFoundSha)) {
                 throw new ApiException(HttpURLConnection.HTTP_NOT_FOUND, "analysis not found: " + commitSha);
             }
-            exclusions.add(new Exclusion(commitSha, reason, category, detail, files));
+            exclusions.add(new Exclusion(commitSha, reason, category, detail, files, projectMetrics));
         }
     }
-    private record Exclusion(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files) {
+    private record Exclusion(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files, ProjectMetricsModel projectMetrics) {
     }
 }

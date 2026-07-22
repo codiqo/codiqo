@@ -95,6 +95,7 @@ import io.codiqo.client.model.AnalysisBuildFailureModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.ClientInfoModel;
 import io.codiqo.client.model.FileChangeModel;
+import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.core.ClassGraphWrapper;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
@@ -1083,6 +1084,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         doExcludeAnalysis(commitSha, reason, category, detail, List.of());
     }
     protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files) throws Exception {
+        doExcludeAnalysis(commitSha, reason, category, detail, files, null);
+    }
+    protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files, ProjectMetricsModel projectMetrics) throws Exception {
         getLog().debug(String.format("no exclusion handler, commit %s would be excluded with reason: %s (category: %s)", commitSha, reason, category));
     }
     /**
@@ -1100,7 +1104,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         if (args.isScoreOnBuildFailure()) {
             if (CollectionUtils.isEmpty(files)) {
                 getLog().warn(String.format("commit %s skipped: build failed and no analyzable diff — %s", args.getCommitId(), reason));
-                doExcludeAnalysis(args.getCommitId(), reason, category, detail, files);
+                doExcludeAnalysis(args.getCommitId(), reason, category, detail, files, ctx.getSubmissionModel().getProjectMetrics());
                 return;
             }
             if (ctx.getAnalysis().isRevertCommit()) {
@@ -1112,7 +1116,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             doLlmScoring(ctx);
         } else {
             getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), reason));
-            doExcludeAnalysis(args.getCommitId(), reason, category, detail, files);
+            doExcludeAnalysis(args.getCommitId(), reason, category, detail, files, ctx.getSubmissionModel().getProjectMetrics());
         }
     }
     /**
