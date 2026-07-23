@@ -358,13 +358,15 @@ public class LlmScoringClient implements ScoringClient {
         }
     }
     private LlmScoringResponse deserializeResponse(String rawContent) throws Exception {
+        // TEMP: always dump the raw response to inspect off-vocab enum values (revert after root-cause)
+        File dumpFile = File.createTempFile("codiqo-llm-response-", ".json");
+        FileUtils.write(dumpFile, rawContent, StandardCharsets.UTF_8);
+        log.warn("raw LLM response dumped to: " + dumpFile.getAbsolutePath());
+
         try {
             return objectMapper.readValue(stripMarkdownFences(rawContent), LlmScoringResponse.class);
         } catch (IOException err) {
-            File dumpFile = File.createTempFile("codiqo-llm-response-", ".json");
-            FileUtils.write(dumpFile, rawContent, StandardCharsets.UTF_8);
             log.warn("failed to parse LLM response: " + err.getMessage());
-            log.warn("raw LLM response dumped to: " + dumpFile.getAbsolutePath());
             throw err;
         }
     }
