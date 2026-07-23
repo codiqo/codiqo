@@ -216,6 +216,10 @@ public class LlmScoringRequest {
         @Builder.Default
         private List<CallerInfo> callers = new ArrayList<>();
 
+        // when callers is capped for the prompt, how many entries were omitted; the counts below stay exact
+        private int omittedCallerCount;
+        private int omittedProductionCallerCount;
+
         /**
          * PMD and SpotBugs diagnostics for this method.
          * Used by LLM to assess code quality and identify issues.
@@ -245,10 +249,11 @@ public class LlmScoringRequest {
             return operation == Operation.DELETE;
         }
         public int getCallerCount() {
-            return CollectionUtils.size(callers);
+            return CollectionUtils.size(callers) + omittedCallerCount;
         }
         public long getProductionCallerCount() {
-            return Objects.nonNull(callers) ? callers.stream().filter(not(CallerInfo::isTestCaller)).count() : 0;
+            long shown = Objects.nonNull(callers) ? callers.stream().filter(not(CallerInfo::isTestCaller)).count() : 0;
+            return shown + omittedProductionCallerCount;
         }
     }
 

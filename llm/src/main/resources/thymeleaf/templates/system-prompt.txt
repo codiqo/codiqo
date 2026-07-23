@@ -52,6 +52,8 @@ Each caller in the JSON includes:
 - **isDeprecated**: Whether caller is marked @Deprecated
 - **callSiteCount**: Number of times this caller invokes the target (indicates coupling strength)
 
+Per code block, `callerCount` and `productionCallerCount` are the TRUE totals for blast-radius magnitude. The `callers` array lists only the highest-coupling callers (production and most-invoked first); `omittedCallerCount` is how many additional callers exist but were not listed individually. Judge blast radius from the totals, not from the length of the `callers` array.
+
 ### ASM Signature Format
 
 The `signature` field uses Java ASM binary descriptor format:

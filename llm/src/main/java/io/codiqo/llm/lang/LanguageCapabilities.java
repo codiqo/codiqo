@@ -15,7 +15,6 @@ import lombok.experimental.UtilityClass;
 @UtilityClass
 public class LanguageCapabilities {
     private static final EnumSet<LanguageEnum> LINE_FILTERING_LANGUAGES = EnumSet.of(LanguageEnum.JAVA);
-
     private static final IneffectiveLineFilter C_STYLE_FILTER = new IneffectiveLineFilter(CommentSyntax.C_STYLE, IneffectiveLineFilter.IMPORT_PREFIX);
 
     public static boolean requiresLineFiltering(LanguageEnum language) {
@@ -23,6 +22,9 @@ public class LanguageCapabilities {
     }
     public static boolean requiresLineFiltering(FileChangeModel file) {
         return requiresLineFiltering(file.getLanguage());
+    }
+    public static boolean isLineFilteringLanguage(String languageValue) {
+        return LINE_FILTERING_LANGUAGES.stream().anyMatch(language -> language.getValue().equalsIgnoreCase(languageValue));
     }
     public static boolean isLineCountScored(FileChangeModel file) {
         return ConfigFiles.isConfigFile(file.getPath());

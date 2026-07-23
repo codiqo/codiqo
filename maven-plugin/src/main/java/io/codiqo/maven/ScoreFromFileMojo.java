@@ -76,6 +76,12 @@ public class ScoreFromFileMojo extends AbstractMojo {
     @Parameter(property = "codiqo.llm.numCtx")
     private Integer llmNumCtx;
 
+    @Parameter(property = "codiqo.llm.promptTokenBudget")
+    private int llmPromptTokenBudget;
+
+    @Parameter(property = "codiqo.llm.maxCallersPerBlock")
+    private int llmMaxCallersPerBlock;
+
     @Parameter(property = "codiqo.llm.seed", defaultValue = "42")
     private Integer llmSeed;
 
@@ -202,6 +208,14 @@ public class ScoreFromFileMojo extends AbstractMojo {
         toReturn.setLlmNumCtx(llmNumCtx);
         toReturn.setLlmSeed(llmSeed);
         toReturn.setLlmEnableWebSearchTool(llmEnableWebSearchTool);
+
+        if (llmPromptTokenBudget > 0) {
+            toReturn.setLlmPromptTokenBudget(llmPromptTokenBudget);
+        }
+        if (llmMaxCallersPerBlock > 0) {
+            toReturn.setLlmMaxCallersPerBlock(llmMaxCallersPerBlock);
+        }
+
         toReturn.setReadTimeout(Duration.ofSeconds(readTimeoutSeconds));
         toReturn.setDumpAnalysis(dumpAnalysis);
         Optional.ofNullable(outputDirectory).ifPresent(toReturn::setOutputDirectory);

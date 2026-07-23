@@ -45,6 +45,10 @@ import okhttp3.HttpUrl;
 public class RunArgs {
     public static final String DEFAULT_API_URL = "https://api.codiqo.io";
     public static final int DEFAULT_NUM_CTX = 256 * 1024;
+    // headroom reserved on top of the request JSON for the system prompt (~25k) + completion (~33k) + margin
+    public static final int PROMPT_TOKEN_RESERVE = 72 * 1024;
+    public static final int DEFAULT_PROMPT_TOKEN_BUDGET = DEFAULT_NUM_CTX - PROMPT_TOKEN_RESERVE;
+    public static final int DEFAULT_MAX_CALLERS_PER_BLOCK = 64;
     public static final int DEFAULT_SEED = 42;
     public static final Duration PER_TEST_TIMEOUT_MAX = Duration.ofMinutes(15);
     public static final Map<String, String> JDTLS_CONFIG = Map.of(
@@ -178,6 +182,18 @@ public class RunArgs {
     private Short llmValidationMaxRetries = 1;
     @Nullable
     private Integer llmNumCtx;
+
+    /**
+     * Estimated-token ceiling on the serialized request JSON embedded in the LLM prompt. Callers are
+     * unbounded, so a change to a hot method can push the prompt past the model context window (observed
+     * 549k vs a 512k limit). Set below the model limit to leave room for the system prompt and completion.
+     */
+    @Nullable
+    private int llmPromptTokenBudget = DEFAULT_PROMPT_TOKEN_BUDGET;
+
+    @Nullable
+    private int llmMaxCallersPerBlock = DEFAULT_MAX_CALLERS_PER_BLOCK;
+
     @Nullable
     private Integer llmSeed = DEFAULT_SEED;
     @Nullable

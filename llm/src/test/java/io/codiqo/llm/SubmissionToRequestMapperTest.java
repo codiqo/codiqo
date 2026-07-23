@@ -550,6 +550,24 @@ class SubmissionToRequestMapperTest {
         assertEquals("java", request.getFileChanges().get(0).getLanguage(),
                 "with no LanguageEnum set, mapper derives language from file extension");
     }
+    @Test
+    void untrackedResourceFilesAreExcludedFromTheRequest() {
+        AnalysisSubmissionModel submission = baseSubmission();
+
+        FileChangeModel sql = new FileChangeModel();
+        sql.setPath("server-model/src/main/resources/db/migration/V2.0__initial.sql");
+        sql.setChangeType(FileChangeModel.ChangeTypeEnum.MODIFY);
+        sql.setLanguage(null);
+        sql.setIsTest(false);
+        sql.setDiff("+CREATE TABLE foo (id bigint);\n+INSERT INTO foo VALUES (1);\n");
+        sql.setCodeUnits(new ArrayList<>());
+        submission.getFiles().add(sql);
+
+        LlmScoringRequest request = mapper.apply(submission);
+
+        assertEquals(1, request.getFileChanges().size(), "untracked .sql file must be excluded from the LLM request");
+        assertEquals("Foo.java", request.getFileChanges().iterator().next().getPath(), "the tracked java file must remain");
+    }
 
     @Test
     void enclosingBlockWhoseOnlyChangesBelongToNestedBlockIsDropped() {
