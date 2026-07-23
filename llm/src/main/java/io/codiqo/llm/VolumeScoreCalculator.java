@@ -369,19 +369,28 @@ public class VolumeScoreCalculator {
             double deviationNcss;
             double deviationInvocations;
             int blockLines = block.getBodyCodeLines();
+            /**
+             * degraded build-failure scoring runs without a full project scan, so the driver scalers
+             * are empty; fall back to raw changed/added line count (like config files) so code blocks
+             * still earn effort instead of collapsing to zero
+             */
             if (block.isModify()) {
                 int linesChanged = Math.min(block.getTotalLinesChanged(), blockLines);
                 changeRatio = computeChangeRatio(block);
                 invocationsChanged = block.getEffectiveInvocationsChanged();
-                driverScore = DriverScore.forModify(scaler, linesChanged, invocationsChanged);
+                driverScore = scaler.isEmpty()
+                        ? linesChanged
+                        : DriverScore.forModify(scaler, linesChanged, invocationsChanged);
                 projectedLines = linesChanged;
                 projectedNcss = 0.0;
                 projectedInvocations = invocationsChanged * scaler.invocationsFactor();
                 deviationNcss = 0.0;
                 deviationInvocations = 0.0;
             } else {
-                driverScore = DriverScore.forNew(scaler, blockLines,
-                        block.getNonCommentCodeStatements(), block.getDirectInvocationCount());
+                driverScore = scaler.isEmpty()
+                        ? blockLines
+                        : DriverScore.forNew(scaler, blockLines,
+                                block.getNonCommentCodeStatements(), block.getDirectInvocationCount());
                 projectedLines = blockLines;
                 projectedNcss = block.getNonCommentCodeStatements() * scaler.ncssFactor();
                 projectedInvocations = block.getDirectInvocationCount() * scaler.invocationsFactor();

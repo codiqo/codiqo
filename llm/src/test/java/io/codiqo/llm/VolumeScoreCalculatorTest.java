@@ -144,6 +144,70 @@ class VolumeScoreCalculatorTest {
                 "driverScore must be free to exceed the bucket quantile when per-block cap is removed");
     }
     @Test
+    void emptyScalerNewBlockFallsBackToRawLineCount() {
+        CodeBlockChange newBlock = newMethodBlock(40, 40, 40, /*isTest*/ false);
+
+        List<CodeBlockEffort> efforts = VolumeScoreCalculator.calculateCodeBlockEfforts(
+                List.of(newBlock),
+                DriverScaler.EMPTY, DriverScaler.EMPTY, DriverScaler.EMPTY, DriverScaler.EMPTY,
+                0, 0, 0, 0,
+                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP);
+
+        CodeBlockEffort effort = efforts.get(0);
+        assertEquals(40.0, effort.getDriverScore(), 0.001,
+                "with no driver scaler (degraded build failure) a NEW block prices to its body line count, not zero");
+        assertEquals(40.0 * ADD_MULT, effort.getEffort(), 0.001,
+                "degraded NEW block effort = bodyCodeLines × addMult × testWeight");
+    }
+    @Test
+    void emptyScalerModifyBlockFallsBackToChangedLineCount() {
+        CodeBlockChange modifyBlock = CodeBlockChange.builder()
+                .operation(Operation.MODIFY)
+                .name("tweak").file("Foo.java")
+                .nonCommentCodeLines(40)
+                .bodyCodeLines(40)
+                .nonCommentCodeStatements(30)
+                .totalLinesChanged(12)
+                .isConstructor(false).isTest(false).build();
+
+        List<CodeBlockEffort> efforts = VolumeScoreCalculator.calculateCodeBlockEfforts(
+                List.of(modifyBlock),
+                DriverScaler.EMPTY, DriverScaler.EMPTY, DriverScaler.EMPTY, DriverScaler.EMPTY,
+                0, 0, 0, 0,
+                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP);
+
+        CodeBlockEffort effort = efforts.get(0);
+        assertEquals(12.0, effort.getDriverScore(), 0.001,
+                "with no driver scaler a MODIFY block prices to min(totalLinesChanged, bodyCodeLines), not zero");
+        assertEquals(12.0 * MODIFY_MULT, effort.getEffort(), 0.001,
+                "degraded MODIFY block effort = changed lines × modifyMult × testWeight");
+    }
+    @Test
+    void emptyScalerModifyOnlyCommitEarnsPositiveBaseEffort() {
+        CodeBlockChange modifyBlock = CodeBlockChange.builder()
+                .operation(Operation.MODIFY)
+                .name("tweak").file("Foo.java")
+                .nonCommentCodeLines(40)
+                .bodyCodeLines(40)
+                .nonCommentCodeStatements(30)
+                .totalLinesChanged(12)
+                .isConstructor(false).isTest(false).build();
+
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder().totalFilesChanged(1).build())
+                .codeBlockChanges(List.of(modifyBlock))
+                .methodScalerProd(DriverScaler.EMPTY).methodScalerTest(DriverScaler.EMPTY)
+                .constructorScalerProd(DriverScaler.EMPTY).constructorScalerTest(DriverScaler.EMPTY)
+                .build();
+
+        PreComputedScores scores = new VolumeScoreCalculator(new RunArgs()).calculate(request, 1000, 100, 0, 0, 0, 0);
+
+        assertTrue(scores.getBlockEffortSum() > 0.0,
+                "a modify-only commit under degraded scoring must no longer collapse to zero block effort");
+        assertTrue(scores.getBaseEffort() > 0.0,
+                "degraded modify-only commit must earn positive base effort (regression guard for the zero-credit bug)");
+    }
+    @Test
     void globalCapClipsTotalEffortWhenSumExceedsBudget() {
         RunArgs args = neutralMultiplierArgs();
         DriverScaler scaler = uniformScaler(1, 100);
