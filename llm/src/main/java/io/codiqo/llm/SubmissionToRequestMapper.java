@@ -84,7 +84,10 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
 
     @Override
     public LlmScoringRequest apply(AnalysisSubmissionModel submission) {
-        List<FileChangeModel> files = submission.getFiles();
+        // untracked files (.sql, model .xml, arbitrary resources) are not scored and must not reach the LLM
+        List<FileChangeModel> files = submission.getFiles().stream()
+                .filter(SubmissionToRequestMapper::isTracked)
+                .collect(Collectors.toList());
         FileContext fileContext = buildFileContext(files);
         DriverScalers scalers = extractScalers(submission);
         List<String> branches = submission.getCommit().getBranches();
@@ -110,7 +113,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .changeSummary(mapChangeSummary(files, codeBlockChanges))
                 .fileChanges(mapFileChanges(files))
                 .codeBlockChanges(codeBlockChanges)
-                .coverage(hasCoverageSource ? mapCoverage(submission) : null)
+                .coverage(hasCoverageSource ? mapCoverage(submission, files) : null)
                 .complexity(mapComplexityMetrics(files))
                 .duplication(Objects.nonNull(submission.getDuplication()) ? mapDuplication(submission.getDuplication(), fileContext) : null)
                 .buildFailure(Objects.nonNull(submission.getBuildFailure()) ? mapBuildFailure(submission.getBuildFailure()) : null)
@@ -265,7 +268,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .linesOverlappingDiff(linesOverlapping)
                 .build();
     }
-    private CoverageInfo mapCoverage(AnalysisSubmissionModel submission) {
+    private CoverageInfo mapCoverage(AnalysisSubmissionModel submission, List<FileChangeModel> files) {
         CoverageInfo.CoverageInfoBuilder builder = CoverageInfo.builder();
         if (Objects.nonNull(submission.getFullProjectCoverage())) {
             mapProjectCoverage(submission.getFullProjectCoverage(), builder);
@@ -273,7 +276,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         if (Objects.nonNull(submission.getProjectQuality())) {
             mapChangedCoverage(submission.getProjectQuality(), builder);
         }
-        mapFileCoverage(submission.getFiles(), builder);
+        mapFileCoverage(files, builder);
         return builder.build();
     }
     private static void mapChangedCoverage(ProjectQualityModel projectQuality, CoverageInfo.CoverageInfoBuilder builder) {
@@ -850,6 +853,9 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         }
         String extension = FilenameUtils.getExtension(file.getPath());
         return StringUtils.isNotEmpty(extension) ? extension : null;
+    }
+    private static boolean isTracked(FileChangeModel file) {
+        return LanguageCapabilities.isLineCountScored(file) || LanguageCapabilities.isLineFilteringLanguage(mapLanguage(file));
     }
     private static LlmScoringRequest.FileChangeType mapFileChangeType(FileChangeModel.ChangeTypeEnum changeType) {
         return switch (changeType) {

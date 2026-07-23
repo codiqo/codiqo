@@ -17,9 +17,12 @@ import io.codiqo.api.logging.Log;
 import io.codiqo.llm.PromptBuilder.PromptContext;
 import io.codiqo.llm.PromptBuilder.UserMessageResult;
 import io.codiqo.llm.schema.LlmScoringRequest;
+import io.codiqo.llm.schema.LlmScoringRequest.CallerInfo;
 import io.codiqo.llm.schema.LlmScoringRequest.ChangeSummary;
+import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
 import io.codiqo.llm.schema.LlmScoringRequest.FileChange;
 import io.codiqo.llm.schema.LlmScoringRequest.FileChangeType;
+import io.codiqo.llm.schema.LlmScoringRequest.Operation;
 
 class PromptTemplateSmokeTest {
     private static final Log NOOP_LOG = NoopLog.INSTANCE;
@@ -67,6 +70,207 @@ class PromptTemplateSmokeTest {
         assertTrue(rendered.contains("Eligible files"), "table header missing");
         assertTrue(rendered.contains("| src/main/java/Foo.java | 15 | 11 |"), "eligible file row missing");
         assertFalse(rendered.contains("| src/main/resources/application.yaml | 3 | 1 |"), "ineligible file leaked into the table");
+    }
+    @Test
+    void userPromptDropsCallerBodiesButPreservesMetadataAndCounts() {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+
+        CallerInfo prod = CallerInfo.builder().callerMethod("callerA").file("A.java").line(10)
+                .isTestCaller(false).signature("SIG_MARKER_A").kind("function").symbol("com.x.A.callerA")
+                .callSiteCount(2).callerBody("BODY_MARKER_A { doWork(); }").build();
+        CallerInfo prod2 = CallerInfo.builder().callerMethod("callerB").file("B.java").line(20)
+                .isTestCaller(false).signature("SIG_MARKER_B").kind("function").symbol("com.x.B.callerB")
+                .callSiteCount(1).callerBody("BODY_MARKER_B { more(); }").build();
+        CallerInfo testCaller = CallerInfo.builder().callerMethod("testC").file("CTest.java").line(30)
+                .isTestCaller(true).signature("SIG_MARKER_C").kind("function").symbol("com.x.CTest.testC")
+                .callSiteCount(1).callerBody("BODY_MARKER_C { assertThat(); }").build();
+
+        CodeBlockChange block = CodeBlockChange.builder()
+                .name("target").operation(Operation.MODIFY).file("Target.java")
+                .callers(new ArrayList<>(List.of(prod, prod2, testCaller)))
+                .build();
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder()
+                        .linesAdded(5).linesDeleted(1).totalLinesChanged(6).totalFilesChanged(1).codeBlocksModified(1).build())
+                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                        .path("Target.java").changeType(FileChangeType.MODIFIED).language("java")
+                        .linesAdded(5).linesDeleted(1).linesJustificationRequired(true).diff("dummy").build())))
+                .codeBlockChanges(new ArrayList<>(List.of(block)))
+                .build();
+
+        String rendered = builder.buildUserMessageWithScores(request, PromptContext.builder().args(new RunArgs()).build()).getMessage();
+        String compact = rendered.replaceAll("\\s", "");
+
+        assertFalse(rendered.contains("BODY_MARKER"), "caller source body must not leak into the prompt");
+        assertTrue(rendered.contains("SIG_MARKER_A"), "caller metadata (signature) must be retained");
+        assertTrue(compact.contains("\"callerCount\":3"), "total caller count must be preserved");
+        assertTrue(compact.contains("\"productionCallerCount\":2"), "production caller count must be preserved");
+        assertEquals("BODY_MARKER_A { doWork(); }", prod.getCallerBody(), "caller body must be restored on the request after prompt building");
+    }
+    @Test
+    void userPromptCapsCallersPerBlockAndStatesOmittedCount() {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+
+        List<CallerInfo> callers = new ArrayList<>();
+        for (int i = 0; i < 80; i++) {
+            callers.add(CallerInfo.builder()
+                    .callerMethod("caller" + i)
+                    .file("pkg/File" + i + ".java")
+                    .line(i)
+                    .isTestCaller(i % 4 == 0)
+                    .signature("Lcom/example/deeply/nested/pkg" + i + "/GenericType" + i + "$Inner" + i
+                            + ";.methodWithLongName" + i + "(Ljava/lang/String;Ljava/util/Map;I)Ljava/util/List; SIG_MARKER")
+                    .kind("function")
+                    .symbol("com.example.deeply.nested.pkg.GenericType" + i + ".methodWithLongName" + i)
+                    .callSiteCount(1)
+                    .callerBody("body of caller " + i)
+                    .build());
+        }
+        CodeBlockChange block = CodeBlockChange.builder()
+                .name("hot").operation(Operation.MODIFY).file("Hot.java")
+                .callers(callers).build();
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder()
+                        .linesAdded(3).linesDeleted(1).totalLinesChanged(4).totalFilesChanged(1).codeBlocksModified(1).build())
+                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                        .path("Hot.java").changeType(FileChangeType.MODIFIED).language("java")
+                        .linesAdded(3).linesDeleted(1).linesJustificationRequired(true).diff("dummy").build())))
+                .codeBlockChanges(new ArrayList<>(List.of(block)))
+                .build();
+
+        RunArgs args = new RunArgs();
+        args.setLlmPromptTokenBudget(1_000_000);
+        args.setLlmMaxCallersPerBlock(5);
+        String rendered = builder.buildUserMessageWithScores(request, PromptContext.builder().args(args).build()).getMessage();
+        String compact = rendered.replaceAll("\\s", "");
+
+        assertEquals(5, countOccurrences(rendered, "SIG_MARKER"), "only the per-block ceiling of callers should be listed in detail");
+        assertTrue(compact.contains("\"omittedCallerCount\":75"), "the number of omitted callers must be stated");
+        assertTrue(compact.contains("\"callerCount\":80"), "true caller count must survive the per-block cap");
+    }
+    @Test
+    void userPromptDescendsCallerCapUnderTokenBudget() {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+
+        List<CallerInfo> callers = new ArrayList<>();
+        for (int i = 0; i < 80; i++) {
+            callers.add(CallerInfo.builder()
+                    .callerMethod("caller" + i)
+                    .file("pkg/File" + i + ".java")
+                    .line(i)
+                    .isTestCaller(false)
+                    .signature("Lcom/example/deeply/nested/pkg" + i + "/GenericType" + i + "$Inner" + i
+                            + ";.methodWithLongName" + i + "(Ljava/lang/String;Ljava/util/Map;I)Ljava/util/List; SIG_MARKER")
+                    .kind("function")
+                    .symbol("com.example.deeply.nested.pkg.GenericType" + i + ".methodWithLongName" + i)
+                    .callSiteCount(1)
+                    .callerBody("body of caller " + i)
+                    .build());
+        }
+        CodeBlockChange block = CodeBlockChange.builder()
+                .name("hot").operation(Operation.MODIFY).file("Hot.java")
+                .callers(callers).build();
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder()
+                        .linesAdded(3).linesDeleted(1).totalLinesChanged(4).totalFilesChanged(1).codeBlocksModified(1).build())
+                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                        .path("Hot.java").changeType(FileChangeType.MODIFIED).language("java")
+                        .linesAdded(3).linesDeleted(1).linesJustificationRequired(true).diff("dummy").build())))
+                .codeBlockChanges(new ArrayList<>(List.of(block)))
+                .build();
+
+        RunArgs args = new RunArgs();
+        args.setLlmPromptTokenBudget(3000);
+        args.setLlmMaxCallersPerBlock(100);
+        String rendered = builder.buildUserMessageWithScores(request, PromptContext.builder().args(args).build()).getMessage();
+
+        int retained = countOccurrences(rendered, "SIG_MARKER");
+        assertTrue(retained >= 1 && retained < 80, "budget guard must descend the caller cap below the ceiling, retained=" + retained);
+        assertTrue(rendered.replaceAll("\\s", "").contains("\"callerCount\":80"), "true caller count must survive the budget descent");
+    }
+    @Test
+    void promptTokenBudgetIsBoundedByConfiguredNumCtx() {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+
+        List<CallerInfo> callers = new ArrayList<>();
+        for (int i = 0; i < 80; i++) {
+            callers.add(CallerInfo.builder()
+                    .callerMethod("caller" + i)
+                    .file("pkg/File" + i + ".java")
+                    .line(i)
+                    .isTestCaller(false)
+                    .signature("Lcom/example/deeply/nested/pkg" + i + "/GenericType" + i + "$Inner" + i
+                            + ";.methodWithLongName" + i + "(Ljava/lang/String;Ljava/util/Map;I)Ljava/util/List; SIG_MARKER")
+                    .kind("function")
+                    .symbol("com.example.deeply.nested.pkg.GenericType" + i + ".methodWithLongName" + i)
+                    .callSiteCount(1)
+                    .callerBody("body of caller " + i)
+                    .build());
+        }
+        CodeBlockChange block = CodeBlockChange.builder()
+                .name("hot").operation(Operation.MODIFY).file("Hot.java")
+                .callers(callers).build();
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder()
+                        .linesAdded(3).linesDeleted(1).totalLinesChanged(4).totalFilesChanged(1).codeBlocksModified(1).build())
+                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                        .path("Hot.java").changeType(FileChangeType.MODIFIED).language("java")
+                        .linesAdded(3).linesDeleted(1).linesJustificationRequired(true).diff("dummy").build())))
+                .codeBlockChanges(new ArrayList<>(List.of(block)))
+                .build();
+
+        /**
+         * leave the token budget at its (large) default and constrain only the context window; the effective
+         * budget must derive from numCtx and still force the caller cap to descend below the ceiling
+         */
+        RunArgs args = new RunArgs();
+        args.setLlmNumCtx(3000 + RunArgs.PROMPT_TOKEN_RESERVE);
+        args.setLlmMaxCallersPerBlock(100);
+        String rendered = builder.buildUserMessageWithScores(request, PromptContext.builder().args(args).build()).getMessage();
+
+        int retained = countOccurrences(rendered, "SIG_MARKER");
+        assertTrue(retained >= 1 && retained < 80, "a lowered numCtx must tighten the effective budget, retained=" + retained);
+    }
+    @Test
+    void windowSmallerThanReserveTrimsAllCallers() {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+
+        List<CallerInfo> callers = new ArrayList<>();
+        for (int i = 0; i < 80; i++) {
+            callers.add(CallerInfo.builder()
+                    .callerMethod("caller" + i)
+                    .file("pkg/File" + i + ".java")
+                    .line(i)
+                    .isTestCaller(false)
+                    .signature("Lcom/example/pkg" + i + "/Type" + i + ";.method" + i + "()V SIG_MARKER")
+                    .kind("function")
+                    .symbol("com.example.pkg.Type" + i + ".method" + i)
+                    .callSiteCount(1)
+                    .callerBody("body of caller " + i)
+                    .build());
+        }
+        CodeBlockChange block = CodeBlockChange.builder()
+                .name("hot").operation(Operation.MODIFY).file("Hot.java")
+                .callers(callers).build();
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder()
+                        .linesAdded(3).linesDeleted(1).totalLinesChanged(4).totalFilesChanged(1).codeBlocksModified(1).build())
+                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                        .path("Hot.java").changeType(FileChangeType.MODIFIED).language("java")
+                        .linesAdded(3).linesDeleted(1).linesJustificationRequired(true).diff("dummy").build())))
+                .codeBlockChanges(new ArrayList<>(List.of(block)))
+                .build();
+
+        /**
+         * a 32K window is smaller than the reserve, so the effective budget clamps to 0; the guard must still
+         * trim every caller rather than leave a negative budget that lists them all
+         */
+        RunArgs args = new RunArgs();
+        args.setLlmNumCtx(32 * 1024);
+        args.setLlmMaxCallersPerBlock(100);
+        String rendered = builder.buildUserMessageWithScores(request, PromptContext.builder().args(args).build()).getMessage();
+
+        assertEquals(0, countOccurrences(rendered, "SIG_MARKER"), "a window at or below the reserve must trim all callers");
     }
     @Test
     void userPromptGroundsChangedLineCoverageAndCpdSplit() {
@@ -292,6 +496,15 @@ class PromptTemplateSmokeTest {
         assertTrue(rendered.contains("281, 282"), "offending numbers missing from feedback");
         assertTrue(rendered.contains("288, 290, 292"), "valid numbers missing from feedback");
         assertTrue(rendered.contains("+N|"), "feedback must point the model at the number prefixes");
+    }
+    private static int countOccurrences(String haystack, String needle) {
+        int count = 0;
+        int idx = haystack.indexOf(needle);
+        while (idx >= 0) {
+            count++;
+            idx = haystack.indexOf(needle, idx + needle.length());
+        }
+        return count;
     }
     private static String findBulletFor(String rendered, String filePath) {
         return rendered.lines()

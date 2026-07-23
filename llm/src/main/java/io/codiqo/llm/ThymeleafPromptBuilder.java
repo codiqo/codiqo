@@ -1,5 +1,7 @@
 package io.codiqo.llm;
 
+import static java.util.function.Predicate.not;
+
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
@@ -40,6 +42,16 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private static final String TEMPLATE_WEB_SEARCH_RESULTS = "web-search-results";
     private static final String TEMPLATE_PRE_COMPUTED_SCORES = "pre-computed-scores";
     private static final String TEMPLATE_VALIDATION_FEEDBACK = "validation-feedback";
+
+    /**
+     * Retain the highest-signal callers first when trimming to fit the token budget:
+     * production before test, higher call-site coupling before lower, non-deprecated before deprecated.
+     */
+    private static final Comparator<LlmScoringRequest.CallerInfo> CALLER_PRIORITY =
+            Comparator.comparing(LlmScoringRequest.CallerInfo::isTestCaller)
+                    .thenComparing(Comparator.comparingInt(LlmScoringRequest.CallerInfo::getCallSiteCount).reversed())
+                    .thenComparing(LlmScoringRequest.CallerInfo::isDeprecated);
+
     private static final TemplateEngine TEMPLATE_ENGINE;
     private static final ObjectMapper MAPPER;
     static {
@@ -89,11 +101,13 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
 
         Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> savedSlices = stripSourceSlices(request);
         Map<LlmScoringRequest.FileChange, String> savedDiffs = annotateDiffs(request);
-        String requestJson = MAPPER.writeValueAsString(request);
+        Map<LlmScoringRequest.CallerInfo, String> savedCallerBodies = stripCallerBodies(request);
+        BudgetedRequest budgeted = enforceCallerBudget(context.getArgs(), request);
+        restoreCallerBodies(savedCallerBodies);
         restoreDiffs(savedDiffs);
         restoreSourceSlices(savedSlices);
 
-        ctx.setVariable("requestJson", requestJson);
+        ctx.setVariable("requestJson", budgeted.json());
         ctx.setVariable("moveCandidates", movedLineDetector.detect(request));
 
         PreComputedScores preComputedScores = volumeCalculator.calculate(
@@ -104,14 +118,14 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
                 context.getMethodCapQuantileTest(),
                 context.getConstructorCapQuantileProd(),
                 context.getConstructorCapQuantileTest());
-        logPromptMetrics(context.getArgs().getLlmModel(), request, preComputedScores, requestJson);
+        logPromptMetrics(context.getArgs().getLlmModel(), request, preComputedScores, budgeted.json(), budgeted.tokens());
         ctx.setVariable("preComputedScores", preComputedScores);
         ctx.setVariable("preComputedScoresSection", buildPreComputedScoresSection(preComputedScores));
 
         String message = TEMPLATE_ENGINE.process(TEMPLATE_USER_PROMPT, ctx);
         return new UserMessageResult(message, preComputedScores);
     }
-    private void logPromptMetrics(String model, LlmScoringRequest request, PreComputedScores scores, String requestJson) {
+    private void logPromptMetrics(String model, LlmScoringRequest request, PreComputedScores scores, String requestJson, int requestTokens) {
         for (;;) {
             try {
                 LlmScoringRequest.ChangeSummary cs = request.getChangeSummary();
@@ -121,7 +135,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
                         cs.getTotalLinesChanged(),
                         scores.getTotalEffectiveStatements(),
                         requestJson.length(),
-                        estimateTokens(model, requestJson));
+                        requestTokens);
 
                 if (CollectionUtils.isEmpty(request.getFileChanges())) {
                     return;
@@ -179,6 +193,119 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     }
     private static void restoreSourceSlices(Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> saved) {
         saved.forEach(LlmScoringRequest.DuplicationInfo.CloneLocation::setSourceSlice);
+    }
+    private BudgetedRequest enforceCallerBudget(RunArgs args, LlmScoringRequest request) throws IOException {
+        Map<LlmScoringRequest.CodeBlockChange, List<LlmScoringRequest.CallerInfo>> originals = snapshotCallerLists(request);
+        int ceiling = args.getLlmMaxCallersPerBlock();
+        applyCallerCap(request, ceiling, originals);
+        String requestJson = MAPPER.writeValueAsString(request);
+
+        String model = args.getLlmModel();
+        int budget = effectivePromptTokenBudget(args);
+        int tokens = estimateTokens(model, requestJson);
+        if (tokens > budget) {
+            int appliedCap = ceiling;
+            for (int cap : fibonacciDescentCaps(ceiling)) {
+                applyCallerCap(request, cap, originals);
+                requestJson = MAPPER.writeValueAsString(request);
+                tokens = estimateTokens(model, requestJson);
+                appliedCap = cap;
+                if (tokens <= budget) {
+                    break;
+                }
+            }
+            if (tokens > budget) {
+                log.warn("prompt still over budget (%d > %d tokens) after capping callers to %d per block; "
+                        + "the diff dominates the prompt and the request may be rejected by the model", tokens, budget, appliedCap);
+            } else {
+                log.info("prompt over budget; capped callers to %d per block (~%d tokens)", appliedCap, tokens);
+            }
+        }
+
+        restoreCallerLists(originals);
+        return new BudgetedRequest(requestJson, tokens);
+    }
+    private static int effectivePromptTokenBudget(RunArgs args) {
+        int numCtx = Optional.ofNullable(args.getLlmNumCtx()).orElse(RunArgs.DEFAULT_NUM_CTX);
+        // a window at or below the reserve cannot fit any request; clamp to 0 so callers are fully trimmed rather than leaving a negative budget
+        return Math.max(0, Math.min(args.getLlmPromptTokenBudget(), numCtx - RunArgs.PROMPT_TOKEN_RESERVE));
+    }
+    /**
+     * Per-block caller caps to try when the prompt is over budget, descending along the Fibonacci
+     * sequence from just below the already-applied ceiling down to 0. The ~1.618 ratio between steps
+     * over-trims less than halving would when landing on the largest caller set that still fits the
+     * budget. Accumulates in long so an extreme ceiling cannot overflow the sequence into a negative cap.
+     */
+    private static List<Integer> fibonacciDescentCaps(int ceiling) {
+        List<Integer> caps = new ArrayList<>();
+        long a = 1;
+        long b = 2;
+        while (a < ceiling) {
+            caps.add((int) a);
+            long next = a + b;
+            a = b;
+            b = next;
+        }
+        Collections.reverse(caps);
+        caps.add(0);
+        return caps;
+    }
+    private static Map<LlmScoringRequest.CallerInfo, String> stripCallerBodies(LlmScoringRequest request) {
+        Map<LlmScoringRequest.CallerInfo, String> saved = new IdentityHashMap<>();
+        if (CollectionUtils.isNotEmpty(request.getCodeBlockChanges())) {
+            for (LlmScoringRequest.CodeBlockChange block : request.getCodeBlockChanges()) {
+                if (CollectionUtils.isNotEmpty(block.getCallers())) {
+                    for (LlmScoringRequest.CallerInfo caller : block.getCallers()) {
+                        if (Objects.nonNull(caller.getCallerBody())) {
+                            saved.put(caller, caller.getCallerBody());
+                            caller.setCallerBody(null);
+                        }
+                    }
+                }
+            }
+        }
+        return saved;
+    }
+    private static void restoreCallerBodies(Map<LlmScoringRequest.CallerInfo, String> saved) {
+        saved.forEach(LlmScoringRequest.CallerInfo::setCallerBody);
+    }
+    private static Map<LlmScoringRequest.CodeBlockChange, List<LlmScoringRequest.CallerInfo>> snapshotCallerLists(LlmScoringRequest request) {
+        Map<LlmScoringRequest.CodeBlockChange, List<LlmScoringRequest.CallerInfo>> saved = new IdentityHashMap<>();
+        if (CollectionUtils.isNotEmpty(request.getCodeBlockChanges())) {
+            for (LlmScoringRequest.CodeBlockChange block : request.getCodeBlockChanges()) {
+                if (CollectionUtils.isNotEmpty(block.getCallers())) {
+                    saved.put(block, block.getCallers());
+                }
+            }
+        }
+        return saved;
+    }
+    private static void applyCallerCap(LlmScoringRequest request, int cap, Map<LlmScoringRequest.CodeBlockChange, List<LlmScoringRequest.CallerInfo>> originals) {
+        originals.forEach((block, full) -> {
+            if (full.size() <= cap) {
+                block.setCallers(full);
+                block.setOmittedCallerCount(0);
+                block.setOmittedProductionCallerCount(0);
+                return;
+            }
+
+            List<LlmScoringRequest.CallerInfo> ranked = new ArrayList<>(full);
+            ranked.sort(CALLER_PRIORITY);
+            List<LlmScoringRequest.CallerInfo> kept = new ArrayList<>(ranked.subList(0, cap));
+            long fullProduction = full.stream().filter(not(LlmScoringRequest.CallerInfo::isTestCaller)).count();
+            long keptProduction = kept.stream().filter(not(LlmScoringRequest.CallerInfo::isTestCaller)).count();
+
+            block.setCallers(kept);
+            block.setOmittedCallerCount(full.size() - cap);
+            block.setOmittedProductionCallerCount((int) (fullProduction - keptProduction));
+        });
+    }
+    private static void restoreCallerLists(Map<LlmScoringRequest.CodeBlockChange, List<LlmScoringRequest.CallerInfo>> originals) {
+        originals.forEach((block, full) -> {
+            block.setCallers(full);
+            block.setOmittedCallerCount(0);
+            block.setOmittedProductionCallerCount(0);
+        });
     }
     private static Map<LlmScoringRequest.FileChange, String> annotateDiffs(LlmScoringRequest request) {
         Map<LlmScoringRequest.FileChange, String> saved = new IdentityHashMap<>();
@@ -276,5 +403,8 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         String path;
         int tokens;
         int linesChanged;
+    }
+
+    private record BudgetedRequest(String json, int tokens) {
     }
 }
