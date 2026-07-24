@@ -14,6 +14,7 @@ import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.math3.util.Precision;
 import org.slf4j.event.Level;
@@ -178,7 +179,7 @@ public class FinalScoreCalculator {
     }
     private DiffAdjustment computeDiffAdjustment(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
         PerFileResult perFile = computePerFileFactors(response, request);
-        Map<String, Double> perBlockCoeff = buildPerBlockCoeff(response);
+        Map<String, Double> perBlockCoeff = buildPerBlockCoeff(response, preComputed, request);
         Map<String, Double> perBlockMovedFactor = buildPerBlockMovedFactor(response, preComputed, request);
 
         if (perFile.getFactors().isEmpty() && perBlockCoeff.isEmpty() && perBlockMovedFactor.isEmpty()) {
@@ -263,13 +264,40 @@ public class FinalScoreCalculator {
         }
         return toReturn;
     }
-    private Map<String, Double> buildPerBlockCoeff(LlmScoringResponse response) {
+    /**
+     * Explicit LLM categories are authoritative. Any NEW code unit the LLM left uncategorized falls
+     * back to the MECHANICAL coefficient rather than the neutral 1.0: omission means the model did not
+     * judge the unit worth promoting above trivial. A MODIFY unit's trivial churn is already collapsed
+     * line-by-line (in-place / true-modify pairing), which pure additions cannot be, so the category is
+     * a NEW unit's main triviality signal; the per-file cosmetic / wrapped-continuation factor still
+     * applies to both operations. MODIFY and config units keep the neutral default. The floor is
+     * skipped for degraded (build-failure) analyses, where the prompt instructs the LLM to emit no
+     * categories at all — flooring there would discount parsed NEW files while unparsed synthetic ones
+     * (blank signature) stayed neutral. Signature-less blocks are not LLM-categorizable and are skipped.
+     */
+    private Map<String, Double> buildPerBlockCoeff(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
         Map<String, Double> toReturn = new HashMap<>();
         for (CodeBlockCategoryView view : CollectionUtils.emptyIfNull(response.getBlockCategories())) {
             if (Objects.isNull(view.getCategory()) || StringUtils.isBlank(view.getSignature())) {
                 continue;
             }
             toReturn.put(VolumeScoreCalculator.blockKey(view.getFile(), view.getSignature()), categoryCoeff(view.getCategory()));
+        }
+
+        boolean degraded = Objects.nonNull(request) && Objects.nonNull(request.getBuildFailure());
+        if (degraded) {
+            return toReturn;
+        }
+
+        double mechanicalCoeff = args.getCategoryMechanicalCoeff();
+        for (CodeBlockEffort cbe : preComputed.getCodeBlockEfforts()) {
+            if (BooleanUtils.or(new boolean[] {
+                    cbe.getOperation() != LlmScoringRequest.Operation.NEW,
+                    cbe.isConfig(),
+                    StringUtils.isBlank(cbe.getSignature()) })) {
+                continue;
+            }
+            toReturn.putIfAbsent(VolumeScoreCalculator.blockKey(cbe.getFile(), cbe.getSignature()), mechanicalCoeff);
         }
         return toReturn;
     }

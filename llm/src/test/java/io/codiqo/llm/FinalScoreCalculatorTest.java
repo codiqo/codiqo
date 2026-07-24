@@ -223,6 +223,58 @@ class FinalScoreCalculatorTest {
     }
 
     @Test
+    void omittedNewBlockDefaultsToMechanical() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
+
+        // NEW block the LLM returned no category for at all
+        LlmScoringResponse response = new LlmScoringResponse();
+        calculator.apply(response, scoresWithFileEffort("Foo.java", 100.0, Operation.NEW), null);
+
+        double expected = Math.round(Math.pow(100.0 * args.getCategoryMechanicalCoeff(), args.getVolumeExponent()));
+        assertEquals(expected, response.getScore(), 0.001,
+                "an uncategorized NEW block must fall back to the mechanical coefficient, not neutral 1.0");
+    }
+    @Test
+    void explicitCategoryOverridesOmittedNewDefault() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
+
+        LlmScoringResponse response = new LlmScoringResponse();
+        response.setBlockCategories(List.of(CodeBlockCategoryView.builder()
+                .file("Foo.java").signature("doStuff()").category(CodeBlockCategory.SUBSTANTIVE).build()));
+        calculator.apply(response, scoresWithFileEffort("Foo.java", 100.0, Operation.NEW), null);
+
+        double expected = Math.round(Math.pow(100.0 * args.getCategorySubstantiveCoeff(), args.getVolumeExponent()));
+        assertEquals(expected, response.getScore(), 0.001,
+                "an explicit SUBSTANTIVE label must win over the omitted-NEW mechanical default");
+    }
+    @Test
+    void omittedModifyBlockStaysNeutral() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
+
+        // the mechanical floor is NEW-only: an uncategorized MODIFY block keeps neutral 1.0 effort
+        LlmScoringResponse response = new LlmScoringResponse();
+        calculator.apply(response, scoresWithFileEffort("Foo.java", 100.0, Operation.MODIFY), null);
+
+        assertEquals(100.0, response.getScore(), 0.001,
+                "an uncategorized MODIFY block is untouched by the NEW-only mechanical floor");
+    }
+    @Test
+    void degradedModeSkipsMechanicalFloorForNewBlocks() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
+
+        // a build-failure analysis instructs the LLM to emit no categories, so flooring parsed NEW
+        // blocks would invert scoring against unparsed synthetic files — the floor must not apply
+        LlmScoringResponse response = new LlmScoringResponse();
+        calculator.apply(response, scoresWithFileEffort("Foo.java", 100.0, Operation.NEW), degradedRequest());
+
+        assertEquals(100.0, response.getScore(), 0.001,
+                "a NEW block in degraded mode keeps the neutral 1.0 default — the mechanical floor is skipped");
+    }
+    @Test
     void allCosmeticClassificationDropsBlockEffortToZero() {
         RunArgs args = new RunArgs();
         FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
@@ -326,6 +378,9 @@ class FinalScoreCalculatorTest {
                 .pureAdd(list(1, 2, 3, 4, 5, 6, 7, 8, 9, 10))
                 .build();
         LlmScoringResponse response = responseWithClassification(fileDiff);
+        // explicit ROUTINE isolates the pure-add factor from the uncategorized-NEW mechanical floor
+        response.setBlockCategories(List.of(CodeBlockCategoryView.builder()
+                .file("Foo.java").signature("doStuff()").category(CodeBlockCategory.ROUTINE).build()));
 
         calculator.apply(response, preComputed, request);
 
@@ -348,12 +403,38 @@ class FinalScoreCalculatorTest {
                 .pureAdd(list(5, 6, 7, 8, 9, 10))
                 .build();
         LlmScoringResponse response = responseWithClassification(fileDiff);
+        // explicit ROUTINE isolates the pure-add factor from the uncategorized-NEW mechanical floor
+        response.setBlockCategories(List.of(CodeBlockCategoryView.builder()
+                .file("Foo.java").signature("doStuff()").category(CodeBlockCategory.ROUTINE).build()));
 
         calculator.apply(response, preComputed, request);
 
         LlmScoringResponse.VolumeScore vs = response.getEffortBreakdown().getVolumeScore();
         assertEquals(60.0, vs.getBlockEffortSum(), 0.01,
                 "4 cosmetic + 6 pureAdd / 10 raw → factor 0.6");
+        assertEquals(6, vs.getLinesChangedAdjusted());
+        assertEquals(4, vs.getCosmeticLinesDropped());
+    }
+    @Test
+    void uncategorizedNewBlockStacksPerFileFactorWithMechanicalFloor() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
+        PreComputedScores preComputed = scoresWithFileEffort("Foo.java", 100.0, Operation.NEW);
+        LlmScoringRequest request = requestWithFileChange("Foo.java", /*added*/ 10, /*deleted*/ 0);
+        // no blockCategories: the uncategorized NEW block is floored to mechanical (0.7) AND scaled
+        // by the per-file factor (0.6) — the two discounts must stack multiplicatively in recompute
+        FileDiffClassification fileDiff = FileDiffClassification.builder()
+                .file("Foo.java")
+                .cosmeticAdded(list(1, 2, 3, 4))
+                .pureAdd(list(5, 6, 7, 8, 9, 10))
+                .build();
+        LlmScoringResponse response = responseWithClassification(fileDiff);
+
+        calculator.apply(response, preComputed, request);
+
+        LlmScoringResponse.VolumeScore vs = response.getEffortBreakdown().getVolumeScore();
+        assertEquals(100.0 * 0.6 * args.getCategoryMechanicalCoeff(), vs.getBlockEffortSum(), 0.01,
+                "per-file factor 0.6 × mechanical floor 0.7 → 100 × 0.42 = 42");
         assertEquals(6, vs.getLinesChangedAdjusted());
         assertEquals(4, vs.getCosmeticLinesDropped());
     }
@@ -844,6 +925,9 @@ class FinalScoreCalculatorTest {
         LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
         LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
         response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M1")));
+        // explicit ROUTINE on the NEW destination isolates the moved-invocation discount from the mechanical floor
+        response.setBlockCategories(List.of(CodeBlockCategoryView.builder()
+                .file("Foo.java").signature("destination()").category(CodeBlockCategory.ROUTINE).build()));
 
         calculator.apply(response, preComputed, request);
 
