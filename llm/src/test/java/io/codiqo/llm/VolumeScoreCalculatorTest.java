@@ -44,7 +44,7 @@ class VolumeScoreCalculatorTest {
                 scaler, scaler, scaler, scaler,
                 /*methodCapQProd*/ 10, /*methodCapQTest*/ 100,
                 /*ctorCapQProd*/ 0, /*ctorCapQTest*/ 0,
-                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP);
+                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP, false);
 
         assertEquals(1, efforts.size());
         assertEquals(10.0, efforts.get(0).getBucketBaseline(), 0.01,
@@ -60,7 +60,7 @@ class VolumeScoreCalculatorTest {
                 scaler, scaler, scaler, scaler,
                 /*methodCapQProd*/ 10, /*methodCapQTest*/ 20,
                 /*ctorCapQProd*/ 0, /*ctorCapQTest*/ 0,
-                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP);
+                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP, false);
 
         assertEquals(20 * TEST_MULT, efforts.get(0).getBucketBaseline(), 0.01,
                 "test block must contribute test quantile (20) × addMult × testCodeScoreMultiplier (0.4) to the baseline budget");
@@ -75,7 +75,7 @@ class VolumeScoreCalculatorTest {
                 List.of(prodBlock, testBlock),
                 scaler, scaler, scaler, scaler,
                 10, 20, 0, 0,
-                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP);
+                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP, false);
 
         CodeBlockEffort prodEffort = efforts.stream().filter(not(CodeBlockEffort::isTest)).findFirst().orElseThrow();
         CodeBlockEffort testEffort = efforts.stream().filter(CodeBlockEffort::isTest).findFirst().orElseThrow();
@@ -106,7 +106,7 @@ class VolumeScoreCalculatorTest {
                 scaler, scaler, scaler, scaler,
                 /*methodCapQProd*/ 100, /*methodCapQTest*/ 100,
                 /*ctorCapQProd*/ 5, /*ctorCapQTest*/ 100,
-                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP);
+                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP, false);
 
         assertEquals(5.0, efforts.get(0).getBucketBaseline(), 0.01,
                 "ctor block must use ctor/prod quantile (5), not method/prod (100)");
@@ -121,7 +121,7 @@ class VolumeScoreCalculatorTest {
                 scaler, scaler, scaler, scaler,
                 /*methodCapQProd*/ 10, /*methodCapQTest*/ 0,
                 /*ctorCapQProd*/ 0, /*ctorCapQTest*/ 0,
-                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP);
+                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP, false);
 
         assertEquals(10 * TEST_MULT, efforts.get(0).getBucketBaseline(), 0.01,
                 "with no test samples, test block must fall back to prod quantile (10) × testWeight (0.4)");
@@ -135,7 +135,7 @@ class VolumeScoreCalculatorTest {
                 List.of(prodBlock),
                 scaler, scaler, scaler, scaler,
                 /*tiny prod quantile to "cap" if the per-block cap were still in effect*/ 5, 0, 0, 0,
-                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP);
+                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP, false);
 
         CodeBlockEffort effort = efforts.get(0);
         assertEquals((int) Math.round(effort.getDriverScore()), effort.getCappedStatements(),
@@ -151,7 +151,7 @@ class VolumeScoreCalculatorTest {
                 List.of(newBlock),
                 DriverScaler.EMPTY, DriverScaler.EMPTY, DriverScaler.EMPTY, DriverScaler.EMPTY,
                 0, 0, 0, 0,
-                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP);
+                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP, true);
 
         CodeBlockEffort effort = efforts.get(0);
         assertEquals(40.0, effort.getDriverScore(), 0.001,
@@ -174,7 +174,7 @@ class VolumeScoreCalculatorTest {
                 List.of(modifyBlock),
                 DriverScaler.EMPTY, DriverScaler.EMPTY, DriverScaler.EMPTY, DriverScaler.EMPTY,
                 0, 0, 0, 0,
-                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP);
+                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP, true);
 
         CodeBlockEffort effort = efforts.get(0);
         assertEquals(12.0, effort.getDriverScore(), 0.001,
@@ -196,6 +196,7 @@ class VolumeScoreCalculatorTest {
         LlmScoringRequest request = LlmScoringRequest.builder()
                 .changeSummary(ChangeSummary.builder().totalFilesChanged(1).build())
                 .codeBlockChanges(List.of(modifyBlock))
+                .buildFailure(LlmScoringRequest.BuildFailureInfo.builder().reason("COMPILATION ERROR").category("build_failure").build())
                 .methodScalerProd(DriverScaler.EMPTY).methodScalerTest(DriverScaler.EMPTY)
                 .constructorScalerProd(DriverScaler.EMPTY).constructorScalerTest(DriverScaler.EMPTY)
                 .build();
@@ -206,6 +207,181 @@ class VolumeScoreCalculatorTest {
                 "a modify-only commit under degraded scoring must no longer collapse to zero block effort");
         assertTrue(scores.getBaseEffort() > 0.0,
                 "degraded modify-only commit must earn positive base effort (regression guard for the zero-credit bug)");
+    }
+    @Test
+    void degradedDiffOnlyModifiedSourceFilePricesByLineCount() {
+        FileChange modified = FileChange.builder().path("Service.java")
+                .changeType(LlmScoringRequest.FileChangeType.MODIFIED)
+                .isConfig(false).language("java").linesAdded(30).linesDeleted(10).build();
+
+        List<CodeBlockEffort> efforts = VolumeScoreCalculator.calculateDegradedSourceFileEfforts(
+                List.of(modified), Set.of(), ADD_MULT, MODIFY_MULT, TEST_MULT);
+
+        CodeBlockEffort effort = efforts.get(0);
+        assertEquals(40.0, effort.getDriverScore(), 0.001, "driverScore = linesAdded + linesDeleted");
+        assertEquals(40.0 * MODIFY_MULT, effort.getEffort(), 0.001, "modified source effort = rawLines × modifyMult, no config discount");
+        assertEquals(Operation.MODIFY, effort.getOperation());
+        assertFalse(effort.isConfig(), "a source-file fallback block is real code, not config");
+    }
+    @Test
+    void degradedDiffOnlyNewSourceFileUsesAddMultiplierAndNewOperation() {
+        FileChange added = FileChange.builder().path("New.java")
+                .changeType(LlmScoringRequest.FileChangeType.ADDED)
+                .isConfig(false).language("java").linesAdded(25).linesDeleted(0).build();
+
+        List<CodeBlockEffort> efforts = VolumeScoreCalculator.calculateDegradedSourceFileEfforts(
+                List.of(added), Set.of(), ADD_MULT, MODIFY_MULT, TEST_MULT);
+
+        CodeBlockEffort effort = efforts.get(0);
+        assertEquals(25.0 * ADD_MULT, effort.getEffort(), 0.001, "a new source file is priced with the add multiplier");
+        assertEquals(Operation.NEW, effort.getOperation());
+    }
+    @Test
+    void degradedDiffOnlyTestSourceFileGetsTestDiscount() {
+        FileChange testFile = FileChange.builder().path("ServiceTest.java")
+                .changeType(LlmScoringRequest.FileChangeType.MODIFIED)
+                .isConfig(false).isTest(true).language("java").linesAdded(20).linesDeleted(0).build();
+
+        List<CodeBlockEffort> efforts = VolumeScoreCalculator.calculateDegradedSourceFileEfforts(
+                List.of(testFile), Set.of(), ADD_MULT, MODIFY_MULT, TEST_MULT);
+
+        assertEquals(20.0 * MODIFY_MULT * TEST_MULT, efforts.get(0).getEffort(), 0.001,
+                "test source file fallback effort is discounted by the test multiplier");
+    }
+    @Test
+    void degradedDiffOnlyIgnoresNonSourceAndPureDeletionFiles() {
+        FileChange docs = FileChange.builder().path("README.md")
+                .changeType(LlmScoringRequest.FileChangeType.MODIFIED)
+                .isConfig(false).language("markdown").linesAdded(50).linesDeleted(0).build();
+        FileChange pureDeletion = FileChange.builder().path("Old.java")
+                .changeType(LlmScoringRequest.FileChangeType.MODIFIED)
+                .isConfig(false).language("java").linesAdded(0).linesDeleted(30).build();
+
+        List<CodeBlockEffort> efforts = VolumeScoreCalculator.calculateDegradedSourceFileEfforts(
+                List.of(docs, pureDeletion), Set.of(), ADD_MULT, MODIFY_MULT, TEST_MULT);
+
+        assertTrue(efforts.isEmpty(),
+                "non-structured files earn nothing and pure deletions are left to the deletion-reward path");
+    }
+    @Test
+    void degradedDiffOnlyCommitWithNoCodeBlocksEarnsPositiveBaseEffort() {
+        FileChange java = FileChange.builder().path("Service.java")
+                .changeType(LlmScoringRequest.FileChangeType.MODIFIED)
+                .isConfig(false).language("java").linesAdded(30).linesDeleted(10).build();
+
+        PreComputedScores scores = new VolumeScoreCalculator(neutralMultiplierArgs())
+                .calculate(degradedDiffOnlyRequest(1, List.of(java)), 1000, 100, 0, 0, 0, 0);
+
+        assertEquals(40.0, scores.getBlockEffortSum(), 0.001,
+                "diff-only degraded source file must earn line-count effort instead of collapsing to zero");
+        assertTrue(scores.getBaseEffort() > 0.0,
+                "regression guard for degraded commits scoring zero when the source index falls back to diff-only");
+    }
+    @Test
+    void sourceFileFallbackIsSuppressedWithoutBuildFailure() {
+        FileChange java = FileChange.builder().path("Service.java")
+                .changeType(LlmScoringRequest.FileChangeType.MODIFIED)
+                .isConfig(false).language("java").linesAdded(30).linesDeleted(10).build();
+        LlmScoringRequest normal = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder().totalFilesChanged(1).build())
+                .codeBlockChanges(List.of())
+                .fileChanges(List.of(java))
+                .methodScalerProd(DriverScaler.EMPTY).methodScalerTest(DriverScaler.EMPTY)
+                .constructorScalerProd(DriverScaler.EMPTY).constructorScalerTest(DriverScaler.EMPTY)
+                .build();
+
+        PreComputedScores scores = new VolumeScoreCalculator(neutralMultiplierArgs())
+                .calculate(normal, 1000, 100, 0, 0, 0, 0);
+
+        assertEquals(0.0, scores.getBlockEffortSum(), 0.001,
+                "the source-file fallback must not change normal (non-degraded) scoring");
+    }
+    @Test
+    void degradedFallbackPricesUnparsedFilesButNotFilesThatYieldedBlocks() {
+        FileChange parsed = FileChange.builder().path("Foo.java")
+                .changeType(LlmScoringRequest.FileChangeType.MODIFIED)
+                .isConfig(false).language("java").linesAdded(30).linesDeleted(10).build();
+        FileChange unparsed = FileChange.builder().path("Bar.java")
+                .changeType(LlmScoringRequest.FileChangeType.MODIFIED)
+                .isConfig(false).language("java").linesAdded(20).linesDeleted(0).build();
+        LlmScoringRequest partial = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder().totalFilesChanged(2).build())
+                .codeBlockChanges(List.of(newMethodBlock(40, 40, 40, false)))
+                .fileChanges(List.of(parsed, unparsed))
+                .buildFailure(LlmScoringRequest.BuildFailureInfo.builder().reason("COMPILATION ERROR").category("build_failure").build())
+                .methodScalerProd(DriverScaler.EMPTY).methodScalerTest(DriverScaler.EMPTY)
+                .constructorScalerProd(DriverScaler.EMPTY).constructorScalerTest(DriverScaler.EMPTY)
+                .build();
+
+        PreComputedScores scores = new VolumeScoreCalculator(neutralMultiplierArgs())
+                .calculate(partial, 1000, 100, 0, 0, 0, 0);
+
+        long fooBlocks = scores.getCodeBlockEfforts().stream().filter(e -> e.getFile().equals("Foo.java")).count();
+        long barBlocks = scores.getCodeBlockEfforts().stream().filter(e -> e.getFile().equals("Bar.java")).count();
+        assertEquals(1L, fooBlocks,
+                "a file that produced a code block must not also get a file-level fallback block (no double count)");
+        assertEquals(1L, barBlocks,
+                "a degraded file the source index failed to parse must still earn a line-count fallback block");
+    }
+    @Test
+    void degradedPureDeletionCommitEarnsPositiveBaseEffortViaDeletionPath() {
+        FileChange deletion = FileChange.builder().path("Gone.java")
+                .changeType(LlmScoringRequest.FileChangeType.MODIFIED)
+                .isConfig(false).language("java").linesJustificationRequired(true)
+                .linesAdded(0).linesDeleted(60).build();
+
+        PreComputedScores scores = new VolumeScoreCalculator(neutralMultiplierArgs())
+                .calculate(degradedDiffOnlyRequest(1, List.of(deletion)), 1000, 100, 0, 0, 0, 0);
+
+        assertTrue(scores.getBlockEffortSum() > 0.0,
+                "a degraded commit that only deletes lines must earn the fractional deletion reward, not collapse to zero");
+    }
+    @Test
+    void degradedConfigAndSourceFilesAreEachPricedOnce() {
+        FileChange pom = FileChange.builder().path("pom.xml")
+                .changeType(LlmScoringRequest.FileChangeType.MODIFIED)
+                .isConfig(true).linesAdded(10).linesDeleted(4).build();
+        FileChange java = FileChange.builder().path("Service.java")
+                .changeType(LlmScoringRequest.FileChangeType.MODIFIED)
+                .isConfig(false).language("java").linesAdded(30).linesDeleted(10).build();
+
+        PreComputedScores scores = new VolumeScoreCalculator(neutralMultiplierArgs())
+                .calculate(degradedDiffOnlyRequest(2, List.of(pom, java)), 1000, 100, 0, 0, 0, 0);
+
+        CodeBlockEffort pomEffort = scores.getCodeBlockEfforts().stream()
+                .filter(e -> e.getFile().equals("pom.xml")).findFirst().orElseThrow();
+        CodeBlockEffort javaEffort = scores.getCodeBlockEfforts().stream()
+                .filter(e -> e.getFile().equals("Service.java")).findFirst().orElseThrow();
+
+        assertEquals(1L, scores.getCodeBlockEfforts().stream().filter(e -> e.getFile().equals("Service.java")).count(),
+                "the source file is priced once by the degraded fallback, never also as config");
+        assertTrue(pomEffort.isConfig(), "the pom stays config-classified");
+        assertFalse(javaEffort.isConfig(), "the source file counts as real code, not config");
+        assertTrue(javaEffort.getEffort() > pomEffort.getEffort(),
+                "code earns full line weight while config keeps its discount");
+    }
+    @Test
+    void emptyScalerBlockScoresZeroOutsideDegradedMode() {
+        CodeBlockChange newBlock = newMethodBlock(40, 40, 40, false);
+
+        List<CodeBlockEffort> efforts = VolumeScoreCalculator.calculateCodeBlockEfforts(
+                List.of(newBlock),
+                DriverScaler.EMPTY, DriverScaler.EMPTY, DriverScaler.EMPTY, DriverScaler.EMPTY,
+                0, 0, 0, 0,
+                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP, /*degraded*/ false);
+
+        assertEquals(0.0, efforts.get(0).getDriverScore(), 0.001,
+                "outside degraded mode an empty scaler keeps the statistical model's zero, not a line-count fallback");
+    }
+    private static LlmScoringRequest degradedDiffOnlyRequest(int filesChanged, List<FileChange> files) {
+        return LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder().totalFilesChanged(filesChanged).build())
+                .codeBlockChanges(List.of())
+                .fileChanges(files)
+                .buildFailure(LlmScoringRequest.BuildFailureInfo.builder().reason("COMPILATION ERROR").category("build_failure").build())
+                .methodScalerProd(DriverScaler.EMPTY).methodScalerTest(DriverScaler.EMPTY)
+                .constructorScalerProd(DriverScaler.EMPTY).constructorScalerTest(DriverScaler.EMPTY)
+                .build();
     }
     @Test
     void globalCapClipsTotalEffortWhenSumExceedsBudget() {
@@ -367,7 +543,7 @@ class VolumeScoreCalculatorTest {
                 List.of(prod, test),
                 scaler, scaler, scaler, scaler,
                 0, 0, 0, 0,
-                1.0, 1.0, args.getTestCodeScoreMultiplier(), args.getDriverFactorMaxDeviation());
+                1.0, 1.0, args.getTestCodeScoreMultiplier(), args.getDriverFactorMaxDeviation(), false);
 
         double prodEffort = efforts.stream().filter(not(CodeBlockEffort::isTest)).findFirst().orElseThrow().getEffort();
         double testEffort = efforts.stream().filter(CodeBlockEffort::isTest).findFirst().orElseThrow().getEffort();
@@ -426,11 +602,11 @@ class VolumeScoreCalculatorTest {
         double weight = 0.2;
 
         double deleteEffort = VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
-                List.of(deletionOnlyFile(40, false)), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, weight)
+                List.of(deletionOnlyFile(40, false)), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, weight, false)
                 .get(0).getEffort();
         double modifyEffort = VolumeScoreCalculator.calculateCodeBlockEfforts(
                 List.of(newModifyBlock(40, 40, 0)), scaler, scaler, scaler, scaler,
-                0, 0, 0, 0, ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP)
+                0, 0, 0, 0, ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP, false)
                 .get(0).getEffort();
 
         assertEquals(weight * modifyEffort, deleteEffort, 0.001,
@@ -441,7 +617,7 @@ class VolumeScoreCalculatorTest {
     void deletionRewardProducesNothingWhenWeightZero() {
         DriverScaler scaler = uniformScaler(1, 100);
         assertTrue(VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
-                List.of(deletionOnlyFile(40, false)), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.0).isEmpty(),
+                List.of(deletionOnlyFile(40, false)), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.0, false).isEmpty(),
                 "weight 0 disables the deletion reward");
     }
     @Test
@@ -452,7 +628,7 @@ class VolumeScoreCalculatorTest {
                 .linesJustificationRequired(true).linesAdded(3).linesDeleted(20).build();
 
         assertTrue(VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
-                List.of(mixed), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2).isEmpty(),
+                List.of(mixed), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2, false).isEmpty(),
                 "a file with any added line keeps existing behavior — no separate deletion reward");
     }
     @Test
@@ -466,7 +642,7 @@ class VolumeScoreCalculatorTest {
                 .linesJustificationRequired(true).linesAdded(0).linesDeleted(200).build();
 
         assertTrue(VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
-                List.of(config, removed), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2).isEmpty(),
+                List.of(config, removed), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2, false).isEmpty(),
                 "config deletions are line-count scored elsewhere; whole-file removals are excluded");
     }
     @Test
@@ -474,7 +650,7 @@ class VolumeScoreCalculatorTest {
         DriverScaler scaler = uniformScaler(1, 100);
 
         assertTrue(VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
-                List.of(deletionOnlyFile(40, false)), Set.of("Foo.java"), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2).isEmpty(),
+                List.of(deletionOnlyFile(40, false)), Set.of("Foo.java"), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2, false).isEmpty(),
                 "a deletion-only file that already produced a scored code block must not be credited a second time");
     }
     @Test
@@ -688,7 +864,7 @@ class VolumeScoreCalculatorTest {
 
         List<CodeBlockEffort> efforts = VolumeScoreCalculator.calculateCodeBlockEfforts(
                 List.of(block), scaler, scaler, scaler, scaler,
-                0, 0, 0, 0, ADD_MULT, MODIFY_MULT, TEST_MULT, 0.25);
+                0, 0, 0, 0, ADD_MULT, MODIFY_MULT, TEST_MULT, 0.25, false);
 
         CodeBlockEffort cbe = efforts.get(0);
         assertEquals(0.0, cbe.getBlockRatioDeviationNcss(), 0.001,
@@ -703,7 +879,7 @@ class VolumeScoreCalculatorTest {
 
         List<CodeBlockEffort> efforts = VolumeScoreCalculator.calculateCodeBlockEfforts(
                 List.of(ncssDense), scaler, scaler, scaler, scaler,
-                0, 0, 0, 0, ADD_MULT, MODIFY_MULT, TEST_MULT, 0.25);
+                0, 0, 0, 0, ADD_MULT, MODIFY_MULT, TEST_MULT, 0.25, false);
 
         CodeBlockEffort cbe = efforts.get(0);
         assertEquals(0.5, cbe.getBlockRatioDeviationNcss(), 0.01,
@@ -727,7 +903,7 @@ class VolumeScoreCalculatorTest {
 
         List<CodeBlockEffort> efforts = VolumeScoreCalculator.calculateCodeBlockEfforts(
                 List.of(modify), scaler, scaler, scaler, scaler,
-                0, 0, 0, 0, ADD_MULT, MODIFY_MULT, TEST_MULT, 0.25);
+                0, 0, 0, 0, ADD_MULT, MODIFY_MULT, TEST_MULT, 0.25, false);
 
         CodeBlockEffort cbe = efforts.get(0);
         assertEquals(0.0, cbe.getBlockRatioDeviationNcss(), 0.001,
@@ -781,7 +957,7 @@ class VolumeScoreCalculatorTest {
         List<CodeBlockEffort> efforts = VolumeScoreCalculator.calculateCodeBlockEfforts(
                 List.of(outlier1, outlier2, normal),
                 scaler, scaler, scaler, scaler,
-                0, 0, 0, 0, ADD_MULT, MODIFY_MULT, TEST_MULT, 0.25);
+                0, 0, 0, 0, ADD_MULT, MODIFY_MULT, TEST_MULT, 0.25, false);
 
         VolumeScoreCalculator.FileEffort fileEffort = VolumeScoreCalculator.groupByFile(efforts, 0.25).get(0);
         assertEquals(2, fileEffort.getBlocksFlaggedAsRatioOutlier());
@@ -798,7 +974,7 @@ class VolumeScoreCalculatorTest {
         List<CodeBlockEffort> efforts = VolumeScoreCalculator.calculateCodeBlockEfforts(
                 List.of(outlier, normal1, normal2),
                 scaler, scaler, scaler, scaler,
-                0, 0, 0, 0, ADD_MULT, MODIFY_MULT, TEST_MULT, 0.25);
+                0, 0, 0, 0, ADD_MULT, MODIFY_MULT, TEST_MULT, 0.25, false);
 
         VolumeScoreCalculator.FileEffort fileEffort = VolumeScoreCalculator.groupByFile(efforts, 0.25).get(0);
         assertEquals(1, fileEffort.getBlocksFlaggedAsRatioOutlier());
