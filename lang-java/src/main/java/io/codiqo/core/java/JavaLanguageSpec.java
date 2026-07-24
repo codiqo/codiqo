@@ -318,7 +318,7 @@ public class JavaLanguageSpec implements LanguageSpec {
 
         ExecFileLoader loader = new ExecFileLoader();
 
-        List<File> outputDirectories = new CopyOnWriteArrayList<>();
+        List<ProjectSpec> coveredProjects = new ArrayList<>();
         List<String> uninstrumentedModules = new CopyOnWriteArrayList<>();
         Set<File> loadedCoverageFiles = ConcurrentHashMap.newKeySet();
 
@@ -357,7 +357,7 @@ public class JavaLanguageSpec implements LanguageSpec {
                     loader.load(file);
                 }
                 if (project.getOutputDirectory().exists()) {
-                    outputDirectories.add(project.getOutputDirectory());
+                    coveredProjects.add(project);
                 }
             } else if (args.isFailOnUninstrumentedModule() && expectsCoverage(project)) {
                 uninstrumentedModules.add(project.getName());
@@ -370,62 +370,63 @@ public class JavaLanguageSpec implements LanguageSpec {
                     String.join(", ", uninstrumentedModules)));
         }
 
-        if (CollectionUtils.isEmpty(outputDirectories)) {
+        if (CollectionUtils.isEmpty(coveredProjects)) {
             return;
         }
 
         ExecutionDataStore data = loader.getExecutionDataStore();
-        CoverageBuilder coverageBuilder = new CoverageBuilder();
-        Analyzer analyzer = new Analyzer(data, coverageBuilder);
 
         int totalAnalyzed = 0;
-        for (File outputDir : outputDirectories) {
+        int totalLines = 0;
+        int coveredLines = 0;
+        int totalPackages = 0;
+
+        List<IClassCoverage> noMatch = new ArrayList<>();
+        Map<File, ISourceFileCoverage> coverages = new ConcurrentHashMap<>();
+
+        /**
+         * classModuleCounts tracks how many covered modules compile each fully-qualified class. a count > 1
+         * marks a legitimately duplicated FQN (e.g. uam's bi.bloomreach.data.BloomreachMapper), which the
+         * noMatch handling below must not mistake for stale output. aggregate line totals dedupe by class id
+         * and packages by name so identical copies across modules are not double-counted.
+         */
+        Map<String, Integer> classModuleCounts = new HashMap<>();
+        Set<Long> countedClassIds = new HashSet<>();
+        Set<String> countedPackages = new HashSet<>();
+
+        /**
+         * each module is analyzed with its own CoverageBuilder. a single shared builder throws
+         * "Can't add different class with same name" when two modules legitimately declare the same
+         * fully-qualified class with different bodies (e.g. uam's bi.bloomreach.data.BloomreachMapper
+         * exists in both the gateway-client and worker modules). per-module builders also let each
+         * module's source files resolve against that module's own source roots only, avoiding
+         * cross-module mis-attribution of duplicate class names.
+         */
+        for (ProjectSpec project : coveredProjects) {
+            CoverageBuilder coverageBuilder = new CoverageBuilder();
+            Analyzer analyzer = new Analyzer(data, coverageBuilder);
+
+            File outputDir = project.getOutputDirectory();
             int count = analyzer.analyzeAll(outputDir);
             totalAnalyzed += count;
             log.info("analyzed JaCoCo coverage for %d classes from %s", count, outputDir.getAbsolutePath());
-        }
 
-        /**
-         * a class id mismatch means the execution data was recorded against different bytes than target/classes —
-         * runtime-transforming agents (e.g. allure's aspectjweaver rewriting @Aspect classes) cause benign isolated
-         * mismatches, so untrusted classes are excluded from coverage (conservatively uncovered) instead of failing
-         * the analysis. the guard stays absolute for the code being SCORED: a mismatch on one of the commit's changed
-         * files would corrupt its risk assessment, so that still fails hard.
-         */
-        Collection<IClassCoverage> noMatch = coverageBuilder.getNoMatchClasses();
-        if (CollectionUtils.isNotEmpty(noMatch)) {
-            List<IClassCoverage> changedFileMismatches = noMatch.stream()
-                    .filter(cls -> touchesAnalyzedFile(cls, analysis))
-                    .toList();
-            if (CollectionUtils.isNotEmpty(changedFileMismatches)) {
-                changedFileMismatches.forEach(cls -> log.error("  - %s", cls.getName()));
-                throw new IOException(String.format(
-                        "coverage analysis failed: %d of the commit's changed classes have execution data that doesn't match compiled classes — the compiled output appears stale, please rebuild the project and rerun the tests",
-                        changedFileMismatches.size()));
+            noMatch.addAll(coverageBuilder.getNoMatchClasses());
+
+            IBundleCoverage bundle = coverageBuilder.getBundle(language.getName());
+            for (IPackageCoverage pkg : bundle.getPackages()) {
+                if (countedPackages.add(pkg.getName())) {
+                    totalPackages++;
+                }
+                for (IClassCoverage cls : pkg.getClasses()) {
+                    classModuleCounts.merge(cls.getName(), 1, Integer::sum);
+                    if (countedClassIds.add(cls.getId())) {
+                        totalLines += cls.getLineCounter().getTotalCount();
+                        coveredLines += cls.getLineCounter().getCoveredCount();
+                    }
+                }
             }
-            log.warn("class id mismatch: %d classes excluded from coverage (none among the commit's changed files) — typically another -javaagent (e.g. aspectjweaver) transformed them at load time", noMatch.size());
-            noMatch.stream().forEach(cls -> log.warn("  - %s", cls.getName()));
-        }
 
-        int totalLines = 0;
-        int coveredLines = 0;
-        IBundleCoverage bundle = coverageBuilder.getBundle(language.getName());
-        for (IPackageCoverage pkg : bundle.getPackages()) {
-            for (IClassCoverage cls : pkg.getClasses()) {
-                totalLines += cls.getLineCounter().getTotalCount();
-                coveredLines += cls.getLineCounter().getCoveredCount();
-            }
-        }
-        log.info("bundle '%s': %d/%d lines covered (%d packages, %d classes analyzed)",
-                bundle.getName(),
-                coveredLines,
-                totalLines,
-                bundle.getPackages().size(),
-                totalAnalyzed);
-
-        Map<File, ISourceFileCoverage> coverages = new ConcurrentHashMap<>();
-
-        summary.getProjects().forEach(project -> {
             if (project instanceof JvmProjectSpec jvm) {
                 for (File sourceRoot : jvm.getCompileSourceRoots()) {
                     Path normalized = sourceRoot.toPath().normalize().toAbsolutePath();
@@ -440,7 +441,54 @@ public class JavaLanguageSpec implements LanguageSpec {
                     }
                 }
             }
-        });
+        }
+
+        /**
+         * a class id mismatch means the execution data was recorded against different bytes than target/classes —
+         * runtime-transforming agents (e.g. allure's aspectjweaver rewriting @Aspect classes) cause benign isolated
+         * mismatches, so untrusted classes are excluded from coverage (conservatively uncovered) instead of failing
+         * the analysis. the guard stays absolute for the code being SCORED: a mismatch on one of the commit's changed
+         * files would corrupt its risk assessment, so that still fails hard.
+         *
+         * a class whose FQN is compiled in more than one covered module is exempt from the hard fail: JaCoCo keys
+         * execution data by name in the shared store, so the module whose copy was not exercised reports a benign
+         * name collision (noMatch) rather than stale bytes. failing on it would reject every commit that changes a
+         * legitimately duplicated class — the exact case this method was written to support.
+         */
+        if (CollectionUtils.isNotEmpty(noMatch)) {
+            List<IClassCoverage> staleMismatches = noMatch.stream()
+                    .filter(cls -> classModuleCounts.getOrDefault(cls.getName(), 0) <= 1)
+                    .toList();
+            List<IClassCoverage> duplicatedFqn = noMatch.stream()
+                    .filter(cls -> classModuleCounts.getOrDefault(cls.getName(), 0) > 1)
+                    .toList();
+
+            List<IClassCoverage> changedFileMismatches = staleMismatches.stream()
+                    .filter(cls -> touchesAnalyzedFile(cls, analysis))
+                    .toList();
+            if (CollectionUtils.isNotEmpty(changedFileMismatches)) {
+                changedFileMismatches.forEach(cls -> log.error("  - %s", cls.getName()));
+                throw new IOException(String.format(
+                        "coverage analysis failed: %d of the commit's changed classes have execution data that doesn't match compiled classes — the compiled output appears stale, please rebuild the project and rerun the tests",
+                        changedFileMismatches.size()));
+            }
+
+            if (CollectionUtils.isNotEmpty(staleMismatches)) {
+                log.warn("class id mismatch: %d classes excluded from coverage (none among the commit's changed files) — typically another -javaagent (e.g. aspectjweaver) transformed them at load time", staleMismatches.size());
+                staleMismatches.forEach(cls -> log.warn("  - %s", cls.getName()));
+            }
+            if (CollectionUtils.isNotEmpty(duplicatedFqn)) {
+                log.warn("%d classes excluded from coverage — their fully-qualified name is compiled in more than one module, so JaCoCo cannot attribute execution data to a single copy by name", duplicatedFqn.size());
+                duplicatedFqn.forEach(cls -> log.warn("  - %s", cls.getName()));
+            }
+        }
+
+        log.info("coverage: %d/%d lines covered across %d modules (%d packages, %d classes analyzed)",
+                coveredLines,
+                totalLines,
+                coveredProjects.size(),
+                totalPackages,
+                totalAnalyzed);
 
         /**
          * capture coverage for ALL code blocks in the project (not just commit-affected).
