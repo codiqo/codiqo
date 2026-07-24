@@ -18,6 +18,7 @@ import org.apache.commons.math3.util.Precision;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.metrics.DriverScaler;
 import io.codiqo.api.metrics.DriverScore;
+import io.codiqo.llm.lang.LanguageCapabilities;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringRequest.ChangeSummary;
 import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
@@ -56,6 +57,7 @@ public class VolumeScoreCalculator {
         double modifyMult = args.getModifyMultiplierBase() + Math.min(args.getModifyMultiplierScale() * sizeFactor / (1.0 + sizeFactor), args.getModifyMultiplierCap());
         double addMult = args.getAddMultiplierBase() + args.getAddMultiplierScale() / (1.0 + sizeFactor);
 
+        boolean degraded = Objects.nonNull(request.getBuildFailure());
         double maxDeviation = args.getDriverFactorMaxDeviation();
         List<CodeBlockEffort> initialEfforts = calculateCodeBlockEfforts(
                 request.getCodeBlockChanges(),
@@ -70,11 +72,21 @@ public class VolumeScoreCalculator {
                 addMult,
                 modifyMult,
                 testMult,
-                maxDeviation);
+                maxDeviation,
+                degraded);
         Set<String> scoredCodeFiles = initialEfforts.stream().map(CodeBlockEffort::getFile).collect(Collectors.toSet());
         initialEfforts.addAll(calculateConfigFileEfforts(request.getFileChanges(), modifyMult, args.getConfigFileScoreMultiplier()));
+        /**
+         * a degraded (build-failure) submission scores diff-only for every file the source index failed to
+         * parse into a code block; price those structured source files by line count so they earn volume
+         * instead of collapsing to zero. scoredCodeFiles excludes files that already produced a block, so a
+         * fully-parsed degraded commit — and every normal commit — is untouched
+         */
+        if (degraded) {
+            initialEfforts.addAll(calculateDegradedSourceFileEfforts(request.getFileChanges(), scoredCodeFiles, addMult, modifyMult, testMult));
+        }
         initialEfforts.addAll(calculateDeletionOnlyFileEfforts(request.getFileChanges(), scoredCodeFiles,
-                request.getMethodScalerProd(), request.getMethodScalerTest(), modifyMult, testMult, args.getDeleteRewardWeight()));
+                request.getMethodScalerProd(), request.getMethodScalerTest(), modifyMult, testMult, args.getDeleteRewardWeight(), degraded));
 
         double totalEffortRaw = initialEfforts.stream().mapToDouble(CodeBlockEffort::getEffort).sum();
         double totalBaseline = initialEfforts.stream().mapToDouble(CodeBlockEffort::getBucketBaseline).sum();
@@ -347,7 +359,8 @@ public class VolumeScoreCalculator {
             double addMult,
             double modifyMult,
             double testMult,
-            double maxDeviation) {
+            double maxDeviation,
+            boolean degraded) {
         if (CollectionUtils.isEmpty(codeBlocks)) {
             return new ArrayList<>();
         }
@@ -370,15 +383,16 @@ public class VolumeScoreCalculator {
             double deviationInvocations;
             int blockLines = block.getBodyCodeLines();
             /**
-             * degraded build-failure scoring runs without a full project scan, so the driver scalers
-             * are empty; fall back to raw changed/added line count (like config files) so code blocks
-             * still earn effort instead of collapsing to zero
+             * degraded build-failure scoring runs without a full project scan, so the driver scalers are
+             * empty; fall back to raw changed/added line count (like config files) so code blocks still
+             * earn effort instead of collapsing to zero. Gated on degraded: a normal commit with an empty
+             * scaler keeps the statistical model's zero, so this never silently un-normalizes normal scores
              */
             if (block.isModify()) {
                 int linesChanged = Math.min(block.getTotalLinesChanged(), blockLines);
                 changeRatio = computeChangeRatio(block);
                 invocationsChanged = block.getEffectiveInvocationsChanged();
-                driverScore = scaler.isEmpty()
+                driverScore = degraded && scaler.isEmpty()
                         ? linesChanged
                         : DriverScore.forModify(scaler, linesChanged, invocationsChanged);
                 projectedLines = linesChanged;
@@ -387,7 +401,7 @@ public class VolumeScoreCalculator {
                 deviationNcss = 0.0;
                 deviationInvocations = 0.0;
             } else {
-                driverScore = scaler.isEmpty()
+                driverScore = degraded && scaler.isEmpty()
                         ? blockLines
                         : DriverScore.forNew(scaler, blockLines,
                                 block.getNonCommentCodeStatements(), block.getDirectInvocationCount());
@@ -464,6 +478,55 @@ public class VolumeScoreCalculator {
         return toReturn;
     }
     /**
+     * a degraded build-failure submission scores diff-only for every file the source index failed to
+     * parse into a code block, so a changed structured source file that would normally yield code blocks
+     * earns nothing and the commit collapses to zero. Price each such file from line count — one synthetic
+     * block per file, seeded from added + deleted like config so the diff classification factor collapses
+     * cosmetic/moved churn in recompute, weighted by the add/modify multiplier and the test discount but
+     * WITHOUT the config discount (code outweighs config). Files already scored as code blocks
+     * (scoredCodeFiles) are excluded, so a fully-parsed degraded commit is unaffected and a partially
+     * parsed one still credits its unparsed files. Pure-deletion files (no added line) carry no code and
+     * are priced by calculateDeletionOnlyFileEfforts instead.
+     */
+    static List<CodeBlockEffort> calculateDegradedSourceFileEfforts(List<FileChange> fileChanges, Set<String> scoredCodeFiles,
+            double addMult, double modifyMult, double testMult) {
+        if (CollectionUtils.isEmpty(fileChanges)) {
+            return new ArrayList<>();
+        }
+
+        List<CodeBlockEffort> toReturn = new ArrayList<>();
+        for (FileChange fc : fileChanges) {
+            boolean structuredSourceAddition = BooleanUtils.and(new boolean[] {
+                    !fc.isConfig(),
+                    !scoredCodeFiles.contains(fc.getPath()),
+                    LanguageCapabilities.isLineFilteringLanguage(fc.getLanguage()),
+                    fc.getLinesAdded() > 0 });
+            if (!structuredSourceAddition) {
+                continue;
+            }
+
+            int rawLines = fc.getLinesAdded() + fc.getLinesDeleted();
+            boolean isNew = fc.getChangeType() == LlmScoringRequest.FileChangeType.ADDED;
+            double operationMult = isNew ? addMult : modifyMult;
+            double testWeight = fc.isTest() ? testMult : 1.0;
+            double driverScore = rawLines;
+            double effort = driverScore * operationMult * testWeight;
+
+            /**
+             * isConfig false so these count as real code effort (effective statements, line split);
+             * bucketBaseline 0 keeps them out of the global-cap baseline, matching degraded's absent scan
+             */
+            toReturn.add(new CodeBlockEffort(fc.getPath(), fc.getPath(), null,
+                    isNew ? LlmScoringRequest.Operation.NEW : LlmScoringRequest.Operation.MODIFY, 0, 0,
+                    0, 0, 0, rawLines, 0.0,
+                    rawLines, 0.0, 0.0,
+                    driverScore, (int) Math.round(driverScore), effort, 0.0, fc.isTest(),
+                    0.0, 0.0, false, 0.0, false,
+                    0, 0, 0, false));
+        }
+        return toReturn;
+    }
+    /**
      * a surviving file whose only effective change is deletion and that produced no scored code block
      * (scoredCodeFiles) yields no effort for its removed lines by default — deletions inside a surviving
      * MODIFY block are already billed there, so those files are excluded to avoid double counting. when
@@ -477,7 +540,7 @@ public class VolumeScoreCalculator {
      */
     static List<CodeBlockEffort> calculateDeletionOnlyFileEfforts(List<FileChange> fileChanges, Set<String> scoredCodeFiles,
             DriverScaler methodScalerProd, DriverScaler methodScalerTest,
-            double modifyMult, double testMult, double deleteRewardWeight) {
+            double modifyMult, double testMult, double deleteRewardWeight, boolean degraded) {
         if (BooleanUtils.or(new boolean[] { deleteRewardWeight <= 0.0, CollectionUtils.isEmpty(fileChanges) })) {
             return new ArrayList<>();
         }
@@ -496,7 +559,14 @@ public class VolumeScoreCalculator {
             }
 
             DriverScaler scaler = fc.isTest() ? methodScalerTest : methodScalerProd;
-            double driverScore = DriverScore.forModify(scaler, fc.getLinesDeleted(), 0);
+            /**
+             * degraded commits carry empty scalers, where forModify returns 0 and the removal would
+             * collapse to zero; fall back to the raw deleted-line count so degraded pure-deletion files
+             * earn the same fractional reward as any other removal
+             */
+            double driverScore = degraded && scaler.isEmpty()
+                    ? fc.getLinesDeleted()
+                    : DriverScore.forModify(scaler, fc.getLinesDeleted(), 0);
             double testWeight = fc.isTest() ? testMult : 1.0;
             double effort = driverScore * modifyMult * testWeight * deleteRewardWeight;
 
