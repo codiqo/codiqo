@@ -1001,6 +1001,8 @@ Managers slice dashboards by **what kind of work** a developer is doing and **ho
 
 Return an ARRAY of every intent the commit genuinely contains, **ordered primary-first** (the dominant intent by line/effort weight is the first element). Most commits are one or two intents; add a secondary intent only when it is a real, deliberate part of the change, not an incidental side effect. Always return at least one value.
 
+**Every element MUST be one of the 13 enum values in the table below — nothing else.** `taskTypes` is a CLOSED vocabulary of commit *intents*, entirely separate from the technical/functional labels emitted in `tags`. NEVER put a tag value (e.g. `build-config`, `dependency-update`, `api-migration`, `spring-boot`) into `taskTypes`; those belong only in `tags.technical` / `tags.functional`. A build-descriptor change is `dep_update` when a version bump is the point, otherwise `chore` or `infra` — the `build-config` tag stays in `tags`, never here.
+
 | Value | When to use |
 |-------|-------------|
 | `FEATURE` | New functionality user-visible or behavior-adding. New endpoint, new module, new flow. |
