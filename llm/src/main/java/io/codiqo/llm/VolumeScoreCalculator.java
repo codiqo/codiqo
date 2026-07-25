@@ -465,12 +465,14 @@ public class VolumeScoreCalculator {
             double effort = driverScore * modifyMult * configMult;
             /**
              * bucketBaseline 0 keeps config out of the global-cap baseline; isConfig excludes it from
-             * the effective-statements metric
+             * the effective-statements metric. scaledLines carries the line volume — lines are the
+             * block's only driver component — so config churn shows up in the added/modified line
+             * split instead of reporting zero lines for a real pom/proto change
              */
             toReturn.add(new CodeBlockEffort(fc.getPath(), fc.getPath(), null,
                     LlmScoringRequest.Operation.MODIFY, 0, 0,
                     0, 0, 0, rawLines, 0.0,
-                    0.0, 0.0, 0.0,
+                    driverScore, 0.0, 0.0,
                     driverScore, (int) Math.round(driverScore), effort, 0.0, false,
                     0.0, 0.0, false, 0.0, false,
                     0, 0, 0, true));
@@ -604,9 +606,15 @@ public class VolumeScoreCalculator {
         }
         return toReturn;
     }
+    /**
+     * Added/modified line volume, config included: a pom-only commit really does change lines, and
+     * reporting zero made every line metric blind to ~30% of commits. Config blocks are always
+     * MODIFY (they are seeded from added + deleted), so their churn lands in the modified bucket
+     * even for a brand-new descriptor — switching them to NEW would move them into the per-block
+     * category coefficients and change scores, which this reporting metric must not do.
+     */
     private static int sumScaledLines(List<CodeBlockEffort> blocks, LlmScoringRequest.Operation operation) {
         return (int) Math.round(blocks.stream()
-                .filter(not(CodeBlockEffort::isConfig))
                 .filter(cbe -> cbe.getOperation() == operation)
                 .mapToDouble(CodeBlockEffort::getScaledLines)
                 .sum());

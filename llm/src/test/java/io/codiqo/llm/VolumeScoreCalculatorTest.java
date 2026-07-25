@@ -710,7 +710,7 @@ class VolumeScoreCalculatorTest {
                 .build();
     }
     @Test
-    void lineSplitSumsScaledLinesByOperationExcludingConfig() {
+    void lineSplitSumsScaledLinesByOperationIncludingConfig() {
         RunArgs args = neutralMultiplierArgs();
         DriverScaler scaler = uniformScaler(1, 100);
         CodeBlockChange added = newMethodBlock(50, 50, 50, false);
@@ -737,11 +737,23 @@ class VolumeScoreCalculatorTest {
         PreComputedScores scores = new VolumeScoreCalculator(args).calculate(request, 1000, 100, 5, 0, 0, 0);
 
         assertEquals(50, scores.getLinesNew(), "NEW block bills its full body lines");
-        assertEquals(12, scores.getLinesModified(), "MODIFY block bills its capped changed lines; config lines excluded");
+        assertEquals(512, scores.getLinesModified(),
+                "MODIFY block bills its capped changed lines plus the pom's 500 config lines");
 
         PreComputedScores recomputed = new VolumeScoreCalculator(args).recompute(scores, Map.of(), Map.of(), Map.of(), Map.of());
         assertEquals(50, recomputed.getLinesNew(), "recompute with neutral factors preserves linesNew");
-        assertEquals(12, recomputed.getLinesModified(), "recompute with neutral factors preserves linesModified");
+        assertEquals(512, recomputed.getLinesModified(), "recompute with neutral factors preserves linesModified");
+    }
+    @Test
+    void configOnlyCommitReportsItsLinesAsModified() {
+        RunArgs args = new RunArgs();
+        FileChange pom = FileChange.builder().path("pom.xml").isConfig(true).linesAdded(6).linesDeleted(4).build();
+
+        PreComputedScores scores = calculateConfigOnly(args, pom);
+
+        assertEquals(0, scores.getLinesNew(), "config blocks are always MODIFY");
+        assertEquals(10, scores.getLinesModified(), "added + deleted config lines, so line metrics see the commit");
+        assertEquals(0, scores.getTotalEffectiveStatements(), "config still stays out of effective statements");
     }
     private static PreComputedScores calculateConfigOnly(RunArgs args, FileChange config) {
         LlmScoringRequest request = LlmScoringRequest.builder()
