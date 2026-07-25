@@ -112,6 +112,7 @@ import io.codiqo.maven.timemachine.TimeMachineConfig;
 import io.codiqo.submit.CommitModelPopulator;
 import io.codiqo.submit.DuplicationReportPopulator;
 import io.codiqo.submit.EffectiveChangePopulator;
+import io.codiqo.submit.ExcludedCoverageClassPopulator;
 import io.codiqo.submit.FileAnalysisPopulator;
 import io.codiqo.submit.IndexModelPopulator;
 import io.codiqo.submit.MetricsAggregator;
@@ -1048,6 +1049,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     DuplicationReportPopulator duplicationPopulator = new DuplicationReportPopulator();
                     duplicationPopulator.accept(ctx);
                     new MetricsAggregator(duplicationPopulator.getTotalDuplicatedLines()).accept(ctx);
+                    new ExcludedCoverageClassPopulator().accept(ctx);
                     new SubmissionSummaryPrinter(getLog()).accept(ctx);
                     // set before the dump so codiqo-submission-<sha> replays carry the effective config
                     ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));

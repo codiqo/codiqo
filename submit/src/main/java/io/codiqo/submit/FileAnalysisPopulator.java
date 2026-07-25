@@ -55,6 +55,7 @@ import io.codiqo.client.model.PmdPropertiesModel;
 import io.codiqo.client.model.SignatureFormatModel;
 import io.codiqo.client.model.SpotbugsPropertiesModel;
 import io.codiqo.client.model.SymbolKindModel;
+import io.codiqo.lang.config.ConfigFiles;
 import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.llm.lang.LanguageCapabilities;
@@ -129,6 +130,17 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
 
             ctx.getSubmissionModel().getFiles().add(fileChangeModel);
         }
+
+        /**
+         * change-set shape flags, derived once here because this is the only writer of the submission's
+         * file list (normal, degraded and exclusion paths all run this populator). hasCodeChanges follows
+         * the language field, which upstream sets only for files a LanguageSpec actually handled — so a
+         * diff-only exclusion carries no language and reports false, matching "nothing was analysable"
+         */
+        List<FileChangeModel> files = ctx.getSubmissionModel().getFiles();
+        ctx.getSubmissionModel().setConfigOnly(ConfigFiles.isConfigOnly(files.stream().map(FileChangeModel::getPath).toList()));
+        ctx.getSubmissionModel().setHasCodeChanges(
+                LanguageCapabilities.hasCodeChanges(files.stream().map(FileChangeModel::getLanguage).toList()));
     }
     private static CodeUnitModel createCodeUnitModel(
             SubmissionContext ctx,

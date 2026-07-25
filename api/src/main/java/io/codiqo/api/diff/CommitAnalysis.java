@@ -6,6 +6,7 @@ import java.util.Date;
 import java.util.List;
 
 import io.codiqo.api.code.CodeBlockInfo;
+import io.codiqo.api.coverage.ExcludedCoverageClass;
 import io.codiqo.api.cpd.CopyPasteDetectionSummary;
 
 public interface CommitAnalysis extends Iterable<FileAnalysis> {
@@ -27,4 +28,5 @@ public interface CommitAnalysis extends Iterable<FileAnalysis> {
 
     Collection<File> locations();
     Collection<CopyPasteDetectionSummary> cpd();
+    Collection<ExcludedCoverageClass> excludedCoverageClasses();
 }
