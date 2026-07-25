@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
@@ -29,6 +30,13 @@ class ConfigFilesTest {
         assertFalse(ConfigFiles.isConfigFile("Foo.java"));
         assertFalse(ConfigFiles.isConfigFile("settings.xml"));
         assertFalse(ConfigFiles.isConfigFile("README.md"));
+    }
+    @Test
+    void configOnlyRequiresEveryPathToBeConfig() {
+        assertTrue(ConfigFiles.isConfigOnly(List.of("pom.xml", "api/user.proto")));
+        assertFalse(ConfigFiles.isConfigOnly(List.of("pom.xml", "Foo.java")));
+        assertFalse(ConfigFiles.isConfigOnly(List.of("README.md")));
+        assertFalse(ConfigFiles.isConfigOnly(List.of()), "a fileless change set is not config-only");
     }
     @Test
     void mapsFilterPerConfigKind() {

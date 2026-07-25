@@ -4,6 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.Arrays;
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 
 import io.codiqo.api.diff.CommentSyntax;
@@ -40,6 +43,12 @@ class LanguageCapabilitiesTest {
         assertEquals(cStyle, LanguageCapabilities.filterFor(file("user.proto", null)));
         assertEquals(xml, LanguageCapabilities.filterFor(file("pom.xml", null)));
         assertEquals(IneffectiveLineFilter.NONE, LanguageCapabilities.filterFor(file("application.yaml", null)));
+    }
+    @Test
+    void hasCodeChangesFollowsResolvedLanguage() {
+        assertTrue(LanguageCapabilities.hasCodeChanges(Arrays.asList(null, LanguageEnum.JAVA)));
+        assertFalse(LanguageCapabilities.hasCodeChanges(Arrays.asList(null, null)), "config and yaml files resolve to no language");
+        assertFalse(LanguageCapabilities.hasCodeChanges(List.of()));
     }
     private static FileChangeModel file(String path, LanguageEnum language) {
         FileChangeModel toReturn = new FileChangeModel();

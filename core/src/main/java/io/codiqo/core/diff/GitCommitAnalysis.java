@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.stream.Collectors;
 
 import io.codiqo.api.code.CodeBlockInfo;
+import io.codiqo.api.coverage.ExcludedCoverageClass;
 import io.codiqo.api.cpd.CopyPasteDetectionSummary;
 import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.diff.CommitAnalysis;
@@ -37,6 +38,7 @@ public class GitCommitAnalysis implements CommitAnalysis {
     private int filesChanged;
     private Set<FileAnalysis> files = new LinkedHashSet<>();
     private List<CopyPasteDetectionSummary> cpd = new ArrayList<>();
+    private List<ExcludedCoverageClass> excludedCoverageClasses = new ArrayList<>();
     private final Supplier<Set<File>> destinations = Lazy.of(
             () -> getFiles().stream().map(FileAnalysis::getFile).collect(Collectors.toUnmodifiableSet()));
 
@@ -47,6 +49,10 @@ public class GitCommitAnalysis implements CommitAnalysis {
     @Override
     public Collection<CopyPasteDetectionSummary> cpd() {
         return cpd;
+    }
+    @Override
+    public Collection<ExcludedCoverageClass> excludedCoverageClasses() {
+        return excludedCoverageClasses;
     }
     @Override
     public boolean isPresent(File destination, CodeBlockInfo block) {

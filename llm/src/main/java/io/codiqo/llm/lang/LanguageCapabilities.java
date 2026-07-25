@@ -1,5 +1,6 @@
 package io.codiqo.llm.lang;
 
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.Objects;
 
@@ -31,6 +32,16 @@ public class LanguageCapabilities {
     }
     public static boolean requiresDiffClassification(FileChangeModel file) {
         return BooleanUtils.or(new boolean[] { requiresLineFiltering(file), isLineCountScored(file) });
+    }
+    /**
+     * whether the change set carries source code a language processor recognised. Language is resolved
+     * upstream and stays null for files no LanguageSpec handled, so this answers "was there anything
+     * analysable" — not "does a source-looking path exist" (a diff-only submission carries no language).
+     * Takes the raw language slots rather than file models because the engine and the server generate
+     * their own FileChangeModel/LanguageEnum families from the same schema, and this rule serves both.
+     */
+    public static boolean hasCodeChanges(Collection<?> resolvedLanguages) {
+        return resolvedLanguages.stream().anyMatch(Objects::nonNull);
     }
     public static IneffectiveLineFilter filterFor(FileChangeModel file) {
         if (requiresLineFiltering(file)) {

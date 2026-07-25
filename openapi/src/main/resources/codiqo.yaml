@@ -344,6 +344,24 @@ components:
           nullable: true
           description: Full (bounded) build error output / time-machine attempt history captured for diagnostics
 
+    CoverageExclusionReason:
+      type: string
+      description: Why a class was excluded from coverage attribution
+      enum:
+        - duplicate_fully_qualified_name
+
+    ExcludedCoverageClassModel:
+      type: object
+      required: [className, reason]
+      properties:
+        className:
+          type: string
+          description: Fully-qualified name of the class excluded from coverage
+        reason:
+          description: Structured reason the class was excluded
+          allOf:
+            - $ref: '#/components/schemas/CoverageExclusionReason'
+
     AnalysisSubmissionModel:
       type: object
       required: [project, commit, files]
@@ -356,6 +374,22 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/FileChangeModel'
+        configOnly:
+          type: boolean
+          description: |
+            Every changed file is a config descriptor recognised by path (pom.xml, *.proto) — the commit
+            carries no source file at all. Such commits are line-count scored (dependency bumps, release
+            preparation, schema-only edits) and drag complexity/quality averages down, so dashboards can
+            keep them out of metric denominators. False when the commit has no files.
+            Absent from clients that predate the flag — the server then derives it from the file paths.
+        hasCodeChanges:
+          type: boolean
+          description: |
+            At least one changed file was recognised as source code of a supported language and analysed
+            structurally. False when the commit only touches config descriptors, documentation or other
+            non-source text, and false for diff-only degraded submissions where no language processor ran.
+            Not the complement of configOnly — a yaml-only or markdown-only commit is false on both.
+            Absent from clients that predate the flag — the server then derives it from the file languages.
         dependencies:
           $ref: '#/components/schemas/DependencyRegistryModel'
         duplication:
@@ -372,6 +406,15 @@ components:
           $ref: '#/components/schemas/ProjectQualityModel'
         fullProjectCoverage:
           $ref: '#/components/schemas/FullProjectCoverageModel'
+        excludedCoverageClasses:
+          type: array
+          description: |
+            Classes dropped from coverage because their fully-qualified name resolves to more than one class
+            on the build classpath (a duplicate FQN — e.g. a reactor module shadowed by a legacy dependency
+            jar). JaCoCo cannot attribute execution data to a single copy, so every copy is excluded. Recorded
+            for debugging; does not affect scoring.
+          items:
+            $ref: '#/components/schemas/ExcludedCoverageClassModel'
         scoringConfig:
           $ref: '#/components/schemas/ScoringConfigModel'
         buildFailure:
@@ -424,6 +467,12 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/FileChangeModel'
+        configOnly:
+          type: boolean
+          description: See AnalysisSubmissionModel.configOnly — every changed file is a config descriptor (pom.xml, *.proto)
+        hasCodeChanges:
+          type: boolean
+          description: See AnalysisSubmissionModel.hasCodeChanges — at least one changed file is analysable source code
         dependencies:
           $ref: '#/components/schemas/DependencyRegistryModel'
         duplication:

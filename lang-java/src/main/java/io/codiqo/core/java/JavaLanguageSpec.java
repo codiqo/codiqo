@@ -79,6 +79,8 @@ import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.SourceLocation;
+import io.codiqo.api.coverage.CoverageExclusionReason;
+import io.codiqo.api.coverage.ExcludedCoverageClass;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
@@ -385,12 +387,9 @@ public class JavaLanguageSpec implements LanguageSpec {
         Map<File, ISourceFileCoverage> coverages = new ConcurrentHashMap<>();
 
         /**
-         * classModuleCounts tracks how many covered modules compile each fully-qualified class. a count > 1
-         * marks a legitimately duplicated FQN (e.g. uam's bi.bloomreach.data.BloomreachMapper), which the
-         * noMatch handling below must not mistake for stale output. aggregate line totals dedupe by class id
-         * and packages by name so identical copies across modules are not double-counted.
+         * aggregate line totals dedupe by class id and packages by name so identical copies of a class across
+         * modules are not double-counted.
          */
-        Map<String, Integer> classModuleCounts = new HashMap<>();
         Set<Long> countedClassIds = new HashSet<>();
         Set<String> countedPackages = new HashSet<>();
 
@@ -419,7 +418,6 @@ public class JavaLanguageSpec implements LanguageSpec {
                     totalPackages++;
                 }
                 for (IClassCoverage cls : pkg.getClasses()) {
-                    classModuleCounts.merge(cls.getName(), 1, Integer::sum);
                     if (countedClassIds.add(cls.getId())) {
                         totalLines += cls.getLineCounter().getTotalCount();
                         coveredLines += cls.getLineCounter().getCoveredCount();
@@ -444,43 +442,35 @@ public class JavaLanguageSpec implements LanguageSpec {
         }
 
         /**
-         * a class id mismatch means the execution data was recorded against different bytes than target/classes —
-         * runtime-transforming agents (e.g. allure's aspectjweaver rewriting @Aspect classes) cause benign isolated
-         * mismatches, so untrusted classes are excluded from coverage (conservatively uncovered) instead of failing
-         * the analysis. the guard stays absolute for the code being SCORED: a mismatch on one of the commit's changed
-         * files would corrupt its risk assessment, so that still fails hard.
-         *
-         * a class whose FQN is compiled in more than one covered module is exempt from the hard fail: JaCoCo keys
-         * execution data by name in the shared store, so the module whose copy was not exercised reports a benign
-         * name collision (noMatch) rather than stale bytes. failing on it would reject every commit that changes a
-         * legitimately duplicated class — the exact case this method was written to support.
+         * a noMatch means the class name is present in the aggregated execution data under a different class id than
+         * the compiled target/classes. the cause is a duplicate fully-qualified name on the classpath — the same FQN
+         * shipped by more than one artifact (two reactor modules, or a reactor module shadowed by a dependency jar,
+         * e.g. uam's admin.AdminServerProperties in both com.turbospaces.uam:admin-ui-server and the legacy
+         * com.patrianna.uam:admin-server-common) — or another -javaagent transforming the class at load time. codiqo
+         * cannot tell which copy the recorded probes belong to, so the name's coverage is untrustworthy from EVERY
+         * copy: every source file carrying a collided name is dropped from coverage entirely (safer than trusting one
+         * copy). this never fails the analysis — a classpath collision cannot be fixed by rebuilding, and time-machined
+         * historical commits predate any maven-enforcer duplicate-class ban.
          */
         if (CollectionUtils.isNotEmpty(noMatch)) {
-            List<IClassCoverage> staleMismatches = noMatch.stream()
-                    .filter(cls -> classModuleCounts.getOrDefault(cls.getName(), 0) <= 1)
-                    .toList();
-            List<IClassCoverage> duplicatedFqn = noMatch.stream()
-                    .filter(cls -> classModuleCounts.getOrDefault(cls.getName(), 0) > 1)
-                    .toList();
+            noMatch.forEach(cls -> analysis.excludedCoverageClasses().add(
+                    new ExcludedCoverageClass(cls.getName().replace('/', '.'), CoverageExclusionReason.DUPLICATE_FULLY_QUALIFIED_NAME)));
 
-            List<IClassCoverage> changedFileMismatches = staleMismatches.stream()
+            Set<String> collidedSourceFiles = noMatch.stream()
+                    .map(cls -> cls.getPackageName() + "/" + cls.getSourceFileName())
+                    .collect(Collectors.toSet());
+            coverages.values().removeIf(source -> collidedSourceFiles.contains(source.getPackageName() + "/" + source.getName()));
+
+            List<IClassCoverage> changedCollisions = noMatch.stream()
                     .filter(cls -> touchesAnalyzedFile(cls, analysis))
                     .toList();
-            if (CollectionUtils.isNotEmpty(changedFileMismatches)) {
-                changedFileMismatches.forEach(cls -> log.error("  - %s", cls.getName()));
-                throw new IOException(String.format(
-                        "coverage analysis failed: %d of the commit's changed classes have execution data that doesn't match compiled classes — the compiled output appears stale, please rebuild the project and rerun the tests",
-                        changedFileMismatches.size()));
+            if (CollectionUtils.isNotEmpty(changedCollisions)) {
+                log.warn("%d of the commit's changed classes have a duplicate fully-qualified name on the classpath — coverage is unavailable for them and excluded (no copy is trusted)", changedCollisions.size());
+                changedCollisions.forEach(cls -> log.warn("  - %s", cls.getName()));
             }
 
-            if (CollectionUtils.isNotEmpty(staleMismatches)) {
-                log.warn("class id mismatch: %d classes excluded from coverage (none among the commit's changed files) — typically another -javaagent (e.g. aspectjweaver) transformed them at load time", staleMismatches.size());
-                staleMismatches.forEach(cls -> log.warn("  - %s", cls.getName()));
-            }
-            if (CollectionUtils.isNotEmpty(duplicatedFqn)) {
-                log.warn("%d classes excluded from coverage — their fully-qualified name is compiled in more than one module, so JaCoCo cannot attribute execution data to a single copy by name", duplicatedFqn.size());
-                duplicatedFqn.forEach(cls -> log.warn("  - %s", cls.getName()));
-            }
+            log.warn("%d classes excluded from coverage — their fully-qualified name resolves to more than one class on the classpath (duplicate FQN) or was transformed at load time, so JaCoCo cannot attribute execution data to a single copy", noMatch.size());
+            noMatch.forEach(cls -> log.warn("  - %s", cls.getName()));
         }
 
         log.info("coverage: %d/%d lines covered across %d modules (%d packages, %d classes analyzed)",
