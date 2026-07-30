@@ -52,7 +52,7 @@
         <!-- CORE -->
         <!-- -->
         <slf4j.version>2.0.18</slf4j.version>
-        <logback.version>1.5.38</logback.version>
+        <logback.version>1.6.1</logback.version>
         <asm.version>9.10.1</asm.version>
         <javax.inject.version>1</javax.inject.version>
         <jakarta.annotation-api.version>3.0.0</jakarta.annotation-api.version>
@@ -71,23 +71,23 @@
         <okhttp.version>5.4.0</okhttp.version>
         <guava.version>33.6.0-jre</guava.version>
         <vavr.version>1.0.0</vavr.version>
-        <jgit.version>7.7.0.202606012155-r</jgit.version>
+        <jgit.version>7.7.1.202607240634-r</jgit.version>
         <ztzip.version>1.18.2</ztzip.version>
         <ztkill.version>1.12.0</ztkill.version>
         <ztexec.version>1.13.0</ztexec.version>
         <jarchivelib.version>1.2.0</jarchivelib.version>
         <ecj.version>3.46.0</ecj.version>
         <lsp4j.version>1.0.0</lsp4j.version>
-        <openrewrite.version>8.87.6</openrewrite.version>
+        <openrewrite.version>8.87.7</openrewrite.version>
         <openrewrite.recipe.version>2.39.0</openrewrite.recipe.version>
         <pmd.version>7.26.0</pmd.version>
         <spotbugs.version>4.10.3</spotbugs.version>
         <findbugs.sec.version>1.14.0</findbugs.sec.version>
         <findbugs.contrib.version>7.7.4</findbugs.contrib.version>
         <jacoco.version>0.8.15</jacoco.version>
-        <classgraph.version>4.8.184</classgraph.version>
-        <oshi.version>7.4.1</oshi.version>
-        <openapi.version>4.43.0</openapi.version>
+        <classgraph.version>4.8.186</classgraph.version>
+        <oshi.version>7.4.2</oshi.version>
+        <openapi.version>4.45.0</openapi.version>
         <djl.tokenizers.version>0.36.0</djl.tokenizers.version>
         <jtokkit.version>1.1.0</jtokkit.version>
         <gradle.api.version>8.11.1</gradle.api.version>
@@ -103,7 +103,7 @@
         <failsafe.version>3.3.2</failsafe.version>
         <ascii-table.version>1.9.0</ascii-table.version>
         <antlr4.version>4.13.2</antlr4.version>
-        <aether.version>2.0.20</aether.version>
+        <aether.version>2.0.21</aether.version>
         <maven.plugin-annotations.version>3.15.2</maven.plugin-annotations.version>
         <maven.version>3.9.16</maven.version>
         <maven.invoker.version>3.3.0</maven.invoker.version>
