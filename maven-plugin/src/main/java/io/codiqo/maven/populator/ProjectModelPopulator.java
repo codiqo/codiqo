@@ -74,7 +74,9 @@ public class ProjectModelPopulator implements SubmissionPopulator {
                             DependencyModel dependencyModel = new DependencyModel();
                             dependencyModel.setMavenInfo(mavenDependencyModel);
                             dependencyModel.setName(artifact.getId());
-                            dependencyModel.setVersion(artifact.getVersion());
+                            // base version keeps the coordinate stable (1.0-SNAPSHOT); the resolved
+                            // timestamped build belongs to snapshotMetadata.resolvedVersion instead
+                            dependencyModel.setVersion(artifact.getBaseVersion());
                             dependencyModel.setOptional(artifact.isOptional());
                             dependencyModel.setSnapshot(artifact.isSnapshot());
                             dependencyModel.setRelease(artifact.isRelease());
