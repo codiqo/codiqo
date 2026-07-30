@@ -440,7 +440,7 @@ public class RunArgs {
     @Nullable
     private int fanOutHighThreshold = 10;
     @Nullable
-    private int npathComplexThreshold = 200;
+    private int npathComplexThreshold = 16 * 1024;
     @Nullable
     private boolean jdtUseSharedIndex = true;
     @Nullable

@@ -2,11 +2,15 @@ package io.codiqo.core.java;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
+import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.eclipse.lsp4j.CallHierarchyIncomingCall;
@@ -35,8 +39,12 @@ class JdtIncomingCallsResolver implements IncomingCallsResolver {
     public void resolve(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
         StopWatch watch = StopWatch.createStarted();
 
-        AtomicInteger populated = new AtomicInteger();
+        AtomicInteger withCallers = new AtomicInteger();
+        AtomicInteger resolved = new AtomicInteger();
+        AtomicInteger unresolved = new AtomicInteger();
+        AtomicInteger failed = new AtomicInteger();
         AtomicInteger total = new AtomicInteger();
+        AtomicReference<String> firstUnresolvedUri = new AtomicReference<>();
         String workTreeUri = args.getGit().getWorkTree().toPath().toRealPath().toUri().toString();
 
         analysis.forEach(fileAnalysis -> {
@@ -69,7 +77,10 @@ class JdtIncomingCallsResolver implements IncomingCallsResolver {
                                         pmdSymbol.getName(), block.getFile().getName(),
                                         item.getRange().getStart().getLine(), item.getRange().getStart().getCharacter(),
                                         item.getRange().getEnd().getLine(), item.getRange().getEnd().getCharacter());
-                                Optional.ofNullable(jdt.callHierarchyIncomingCalls(item).get(lspTimeout, TimeUnit.SECONDS)).ifPresent(calls -> {
+                                List<CallHierarchyIncomingCall> calls = jdt.callHierarchyIncomingCalls(item).get(lspTimeout, TimeUnit.SECONDS);
+
+                                if (Objects.nonNull(calls)) {
+                                    resolved.incrementAndGet();
                                     log.info("  -> found %d callers", calls.size());
                                     for (CallHierarchyIncomingCall call : calls) {
                                         CallHierarchyItem from = call.getFrom();
@@ -87,9 +98,22 @@ class JdtIncomingCallsResolver implements IncomingCallsResolver {
                                                 from.getRange().getEnd().getCharacter());
                                     }
                                     pmdSymbol.getIncomingCalls().addAll(calls);
-                                    populated.incrementAndGet();
-                                });
+
+                                    if (CollectionUtils.isNotEmpty(calls)) {
+                                        withCallers.incrementAndGet();
+                                    }
+                                } else {
+                                    /**
+                                     * jdt.ls never returns null to mean "no callers" — an empty list means that. null means
+                                     * the search never ran: most often the item URI did not map to a usable compilation unit
+                                     * because the workspace project failed to import (observed in CI as "Project build error:
+                                     * Non-resolvable parent POM"), and less often a JavaModelException or a cancelled monitor
+                                     */
+                                    unresolved.incrementAndGet();
+                                    firstUnresolvedUri.compareAndSet(null, item.getUri());
+                                }
                             } catch (Exception err) {
+                                failed.incrementAndGet();
                                 log.error(String.format(
                                         "failed to fetch incoming calls for symbol %s in file %s: %s | item[uri=%s, kind=%s, range=%d:%d-%d:%d, detail=%s]",
                                         pmdSymbol.getName(),
@@ -122,6 +146,19 @@ class JdtIncomingCallsResolver implements IncomingCallsResolver {
         });
 
         watch.stop();
-        log.info("incoming calls resolved via JDT LS in %s: %d/%d symbols have callers", watch, populated.get(), total.get());
+        log.info("incoming calls resolved via JDT LS in %s: %d/%d symbols resolved, %d have callers (%d unresolved, %d failed)",
+                watch, resolved.get(), total.get(), withCallers.get(), unresolved.get(), failed.get());
+
+        if (unresolved.get() > 0) {
+            log.warn("JDT LS returned no call hierarchy for %d/%d symbols — those files did not map to an imported workspace project, "
+                    + "so their callers were never searched and blast radius is understated; first unresolved uri: %s",
+                    unresolved.get(), total.get(), firstUnresolvedUri.get());
+        }
+
+        if (BooleanUtils.and(new boolean[] { total.get() > 0, resolved.get() == 0 })) {
+            log.error("JDT LS resolved none of the %d queried symbols (%d unresolved, %d failed) — every caller count in this analysis "
+                    + "is zero regardless of the real call graph, so treat the blast radius as unknown rather than empty",
+                    total.get(), unresolved.get(), failed.get());
+        }
     }
 }

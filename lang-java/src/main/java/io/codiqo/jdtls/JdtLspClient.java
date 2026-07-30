@@ -33,6 +33,7 @@ import org.eclipse.lsp4j.CompletionItemResolveSupportCapabilities;
 import org.eclipse.lsp4j.DeclarationCapabilities;
 import org.eclipse.lsp4j.DefinitionCapabilities;
 import org.eclipse.lsp4j.DiagnosticCapabilities;
+import org.eclipse.lsp4j.DiagnosticSeverity;
 import org.eclipse.lsp4j.DiagnosticTag;
 import org.eclipse.lsp4j.DiagnosticWorkspaceCapabilities;
 import org.eclipse.lsp4j.DiagnosticsTagSupport;
@@ -516,7 +517,14 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
     }
     @Override
     public void publishDiagnostics(PublishDiagnosticsParams params) {
-        params.getDiagnostics().forEach(diag -> log.info("[%s] L %s:%s - %s",
+        /**
+         * a failed project import arrives here as an Error diagnostic on the module POM, and it is the only
+         * signal that the workspace has no Java model — at info level it stayed buried in millions of build
+         * lines while every call-hierarchy query silently answered null and the analysis reported zero callers
+         */
+        params.getDiagnostics().forEach(diag -> log.log(
+                DiagnosticSeverity.Error.equals(diag.getSeverity()) ? Level.WARN : Level.INFO,
+                "[%s] L %s:%s - %s",
                 diag.getSeverity(),
                 diag.getRange().getStart().getLine(),
                 diag.getRange().getStart().getCharacter(),
