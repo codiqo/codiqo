@@ -299,7 +299,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.llm.seed", defaultValue = "42")
     protected Integer llmSeed;
 
-    @Parameter(property = "codiqo.llm.enableWebSearchTool", defaultValue = "false")
+    @Parameter(property = "codiqo.llm.enableWebSearchTool", defaultValue = "true")
     protected boolean llmEnableWebSearchTool;
 
     @Parameter(property = "codiqo.llm.validationMaxRetries", defaultValue = "1")
