@@ -711,9 +711,10 @@ Apply these when assessing risk for library modules:
 - Framework version upgrades (Spring, Kafka, etc.)
 - Library updates - check for breaking changes
 
+[# th:if="${web_search_enabled}"]
 ### Web Search Tool for Dependency Analysis
 
-You MAY have access to a `WebSearchTool` function for researching dependency version changes.
+You have access to a `WebSearchTool` function for researching dependency version changes.
 
 **When to use it:**
 - ONLY when you encounter a dependency version upgrade and you have NO knowledge about breaking changes or migration requirements for that specific version transition
@@ -733,8 +734,12 @@ You MAY have access to a `WebSearchTool` function for researching dependency ver
 
 **WRONG — NEVER do this** (multiple JSONs concatenated in one call):
 - `{"query": "Spring Boot 3.5 to 4.0 breaking changes", "maxResults": 5}{"query": "Kafka 3.9 to 4.1 migration guide", "maxResults": 5}`
+[/]
+[# th:unless="${web_search_enabled}"]
+### No Tools Available
 
-If no web search tool is available, rely on your training knowledge. Note any uncertainties in your `thinking` field when analyzing unfamiliar library upgrades.
+You have NO tools or functions available for this analysis. Never emit a tool call. Rely on your training knowledge for dependency upgrades and note any uncertainties in your `thinking` field when analyzing unfamiliar library upgrades.
+[/]
 
 ## Code Smells
 - Long parameter lists (>5 parameters)

@@ -416,6 +416,22 @@ class PromptTemplateSmokeTest {
         assertFalse(normal.contains("DEGRADED ANALYSIS"), "degraded banner leaked into a normal analysis");
     }
     @Test
+    void systemPromptMentionsWebSearchToolOnlyWhenEnabled() {
+        RunArgs enabled = new RunArgs();
+        enabled.setLlmEnableWebSearchTool(true);
+        String withTool = new ThymeleafPromptBuilder(enabled, NOOP_LOG).buildSystemPrompt(PromptContext.builder().args(enabled).build());
+
+        assertTrue(withTool.contains("WebSearchTool"), "web search section missing when the tool is registered");
+        assertFalse(withTool.contains("NO tools or functions available"), "no-tools notice leaked while the tool is registered");
+
+        RunArgs disabled = new RunArgs();
+        disabled.setLlmEnableWebSearchTool(false);
+        String withoutTool = new ThymeleafPromptBuilder(disabled, NOOP_LOG).buildSystemPrompt(PromptContext.builder().args(disabled).build());
+
+        assertFalse(withoutTool.contains("WebSearchTool"), "web search tool advertised while it is not registered");
+        assertTrue(withoutTool.contains("NO tools or functions available"), "no-tools notice missing when the tool is not registered");
+    }
+    @Test
     void systemPromptRendersDegradedModeSection() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
         String rendered = builder.buildSystemPrompt(PromptContext.builder().args(new RunArgs()).build());

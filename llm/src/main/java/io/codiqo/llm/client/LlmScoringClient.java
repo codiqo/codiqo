@@ -17,8 +17,10 @@ import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.MapperFeature;
@@ -371,9 +373,26 @@ public class LlmScoringClient implements ScoringClient {
         }
     }
     private Object executeTool(String name, String arguments) throws Exception {
-        if (WebSearchTool.class.getSimpleName().equals(name)) {
+        /**
+         * dispatch on the registered tool set, not on the name alone — the model occasionally hallucinates a
+         * WebSearchTool call even when the tool was never offered, and webSearchClient is null in that case
+         */
+        if (BooleanUtils.and(new boolean[] { enableWebSearch, WebSearchTool.class.getSimpleName().equals(name) })) {
             WebSearchTool searchTool = objectMapper.readValue(arguments, WebSearchTool.class);
-            return searchTool.apply(webSearchClient);
+            try {
+                return searchTool.apply(webSearchClient);
+            } catch (RuntimeException err) {
+                /**
+                 * web search is a supplementary input, not a hard dependency — a provider outage or an API key
+                 * that is not valid for the search endpoint (e.g. a Cloudflare-gateway placeholder) must not fail
+                 * the whole analysis, so report the failure back to the model and let it score from training knowledge.
+                 * WebSearchTool.apply re-throws the underlying IOException through ExceptionUtils.wrapAndThrow,
+                 * which surfaces as UndeclaredThrowableException — hence catching the runtime wrapper, not IOException
+                 */
+                String cause = ExceptionUtils.getRootCauseMessage(err);
+                log.error("web search failed, continuing without it: " + cause);
+                return Map.of("error", "web search unavailable: " + cause);
+            }
         }
         throw new IllegalArgumentException("unknown tool: " + name);
     }

@@ -197,7 +197,7 @@ public class RunArgs {
     @Nullable
     private Integer llmSeed = DEFAULT_SEED;
     @Nullable
-    private boolean llmEnableWebSearchTool = false;
+    private boolean llmEnableWebSearchTool = true;
     @Nullable
     private Duration llmReadTimeout = Duration.ofMinutes(10);
     @Nullable

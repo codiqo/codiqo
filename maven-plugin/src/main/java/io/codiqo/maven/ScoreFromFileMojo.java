@@ -85,7 +85,7 @@ public class ScoreFromFileMojo extends AbstractMojo {
     @Parameter(property = "codiqo.llm.seed", defaultValue = "42")
     private Integer llmSeed;
 
-    @Parameter(property = "codiqo.llm.enableWebSearchTool", defaultValue = "false")
+    @Parameter(property = "codiqo.llm.enableWebSearchTool", defaultValue = "true")
     private boolean llmEnableWebSearchTool;
 
     @Parameter(property = "codiqo.readTimeoutSeconds", defaultValue = "300")
