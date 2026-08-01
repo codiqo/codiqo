@@ -30,8 +30,9 @@ import org.apache.maven.project.ProjectBuildingResult;
 import org.eclipse.aether.DefaultRepositoryCache;
 import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.DefaultSessionData;
+import org.eclipse.aether.RepositorySystem;
+import org.eclipse.aether.repository.LocalRepository;
 import org.eclipse.aether.util.repository.SimpleResolutionErrorPolicy;
-
 
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import kr.motd.maven.os.Detector;
@@ -72,6 +73,18 @@ public class Maven {
         derived.setCache(new DefaultRepositoryCache());
         derived.setData(new DefaultSessionData());
         derived.setResolutionErrorPolicy(new SimpleResolutionErrorPolicy(false, false));
+
+        request.setRepositorySession(derived);
+    }
+    /**
+     * point host-side model building at the private repository the fork just filled. Without this the fork writes its
+     * time-machine pins to -Dmaven.repo.local while the host still resolves from ~/.m2, so the host re-resolves the
+     * whole graph from remote — as LATEST snapshots wherever the host lacks the time-machine extension — and the
+     * ClassGraph scan indexes jars other than the ones the fork compiled and tested against.
+     */
+    public static void pinLocalRepository(RepositorySystem repositorySystem, ProjectBuildingRequest request, File localRepository) {
+        DefaultRepositorySystemSession derived = new DefaultRepositorySystemSession(request.getRepositorySession());
+        derived.setLocalRepositoryManager(repositorySystem.newLocalRepositoryManager(derived, new LocalRepository(localRepository)));
 
         request.setRepositorySession(derived);
     }

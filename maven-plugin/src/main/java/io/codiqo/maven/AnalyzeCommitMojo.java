@@ -227,6 +227,13 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
         } finally {
             clone.close();
             FileUtils.deleteDirectory(temp);
+            /**
+             * the private local repository deliberately outlives the analysis: it is shared by every commit of
+             * this project, its seeded releases are what make the next commit cheap, and its snapshots — the only
+             * volatile part — are cleared before the next attempt reads them. It also holds the record of which
+             * timestamps the successful attempt pinned. Deleting it here would throw the seed away once per
+             * commit, so cleanup belongs at the end of the run, not here.
+             */
         }
     }
     private BuildOutcome buildWithBackoff(RunArgs args, ProjectBuildingRequest buildingReq) throws Exception {
