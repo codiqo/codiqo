@@ -205,6 +205,16 @@ public class RunArgs {
     @Nullable
     private transient File timeMachineMetaDir;
     @Nullable
+    private transient File localRepositoryDir;
+    @Nullable
+    private transient File mavenUserSettings;
+    /**
+     * kept separate from mavenUserSettings so the private repository and the language server's offline mode can be
+     * decided independently — pointing m2e at the pinned repository is always right, forbidding it the network is a
+     * judgement call about whether the fork resolved everything m2e will ask for
+     */
+    private transient boolean jdtImportOffline;
+    @Nullable
     private transient Duration timeMachineTargetOffset;
     @Nullable
     private transient File buildFailureReportFile;

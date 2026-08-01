@@ -3,10 +3,15 @@ package io.codiqo.maven;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.Writer;
 import java.net.HttpURLConnection;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
@@ -23,6 +28,7 @@ import java.util.Properties;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.regex.Pattern;
@@ -30,6 +36,7 @@ import java.util.stream.Collectors;
 
 import javax.inject.Inject;
 
+import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.ListUtils;
 import org.apache.commons.collections4.queue.CircularFifoQueue;
@@ -45,7 +52,10 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
+import org.apache.maven.artifact.ArtifactUtils;
 import org.apache.maven.execution.MavenSession;
+import org.apache.maven.settings.Settings;
+import org.apache.maven.settings.io.xpp3.SettingsXpp3Writer;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -148,6 +158,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     private static final String JACOCO_EXEC_FILE = "jacoco.exec";
 
     private static final String MAVEN_EXT_CLASS_PATH = "maven.ext.class.path";
+    private static final String SOURCES_JAR_SUFFIX = "-sources.jar";
+    private static final String PRIVATE_REPOSITORY_PREFIX = "codiqo-m2-";
 
     // StringUtils.abbreviate requires a width of at least 4 ("a...")
     private static final int MIN_ABBREVIATE_WIDTH = 4;
@@ -728,19 +740,56 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             File metaDir = Files.createTempDirectory("codiqo-tm-").toFile();
             args.setTimeMachineMetaDir(metaDir);
 
+            /**
+             * a private local repository holding one timestamp per snapshot. Maven maps a -SNAPSHOT to a timestamp
+             * through maven-metadata-<repoId>.xml and the -SNAPSHOT alias file in the version directory, and both are
+             * overwritten by whichever attempt resolved last — so a repository shared across the back-off ladder
+             * accumulates the pins of every rung, and the language server's m2e, which resolves independently, can
+             * pick a version this build never used. Clearing every snapshot before each attempt leaves exactly the
+             * successful attempt's pins behind, which is what the JDT import then reads.
+             *
+             * The path is stable per project rather than a fresh temp directory: JDT's shared index is keyed by the
+             * absolute path of the jar it indexed, so a new path per commit would miss on every dependency and
+             * re-index the whole set each time. Releases are immutable, so they are seeded once and survive; only
+             * snapshots are volatile and only they are cleared.
+             */
+            File localRepository = privateLocalRepository();
+            if (localRepository.isDirectory()) {
+                clearSnapshots(localRepository);
+            } else {
+                FileUtils.forceMkdir(localRepository);
+                seedReleaseArtifacts(new File(mavenSession.getRepositorySession().getLocalRepositoryManager().getRepository().getBasedir().getAbsolutePath()), localRepository);
+            }
+            args.setLocalRepositoryDir(localRepository);
+
+            FileUtils.deleteQuietly(args.getMavenUserSettings());
+            args.setMavenUserSettings(writeLocalRepositorySettings(localRepository, true));
+            args.setJdtImportOffline(true);
+            request.setLocalRepositoryDirectory(localRepository);
+
             props.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, DateTimeFormatter.ISO_INSTANT.format(ts));
             props.setProperty(TimeMachineConfig.PROP_META_DIR, metaDir.getAbsolutePath());
             if (targetOffset.compareTo(Duration.ZERO) > 0) {
                 props.setProperty(TimeMachineConfig.PROP_TARGET_OFFSET, targetOffset.toString());
             }
-            getLog().info(String.format("time-machine enabled for commit %s (timestamp: %s, offset: %s, metaDir: %s)", args.getCommitId(), ts, targetOffset, metaDir.getAbsolutePath()));
+            getLog().info(String.format("time-machine enabled for commit %s (timestamp: %s, offset: %s, metaDir: %s, localRepository: %s)",
+                    args.getCommitId(), ts, targetOffset, metaDir.getAbsolutePath(), localRepository.getAbsolutePath()));
         } else {
             /**
              * a non-time-machine attempt may follow a failed time-machine attempt; drop the failed attempt's
-             * sidecar dir so ProjectModelPopulator never attaches its metadata to this build's submission
+             * sidecar dir so ProjectModelPopulator never attaches its metadata to this build's submission, and
+             * stop pointing at the private repository so the fallback resolves LATEST from the shared one —
+             * nothing is pinned here, so the JDT import stays online against the default local repository. The
+             * private repository itself is left on disk: its seeded releases are immutable and the next commit
+             * reuses them, and its snapshots are cleared before they are ever read again.
              */
             FileUtils.deleteQuietly(args.getTimeMachineMetaDir());
             args.setTimeMachineMetaDir(null);
+
+            FileUtils.deleteQuietly(args.getMavenUserSettings());
+            args.setLocalRepositoryDir(null);
+            args.setMavenUserSettings(null);
+            args.setJdtImportOffline(false);
         }
 
         if (injectJacocoAgent) {
@@ -770,6 +819,160 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     }
     private static List<String> extensionJarPaths(Collection<File> jars) {
         return jars.stream().map(File::getAbsolutePath).toList();
+    }
+    /**
+     * one repository per analyzed project, stable across commits so JDT's path-keyed shared index keeps hitting,
+     * and distinct per project so two analyses on one machine cannot interleave their pins.
+     */
+    private File privateLocalRepository() {
+        String key = DigestUtils.sha1Hex(mavenSession.getTopLevelProject().getBasedir().getAbsolutePath()).substring(0, 12);
+        return new File(FileUtils.getTempDirectory(), PRIVATE_REPOSITORY_PREFIX + key);
+    }
+    /**
+     * remove every snapshot from the private repository, leaving the seeded releases in place. Releases are
+     * immutable so re-seeding them per attempt would only cost I/O; snapshots are the volatile part, and a stale
+     * one is exactly what would let m2e resolve a version this build never used.
+     */
+    private void clearSnapshots(File localRepository) throws IOException {
+        AtomicInteger cleared = new AtomicInteger();
+
+        Files.walkFileTree(localRepository.toPath(), new SimpleFileVisitor<Path>() {
+            @Override
+            public FileVisitResult visitFileFailed(Path file, IOException err) {
+                getLog().warn(String.format("could not inspect %s while clearing snapshots: %s", file, err.getMessage()));
+                return FileVisitResult.CONTINUE;
+            }
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                if (ArtifactUtils.isSnapshot(dir.getFileName().toString())) {
+                    FileUtils.deleteDirectory(dir.toFile());
+                    cleared.incrementAndGet();
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        getLog().info(String.format("cleared %d snapshot versions from %s", cleared.get(), localRepository.getAbsolutePath()));
+    }
+    /**
+     * Hard-link every release artifact from the host's local repository into this attempt's private one. A release
+     * is immutable, so sharing the inode costs no disk and spares re-downloading the bulk of a reactor's
+     * dependencies into an otherwise cold repository. Everything mutable is deliberately left behind: -SNAPSHOT
+     * directories, so the time-machine resolves the commit's own pins onto a clean slate rather than finding a
+     * newer timestamp already cached, and all resolution metadata, since it records what today's registry offered.
+     * _remote.repositories goes too — without it Maven treats a cached artifact as locally installed and always
+     * serves it, instead of refusing one whose recording repository id is out of scope.
+     */
+    private void seedReleaseArtifacts(File source, File target) throws IOException {
+        Path sourceRoot = source.toPath();
+        Path targetRoot = target.toPath();
+        AtomicBoolean copyFallback = new AtomicBoolean();
+
+        Files.walkFileTree(sourceRoot, new SimpleFileVisitor<Path>() {
+            /**
+             * a local repository under concurrent use holds transient download fragments, lock files and entries
+             * that vanish between the directory listing and the visit. The default implementation rethrows, which
+             * would turn a seeding optimisation into a hard failure for the whole commit — seeding is best-effort
+             * by nature, since anything missing is simply downloaded again.
+             */
+            @Override
+            public FileVisitResult visitFileFailed(Path file, IOException err) {
+                getLog().warn(String.format("could not seed %s into the private local repository: %s", file, err.getMessage()));
+                return FileVisitResult.CONTINUE;
+            }
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                /**
+                 * ArtifactUtils rather than a "-SNAPSHOT" suffix test: it is Maven's own definition, and it also
+                 * recognises an already-timestamped version, so a repository that happens to hold one is skipped
+                 * too instead of being seeded as if it were a release
+                 */
+                if (ArtifactUtils.isSnapshot(dir.getFileName().toString())) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                return FileVisitResult.CONTINUE;
+            }
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                if (isSeedable(file.getFileName().toString())) {
+                    Path link = targetRoot.resolve(sourceRoot.relativize(file));
+                    Files.createDirectories(link.getParent());
+                    /**
+                     * a hard link fails across filesystems (the temp dir and the local repository need not share
+                     * one), and on filesystems that do not support them at all — copy is correct either way, just
+                     * slower, so it stays the fallback rather than the default
+                     */
+                    try {
+                        Files.createLink(link, file);
+                    } catch (IOException | UnsupportedOperationException err) {
+                        if (copyFallback.compareAndSet(false, true)) {
+                            getLog().warn(String.format(
+                                    "cannot hard-link into %s (%s) — seeding falls back to copying, which duplicates the release set on disk. Point java.io.tmpdir at the same filesystem as the local repository to avoid it.",
+                                    targetRoot, err.getMessage()));
+                        }
+                        Files.copy(file, link);
+                    }
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
+    }
+    /**
+     * Maven exposes no API that classifies an arbitrary repository path, so the resolution bookkeeping is matched
+     * by name — these are the four artifacts the local repository layout writes alongside a downloaded file.
+     */
+    /**
+     * source JARs are excluded on top of the resolution bookkeeping: the language server is configured with
+     * downloadSources=false so it never needs them, and purgeNonJavaSourceJars deletes Kotlin/Scala ones from the
+     * HOST repository to stop JDT hanging during call-hierarchy resolution — a hard link here would survive that
+     * delete and hand the language server the very file the purge exists to remove.
+     */
+    private static boolean isSeedable(String fileName) {
+        return BooleanUtils.negate(BooleanUtils.or(new boolean[] {
+                Strings.CS.startsWith(fileName, "maven-metadata"),
+                Strings.CS.endsWith(fileName, ".lastUpdated"),
+                Strings.CS.equals(fileName, "resolver-status.properties"),
+                Strings.CS.equals(fileName, "_remote.repositories"),
+                Strings.CS.endsWith(fileName, SOURCES_JAR_SUFFIX) }));
+    }
+    /**
+     * m2e reads its own user settings, not the forked build's -Dmaven.repo.local, so the only way to point the
+     * language server at this attempt's private repository is a settings file naming it. That file must EXTEND the
+     * host settings rather than replace them: jdt.ls treats userSettings as the whole user configuration, and the
+     * mirrors, servers and registry properties in ~/.m2/settings.xml exist precisely because m2e is a separate
+     * process — drop them and a project whose POMs declare ${artifact.registry.url} has no way to interpolate or
+     * reach that repository, which is the zero-callers failure this whole mechanism is meant to remove. The
+     * session's effective settings are already the merge of global and user files, so clone them (mutating the
+     * session's own instance would leak the private repository into the host build) and override one field.
+     */
+    private File writeLocalRepositorySettings(File localRepository, boolean offline) throws IOException {
+        File settingsFile = File.createTempFile("codiqo-m2-settings-", ".xml");
+        settingsFile.deleteOnExit();
+
+        /**
+         * an offline import needs no repositories at all — it must read the private repository and nothing else —
+         * so it gets a settings file naming only that. Copying the host's repositories in is not merely redundant
+         * there, it is harmful: they routinely use protocols supplied by a .mvn/extensions.xml wagon
+         * (artifactregistry:// for Google Artifact Registry, for one), and m2e loads no core extensions, so every
+         * such repository is unusable to it and the import collapses in seconds with no Java model. The full host
+         * settings are cloned only when m2e is allowed on the network and therefore needs mirrors and credentials.
+         */
+        Settings settings = new Settings();
+        if (BooleanUtils.isFalse(offline)) {
+            settings = mavenSession.getSettings().clone();
+        }
+        settings.setLocalRepository(localRepository.getAbsolutePath());
+
+        try (Writer writer = Files.newBufferedWriter(settingsFile.toPath(), StandardCharsets.UTF_8)) {
+            new SettingsXpp3Writer().write(writer, settings);
+        }
+        /**
+         * the clone carries the host's server credentials, so the file is readable only by this user — the
+         * analysis leaves it behind for the language server to read while the fork runs
+         */
+        settingsFile.setReadable(false, false);
+        settingsFile.setReadable(true, true);
+        return settingsFile;
     }
     protected void warnIfHostTimeMachineMissing() {
         /**
@@ -857,6 +1060,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         if (Objects.nonNull(args.getTimeMachineTargetOffset())) {
             Maven.isolateRepositorySession(request);
         }
+        if (Objects.nonNull(args.getLocalRepositoryDir())) {
+            Maven.pinLocalRepository(repositorySystem, request, args.getLocalRepositoryDir());
+        }
 
         try {
             return new BuildOutcome.Proceeded(TimeMachineSupport.withHostPinning(args, getLog(), () -> projectBuilder.build(rootPom, request)));
@@ -885,6 +1091,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                  * dropping managed versions ('dependencies.dependency.version is missing' broken-POM failures)
                  */
                 Maven.isolateRepositorySession(buildingRequest);
+                if (Objects.nonNull(args.getLocalRepositoryDir())) {
+                    Maven.pinLocalRepository(repositorySystem, buildingRequest, args.getLocalRepositoryDir());
+                }
 
                 ProjectBuildingResult moduleResult;
                 try {
