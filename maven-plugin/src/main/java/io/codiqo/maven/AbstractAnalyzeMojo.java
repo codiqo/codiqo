@@ -159,6 +159,13 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
     private static final String MAVEN_EXT_CLASS_PATH = "maven.ext.class.path";
     private static final String SOURCES_JAR_SUFFIX = "-sources.jar";
+    /**
+     * protocols the language server's resolver can actually transport, read off the two transporters Maven ships:
+     * FileTransporter accepts "file", HttpTransporter accepts "http" and "https", both by equalsIgnoreCase on
+     * RemoteRepository.getProtocol(). WagonTransporter would accept more, but only for wagons registered in that
+     * process — which is precisely what m2e lacks, so it cannot be counted on.
+     */
+    private static final Set<String> M2E_TRANSPORTABLE_PROTOCOLS = Set.of("file", "http", "https");
     private static final String PRIVATE_REPOSITORY_PREFIX = "codiqo-m2-";
 
     // StringUtils.abbreviate requires a width of at least 4 ("a...")
@@ -763,8 +770,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             args.setLocalRepositoryDir(localRepository);
 
             FileUtils.deleteQuietly(args.getMavenUserSettings());
-            args.setMavenUserSettings(writeLocalRepositorySettings(localRepository, true));
-            args.setJdtImportOffline(true);
+            args.setMavenUserSettings(writeLocalRepositorySettings(localRepository));
             request.setLocalRepositoryDirectory(localRepository);
 
             props.setProperty(TimeMachineConfig.PROP_COMMIT_TIMESTAMP, DateTimeFormatter.ISO_INSTANT.format(ts));
@@ -789,7 +795,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             FileUtils.deleteQuietly(args.getMavenUserSettings());
             args.setLocalRepositoryDir(null);
             args.setMavenUserSettings(null);
-            args.setJdtImportOffline(false);
         }
 
         if (injectJacocoAgent) {
@@ -927,6 +932,15 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
      * HOST repository to stop JDT hanging during call-hierarchy resolution — a hard link here would survive that
      * delete and hand the language server the very file the purge exists to remove.
      */
+    /**
+     * Aether parses the protocol with a regex that also understands compound schemes such as dav:http, so the
+     * repository is built and asked rather than the URL being split on "://" — a naive split misreads those and
+     * returns the whole string for a URL with no scheme at all.
+     */
+    private static boolean isUntransportableByM2e(String url) {
+        String protocol = new RemoteRepository.Builder("probe", "default", url).build().getProtocol();
+        return BooleanUtils.negate(M2E_TRANSPORTABLE_PROTOCOLS.contains(StringUtils.lowerCase(protocol)));
+    }
     private static boolean isSeedable(String fileName) {
         return BooleanUtils.negate(BooleanUtils.or(new boolean[] {
                 Strings.CS.startsWith(fileName, "maven-metadata"),
@@ -945,23 +959,30 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
      * session's effective settings are already the merge of global and user files, so clone them (mutating the
      * session's own instance would leak the private repository into the host build) and override one field.
      */
-    private File writeLocalRepositorySettings(File localRepository, boolean offline) throws IOException {
+    private File writeLocalRepositorySettings(File localRepository) throws IOException {
         File settingsFile = File.createTempFile("codiqo-m2-settings-", ".xml");
         settingsFile.deleteOnExit();
 
         /**
-         * an offline import needs no repositories at all — it must read the private repository and nothing else —
-         * so it gets a settings file naming only that. Copying the host's repositories in is not merely redundant
-         * there, it is harmful: they routinely use protocols supplied by a .mvn/extensions.xml wagon
-         * (artifactregistry:// for Google Artifact Registry, for one), and m2e loads no core extensions, so every
-         * such repository is unusable to it and the import collapses in seconds with no Java model. The full host
-         * settings are cloned only when m2e is allowed on the network and therefore needs mirrors and credentials.
+         * m2e gets the host settings with the local repository redirected, because it must be able to fetch what
+         * the fork did not happen to leave behind — plugin descriptors read for lifecycle mapping, a parent reached
+         * before the POM's own <repositories>. Denying it that produces a workspace with no Java project at all,
+         * which is the zero-callers failure this mechanism exists to remove. Snapshot pinning does not depend on
+         * the network being closed: the private repository holds one timestamp per snapshot in freshly written
+         * maven-metadata, and updateSnapshots stays off, so m2e resolves the pins the fork built against.
+         *
+         * Repositories m2e cannot transport are dropped rather than passed through. Aether ships http/https/file
+         * only, and a URL like artifactregistry:// is served by a .mvn/extensions.xml wagon that m2e never loads;
+         * left in, every resolution through it fails and the import collapses. Dropping them costs nothing it
+         * could have used, and the clone keeps the mirrors and credentials for the ones it can.
          */
-        Settings settings = new Settings();
-        if (BooleanUtils.isFalse(offline)) {
-            settings = mavenSession.getSettings().clone();
-        }
+        Settings settings = mavenSession.getSettings().clone();
         settings.setLocalRepository(localRepository.getAbsolutePath());
+        settings.getMirrors().removeIf(mirror -> isUntransportableByM2e(mirror.getUrl()));
+        settings.getProfiles().forEach(profile -> {
+            profile.getRepositories().removeIf(repository -> isUntransportableByM2e(repository.getUrl()));
+            profile.getPluginRepositories().removeIf(repository -> isUntransportableByM2e(repository.getUrl()));
+        });
 
         try (Writer writer = Files.newBufferedWriter(settingsFile.toPath(), StandardCharsets.UTF_8)) {
             new SettingsXpp3Writer().write(writer, settings);

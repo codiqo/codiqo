@@ -345,19 +345,16 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
         Map<String, Object> importOpts = new HashMap<>();
 
         /**
-         * m2e runs in the language server, a separate process that never sees the time-machine
-         * core extension the forked build gets on its maven.ext.class.path. Online, it resolves a
-         * -SNAPSHOT against today's registry metadata; on a historical commit whose snapshots have
-         * since been purged that import fails, the workspace ends up with no Java model, and every
-         * call-hierarchy query answers nothing — coverage and PMD still look healthy while blast
-         * radius reports zero. The private repository above holds one timestamp per snapshot — the
-         * pins the successful attempt built against — so offline keeps m2e on those. It is a
-         * separate decision from pointing m2e at that repository: the settings above stay in force
-         * either way, carrying the mirrors and credentials m2e needs whenever it is allowed out.
+         * deliberately NOT offline, even though the userSettings above point m2e at a local repository the fork
+         * already pinned. m2e resolves more than the fork does — plugin descriptors for lifecycle mapping, parents
+         * reached before a POM's own <repositories> — and closing the network turned every one of those misses into
+         * a workspace with no Java project, so every call-hierarchy query answered nothing while coverage and PMD
+         * still looked correct. The pins hold anyway: that repository carries one timestamp per snapshot in freshly
+         * written metadata, and updateSnapshots below stays false.
          */
         Map<String, Object> mavenImport = new HashMap<>();
         mavenImport.put("enabled", true);
-        mavenImport.put("offline", Map.of("enabled", args.isJdtImportOffline()));
+        mavenImport.put("offline", Map.of("enabled", false));
         mavenImport.put("disableTestClasspathFlag", false);
         importOpts.put("maven", mavenImport);
 
