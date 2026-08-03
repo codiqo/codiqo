@@ -28,6 +28,11 @@ public interface PromptBuilder {
         @Builder.Default
         int tagsVocabularyCap = 30;
 
+        // assembled by ConventionGuidance outside the prompt builder: reading it can fail the analysis, and
+        // a builder constructor is not a safe place to throw from — it sits inside a try-with-resources head
+        @Builder.Default
+        String conventionGuidance = "";
+
         @Builder.Default
         long projectTotalStatements = 0;
         @Builder.Default

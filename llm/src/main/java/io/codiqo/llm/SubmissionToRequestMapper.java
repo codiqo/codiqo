@@ -453,7 +453,6 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .name(codeUnit.getName())
                 .signature(codeUnit.getSignature())
                 .file(resolveEffectivePath(file))
-                .className(extractClassName(codeUnit))
                 .operation(mapOperation(codeUnit.getOperation()))
                 .isConstructor(codeUnit.getKind() == SymbolKindModel.CONSTRUCTOR)
                 .isTest(Boolean.TRUE.equals(file.getIsTest()))
@@ -461,6 +460,8 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .endLine(endLine)
                 .bodyStartLine(bodyStartLine)
                 .bodyEndLine(bodyEndLine);
+
+        extractClassName(codeUnit).ifPresent(builder::className);
 
         mapMetrics(codeUnit.getMetrics(), builder);
         mapCallers(codeUnit.getCallers(), builder);
@@ -777,21 +778,19 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 }
             }
         }
-        return DiagnosticInfo.builder()
+        DiagnosticInfo.DiagnosticInfoBuilder toReturn = DiagnosticInfo.builder()
                 .tool(Objects.nonNull(diag.getTool()) ? diag.getTool().getValue() : null)
                 .ruleId(diag.getRuleId())
                 .message(diag.getMessage())
                 .category(diag.getCategory())
-                .severity(mapDiagnosticSeverity(diag.getSeverity()))
                 .startLine(startLine)
                 .endLine(endLine)
-                .introducedInCommit(introducedInCommit)
-                .build();
+                .introducedInCommit(introducedInCommit);
+
+        Optional.ofNullable(diag.getSeverity()).map(SubmissionToRequestMapper::mapDiagnosticSeverity).ifPresent(toReturn::severity);
+        return toReturn.build();
     }
     private static LlmScoringRequest.DiagnosticSeverity mapDiagnosticSeverity(DiagnosticModel.SeverityEnum severity) {
-        if (Objects.isNull(severity)) {
-            return null;
-        }
         return switch (severity) {
             case ERROR -> LlmScoringRequest.DiagnosticSeverity.ERROR;
             case WARNING -> LlmScoringRequest.DiagnosticSeverity.WARNING;
@@ -831,21 +830,21 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     private static Optional<String> extractPackageName(CodeUnitModel codeUnit) {
         return Optional.ofNullable(codeUnit.getJavaInfo()).map(JavaInfoModel::getPackageName);
     }
-    private static String extractClassName(CodeUnitModel codeUnit) {
+    private static Optional<String> extractClassName(CodeUnitModel codeUnit) {
         JavaInfoModel java = codeUnit.getJavaInfo();
         if (Objects.nonNull(java) && Objects.nonNull(java.getClassName())) {
-            return java.getClassName();
+            return Optional.of(java.getClassName());
         }
         return extractClassNameFromSignature(codeUnit.getSignature());
     }
-    private static String extractClassNameFromSignature(String signature) {
+    private static Optional<String> extractClassNameFromSignature(String signature) {
         int lastDot = signature.lastIndexOf('.');
         if (lastDot <= 0) {
-            return null;
+            return Optional.empty();
         }
         String beforeMethod = signature.substring(0, lastDot);
         int classNameStart = Math.max(beforeMethod.lastIndexOf('/'), beforeMethod.lastIndexOf('.'));
-        return classNameStart >= 0 ? beforeMethod.substring(classNameStart + 1) : beforeMethod;
+        return Optional.of(classNameStart >= 0 ? beforeMethod.substring(classNameStart + 1) : beforeMethod);
     }
     private static String mapLanguage(FileChangeModel file) {
         if (Objects.nonNull(file.getLanguage())) {

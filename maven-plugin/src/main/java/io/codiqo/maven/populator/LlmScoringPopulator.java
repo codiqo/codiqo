@@ -17,6 +17,7 @@ import java.util.HashMap;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.maven.plugin.logging.Log;
@@ -63,7 +64,8 @@ public class LlmScoringPopulator implements SubmissionPopulator {
         AnalysisSubmissionModel submission = ctx.getSubmissionModel();
         StopWatch stopWatch = StopWatch.createStarted();
 
-        try (LlmScoringClient client = new LlmScoringClient(args, executor, new MavenMessageReporter(log))) {
+        MavenMessageReporter reporter = new MavenMessageReporter(log);
+        try (LlmScoringClient client = new LlmScoringClient(args, executor, reporter)) {
             SubmissionToRequestMapper mapper = new SubmissionToRequestMapper(args);
             LlmScoringRequest request = mapper.apply(submission);
             PromptContext promptContext = buildPromptContext(submission, args);
@@ -220,7 +222,9 @@ public class LlmScoringPopulator implements SubmissionPopulator {
             codeUnitsAffected = projectQuality.getCodeUnitsAffected();
         }
 
+        // collected at submission assembly, where the work tree still exists — see AbstractAnalyzeMojo.applyAgentInstructions
         return PromptContext.withFullContext(args)
+                .conventionGuidance(StringUtils.defaultString(submission.getAgentInstructions()))
                 .projectTotalStatements(totalStatements)
                 .projectTotalFiles(totalFiles)
                 .projectTotalMethods(totalMethods)

@@ -25,6 +25,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.eclipse.lsp4j.CallHierarchyIncomingCall;
 import org.eclipse.lsp4j.CallHierarchyItem;
 import org.eclipse.lsp4j.Range;
+import org.eclipse.lsp4j.SymbolKind;
 import org.eclipse.lsp4j.SymbolTag;
 import org.jacoco.core.analysis.ICounter;
 import org.jacoco.core.analysis.ILine;
@@ -197,7 +198,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             Path workTreeRealPath,
             FileAnalysis fileAnalysis,
             Map<String, String> fileContentCache) {
-        codeUnitModel.setKind(SymbolKindModel.fromValue(lsp4jSymbol.getKind().name().toLowerCase()));
+        codeUnitModel.setKind(resolveSymbolKind(lsp4jSymbol.getKind()));
         List<SymbolTag> symbolTags = lsp4jSymbol.getTags();
         if (CollectionUtils.isNotEmpty(symbolTags)) {
             for (SymbolTag tag : symbolTags) {
@@ -247,7 +248,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             }
 
             if (Objects.nonNull(from.getKind())) {
-                callerModel.setKind(SymbolKindModel.fromValue(from.getKind().name().toLowerCase()));
+                callerModel.setKind(resolveSymbolKind(from.getKind()));
             }
 
             List<SymbolTag> callerTags = from.getTags();
@@ -549,6 +550,26 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         } else {
             return SpotbugsPropertiesModel.ConfidenceEnum.LOW;
         }
+    }
+    /**
+     * kinds arrive straight from the language server, whose vocabulary is broader than the submission schema
+     * (26 LSP values against 15 schema values), so every value is mapped explicitly — an unmapped kind used to
+     * abort the whole run: jdt.ls reports enum constants that call a changed member as EnumMember
+     */
+    static SymbolKindModel resolveSymbolKind(SymbolKind kind) {
+        return switch (kind) {
+            case Class, Object, TypeParameter -> SymbolKindModel.propertyClass;
+            case Interface -> SymbolKindModel.INTERFACE;
+            case Enum -> SymbolKindModel.ENUM;
+            case EnumMember -> SymbolKindModel.ENUM_MEMBER;
+            case Struct -> SymbolKindModel.RECORD;
+            case Method, Operator -> SymbolKindModel.METHOD;
+            case Constructor -> SymbolKindModel.CONSTRUCTOR;
+            case Function -> SymbolKindModel.FUNCTION;
+            case Field, Property, Variable, Event, Key -> SymbolKindModel.FIELD;
+            case Constant, String, Number, Boolean, Array, Null -> SymbolKindModel.CONSTANT;
+            case Module, Namespace, Package, File -> SymbolKindModel.MODULE;
+        };
     }
     private static Path resolveRealPath(Path path) {
         for (;;) {

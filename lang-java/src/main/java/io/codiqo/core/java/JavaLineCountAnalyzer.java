@@ -2,6 +2,7 @@ package io.codiqo.core.java;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.ArrayList;
 
 import org.apache.commons.lang3.StringUtils;
@@ -32,10 +33,15 @@ public class JavaLineCountAnalyzer {
         int nodeEndCol = endLoc.getEndColumn();
         List<CommentSpan> spans = collectContainedComments(root, nodeBeginLine, nodeBeginCol, nodeEndLine, nodeEndCol);
 
-        BodyRange bodyRange = bodyRange(node);
+        // abstract and interface declarations have no body, so every body-relative bound falls back
+        Optional<BodyRange> body = bodyRange(node);
+        int bodyStartLine = body.map(range -> range.startLine).orElse(0);
+        int bodyEndLine = body.map(range -> range.endLine).orElse(0);
+        int bodyStartCol = body.map(range -> range.startCol).orElse(0);
+        int bodyEndCol = body.map(range -> range.endCol).orElse(0);
 
-        int declEndLine = Objects.nonNull(bodyRange) ? bodyRange.startLine : nodeEndLine;
-        int declEndColExclusive = Objects.nonNull(bodyRange) ? bodyRange.startCol : nodeEndCol;
+        int declEndLine = body.map(range -> range.startLine).orElse(nodeEndLine);
+        int declEndColExclusive = body.map(range -> range.startCol).orElse(nodeEndCol);
 
         int codeLines = 0;
         int commentLines = 0;
@@ -66,9 +72,9 @@ public class JavaLineCountAnalyzer {
                 }
             }
 
-            if (Objects.nonNull(bodyRange) && line >= bodyRange.startLine && line <= bodyRange.endLine) {
-                int bodyEffStart = line == bodyRange.startLine ? bodyRange.startCol : 1;
-                int bodyEffEnd = line == bodyRange.endLine ? bodyRange.endCol : Integer.MAX_VALUE;
+            if (body.isPresent() && line >= bodyStartLine && line <= bodyEndLine) {
+                int bodyEffStart = line == bodyStartLine ? bodyStartCol : 1;
+                int bodyEffEnd = line == bodyEndLine ? bodyEndCol : Integer.MAX_VALUE;
                 LineClassification bodyClassification = classifyLine(lineText, line, bodyEffStart, bodyEffEnd, spans);
                 if (bodyClassification.hasCode) {
                     bodyCodeLines++;
@@ -79,17 +85,15 @@ public class JavaLineCountAnalyzer {
             }
         }
 
-        int bodyStartLine = Objects.nonNull(bodyRange) ? bodyRange.startLine : 0;
-        int bodyEndLine = Objects.nonNull(bodyRange) ? bodyRange.endLine : 0;
         return new LineCounts(codeLines, commentLines, declarationCodeLines, bodyStartLine, bodyEndLine, bodyCodeLines, bodyCommentLines);
     }
-    private static BodyRange bodyRange(ASTExecutableDeclaration node) {
+    private static Optional<BodyRange> bodyRange(ASTExecutableDeclaration node) {
         ASTBlock body = node.getBody();
         if (Objects.isNull(body)) {
-            return null;
+            return Optional.empty();
         }
         FileLocation loc = body.getReportLocation();
-        return new BodyRange(loc.getStartLine(), loc.getStartColumn(), loc.getEndLine(), loc.getEndColumn());
+        return Optional.of(new BodyRange(loc.getStartLine(), loc.getStartColumn(), loc.getEndLine(), loc.getEndColumn()));
     }
     private static List<CommentSpan> collectContainedComments(ASTCompilationUnit root, int nodeBeginLine, int nodeBeginCol, int nodeEndLine, int nodeEndCol) {
         List<CommentSpan> toReturn = new ArrayList<>();

@@ -49,6 +49,8 @@ public class RunArgs {
     public static final int PROMPT_TOKEN_RESERVE = 72 * 1024;
     public static final int DEFAULT_PROMPT_TOKEN_BUDGET = DEFAULT_NUM_CTX - PROMPT_TOKEN_RESERVE;
     public static final int DEFAULT_MAX_CALLERS_PER_BLOCK = 64;
+    // sized above a single large instruction file (observed 40-75 KB) so enabling the feature does not fail on its own default
+    public static final int DEFAULT_CONVENTION_FILES_MAX_CHARS = 64 * 1024;
     public static final int DEFAULT_SEED = 42;
     public static final Duration PER_TEST_TIMEOUT_MAX = Duration.ofMinutes(15);
     public static final Map<String, String> JDTLS_CONFIG = Map.of(
@@ -193,6 +195,34 @@ public class RunArgs {
 
     @Nullable
     private int llmMaxCallersPerBlock = DEFAULT_MAX_CALLERS_PER_BLOCK;
+
+    /**
+     * Agent instruction files, relative to the repository root, appended to the prompt as a hint for finding
+     * triage: they stop the model reporting a project's deliberate idioms as defects and shape the fixes it
+     * proposes. They are not a rule set to enforce — a convention violation is not by itself a bug. An entry
+     * may name a file or a directory of rule files. Opt-in per project: the files are authored by the same
+     * developers being scored, so the prompt forbids them from moving effort, volume, complexity, risk or any
+     * other number. Combines with {@link #autoDiscoveryAgentInstructions}.
+     */
+    @Nullable
+    private List<String> llmConventionFiles = new ArrayList<>();
+
+    /**
+     * Also pick up the well-known agent instruction locations (AGENTS.md, CLAUDE.md, Copilot, Cursor,
+     * Windsurf, Cline, Gemini, Junie, Aider) without naming them one by one. On by default: a repository
+     * that documents its idioms should not have them reported as defects. Costs prompt tokens only when
+     * such a file exists, and the prompt bars the content from moving any score.
+     */
+    @Nullable
+    private boolean autoDiscoveryAgentInstructions = true;
+
+    /**
+     * Ceiling on the assembled instruction text. Exceeding it fails the analysis instead of trimming the
+     * text: a truncated rule set silently changes which findings the model suppresses, so the ceiling is
+     * raised deliberately. Zero disables instruction loading entirely.
+     */
+    @Nullable
+    private int llmConventionFilesMaxChars = DEFAULT_CONVENTION_FILES_MAX_CHARS;
 
     @Nullable
     private Integer llmSeed = DEFAULT_SEED;
@@ -521,6 +551,7 @@ public class RunArgs {
         this.deleteRewardWeight = Math.min(0.20, Math.max(0.0, this.deleteRewardWeight));
         this.llmMaxRetries = (short) Math.max(1, this.llmMaxRetries);
         this.llmValidationMaxRetries = (short) Math.max(0, this.llmValidationMaxRetries);
+        this.llmConventionFilesMaxChars = Math.max(0, this.llmConventionFilesMaxChars);
     }
     public static Options options() {
         Options toReturn = new Options();

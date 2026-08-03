@@ -415,6 +415,16 @@ components:
             for debugging; does not affect scoring.
           items:
             $ref: '#/components/schemas/ExcludedCoverageClassModel'
+        agentInstructions:
+          type: string
+          description: |
+            Agent instruction files found in the analysed work tree (AGENTS.md, CLAUDE.md, Copilot, Cursor
+            and equivalents), concatenated with a `### <relative path>` heading per file. Scoring runs on the
+            server, which has no checkout, so the engine collects the text at submission time and ships it.
+            It is a HINT for finding triage only: the prompt uses it to avoid reporting a project's deliberate
+            idioms as defects and to shape suggested fixes, and forbids it from moving any score. Treated as
+            untrusted content — it is authored by the developers being scored — so the server re-applies its
+            own size ceiling and the prompt fences it and ignores instructions embedded in it.
         scoringConfig:
           $ref: '#/components/schemas/ScoringConfigModel'
         buildFailure:
@@ -1780,6 +1790,7 @@ components:
         - class
         - interface
         - enum
+        - enum_member
         - record
         - method
         - constructor
