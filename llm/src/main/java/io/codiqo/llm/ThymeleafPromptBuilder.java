@@ -15,6 +15,7 @@ import java.util.IdentityHashMap;
 import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.thymeleaf.TemplateEngine;
 import org.thymeleaf.context.Context;
@@ -99,10 +100,15 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         Context ctx = createContext(context);
         ctx.setVariable("request", request);
 
+        int guidanceTokens = 0;
+        if (StringUtils.isNotBlank(context.getConventionGuidance())) {
+            guidanceTokens = estimateTokens(context.getArgs().getLlmModel(), context.getConventionGuidance());
+        }
+
         Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> savedSlices = stripSourceSlices(request);
         Map<LlmScoringRequest.FileChange, String> savedDiffs = annotateDiffs(request);
         Map<LlmScoringRequest.CallerInfo, String> savedCallerBodies = stripCallerBodies(request);
-        BudgetedRequest budgeted = enforceCallerBudget(context.getArgs(), request);
+        BudgetedRequest budgeted = enforceCallerBudget(context.getArgs(), request, guidanceTokens);
         restoreCallerBodies(savedCallerBodies);
         restoreDiffs(savedDiffs);
         restoreSourceSlices(savedSlices);
@@ -194,14 +200,15 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private static void restoreSourceSlices(Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> saved) {
         saved.forEach(LlmScoringRequest.DuplicationInfo.CloneLocation::setSourceSlice);
     }
-    private BudgetedRequest enforceCallerBudget(RunArgs args, LlmScoringRequest request) throws IOException {
+    private BudgetedRequest enforceCallerBudget(RunArgs args, LlmScoringRequest request, int reservedTokens) throws IOException {
         Map<LlmScoringRequest.CodeBlockChange, List<LlmScoringRequest.CallerInfo>> originals = snapshotCallerLists(request);
         int ceiling = args.getLlmMaxCallersPerBlock();
         applyCallerCap(request, ceiling, originals);
         String requestJson = MAPPER.writeValueAsString(request);
 
         String model = args.getLlmModel();
-        int budget = effectivePromptTokenBudget(args);
+        // convention guidance shares the user message with the request JSON, so it comes out of the same budget
+        int budget = Math.max(0, effectivePromptTokenBudget(args) - reservedTokens);
         int tokens = estimateTokens(model, requestJson);
         if (tokens > budget) {
             int appliedCap = ceiling;
@@ -215,10 +222,11 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
                 }
             }
             if (tokens > budget) {
-                log.warn("prompt still over budget (%d > %d tokens) after capping callers to %d per block; "
-                        + "the diff dominates the prompt and the request may be rejected by the model", tokens, budget, appliedCap);
+                log.warn("prompt still over budget (%d > %d tokens, %d reserved for agent instructions) after capping callers to %d per block; "
+                        + "the diff dominates the prompt and the request may be rejected by the model", tokens, budget, reservedTokens, appliedCap);
             } else {
-                log.info("prompt over budget; capped callers to %d per block (~%d tokens)", appliedCap, tokens);
+                log.info("prompt over budget; capped callers to %d per block (~%d tokens, %d reserved for agent instructions)",
+                        appliedCap, tokens, reservedTokens);
             }
         }
 
@@ -330,6 +338,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private static Context createContext(PromptContext promptContext) {
         Context ctx = new Context(Locale.ENGLISH);
         RunArgs args = promptContext.getArgs();
+        String conventionGuidance = promptContext.getConventionGuidance();
 
         long projectStatements = promptContext.getProjectTotalStatements();
         ctx.setVariable("STATIC_ANALYSIS_PENALTY_CAP", args.getStaticAnalysisPenaltyCap());
@@ -376,6 +385,8 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         ctx.setVariable("functional_tags", String.join(", ", promptContext.getFunctionalTags()));
         ctx.setVariable("tags_vocabulary_cap", promptContext.getTagsVocabularyCap());
         ctx.setVariable("web_search_enabled", args.isLlmEnableWebSearchTool());
+        ctx.setVariable("convention_guidance", conventionGuidance);
+        ctx.setVariable("convention_guidance_present", StringUtils.isNotBlank(conventionGuidance));
         ctx.setVariable("architecture_bonus_factor", args.getArchitectureBonusFactor());
         ctx.setVariable("quality_multiplier_min", args.getQualityMultiplierMin());
         ctx.setVariable("quality_multiplier_max", args.getQualityMultiplierMax());

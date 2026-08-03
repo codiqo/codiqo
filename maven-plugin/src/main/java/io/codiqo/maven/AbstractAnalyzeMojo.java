@@ -113,7 +113,9 @@ import io.codiqo.lang.config.ConfigFiles;
 import io.codiqo.llm.client.DaemonExecutors;
 import io.codiqo.maven.coverage.CoverageInjectorConfig;
 import io.codiqo.maven.eventspy.BuildFailureConfig;
+import io.codiqo.llm.ConventionGuidance;
 import io.codiqo.maven.logging.MavenLogFactory;
+import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.maven.populator.LlmScoringPopulator;
 import io.codiqo.maven.populator.ProjectModelPopulator;
 import io.codiqo.maven.populator.SubmissionSummaryPrinter;
@@ -315,6 +317,16 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.llm.maxCallersPerBlock")
     protected int llmMaxCallersPerBlock;
 
+    @Parameter(property = "codiqo.llm.conventionFiles")
+    protected String llmConventionFiles;
+
+    @Parameter(property = "codiqo.llm.autoDiscoveryAgentInstructions", defaultValue = "true")
+    protected boolean autoDiscoveryAgentInstructions;
+
+    // -1 marks "unset" so that an explicit 0, which disables instruction loading, is forwarded rather than swallowed
+    @Parameter(property = "codiqo.llm.conventionFilesMaxChars", defaultValue = "-1")
+    protected int llmConventionFilesMaxChars;
+
     @Parameter(property = "codiqo.llm.seed", defaultValue = "42")
     protected Integer llmSeed;
 
@@ -449,6 +461,13 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         }
         if (llmMaxCallersPerBlock > 0) {
             args.setLlmMaxCallersPerBlock(llmMaxCallersPerBlock);
+        }
+        if (StringUtils.isNotBlank(llmConventionFiles)) {
+            args.setLlmConventionFiles(Split.on(llmConventionFiles, ','));
+        }
+        args.setAutoDiscoveryAgentInstructions(autoDiscoveryAgentInstructions);
+        if (llmConventionFilesMaxChars >= 0) {
+            args.setLlmConventionFilesMaxChars(llmConventionFilesMaxChars);
         }
         args.setLlmSeed(llmSeed);
         args.setLlmEnableWebSearchTool(llmEnableWebSearchTool);
@@ -1283,6 +1302,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     new SubmissionSummaryPrinter(getLog()).accept(ctx);
                     // set before the dump so codiqo-submission-<sha> replays carry the effective config
                     ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
+                    applyAgentInstructions(ctx, args);
                     new OutputSerializer(preferYaml, logFactory.getLogger(OutputSerializer.class)).accept(ctx);
                     return Optional.of(ctx);
                 }
@@ -1532,7 +1552,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             return index;
         }
     }
-    private static void applyBuildFailure(SubmissionContext ctx, RunArgs args, String reason, AnalysisExcludeCategory category, String detail) {
+    private void applyBuildFailure(SubmissionContext ctx, RunArgs args, String reason, AnalysisExcludeCategory category, String detail) throws IOException {
         AnalysisBuildFailureModel buildFailure = new AnalysisBuildFailureModel();
         buildFailure.setReason(reason);
         buildFailure.setCategory(category);
@@ -1540,6 +1560,16 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
         ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
         ctx.getSubmissionModel().setBuildFailure(buildFailure);
+        applyAgentInstructions(ctx, args);
+    }
+    /**
+     * Scoring runs server-side against the submitted payload, so the instruction text is collected here —
+     * this is the last point that still has a work tree — and travels with the submission. Setting it before
+     * the dump also makes a score-from-file replay reproduce the prompt the server saw.
+     */
+    private void applyAgentInstructions(SubmissionContext ctx, RunArgs args) throws IOException {
+        ctx.getSubmissionModel().setAgentInstructions(
+                StringUtils.trimToNull(ConventionGuidance.read(args, new MavenMessageReporter(getLog()))));
     }
 
     protected sealed interface BuildOutcome {

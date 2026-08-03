@@ -287,15 +287,13 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
                 if (!isMethodOrConstructor(unit.getKind()) || unit.getOperation() == OperationEnum.DELETE) {
                     continue;
                 }
-                BlockRow row = buildRow(ctx, file, unit, isTest);
-                if (Objects.isNull(row)) {
-                    continue;
-                }
-                if (Boolean.TRUE.equals(unit.getIsTrivial())) {
-                    trivial.add(row);
-                } else {
-                    nonTrivial.add(row);
-                }
+                buildRow(ctx, file, unit, isTest).ifPresent(row -> {
+                    if (Boolean.TRUE.equals(unit.getIsTrivial())) {
+                        trivial.add(row);
+                    } else {
+                        nonTrivial.add(row);
+                    }
+                });
             }
         }
         nonTrivial.sort(Comparator.comparingDouble(BlockRow::driver).reversed());
@@ -323,10 +321,10 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
                 new MaxRow("invocs", tracker.invocations().value(), tracker.invocations().file(), tracker.invocations().block()));
         return AsciiTable.getTable(rows, MAX_CONTRIBUTOR_COLUMNS);
     }
-    private static BlockRow buildRow(SubmissionContext ctx, FileChangeModel file, CodeUnitModel unit, boolean isTest) {
+    private static Optional<BlockRow> buildRow(SubmissionContext ctx, FileChangeModel file, CodeUnitModel unit, boolean isTest) {
         MetricsModel metrics = unit.getMetrics();
         if (Objects.isNull(metrics)) {
-            return null;
+            return Optional.empty();
         }
         int lines = Objects.nonNull(metrics.getNonCommentCodeLines()) ? metrics.getNonCommentCodeLines()
                 : Optional.ofNullable(metrics.getCodeLines()).orElse(0);
@@ -370,7 +368,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         String blockLabel = StringUtils.normalizeSpace(Optional.ofNullable(unit.getName()).orElse("-"));
         boolean outlier = deviationNcss > maxDeviation || deviationInvocations > maxDeviation;
 
-        return new BlockRow(
+        return Optional.of(new BlockRow(
                 fileLabel,
                 blockLabel,
                 kindLabel(unit.getKind()),
@@ -383,7 +381,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
                 driver,
                 Precision.round(deviationNcss, ROUNDING),
                 Precision.round(deviationInvocations, ROUNDING),
-                outlier);
+                outlier));
     }
     private static double bucketRatio(DimensionStats numerator, DimensionStats denominator) {
         if (denominator.p50() <= 0.0) {

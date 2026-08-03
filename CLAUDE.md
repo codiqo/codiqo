@@ -1081,6 +1081,35 @@ private static String extractClassName(String signature) {
 
 Exception: When implementing interfaces or working with APIs that expect null.
 
+### NEVER `.orElse(null)`
+
+**`.orElse(null)` is forbidden.** It unwraps an `Optional` straight back into the null it exists to eliminate, so the caller gains nothing and the reader is misled into thinking the value is safe. Consume the `Optional` instead — `ifPresent`, `map`, `filter`, `orElseThrow`, or a real default.
+
+For a builder field that is legitimately absent, set it conditionally rather than passing null into it:
+
+```java
+// Good - the field is simply not set when the value is absent
+DiagnosticInfo.DiagnosticInfoBuilder toReturn = DiagnosticInfo.builder()
+        .ruleId(diag.getRuleId())
+        .message(diag.getMessage());
+
+Optional.ofNullable(diag.getSeverity()).map(Mapper::mapDiagnosticSeverity).ifPresent(toReturn::severity);
+return toReturn.build();
+
+// Good - consume the Optional at the call site
+extractClassName(codeUnit).ifPresent(builder::className);
+
+// Good - a real default, not null
+String name = Optional.ofNullable(user.getName()).orElse("Unknown");
+
+// FORBIDDEN - laundering a null through the Optional API
+.severity(Optional.ofNullable(diag.getSeverity()).map(Mapper::mapDiagnosticSeverity).orElse(null))
+.className(extractClassName(codeUnit).orElse(null))
+Repository git = openWorkTree().orElse(null);
+```
+
+If a call site can only accept a nullable value (a language construct such as the try-with-resources resource slot, or a third-party API), restructure so the `Optional` never appears — do not bridge the gap with `.orElse(null)`.
+
 ## Exception Handling
 
 **Never swallow exceptions silently**:
