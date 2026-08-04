@@ -440,6 +440,16 @@ class PromptTemplateSmokeTest {
         assertTrue(withoutTool.contains("NO tools or functions available"), "no-tools notice missing when the tool is not registered");
     }
     @Test
+    void systemPromptRequiresAbsenceClaimsToBeTestedAgainstTheRequest() {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+        String rendered = builder.buildSystemPrompt(PromptContext.builder().args(new RunArgs()).build());
+
+        assertTrue(rendered.contains("Test the Claim Against the Data You Were Given"), "absence-claim verification step missing");
+        assertTrue(rendered.contains("fileChanges[*].path` is the authoritative list"), "file list must be named as the authority on what the commit touches");
+        assertTrue(rendered.contains("is not a medium-confidence finding — it is unreportable"),
+                "unconfirmable premises must be barred outright, not downgraded to medium confidence");
+    }
+    @Test
     void systemPromptRendersDegradedModeSection() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
         String rendered = builder.buildSystemPrompt(PromptContext.builder().args(new RunArgs()).build());
