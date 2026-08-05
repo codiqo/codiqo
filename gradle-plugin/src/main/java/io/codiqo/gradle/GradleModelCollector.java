@@ -42,11 +42,18 @@ public class GradleModelCollector {
         request.setJavaHome(resolveJavaHome(root, ext));
 
         request.setIgnoreCoverage(boolProp(root, "codiqo.ignoreCoverage", ext.isIgnoreCoverage()));
-        request.setIgnoreCpd(ext.isIgnoreCpd());
-        request.setIgnoreDiagnostics(ext.isIgnoreDiagnostics());
-        request.setIgnoreComplexity(ext.isIgnoreComplexity());
+        request.setIgnoreCpd(boolProp(root, "codiqo.ignoreCpd", ext.isIgnoreCpd()));
+        request.setIgnoreDiagnostics(boolProp(root, "codiqo.ignoreDiagnostics", ext.isIgnoreDiagnostics()));
+        request.setIgnoreComplexity(boolProp(root, "codiqo.ignoreComplexity", ext.isIgnoreComplexity()));
         request.setFailOnJdtlsError(ext.isFailOnJdtlsError());
         request.setFailOnUninstrumentedModule(boolProp(root, "codiqo.failOnUninstrumentedModule", ext.isFailOnUninstrumentedModule()));
+
+        request.setJdtlsVersion(stringProp(root, "codiqo.jdtlsVersion", ext.getJdtlsVersion()));
+        request.setJdtlsUseSnapshot(boolProp(root, "codiqo.jdtlsUseSnapshot", ext.isJdtlsUseSnapshot()));
+        request.setJdtUseSharedIndex(boolProp(root, "codiqo.jdtUseSharedIndex", ext.isJdtUseSharedIndex()));
+        request.setJdtIncludeDecompiledSources(boolProp(root, "codiqo.jdtIncludeDecompiledSources", ext.isJdtIncludeDecompiledSources()));
+        request.setImportTimeoutMinutes(longProp(root, "codiqo.importTimeoutMinutes", ext.getImportTimeoutMinutes()));
+        request.setLspQueryTimeoutSeconds(longProp(root, "codiqo.lspQueryTimeoutSeconds", ext.getLspQueryTimeoutSeconds()));
 
         for (Project project : root.getAllprojects()) {
             // skip container/aggregator projects (Maven parity: reactor.getModules() empty) — an
@@ -140,5 +147,9 @@ public class GradleModelCollector {
     private static boolean boolProp(Project project, String name, boolean fallback) {
         Object value = project.findProperty(name);
         return value != null ? Boolean.parseBoolean(value.toString()) : fallback;
+    }
+    private static long longProp(Project project, String name, long fallback) {
+        Object value = project.findProperty(name);
+        return value != null ? Long.parseLong(value.toString()) : fallback;
     }
 }

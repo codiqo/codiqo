@@ -21,6 +21,17 @@ public class CodiqoExtension {
     private boolean ignoreDiagnostics;
     private boolean ignoreComplexity;
 
+    private long testTimeoutMinutes = 30;
+    private Long perTestTimeoutMinutes;
+    private boolean ignoreTestFailures = true;
+
+    private String jdtlsVersion = "1.60.0";
+    private boolean jdtlsUseSnapshot;
+    private boolean jdtUseSharedIndex = true;
+    private boolean jdtIncludeDecompiledSources;
+    private long importTimeoutMinutes = 15;
+    private long lspQueryTimeoutSeconds = 30;
+
     private boolean failOnJdtlsError;
     private boolean failOnUninstrumentedModule = true;
 }
