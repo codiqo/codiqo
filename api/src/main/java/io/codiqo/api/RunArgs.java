@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -539,6 +540,13 @@ public class RunArgs {
                 BooleanUtils.negate(isExcludedAuthor(authorEmail))
         });
     }
+    /**
+     * the PMD threshold as the enum, so the string is parsed in exactly one place. Callers get the canonical value
+     * without re-deriving it from {@link #pmdMinPriority}, which validate() has already normalised.
+     */
+    public RulePriority pmdMinRulePriority() {
+        return pmdRulePriority(this.pmdMinPriority);
+    }
     public void validate() {
         if (Objects.isNull(this.perTestTimeout)) {
             this.perTestTimeout = this.testTimeout.dividedBy(2);
@@ -548,19 +556,35 @@ public class RunArgs {
             this.perTestTimeout = PER_TEST_TIMEOUT_MAX;
         }
         /**
-         * canonicalise here rather than at the PMD call site: the value is a RulePriority constant name, so the
-         * natural spellings "medium-high"/"medium high" would otherwise reach RulePriority.valueOf and throw deep
-         * inside a parallel stream, after the whole fork build has already been paid for. rejecting an unknown value
-         * now also keeps the persisted scoring config canonical.
+         * canonicalise here rather than at the PMD call site: the natural spellings "medium-high"/"Medium High" are
+         * not constant names, so they would otherwise reach RulePriority.valueOf and throw deep inside a parallel
+         * stream, after the whole fork build has already been paid for. rejecting an unknown value now also keeps
+         * the persisted scoring config canonical.
          */
-        this.pmdMinPriority = RulePriority.valueOf(
-                StringUtils.replaceChars(StringUtils.trimToEmpty(this.pmdMinPriority).toUpperCase(), "- ", "__")).name();
+        this.pmdMinPriority = pmdRulePriority(this.pmdMinPriority).name();
 
         this.statsQuantile = Math.max(0.85, this.statsQuantile);
         this.deleteRewardWeight = Math.min(0.20, Math.max(0.0, this.deleteRewardWeight));
         this.llmMaxRetries = (short) Math.max(1, this.llmMaxRetries);
         this.llmValidationMaxRetries = (short) Math.max(0, this.llmValidationMaxRetries);
         this.llmConventionFilesMaxChars = Math.max(0, this.llmConventionFilesMaxChars);
+    }
+    /**
+     * resolves the spellings people actually write — the constant name, the hyphenated "medium-high", and PMD's own
+     * display name "Medium High" — to a {@link RulePriority}. The comparison is per-character case-insensitive rather
+     * than an uppercase-then-valueOf: under a Turkish locale {@code "medium-high".toUpperCase()} yields
+     * {@code "MEDİUM-HİGH"}, so uppercasing threw on exactly the input it was meant to accept.
+     */
+    private static RulePriority pmdRulePriority(String value) {
+        String candidate = StringUtils.trimToEmpty(value).replace('-', '_').replace(' ', '_');
+
+        return Arrays.stream(RulePriority.values())
+                .filter(priority -> priority.name().equalsIgnoreCase(candidate))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(String.format(
+                        "unknown pmdMinPriority '%s', expected one of %s",
+                        value,
+                        Arrays.stream(RulePriority.values()).map(RulePriority::name).toList())));
     }
     public static Options options() {
         Options toReturn = new Options();
