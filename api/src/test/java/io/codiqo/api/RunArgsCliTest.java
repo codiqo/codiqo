@@ -7,10 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
+import java.util.Locale;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.DefaultParser;
 import org.junit.jupiter.api.Test;
+
+import net.sourceforge.pmd.lang.rule.RulePriority;
 
 class RunArgsCliTest {
     @Test
@@ -62,12 +65,47 @@ class RunArgsCliTest {
         assertEquals("MEDIUM_HIGH", hyphenated.getPmdMinPriority());
         assertEquals("MEDIUM_LOW", spaced.getPmdMinPriority());
     }
+    /**
+     * PMD prints its own display name as "Medium High", so a value copied back out of a report has to round-trip.
+     */
+    @Test
+    void pmdMinPriorityAcceptsPmdsOwnDisplayName() {
+        RunArgs args = new RunArgs();
+        args.setPmdMinPriority(RulePriority.MEDIUM_HIGH.getName());
+        args.validate();
+
+        assertEquals("MEDIUM_HIGH", args.getPmdMinPriority());
+        assertEquals(RulePriority.MEDIUM_HIGH, args.pmdMinRulePriority());
+    }
+    /**
+     * the previous implementation uppercased before matching, and under a Turkish locale "medium-high".toUpperCase()
+     * yields "MEDİUM-HİGH" — no constant matches, so it threw on exactly the input it was written to accept.
+     */
+    @Test
+    void pmdMinPriorityResolvesUnderALocaleWithNonAsciiUppercasing() {
+        Locale original = Locale.getDefault();
+        try {
+            Locale.setDefault(new Locale("tr", "TR"));
+
+            RunArgs args = new RunArgs();
+            args.setPmdMinPriority("medium-high");
+            args.validate();
+
+            assertEquals(RulePriority.MEDIUM_HIGH, args.pmdMinRulePriority());
+        } finally {
+            Locale.setDefault(original);
+        }
+    }
     @Test
     void pmdMinPriorityRejectsAnUnknownValue() {
         RunArgs args = new RunArgs();
         args.setPmdMinPriority("urgent");
 
-        assertThrows(IllegalArgumentException.class, args::validate);
+        IllegalArgumentException err = assertThrows(IllegalArgumentException.class, args::validate);
+
+        // the message has to name the offending value and the accepted set, or a CI misconfiguration is a guessing game
+        assertTrue(err.getMessage().contains("urgent"));
+        assertTrue(err.getMessage().contains("MEDIUM_HIGH"));
     }
     @Test
     void perTestTimeoutHonorsExplicitValue() throws Exception {
