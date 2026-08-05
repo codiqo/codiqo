@@ -122,7 +122,6 @@ import net.sourceforge.pmd.lang.java.types.JClassType;
 import net.sourceforge.pmd.lang.java.types.JMethodSig;
 import net.sourceforge.pmd.lang.java.types.JTypeMirror;
 import net.sourceforge.pmd.lang.java.types.OverloadSelectionResult;
-import net.sourceforge.pmd.lang.rule.RulePriority;
 import net.sourceforge.pmd.reporting.Report;
 
 public class JavaLanguageSpec implements LanguageSpec {
@@ -580,7 +579,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         cfg.setFailOnViolation(false);
         cfg.setFailOnError(true);
         cfg.setSourceEncoding(StandardCharsets.UTF_8);
-        cfg.setMinimumPriority(RulePriority.valueOf(args.getPmdMinPriority().toUpperCase()));
+        cfg.setMinimumPriority(args.pmdMinRulePriority());
         cfg.setThreads(BigDecimal.ONE.intValue());
 
         try (PmdAnalysis pmd = PmdAnalysis.create(cfg)) {

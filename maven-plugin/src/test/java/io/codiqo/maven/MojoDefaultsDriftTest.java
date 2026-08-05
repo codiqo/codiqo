@@ -2,6 +2,7 @@ package io.codiqo.maven;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.InputStream;
 
@@ -34,6 +35,21 @@ class MojoDefaultsDriftTest {
         assertEquals(String.valueOf(reference.getMaxRequestsPerHost()), defaultValueOf(pluginXml, "maxRequestsPerHost"));
 
         assertEquals(String.valueOf(reference.isScoreOnBuildFailure()), defaultValueOf(pluginXml, "scoreOnBuildFailure"));
+
+        assertEquals(String.valueOf(reference.getBuildTimeout().toMinutes()), defaultValueOf(pluginXml, "buildTimeoutMinutes"));
+        assertEquals(String.valueOf(reference.getTestTimeout().toMinutes()), defaultValueOf(pluginXml, "testTimeoutMinutes"));
+    }
+    /**
+     * the fork timeout has to fire before the test-phase timeout is meaningless and before whatever outer deadline the
+     * harness imposes, or the fork is killed from outside and buildProject never reaches the CommandLineTimeOutException
+     * branch that excuses the commit as a build failure and lets the time-machine ladder retry it.
+     */
+    @Test
+    void testTimeoutStaysBelowBuildTimeout() {
+        RunArgs reference = new RunArgs();
+
+        assertTrue(reference.getTestTimeout().compareTo(reference.getBuildTimeout()) < 0,
+                "testTimeout " + reference.getTestTimeout() + " must be shorter than buildTimeout " + reference.getBuildTimeout());
     }
     private static Document parsePluginDescriptor() throws Exception {
         try (InputStream in = MojoDefaultsDriftTest.class.getResourceAsStream("/META-INF/maven/plugin.xml")) {

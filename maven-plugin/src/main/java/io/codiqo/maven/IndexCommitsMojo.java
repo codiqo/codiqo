@@ -83,6 +83,9 @@ public class IndexCommitsMojo extends AbstractMojo {
     @Parameter(property = "codiqo.branch")
     private String branch;
 
+    @Parameter(property = "codiqo.includeBranches")
+    private String includeBranches;
+
     @Parameter(property = "codiqo.includeAuthorEmails")
     private String includeAuthorEmails;
 
@@ -115,6 +118,7 @@ public class IndexCommitsMojo extends AbstractMojo {
             getLog().info("using branch: " + resolvedBranch);
 
             RunArgs args = new RunArgs();
+            Optional.ofNullable(includeBranches).ifPresent(args::setIncludeBranches);
             Optional.ofNullable(includeAuthorEmails).ifPresent(args::setIncludeAuthorEmails);
             Optional.ofNullable(excludeAuthorEmails).ifPresent(args::setExcludeAuthorEmails);
             args.setFirstParentOnly(firstParentOnly);

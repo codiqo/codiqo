@@ -1,17 +1,22 @@
 package io.codiqo.gradle;
 
 import java.io.File;
+import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.Set;
 import java.util.LinkedHashSet;
 
 import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
+import org.jacoco.core.tools.ExecFileLoader;
 
 
 import io.codiqo.api.ClassGraphSpec;
@@ -63,7 +68,22 @@ public class AnalysisEngine {
         args.setFailOnUninstrumentedModule(request.isFailOnUninstrumentedModule());
         args.setJavaHome(new File(request.getJavaHome()));
         args.setOutputDirectory(new File(request.getOutputDirectory()));
+
+        args.setJdtlsVersion(request.getJdtlsVersion());
+        args.setJdtlsUseSnapshot(request.isJdtlsUseSnapshot());
+        args.setJdtUseSharedIndex(request.isJdtUseSharedIndex());
+        args.setJdtIncludeDecompiledSources(request.isJdtIncludeDecompiledSources());
+        args.setImportTimeout(Duration.ofMinutes(request.getImportTimeoutMinutes()));
+        args.setLspQueryTimeout(Duration.ofSeconds(request.getLspQueryTimeoutSeconds()));
+
         args.validate();
+
+        if (BooleanUtils.negate(request.isIgnoreCoverage())) {
+            Log mergeLog = logFactory.getLogger(AnalysisEngine.class);
+            for (ModuleData module : request.getModules()) {
+                mergeCoverageParts(module, mergeLog);
+            }
+        }
 
         try (ClassGraphSpec scan = buildProjects(request, args)) {
             try (Repository git = JGit.openRepository(new File(request.getRootDir()))) {
@@ -83,6 +103,44 @@ public class AnalysisEngine {
                 });
             }
         }
+    }
+    /**
+     * fold every Test task's exec part into the single per-module file the analysis reads. Gradle deletes a Test task's
+     * jacoco destination file before the task runs, so the parts cannot share one path (see
+     * {@link GradleBuildSupport#jacocoExecPart}); merging here keeps the one-exec-per-module contract the Maven side
+     * gets for free from surefire's sequential executions.
+     */
+    static void mergeCoverageParts(ModuleData module, Log log) throws IOException {
+        File merged = new File(module.getCoveragePath());
+        File[] parts = merged.getParentFile().listFiles(file -> file.getName().startsWith(GradleBuildSupport.EXEC_PART_PREFIX));
+        if (ArrayUtils.isEmpty(parts)) {
+            return;
+        }
+
+        ExecFileLoader loader = new ExecFileLoader();
+        long oldestPart = Long.MAX_VALUE;
+        for (File part : parts) {
+            loader.load(part);
+            oldestPart = Math.min(oldestPart, part.lastModified());
+        }
+        loader.save(merged, false);
+
+        /**
+         * the merged file carries the OLDEST contributing part's timestamp, not the merge's own. parts are deliberately
+         * kept even when their Test task did not run this build — an up-to-date task's part is still valid for unchanged
+         * inputs, so pruning it would under-report coverage — but a part left behind by a PREVIOUS checkout is not, and
+         * the only thing that can tell those apart is age. writing a fresh timestamp here would hand
+         * JavaLanguageSpec.captureJacocoCoverage a file that always looks newer than the sources and permanently disarm
+         * its exec-vs-latestModified staleness guard, letting one commit be scored with another commit's coverage.
+         */
+        if (BooleanUtils.negate(merged.setLastModified(oldestPart))) {
+            throw new IOException(String.format(
+                    "could not stamp %s with the oldest contributing exec part's time (%d); refusing to continue because the coverage staleness guard would be bypassed",
+                    merged.getAbsolutePath(), oldestPart));
+        }
+
+        log.info("merged %d jacoco exec part(s) for %s into %s (stamped %s from the oldest part)",
+                parts.length, module.getArtifactId(), merged.getAbsolutePath(), Instant.ofEpochMilli(oldestPart));
     }
     private static ClassGraphSpec buildProjects(AnalysisRequest request, RunArgs args) {
         Set<URI> jars = new LinkedHashSet<>();

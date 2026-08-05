@@ -45,6 +45,9 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
         RunArgs filter = new RunArgs();
         Optional.ofNullable(prop("codiqo.includeAuthorEmails", null)).ifPresent(filter::setIncludeAuthorEmails);
         Optional.ofNullable(prop("codiqo.excludeAuthorEmails", null)).ifPresent(filter::setExcludeAuthorEmails);
+        // CommitIndexer applies this alongside the author filters; leaving it unset made the Gradle task index every
+        // branch while silently accepting -Pcodiqo.includeBranches, defeating the point of filtering before the build
+        Optional.ofNullable(prop("codiqo.includeBranches", null)).ifPresent(filter::setIncludeBranches);
         String firstParentValue = prop("codiqo.firstParentOnly", "true");
         if (Set.of("true", "false").contains(firstParentValue.toLowerCase(Locale.ROOT))) {
             filter.setFirstParentOnly(Boolean.parseBoolean(firstParentValue));

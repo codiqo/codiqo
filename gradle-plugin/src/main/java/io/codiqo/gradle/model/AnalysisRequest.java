@@ -32,5 +32,12 @@ public class AnalysisRequest implements Serializable {
     private boolean failOnJdtlsError;
     private boolean failOnUninstrumentedModule = true;
 
+    private String jdtlsVersion;
+    private boolean jdtlsUseSnapshot;
+    private boolean jdtUseSharedIndex = true;
+    private boolean jdtIncludeDecompiledSources;
+    private long importTimeoutMinutes;
+    private long lspQueryTimeoutSeconds;
+
     private List<ModuleData> modules = new ArrayList<>();
 }

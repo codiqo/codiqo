@@ -3,13 +3,17 @@ package io.codiqo.api;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
+import java.util.Locale;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.DefaultParser;
 import org.junit.jupiter.api.Test;
+
+import net.sourceforge.pmd.lang.rule.RulePriority;
 
 class RunArgsCliTest {
     @Test
@@ -39,9 +43,69 @@ class RunArgsCliTest {
         RunArgs args = new RunArgs();
         args.validate();
 
-        assertEquals(Duration.ofMinutes(60), args.getBuildTimeout());
+        assertEquals(Duration.ofMinutes(45), args.getBuildTimeout());
         assertEquals(Duration.ofMinutes(30), args.getTestTimeout());
         assertEquals(Duration.ofMinutes(15), args.getPerTestTimeout());
+    }
+    /**
+     * "medium-high" is the spelling every human writes and the one the CI action documents, but RulePriority's
+     * constants are underscored — canonicalising in validate() keeps it from throwing deep inside PMD, after the
+     * whole fork build has already been paid for.
+     */
+    @Test
+    void pmdMinPriorityAcceptsHyphenatedAndSpacedSpellings() {
+        RunArgs hyphenated = new RunArgs();
+        hyphenated.setPmdMinPriority("medium-high");
+        hyphenated.validate();
+
+        RunArgs spaced = new RunArgs();
+        spaced.setPmdMinPriority(" Medium Low ");
+        spaced.validate();
+
+        assertEquals("MEDIUM_HIGH", hyphenated.getPmdMinPriority());
+        assertEquals("MEDIUM_LOW", spaced.getPmdMinPriority());
+    }
+    /**
+     * PMD prints its own display name as "Medium High", so a value copied back out of a report has to round-trip.
+     */
+    @Test
+    void pmdMinPriorityAcceptsPmdsOwnDisplayName() {
+        RunArgs args = new RunArgs();
+        args.setPmdMinPriority(RulePriority.MEDIUM_HIGH.getName());
+        args.validate();
+
+        assertEquals("MEDIUM_HIGH", args.getPmdMinPriority());
+        assertEquals(RulePriority.MEDIUM_HIGH, args.pmdMinRulePriority());
+    }
+    /**
+     * the previous implementation uppercased before matching, and under a Turkish locale "medium-high".toUpperCase()
+     * yields "MEDİUM-HİGH" — no constant matches, so it threw on exactly the input it was written to accept.
+     */
+    @Test
+    void pmdMinPriorityResolvesUnderALocaleWithNonAsciiUppercasing() {
+        Locale original = Locale.getDefault();
+        try {
+            Locale.setDefault(new Locale("tr", "TR"));
+
+            RunArgs args = new RunArgs();
+            args.setPmdMinPriority("medium-high");
+            args.validate();
+
+            assertEquals(RulePriority.MEDIUM_HIGH, args.pmdMinRulePriority());
+        } finally {
+            Locale.setDefault(original);
+        }
+    }
+    @Test
+    void pmdMinPriorityRejectsAnUnknownValue() {
+        RunArgs args = new RunArgs();
+        args.setPmdMinPriority("urgent");
+
+        IllegalArgumentException err = assertThrows(IllegalArgumentException.class, args::validate);
+
+        // the message has to name the offending value and the accepted set, or a CI misconfiguration is a guessing game
+        assertTrue(err.getMessage().contains("urgent"));
+        assertTrue(err.getMessage().contains("MEDIUM_HIGH"));
     }
     @Test
     void perTestTimeoutHonorsExplicitValue() throws Exception {
