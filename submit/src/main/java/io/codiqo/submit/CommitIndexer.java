@@ -65,8 +65,14 @@ public class CommitIndexer {
                     author = JGit.mergeSideSoleAuthor(repo, commit).orElse(author);
                 }
 
+                /**
+                 * includeBranches is applied here, alongside the author filters, rather than only at analysis time:
+                 * a commit rejected by it is worth no build at all, and reaching that verdict after the fork build
+                 * and the language-server import costs the same as analysing a commit that counts.
+                 */
                 if (BooleanUtils.or(new boolean[] {
                         BooleanUtils.negate(branches.contains(branch)),
+                        BooleanUtils.negate(filterArgs.matchesByBranch(branches)),
                         BooleanUtils.negate(filterArgs.isAuthorAllowed(author.getEmailAddress()))
                 })) {
                     continue;
