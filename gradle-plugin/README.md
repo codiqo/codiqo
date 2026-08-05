@@ -40,13 +40,34 @@ Or a single commit manually:
 cd <spring-kafka checkout>
 git checkout <sha>
 JAVA_HOME=$(/usr/libexec/java_home -v 25) ./gradlew \
-    --init-script <codiqo repo>/gradle-plugin/codiqo.init.gradle \
-    :spring-kafka:test :spring-kafka:jacocoTestReport codiqoDumpAnalysis \
+    --init-script <codiqo repo>/gradle-plugin/codiqo.init.gradle --continue \
+    :spring-kafka-test:test codiqoDumpAnalysis \
     -Pcodiqo.commitId=<sha> -Pcodiqo.outputDirectory=<out dir>
 ```
 
+`--continue` is required, not optional: codiqo caps every `Test` task with a timeout, and a task that
+hits it still fails even though ordinary test failures are ignored — without `--continue` the build
+stops before `codiqoDumpAnalysis` and you get no submission.
+
+No `jacocoTestReport` is needed. Codiqo owns coverage: each `Test` task writes
+`build/jacoco/codiqo-<task>.exec` and the dump merges those parts into the module's `codiqo.exec`.
+
+Pick the test task(s) of the module that **owns the changed files** — changed-line coverage is
+attributed per module, so running an unrelated module's tests yields a correct but useless
+`0 files affected matched`.
+
 Config overrides (project properties, or a `codiqo { … }` extension block): `-Pcodiqo.commitId`,
-`-Pcodiqo.outputDirectory`, `-Pcodiqo.javaHome`, `-Pcodiqo.ignoreCoverage`.
+`-Pcodiqo.outputDirectory`, `-Pcodiqo.javaHome`, `-Pcodiqo.ignoreCoverage`, `-Pcodiqo.ignoreCpd`,
+`-Pcodiqo.ignoreDiagnostics`, `-Pcodiqo.ignoreComplexity`, `-Pcodiqo.testTimeoutMinutes`,
+`-Pcodiqo.perTestTimeoutMinutes`, `-Pcodiqo.importTimeoutMinutes`, `-Pcodiqo.lspQueryTimeoutSeconds`,
+`-Pcodiqo.jdtlsVersion`, `-Pcodiqo.jdtUseSharedIndex`, `-Pcodiqo.failOnUninstrumentedModule`.
+For `codiqoIndexCommits`: `-Pcodiqo.indexRef`, `-Pcodiqo.commitWindow`, `-Pcodiqo.includeBranches`,
+`-Pcodiqo.includeAuthorEmails`, `-Pcodiqo.excludeAuthorEmails`, `-Pcodiqo.firstParentOnly`.
+
+The analysis runs inside the Gradle daemon, so it inherits the analysed project's
+`org.gradle.jvmargs`. Large multi-module builds need more than their own default — micrometer's
+`-Xmx1g` OOMs in the ClassGraph scan and spring-framework's `-Xmx2048m` GC-thrashes; pass
+`-Dorg.gradle.jvmargs=-Xmx6g` (or more) for those.
 
 Success = a `codiqo-submission-<sha>.yaml` with changed-line coverage (MODE=full), PMD + SpotBugs
 diagnostics, CPD duplication and the resolved dependency registry — comparable to the Maven dump.

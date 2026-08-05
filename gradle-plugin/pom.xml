@@ -72,6 +72,17 @@
             <groupId>net.sourceforge.pmd</groupId>
             <artifactId>pmd-core</artifactId>
         </dependency>
+        <!--
+            JaCoCo.VERSION pins the agent the analysis build instruments with to the one it parses the exec file with.
+            the version is explicit rather than inherited from the parent's dependencyManagement because Gradle resolves
+            this POM itself when the init script puts the plugin on its classpath, and it did not apply the managed
+            version — leaving Gradle on 0.8.14 while Maven used 0.8.15. an interpolated literal leaves it no choice.
+        -->
+        <dependency>
+            <groupId>org.jacoco</groupId>
+            <artifactId>org.jacoco.core</artifactId>
+            <version>${jacoco.version}</version>
+        </dependency>
 
         <!-- engine libs needed at runtime (loaded reflectively by the analysis pipeline) -->
         <dependency>
@@ -91,6 +102,17 @@
             <artifactId>lombok</artifactId>
             <groupId>org.projectlombok</groupId>
             <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 </project>
