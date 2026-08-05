@@ -170,6 +170,16 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     private static final Set<String> M2E_TRANSPORTABLE_PROTOCOLS = Set.of("file", "http", "https");
     private static final String PRIVATE_REPOSITORY_PREFIX = "codiqo-m2-";
 
+    /**
+     * how long surefire waits for a forked test JVM to exit after it is done with it. tests that leak non-daemon
+     * threads (a Spring context, a scheduler, a connection pool) keep the process alive past the last test, and
+     * surefire cannot force-kill it until this elapses. it has to be generous enough for such a context to unwind and
+     * run the JaCoCo agent's dumponexit hook, or the module yields no coverage data at all; surefire's own default of
+     * 30s is too tight for a large reactor. NOTE the user property is `surefire.exitTimeout` — the parameter name
+     * (forkedProcessExitTimeoutInSeconds) is NOT accepted on the command line and is silently ignored.
+     */
+    private static final long FORK_EXIT_GRACE_SECONDS = 120L;
+
     // StringUtils.abbreviate requires a width of at least 4 ("a...")
     private static final int MIN_ABBREVIATE_WIDTH = 4;
 
@@ -209,7 +219,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.preferYaml", defaultValue = "true")
     protected boolean preferYaml;
 
-    @Parameter(property = "codiqo.buildTimeoutMinutes", defaultValue = "60")
+    @Parameter(property = "codiqo.buildTimeoutMinutes", defaultValue = "45")
     protected long buildTimeoutMinutes;
 
     @Parameter(property = "codiqo.testTimeoutMinutes", defaultValue = "30")
@@ -703,7 +713,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     "-Dmdep.analyze.skip=true"));
         } else {
             long surefireTimeout = args.getTestTimeout().getSeconds();
-            long surefireExitTimeout = args.getBuildTimeout().minusMinutes(1).getSeconds();
             /**
              * jacoco.skip=true is deliberate: codiqo owns coverage in the fork. the injector extension attaches its
              * own agent to every module (uniform per-module destfile) and strips dangling agent-property tokens, so
@@ -720,7 +729,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     "-Dmaven.javadoc.skip=true",
                     "-Dmdep.analyze.skip=true",
                     "-Dsurefire.timeout=" + surefireTimeout,
-                    "-Dsurefire.forkedProcessExitTimeoutInSeconds=" + surefireExitTimeout));
+                    "-Dsurefire.exitTimeout=" + FORK_EXIT_GRACE_SECONDS));
         }
         request.setTimeoutInSeconds((int) args.getBuildTimeout().getSeconds());
         request.setBatchMode(true);
@@ -1042,12 +1051,17 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         InvocationResult result = invoker.execute(request);
         if (result.getExitCode() != 0) {
             if (result.getExecutionException() instanceof CommandLineTimeOutException) {
+                String reason = "fork build timed out after " + args.getBuildTimeout();
                 if (args.isSkipOnBuildFailure()) {
-                    String reason = "fork build timed out after " + args.getBuildTimeout();
                     getLog().warn(reason + ", skipping with category " + AnalysisExcludeCategory.BUILD_FAILURE);
-                    return new BuildOutcome.Skipped(reason, AnalysisExcludeCategory.BUILD_FAILURE, buildFailureDetail(args, sysout, syserr));
+                    return new BuildOutcome.Skipped(reason, AnalysisExcludeCategory.BUILD_FAILURE, buildFailureDetail(args, sysout, syserr), true);
                 }
-                getLog().warn("maven build timed out after " + args.getBuildTimeout() + " — test coverage may be incomplete");
+                /**
+                 * proceeding here would score a reactor whose `clean` already wiped target/ for every module the
+                 * timeout stopped from building — missing coverage and missing classes read as a small, clean commit
+                 * rather than as the failure it is. skipOnBuildFailure=false asks for a hard error, so raise one.
+                 */
+                throw new MojoExecutionException(reason, result.getExecutionException());
             } else if (args.isSkipOnBuildFailure()) {
                 String reason = Optional.ofNullable(sysout.firstErrorLine())
                         .or(() -> Optional.ofNullable(syserr.firstErrorLine()))
@@ -1573,7 +1587,15 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     }
 
     protected sealed interface BuildOutcome {
-        record Skipped(String reason, AnalysisExcludeCategory category, String detail) implements BuildOutcome {}
+        /**
+         * timedOut separates a fork the deadline killed from a fork that genuinely failed: only the latter is worth
+         * another time-machine rung, because a timeout carries no evidence about which snapshots were picked.
+         */
+        record Skipped(String reason, AnalysisExcludeCategory category, String detail, boolean timedOut) implements BuildOutcome {
+            Skipped(String reason, AnalysisExcludeCategory category, String detail) {
+                this(reason, category, detail, false);
+            }
+        }
         record Proceeded(ProjectBuildingResult result) implements BuildOutcome {}
     }
 

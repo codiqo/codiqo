@@ -128,7 +128,7 @@ public class RunArgs {
     @Nullable
     private transient ClassGraphSpec classGraph;
     @Nullable
-    private Duration buildTimeout = Duration.ofMinutes(60);
+    private Duration buildTimeout = Duration.ofMinutes(45);
     @Nullable
     private Duration testTimeout = Duration.ofMinutes(30);
     @Nullable
@@ -547,6 +547,15 @@ public class RunArgs {
         if (this.perTestTimeout.compareTo(PER_TEST_TIMEOUT_MAX) > 0) {
             this.perTestTimeout = PER_TEST_TIMEOUT_MAX;
         }
+        /**
+         * canonicalise here rather than at the PMD call site: the value is a RulePriority constant name, so the
+         * natural spellings "medium-high"/"medium high" would otherwise reach RulePriority.valueOf and throw deep
+         * inside a parallel stream, after the whole fork build has already been paid for. rejecting an unknown value
+         * now also keeps the persisted scoring config canonical.
+         */
+        this.pmdMinPriority = RulePriority.valueOf(
+                StringUtils.replaceChars(StringUtils.trimToEmpty(this.pmdMinPriority).toUpperCase(), "- ", "__")).name();
+
         this.statsQuantile = Math.max(0.85, this.statsQuantile);
         this.deleteRewardWeight = Math.min(0.20, Math.max(0.0, this.deleteRewardWeight));
         this.llmMaxRetries = (short) Math.max(1, this.llmMaxRetries);

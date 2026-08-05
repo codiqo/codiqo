@@ -3,6 +3,7 @@ package io.codiqo.api;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
@@ -39,9 +40,34 @@ class RunArgsCliTest {
         RunArgs args = new RunArgs();
         args.validate();
 
-        assertEquals(Duration.ofMinutes(60), args.getBuildTimeout());
+        assertEquals(Duration.ofMinutes(45), args.getBuildTimeout());
         assertEquals(Duration.ofMinutes(30), args.getTestTimeout());
         assertEquals(Duration.ofMinutes(15), args.getPerTestTimeout());
+    }
+    /**
+     * "medium-high" is the spelling every human writes and the one the CI action documents, but RulePriority's
+     * constants are underscored — canonicalising in validate() keeps it from throwing deep inside PMD, after the
+     * whole fork build has already been paid for.
+     */
+    @Test
+    void pmdMinPriorityAcceptsHyphenatedAndSpacedSpellings() {
+        RunArgs hyphenated = new RunArgs();
+        hyphenated.setPmdMinPriority("medium-high");
+        hyphenated.validate();
+
+        RunArgs spaced = new RunArgs();
+        spaced.setPmdMinPriority(" Medium Low ");
+        spaced.validate();
+
+        assertEquals("MEDIUM_HIGH", hyphenated.getPmdMinPriority());
+        assertEquals("MEDIUM_LOW", spaced.getPmdMinPriority());
+    }
+    @Test
+    void pmdMinPriorityRejectsAnUnknownValue() {
+        RunArgs args = new RunArgs();
+        args.setPmdMinPriority("urgent");
+
+        assertThrows(IllegalArgumentException.class, args::validate);
     }
     @Test
     void perTestTimeoutHonorsExplicitValue() throws Exception {

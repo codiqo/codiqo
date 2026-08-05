@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.metrics.DriverScaler;
 import io.codiqo.llm.VolumeScoreCalculator.CodeBlockEffort;
+import io.codiqo.llm.VolumeScoreCalculator.CpdPreComputed;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
 import io.codiqo.llm.VolumeScoreCalculator.StaticAnalysisCategory;
 import io.codiqo.llm.VolumeScoreCalculator.StaticAnalysisPreComputed;
@@ -1065,6 +1066,39 @@ class VolumeScoreCalculatorTest {
         assertEquals(1, sa.getPreExistingCount());
         assertEquals(StaticAnalysisCategory.CLEAN, sa.getCategory());
         assertEquals(Precision.round(args.getStaticAnalysisCleanBonus(), 2), sa.getRecommendedImpact(), 0.001);
+    }
+    /**
+     * absent measurements must not be mistaken for a clean result: with collection switched off every commit would
+     * otherwise collect the clean bonus, so the two ignore flags would act as a project-wide score multiplier.
+     */
+    @Test
+    void ignoredDiagnosticsEarnNoCleanBonus() {
+        RunArgs args = new RunArgs();
+        args.setIgnoreDiagnostics(true);
+
+        StaticAnalysisPreComputed sa = new VolumeScoreCalculator(args).calculateStaticAnalysisPenalty(
+                LlmScoringRequest.builder().codeBlockChanges(List.of(newMethodBlock(50, 50, 50, false))).build());
+
+        assertEquals(0, sa.getIntroducedCount());
+        assertEquals(0.0, sa.getRecommendedImpact(), 0.001);
+    }
+    @Test
+    void ignoredCpdEarnsNoCleanBonus() {
+        RunArgs args = new RunArgs();
+        args.setIgnoreCpd(true);
+
+        CpdPreComputed cpd = new VolumeScoreCalculator(args).calculateCpdPenalty(LlmScoringRequest.builder().build());
+
+        assertEquals(0, cpd.getTotalClones());
+        assertEquals(0.0, cpd.getRecommendedImpact(), 0.001);
+    }
+    @Test
+    void collectedButEmptyCpdStillEarnsTheCleanBonus() {
+        RunArgs args = new RunArgs();
+
+        CpdPreComputed cpd = new VolumeScoreCalculator(args).calculateCpdPenalty(LlmScoringRequest.builder().build());
+
+        assertEquals(Precision.round(args.getCpdCleanBonus(), 2), cpd.getRecommendedImpact(), 0.001);
     }
     private static DiagnosticInfo errorDiagnostic(String ruleId, boolean introduced) {
         return DiagnosticInfo.builder()
