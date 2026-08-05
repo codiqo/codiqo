@@ -257,7 +257,12 @@ public class VolumeScoreCalculator {
     public CpdPreComputed calculateCpdPenalty(LlmScoringRequest request) {
         DuplicationInfo dup = request.getDuplication();
         if (Objects.isNull(dup) || CollectionUtils.isEmpty(dup.getCloneDetails())) {
-            return new CpdPreComputed(0, CpdCategory.CLEAN, args.getCpdCleanBonus(), 0, 0, 0);
+            /**
+             * with detection switched off nothing was measured, so there is no evidence of cleanliness to reward:
+             * absent data has to score neutral, or ignoreCpd silently buys the duplicate-free bonus on every commit.
+             */
+            double impact = args.isIgnoreCpd() ? 0.0 : args.getCpdCleanBonus();
+            return new CpdPreComputed(0, CpdCategory.CLEAN, impact, 0, 0, 0);
         }
         List<CloneDetail> clones = dup.getCloneDetails();
         int total = clones.size();
@@ -336,7 +341,8 @@ public class VolumeScoreCalculator {
         double impact;
         if (introducedCount == 0) {
             category = StaticAnalysisCategory.CLEAN;
-            impact = args.getStaticAnalysisCleanBonus();
+            // as with CPD: uncollected diagnostics are not evidence of clean code, so they earn no bonus
+            impact = args.isIgnoreDiagnostics() ? 0.0 : args.getStaticAnalysisCleanBonus();
         } else {
             category = StaticAnalysisCategory.HAS_VIOLATIONS;
             double effectiveIntroduced = introducedProdCount + testOnlyIntroducedCount * args.getTestCodePenaltyWeight();

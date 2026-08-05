@@ -258,6 +258,19 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                 firstSkipped = skipped;
             }
             attemptFailures.add(attemptEntry("offset " + offset, skipped));
+
+            /**
+             * a timeout is the one failure the ladder must not answer with another attempt: it carries no evidence
+             * that the snapshot picks were wrong, and every further rung costs another full buildTimeout — more than
+             * the deadline wrapping the whole commit can absorb, so the process would be killed mid-ladder and this
+             * exclusion would never be recorded at all.
+             */
+            if (skipped.timedOut()) {
+                getLog().warn(String.format("commit %s: time-machine build timed out at offset %s, not retrying", commitId, offset));
+                return new BuildOutcome.Skipped(
+                        firstSkipped.reason(), firstSkipped.category(), attemptHistoryDetail(attemptFailures), true);
+            }
+
             Optional<Duration> next;
             if (AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE == skipped.category()) {
                 next = Optional.empty();
