@@ -156,6 +156,123 @@ class PromptTemplateSmokeTest {
         assertTrue(compact.contains("\"omittedCallerCount\":75"), "the number of omitted callers must be stated");
         assertTrue(compact.contains("\"callerCount\":80"), "true caller count must survive the per-block cap");
     }
+    /**
+     * production callers take the slots first and test callers fill whatever room is left. Dropping test
+     * callers instead would blank the caller list of any changed test file, whose callers are all test code
+     * by nature. The test callers are listed first here, so a stable sort would have kept exactly the wrong
+     * ones.
+     */
+    @Test
+    void productionCallersFillTheCapFirstAndTestCallersTakeTheRemainingRoom() {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+
+        List<CallerInfo> callers = new ArrayList<>();
+        for (int i = 0; i < 8; i++) {
+            callers.add(caller("test" + i, "pkg/Test" + i + ".java", "TEST_MARKER", true));
+        }
+        callers.add(caller("prod0", "pkg/A.java", "PROD_MARKER", false));
+        callers.add(caller("prod1", "pkg/B.java", "PROD_MARKER", false));
+
+        String rendered = renderWithCallers(builder, callers, 5);
+        String compact = rendered.replaceAll("\\s", "");
+
+        assertEquals(2, countOccurrences(rendered, "PROD_MARKER"), "every production caller must take a slot before any test caller");
+        assertEquals(3, countOccurrences(rendered, "TEST_MARKER"), "test callers fill the room left over rather than being dropped");
+        assertTrue(compact.contains("\"omittedProductionCallerCount\":0"), "no production caller was left out");
+        assertTrue(compact.contains("\"callerCount\":10"), "the true caller count must survive the cap");
+    }
+    /**
+     * the flag the model reads to tell blast radius from test coverage. Jackson drops the "is" prefix, so the
+     * payload says "testCaller" while the system prompt documented "isTestCaller" — the model was being told
+     * to look for a field name that was never in the JSON. This pins the two together.
+     */
+    @Test
+    void eachCallerStatesWhetherItIsTestCodeUnderTheNameTheSystemPromptDocuments() {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+
+        String compact = renderWithCallers(builder, new ArrayList<>(List.of(
+                caller("prod0", "pkg/A.java", "PROD_MARKER", false),
+                caller("test0", "pkg/ATest.java", "TEST_MARKER", true))), 64).replaceAll("\\s", "");
+
+        assertTrue(compact.contains("\"testCaller\":true"), "a test caller must be marked as one");
+        assertTrue(compact.contains("\"testCaller\":false"), "a production caller must be marked as one");
+        assertTrue(builder.buildSystemPrompt(PromptContext.builder().args(new RunArgs()).build()).contains("**testCaller**"),
+                "the system prompt must document the flag under the name the payload actually uses");
+    }
+    /**
+     * ranking on coupling alone left the survivors scattered one-per-class, which tells the model only that
+     * the changed code is used. every caller here is production with the same call-site count, so nothing but
+     * class concentration can decide the slice — and the scattered ones are listed first, so a stable sort on
+     * the old ordering would have kept exactly the wrong ones
+     */
+    @Test
+    void callerCapKeepsWholeClassesAheadOfScatteredSingletons() {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+
+        List<CallerInfo> callers = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            callers.add(caller("lone" + i, "pkg/Lone" + i + ".java", "LONE_MARKER", false));
+        }
+        for (int i = 0; i < 5; i++) {
+            callers.add(caller("hub" + i, "pkg/Hub.java", "HUB_MARKER", false));
+        }
+
+        String rendered = renderWithCallers(builder, callers, 5);
+
+        assertEquals(5, countOccurrences(rendered, "HUB_MARKER"), "the class contributing the most callers must survive the cap whole");
+        assertEquals(0, countOccurrences(rendered, "LONE_MARKER"), "one-caller classes must yield to a concentrated one");
+    }
+    /**
+     * class concentration is a tie-break, not a primary key: promoting it above call-site coupling cost the
+     * single most-coupled caller its slot whenever a class of weakly-coupled callers outnumbered it, which
+     * inverts what the cap is for — and the system prompt tells the model the list is coupling-ordered
+     */
+    @Test
+    void theMostCoupledCallerKeepsItsSlotAgainstAConcentratedClassOfWeakOnes() {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+
+        List<CallerInfo> callers = new ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            callers.add(caller("weak" + i, "pkg/Util.java", "WEAK_MARKER", false));
+        }
+        CallerInfo hot = caller("hot", "pkg/Hub.java", "HOT_MARKER", false);
+        hot.setCallSiteCount(40);
+        callers.add(hot);
+
+        String rendered = renderWithCallers(builder, callers, 5);
+
+        assertEquals(1, countOccurrences(rendered, "HOT_MARKER"), "the 40-call-site caller must survive the cap");
+        assertEquals(4, countOccurrences(rendered, "WEAK_MARKER"), "its concentrated class takes the remaining slots, not all of them");
+    }
+    private static CallerInfo caller(String name, String file, String marker, boolean isTestCaller) {
+        return CallerInfo.builder()
+                .callerMethod(name)
+                .file(file)
+                .line(1)
+                .isTestCaller(isTestCaller)
+                .signature("Lcom/example/" + name + ";.method()V " + marker)
+                .kind("function")
+                .symbol("com.example." + name)
+                .callSiteCount(1)
+                .build();
+    }
+    private static String renderWithCallers(ThymeleafPromptBuilder builder, List<CallerInfo> callers, int cap) {
+        CodeBlockChange block = CodeBlockChange.builder()
+                .name("hot").operation(Operation.MODIFY).file("Hot.java")
+                .callers(callers).build();
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder()
+                        .linesAdded(3).linesDeleted(1).totalLinesChanged(4).totalFilesChanged(1).codeBlocksModified(1).build())
+                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                        .path("Hot.java").changeType(FileChangeType.MODIFIED).language("java")
+                        .linesAdded(3).linesDeleted(1).linesJustificationRequired(true).diff("dummy").build())))
+                .codeBlockChanges(new ArrayList<>(List.of(block)))
+                .build();
+
+        RunArgs args = new RunArgs();
+        args.setLlmMaxCallersPerBlock(cap);
+        return builder.buildUserMessageWithScores(request, PromptContext.builder().args(args).build()).getMessage();
+    }
     @Test
     void userPromptDescendsCallerCapUnderTokenBudget() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
@@ -228,8 +345,8 @@ class PromptTemplateSmokeTest {
                 .build();
 
         /**
-         * leave the token budget at its (large) default and constrain only the context window; the effective
-         * budget must derive from numCtx and still force the caller cap to descend below the ceiling
+         * leave the token budget unset and constrain only the context window; the effective budget must
+         * derive from numCtx and still force the caller cap to descend below the ceiling
          */
         RunArgs args = new RunArgs();
         args.setLlmNumCtx(3000 + RunArgs.PROMPT_TOKEN_RESERVE);
@@ -238,6 +355,21 @@ class PromptTemplateSmokeTest {
 
         int retained = countOccurrences(rendered, "SIG_MARKER");
         assertTrue(retained >= 1 && retained < 80, "a lowered numCtx must tighten the effective budget, retained=" + retained);
+
+        /**
+         * and the explicit budget is still a cap, not a floor: a tiny one must bind even when the window is
+         * enormous. The reverse — a window larger than the old 256K-derived default silently clamping the
+         * request back down to 188K — is the bug this pairing guards
+         */
+        RunArgs wideWindow = new RunArgs();
+        wideWindow.setLlmNumCtx(1024 * 1024);
+        wideWindow.setLlmPromptTokenBudget(3000);
+        wideWindow.setLlmMaxCallersPerBlock(100);
+        String cappedRender = builder.buildUserMessageWithScores(request, PromptContext.builder().args(wideWindow).build()).getMessage();
+
+        int cappedRetained = countOccurrences(cappedRender, "SIG_MARKER");
+        assertTrue(cappedRetained >= 1 && cappedRetained < 80,
+                "an explicit budget must still cap a 1M window, retained=" + cappedRetained);
     }
     @Test
     void windowSmallerThanReserveTrimsAllCallers() {
@@ -391,6 +523,37 @@ class PromptTemplateSmokeTest {
         assertTrue(rendered.contains("blockKinds"), "blockKinds contract missing");
         assertTrue(rendered.contains("|B<n>|"), "annotation format explanation missing");
         assertTrue(rendered.contains("movedPairs"), "movedPairs judgment missing");
+    }
+    /**
+     * every scoring number the prompt quotes has to come from RunArgs, or the model is told one rule while the
+     * server applies another. These three drifted that way once: the CPD test weight was frozen at the old 1/5,
+     * the quality clamp was spelled out a second time as a literal, and the category floor still described MODIFY
+     * omission as neutral after FinalScoreCalculator started flooring it to MECHANICAL.
+     */
+    @Test
+    void systemPromptQuotesConfiguredScoringNumbersNotLiterals() {
+        RunArgs args = new RunArgs();
+        args.setTestCodePenaltyWeight(0.42);
+        args.setQualityMultiplierMin(0.33);
+        args.setQualityMultiplierMax(1.77);
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(args, NOOP_LOG);
+        String rendered = builder.buildSystemPrompt(PromptContext.builder().args(args).build());
+
+        assertTrue(rendered.contains("testWeight = 0.42"), "CPD test weight not taken from RunArgs");
+        assertTrue(rendered.contains("penalized at 42% of production code weight"), "CPD test weight percentage not taken from RunArgs");
+        assertTrue(rendered.contains("Apply 0.42 weight"), "CPD allTestCode weight not taken from RunArgs");
+        assertTrue(rendered.contains("clamp to the range 0.33 .. 1.77"), "quality multiplier clamp not taken from RunArgs");
+        assertFalse(rendered.contains("1/5"), "stale hard-coded CPD test weight fraction still present");
+        assertFalse(rendered.contains("[0.5, 1.2]"), "stale hard-coded quality multiplier clamp still present");
+    }
+    @Test
+    void systemPromptFloorsOmittedCategoriesForBothOperations() {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+        String rendered = builder.buildSystemPrompt(PromptContext.builder().args(new RunArgs()).build());
+
+        assertTrue(rendered.contains("omission is NOT neutral"), "omission cost not stated");
+        assertTrue(rendered.contains("NEW or MODIFY alike"), "floor must cover both floored operations");
+        assertFalse(rendered.contains("treated as neutral (coefficient 1.0)"), "MODIFY omission still described as neutral");
     }
     @Test
     void systemPromptRendersTaskClassificationGuidance() {

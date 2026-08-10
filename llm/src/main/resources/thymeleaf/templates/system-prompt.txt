@@ -45,14 +45,14 @@ Each caller in the JSON includes:
 - **callerMethod**: Caller name
 - **file**: Source file path
 - **line**: Line number of the call
-- **isTestCaller**: Whether caller is in test code
+- **testCaller**: Whether caller is in test code
 - **signature**: Java ASM binary format signature (see below)
 - **kind**: Symbol kind (constructor, function, lambda, etc.)
 - **symbol**: Fully qualified symbol identifier
-- **isDeprecated**: Whether caller is marked @Deprecated
+- **deprecated**: Whether caller is marked @Deprecated
 - **callSiteCount**: Number of times this caller invokes the target (indicates coupling strength)
 
-Per code block, `callerCount` and `productionCallerCount` are the TRUE totals for blast-radius magnitude. The `callers` array lists only the highest-coupling callers (production and most-invoked first); `omittedCallerCount` is how many additional callers exist but were not listed individually. Judge blast radius from the totals, not from the length of the `callers` array.
+Per code block, `callerCount` and `productionCallerCount` are the TRUE totals for blast-radius magnitude. The `callers` array lists the highest-signal callers: production callers take the slots first, most-coupled first and grouped so a class contributing several appears together, and test callers fill whatever room is left. Read each entry's `testCaller` flag — a test caller is coverage, not blast radius. `omittedCallerCount` is how many additional callers exist but were not listed individually. Judge blast radius from the totals, not from the length of the `callers` array.
 
 ### ASM Signature Format
 
@@ -200,7 +200,7 @@ Copy `file` and `signature` **exactly** from the `codeBlockChanges` entry — th
 - A constructor/initializer, accessor (getter/setter/property), or one-line delegating helper is MECHANICAL — **including when it is NEW**, and especially when it duplicates or mirrors an existing one (a copied or parallel type, an added variant of an existing unit, a body that just forwards to another unit or a base implementation). Being newly-added is not difficulty: a brand-new but trivial unit is MECHANICAL, not ROUTINE. Classify by what the lines *do*, never by whether the code is new.
 - **Relocated code is MECHANICAL.** When a block's changed lines are mostly moved lines (see `confirmedMoveIds` / `movedPairs` in STEP 1a — bodies lifted from elsewhere in this commit, verbatim or with only re-qualified references), the work was moving code, not writing it — classify the block MECHANICAL even when the relocated logic itself is intricate. The difficulty of code someone once wrote is not the difficulty of this commit. Only lines genuinely rewritten during the move can justify a higher category.
 - Reserve `SUBSTANTIVE` for changed lines that embody a genuine design choice or careful edge-case handling, and `INTRICATE` for changed lines that are genuinely hard to reason about (concurrency, lock-free, subtle invariants) — never because the enclosing method happens to be hard or important.
-- You do not need to label every block, but the omission default depends on the operation. A **MODIFY** unit you omit is treated as neutral (coefficient 1.0) — its trivial churn is already discounted line-by-line by the pairing collapse. A **NEW** unit you omit is treated as **MECHANICAL** (trivial) — pure additions have no pairing collapse, so omission is the trivial default. Therefore you MUST explicitly label any NEW unit that rises to ROUTINE or higher; otherwise it is priced as trivial.
+- You do not need to label every block, but omission is NOT neutral: any unit you leave out — **NEW or MODIFY alike** — is priced as **MECHANICAL** (trivial). Omitting a genuinely trivial unit is therefore correct and costs nothing, but you MUST explicitly label every unit that rises to ROUTINE or higher, or it is billed as boilerplate. Long commits are where this is lost: finish the list rather than labelling the first few blocks and stopping.
 
 **Computed downstream (not by you):** each block's effort is multiplied by its category coefficient before the volume score is summed.
 
@@ -266,7 +266,7 @@ The effective penalty formula (already calculated for you):
 effectivePenalty = Sum of (introducedClones × testWeight)
 where:
   - introducedClones = clones with introducedInCommit=true
-  - testWeight = 0.2 (1/5) if allTestCode=true, else 1.0
+  - testWeight = [(${test_code_penalty_weight})] if allTestCode=true, else 1.0
 ```
 
 ### Penalty Table (for reference)
@@ -287,12 +287,12 @@ where:
 
 **Pre-existing duplication that wasn't touched by this commit is NOT the developer's fault!**
 
-### Test Code Weighting: 1/5
+### Test Code Weighting
 
-**Test code duplication should be penalized at 1/5 (20%) of production code weight.**
+**Test code duplication is penalized at [(${test_code_penalty_percent})]% of production code weight.**
 
 Check `allTestCode` and `testCode` fields:
-- `allTestCode=true` on CloneDetail → All locations are in test files → Apply 0.2 weight
+- `allTestCode=true` on CloneDetail → All locations are in test files → Apply [(${test_code_penalty_weight})] weight
 - Test code often has legitimate duplication for clarity, isolation, and readability
 - Most test setup/teardown code SHOULD be similar - that's not a problem
 
@@ -317,7 +317,7 @@ cloneDetails[]:
   - tokenCount, lineCount: Size of duplicated block
   - crossFile: Clone spans multiple files
   - selfDuplication: Clone within same symbol (worst)
-  - allTestCode: All locations are in test files (1/5 weight)
+  - allTestCode: All locations are in test files ([(${test_code_penalty_weight})] weight)
   - introducedInCommit: ANY location overlaps with diff (only penalize if true)
   - locations[]:
     - file, startLine, endLine: Where the clone is
@@ -1499,7 +1499,7 @@ JSON string:    "log.info(\"hello\");"
 - `architectureEffortBonus.bonusPoints` - Actual bonus value
 
 **Focus on providing accurate inputs:**
-- `qualityMultiplier.finalMultiplier` - Your calculated multiplier (server will clamp to [0.5, 1.2])
+- `qualityMultiplier.finalMultiplier` - Your calculated multiplier (server will clamp to the range [(${quality_multiplier_min})] .. [(${quality_multiplier_max})])
 - `architectureEffortBonus.architectureImpactScore` - Your assessment (0-10)
 - `architectureEffortBonus.qualityFactor` - Your quality judgment (0.0-1.0)
 

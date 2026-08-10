@@ -24,6 +24,7 @@ import io.codiqo.client.model.ModifyImpactEstimateModel;
 import io.codiqo.client.model.RiskAssessmentModel;
 import io.codiqo.client.model.SignatureChangesModel;
 import io.codiqo.client.model.StaticAnalysisFindingModel;
+import io.codiqo.llm.client.LlmUsage;
 import io.codiqo.llm.client.ScoringClient.ScoringResult;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import io.codiqo.llm.schema.LlmScoringResponse.ArchitectureEffortBonus;
@@ -531,8 +532,7 @@ class LlmResponseMapperTest {
         ScoringResult scoring = ScoringResult.builder()
                 .thinking("chain-of-thought")
                 .promptLength(4096)
-                .promptTokens(1000)
-                .completionTokens(250)
+                .usage(LlmUsage.of(1000, 250))
                 .build();
 
         LlmAnalysisModel analysis = LlmResponseMapper.mapLlmAnalysis(scoring, Duration.ofMillis(1500), "gpt-test");
@@ -550,8 +550,7 @@ class LlmResponseMapperTest {
     @Test
     void mapLlmAnalysisAttachesToolUsageWhenToolsWereCalled() {
         ScoringResult scoring = ScoringResult.builder()
-                .promptTokens(10)
-                .completionTokens(5)
+                .usage(LlmUsage.of(10, 5))
                 .toolCallsMade(new ArrayList<>(List.of("web_search", "web_search", "fetch")))
                 .build();
 

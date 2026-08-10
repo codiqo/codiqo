@@ -2,7 +2,6 @@ package io.codiqo.gradle;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Date;
 import java.util.List;
@@ -14,6 +13,7 @@ import java.util.ArrayList;
 
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.JvmProjectSpec;
+import io.codiqo.api.PathContainment;
 import io.codiqo.gradle.model.DependencyData;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -64,20 +64,11 @@ public class GradleProjectWrapper implements JvmProjectSpec {
     @Override
     public boolean isTestResource(File destination) {
         for (File dir : getTestCompileSourceRoots()) {
-            if (dir.isDirectory()) {
-                Path dirPath = dir.toPath().normalize();
-                Path filePath = destination.toPath().normalize();
-
-                if (filePath.startsWith(dirPath)) {
-                    return true;
-                }
+            if (dir.isDirectory() && PathContainment.isUnder(dir, destination)) {
+                return true;
             }
         }
         return false;
-    }
-    @Override
-    public boolean contains(File filePath) {
-        return filePath.toPath().normalize().startsWith(getBaseDirectory().toPath().normalize());
     }
     @Override
     public void setLatestModified(Date date) {
