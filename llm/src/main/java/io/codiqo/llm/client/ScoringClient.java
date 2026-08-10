@@ -1,6 +1,5 @@
 package io.codiqo.llm.client;
 
-import java.io.Closeable;
 import java.util.List;
 import java.util.ArrayList;
 
@@ -14,7 +13,7 @@ import io.codiqo.llm.schema.LlmScoringResponse;
 import lombok.Builder;
 import lombok.Value;
 
-public interface ScoringClient extends Scorer<ScoringClient.Params, ScoringClient.ScoringResult>, Closeable {
+public interface ScoringClient extends Scorer<ScoringClient.Params, ScoringClient.ScoringResult>, LlmClient {
     @Value
     @Builder
     class Params {
@@ -33,14 +32,20 @@ public interface ScoringClient extends Scorer<ScoringClient.Params, ScoringClien
         PreComputedScores preComputedScores;
         String rawJson;
         String thinking;
-        int promptTokens;
-        int completionTokens;
         int promptLength;
+        @Builder.Default
+        LlmUsage usage = LlmUsage.NONE;
         @Builder.Default
         List<String> toolCallsMade = new ArrayList<>();
 
+        public int getPromptTokens() {
+            return usage.promptTokens();
+        }
+        public int getCompletionTokens() {
+            return usage.completionTokens();
+        }
         public int getTotalTokens() {
-            return promptTokens + completionTokens;
+            return usage.totalTokens();
         }
         public boolean usedTools() {
             return CollectionUtils.isNotEmpty(toolCallsMade);

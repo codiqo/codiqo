@@ -86,7 +86,8 @@ public class VolumeScoreCalculator {
             initialEfforts.addAll(calculateDegradedSourceFileEfforts(request.getFileChanges(), scoredCodeFiles, addMult, modifyMult, testMult));
         }
         initialEfforts.addAll(calculateDeletionOnlyFileEfforts(request.getFileChanges(), scoredCodeFiles,
-                request.getMethodScalerProd(), request.getMethodScalerTest(), modifyMult, testMult, args.getDeleteRewardWeight(), degraded));
+                request.getMethodScalerProd(), request.getMethodScalerTest(), modifyMult, testMult, args.getDeleteRewardWeight(), degraded,
+                methodCapQuantileProd, methodCapQuantileTest, args.getDeleteRewardMaxQuantileUnits()));
 
         double totalEffortRaw = initialEfforts.stream().mapToDouble(CodeBlockEffort::getEffort).sum();
         double totalBaseline = initialEfforts.stream().mapToDouble(CodeBlockEffort::getBucketBaseline).sum();
@@ -548,35 +549,24 @@ public class VolumeScoreCalculator {
      */
     static List<CodeBlockEffort> calculateDeletionOnlyFileEfforts(List<FileChange> fileChanges, Set<String> scoredCodeFiles,
             DriverScaler methodScalerProd, DriverScaler methodScalerTest,
-            double modifyMult, double testMult, double deleteRewardWeight, boolean degraded) {
+            double modifyMult, double testMult, double deleteRewardWeight, boolean degraded,
+            int methodCapQuantileProd, int methodCapQuantileTest, double maxQuantileUnits) {
         if (BooleanUtils.or(new boolean[] { deleteRewardWeight <= 0.0, CollectionUtils.isEmpty(fileChanges) })) {
             return new ArrayList<>();
         }
 
+        double deletionScale = deletionCeilingScale(fileChanges, scoredCodeFiles, methodScalerProd, methodScalerTest,
+                degraded, methodCapQuantileProd, methodCapQuantileTest, maxQuantileUnits);
+
         List<CodeBlockEffort> toReturn = new ArrayList<>();
         for (FileChange fc : fileChanges) {
-            boolean deletionOnly = BooleanUtils.and(new boolean[] {
-                    fc.getChangeType() == LlmScoringRequest.FileChangeType.MODIFIED,
-                    fc.isLinesJustificationRequired(),
-                    !fc.isConfig(),
-                    !scoredCodeFiles.contains(fc.getPath()),
-                    fc.getLinesAdded() == 0,
-                    fc.getLinesDeleted() > 0 });
-            if (!deletionOnly) {
+            if (!isDeletionOnly(fc, scoredCodeFiles)) {
                 continue;
             }
 
-            DriverScaler scaler = fc.isTest() ? methodScalerTest : methodScalerProd;
-            /**
-             * degraded commits carry empty scalers, where forModify returns 0 and the removal would
-             * collapse to zero; fall back to the raw deleted-line count so degraded pure-deletion files
-             * earn the same fractional reward as any other removal
-             */
-            double driverScore = degraded && scaler.isEmpty()
-                    ? fc.getLinesDeleted()
-                    : DriverScore.forModify(scaler, fc.getLinesDeleted(), 0);
+            double driverScore = deletionDriverScore(fc, methodScalerProd, methodScalerTest, degraded);
             double testWeight = fc.isTest() ? testMult : 1.0;
-            double effort = driverScore * modifyMult * testWeight * deleteRewardWeight;
+            double effort = driverScore * modifyMult * testWeight * deleteRewardWeight * deletionScale;
 
             /**
              * bucketBaseline 0 keeps deletion out of the global-cap baseline (like config); operation
@@ -591,6 +581,97 @@ public class VolumeScoreCalculator {
                     0, 0, 0, false));
         }
         return toReturn;
+    }
+    /**
+     * The per-block global cap cannot bound a deletion sweep. A mass removal is broad and shallow —
+     * thousands of lines spread over dozens of files, each individually unremarkable — so its share of
+     * the cap budget grows with file count exactly as fast as its effort does, and the cap never binds.
+     * (Measured: a 3024-line removal over 59 files carries 2016 effort units against a 3098-unit budget.)
+     * So the deletion contribution is bounded absolutely instead, at `maxQuantileUnits` p95-sized method
+     * removals' worth of reward regardless of how many files it touches, and every deletion block is
+     * scaled by the same factor so their relative sizes survive.
+     */
+    private static double deletionCeilingScale(List<FileChange> fileChanges, Set<String> scoredCodeFiles,
+            DriverScaler methodScalerProd, DriverScaler methodScalerTest, boolean degraded,
+            int methodCapQuantileProd, int methodCapQuantileTest, double maxQuantileUnits) {
+        /**
+         * driver scores are accumulated UNWEIGHTED by testMult. The ceiling is denominated in p95-sized
+         * method removals — a size, not a reward — so weighting one side of the comparison and not the other
+         * cancelled the test discount exactly where the cap binds: a mass test cleanup and an identical
+         * production cleanup both landed on the same clipped total, handing the test sweep back the 1/testMult
+         * it is discounted by everywhere else. testMult still applies to the effort each block earns.
+         */
+        double prodDriverEffort = 0.0;
+        double testDriverEffort = 0.0;
+        for (FileChange fc : fileChanges) {
+            if (isDeletionOnly(fc, scoredCodeFiles)) {
+                double driver = deletionDriverScore(fc, methodScalerProd, methodScalerTest, degraded);
+                if (fc.isTest()) {
+                    testDriverEffort += driver;
+                } else {
+                    prodDriverEffort += driver;
+                }
+            }
+        }
+
+        double rawDriverEffort = prodDriverEffort + testDriverEffort;
+        double quantile = deletionCeilingQuantile(prodDriverEffort, testDriverEffort, methodCapQuantileProd, methodCapQuantileTest);
+        if (BooleanUtils.or(new boolean[] { maxQuantileUnits <= 0.0, quantile <= 0.0 })) {
+            return 1.0;
+        }
+
+        /**
+         * modifyMult and deleteRewardWeight scale the ceiling and the raw effort identically, so they
+         * cancel out of the ratio and are deliberately absent from both sides
+         */
+        double ceiling = maxQuantileUnits * quantile;
+        if (rawDriverEffort <= ceiling) {
+            return 1.0;
+        }
+        return ceiling / rawDriverEffort;
+    }
+    /**
+     * The ceiling is denominated in p95-sized method removals, so it has to be measured with the same
+     * yardstick the effort was: test files are priced on the test scaler, and clipping them against the
+     * production quantile scores dead-test removal below identical dead-production removal in any project
+     * whose test methods are the larger of the two — a difference the model states nowhere. Blend the two
+     * by where the deletions actually are, falling back to whichever bucket the project has.
+     */
+    private static double deletionCeilingQuantile(double prodDriverEffort, double testDriverEffort,
+            int methodCapQuantileProd, int methodCapQuantileTest) {
+        if (methodCapQuantileProd <= 0) {
+            return methodCapQuantileTest;
+        }
+        if (methodCapQuantileTest <= 0) {
+            return methodCapQuantileProd;
+        }
+
+        double total = prodDriverEffort + testDriverEffort;
+        if (total <= 0.0) {
+            return methodCapQuantileProd;
+        }
+        return (prodDriverEffort * methodCapQuantileProd + testDriverEffort * methodCapQuantileTest) / total;
+    }
+    private static boolean isDeletionOnly(FileChange fc, Set<String> scoredCodeFiles) {
+        return BooleanUtils.and(new boolean[] {
+                fc.getChangeType() == LlmScoringRequest.FileChangeType.MODIFIED,
+                fc.isLinesJustificationRequired(),
+                !fc.isConfig(),
+                !scoredCodeFiles.contains(fc.getPath()),
+                fc.getLinesAdded() == 0,
+                fc.getLinesDeleted() > 0 });
+    }
+    /**
+     * degraded commits carry empty scalers, where forModify returns 0 and the removal would collapse to
+     * zero; fall back to the raw deleted-line count so degraded pure-deletion files earn the same
+     * fractional reward as any other removal
+     */
+    private static double deletionDriverScore(FileChange fc, DriverScaler methodScalerProd, DriverScaler methodScalerTest, boolean degraded) {
+        DriverScaler scaler = fc.isTest() ? methodScalerTest : methodScalerProd;
+        if (degraded && scaler.isEmpty()) {
+            return fc.getLinesDeleted();
+        }
+        return DriverScore.forModify(scaler, fc.getLinesDeleted(), 0);
     }
     static List<CodeBlockEffort> applyAbuseSignals(List<CodeBlockEffort> initialEfforts, double totalEffortRaw, boolean globalCapApplied, double maxDeviation) {
         if (CollectionUtils.isEmpty(initialEfforts)) {

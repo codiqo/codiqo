@@ -72,6 +72,13 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     private static final String DEV_NULL = "/dev/null";
     private static final EnumSet<SymbolKindModel> METHOD_OR_CONSTRUCTOR = EnumSet.of(SymbolKindModel.METHOD, SymbolKindModel.CONSTRUCTOR);
     private static final int MAX_UNCOVERED_CHANGED_LINES = 20;
+
+    /**
+     * the message is rendered into the scoring prompt, so an unbounded one both bloats the prompt and makes
+     * the fence-stripping fixpoint quadratic in an input the author controls; a squash-merge changelog runs
+     * to hundreds of KB and carries no scoring signal past its first screenful
+     */
+    private static final int MAX_COMMIT_MESSAGE_CHARS = 16 * 1024;
     private static final int BUILD_FAILURE_DETAIL_LIMIT = 4096;
     private static final EnumSet<LineCoverageModel.StatusEnum> COVERED_LINE_STATUSES =
             EnumSet.of(LineCoverageModel.StatusEnum.COVERED, LineCoverageModel.StatusEnum.FULLY_COVERED);
@@ -103,7 +110,13 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
 
         return LlmScoringRequest.builder()
                 .commitHash(submission.getCommit().getSha())
-                .commitMessage(submission.getCommit().getMessage())
+                /**
+                 * the scoring user message renders this verbatim, above the PROJECT CONVENTIONS fence — a
+                 * message carrying the opening marker opens a region the system prompt grants standing for
+                 * static-analysis re-review and finding triage, so the author would be writing conventions
+                 * for their own commit. Fencing the classifier alone left this, the larger surface, open
+                 */
+                .commitMessage(PromptFences.stripBounded(submission.getCommit().getMessage(), MAX_COMMIT_MESSAGE_CHARS))
                 .author(submission.getCommit().getAuthor())
                 .timestamp(submission.getCommit().getTimestamp().toString())
                 .branch(CollectionUtils.isNotEmpty(branches) ? branches.iterator().next() : null)

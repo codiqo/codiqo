@@ -14,7 +14,10 @@ public interface ProjectSpec extends Closeable {
     File getOutputDirectory();
     Optional<File> coverage();
     boolean isTestResource(File destination);
-    boolean contains(File filePath);
+
+    default boolean contains(File filePath) {
+        return PathContainment.isUnder(getBaseDirectory(), filePath);
+    }
     Optional<Date> latestModified();
     void setLatestModified(Date date);
     Optional<Date> latestSourceModified();

@@ -250,16 +250,71 @@ class FinalScoreCalculatorTest {
                 "an explicit SUBSTANTIVE label must win over the omitted-NEW mechanical default");
     }
     @Test
-    void omittedModifyBlockStaysNeutral() {
+    void omittedModifyBlockAlsoDefaultsToMechanical() {
         RunArgs args = new RunArgs();
         FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
 
-        // the mechanical floor is NEW-only: an uncategorized MODIFY block keeps neutral 1.0 effort
+        /**
+         * omission tracks how many blocks the model was asked to label, not what the block contains, so
+         * MODIFY cannot keep the neutral 1.0 it used to: that coupled the score to the model's verbosity
+         */
         LlmScoringResponse response = new LlmScoringResponse();
         calculator.apply(response, scoresWithFileEffort("Foo.java", 100.0, Operation.MODIFY), null);
 
+        double expected = Math.round(Math.pow(100.0 * args.getCategoryMechanicalCoeff(), args.getVolumeExponent()));
+        assertEquals(expected, response.getScore(), 0.001,
+                "an uncategorized MODIFY block falls back to the empirical prior, not neutral 1.0");
+    }
+    @Test
+    void explicitRoutineOnModifyOverridesTheMechanicalFallback() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
+
+        LlmScoringResponse response = new LlmScoringResponse();
+        response.setBlockCategories(List.of(CodeBlockCategoryView.builder()
+                .file("Foo.java").signature("doStuff()").category(CodeBlockCategory.ROUTINE).build()));
+        calculator.apply(response, scoresWithFileEffort("Foo.java", 100.0, Operation.MODIFY), null);
+
+        double expected = Math.round(Math.pow(100.0 * args.getCategoryRoutineCoeff(), args.getVolumeExponent()));
+        assertEquals(expected, response.getScore(), 0.001,
+                "an explicit judgement always wins over the fallback, including when it is the neutral one");
+    }
+    @Test
+    void degradedModeSkipsMechanicalFloorForModifyBlocks() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
+
+        LlmScoringResponse response = new LlmScoringResponse();
+        calculator.apply(response, scoresWithFileEffort("Foo.java", 100.0, Operation.MODIFY), degradedRequest());
+
         assertEquals(100.0, response.getScore(), 0.001,
-                "an uncategorized MODIFY block is untouched by the NEW-only mechanical floor");
+                "degraded analyses emit no categories at all, so flooring would penalise only the parsed files");
+    }
+    @Test
+    void deletionBlockIsChargedAsMechanical() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
+
+        // a deletion block is never offered to the LLM, so it can only ever be uncategorized
+        LlmScoringResponse response = new LlmScoringResponse();
+        calculator.apply(response, scoresWithDeletionBlock("Gone.java", 100.0), null);
+
+        double expected = Math.round(Math.pow(100.0 * args.getCategoryMechanicalCoeff(), args.getVolumeExponent()));
+        assertEquals(expected, response.getScore(), 0.001,
+                "removing code is mechanical work and must carry the mechanical coefficient, not neutral 1.0");
+    }
+    @Test
+    void degradedModeStillChargesDeletionBlocksAsMechanical() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
+
+        // unlike the NEW floor, there is no parsed/unparsed asymmetry to protect: no deletion is ever categorized
+        LlmScoringResponse response = new LlmScoringResponse();
+        calculator.apply(response, scoresWithDeletionBlock("Gone.java", 100.0), degradedRequest());
+
+        double expected = Math.round(Math.pow(100.0 * args.getCategoryMechanicalCoeff(), args.getVolumeExponent()));
+        assertEquals(expected, response.getScore(), 0.001,
+                "the deletion coefficient applies in degraded mode too");
     }
     @Test
     void degradedModeSkipsMechanicalFloorForNewBlocks() {
@@ -429,6 +484,7 @@ class FinalScoreCalculatorTest {
                 .pureAdd(list(5, 6, 7, 8, 9, 10))
                 .build();
         LlmScoringResponse response = responseWithClassification(fileDiff);
+        response.setBlockCategories(List.of());
 
         calculator.apply(response, preComputed, request);
 
@@ -901,6 +957,8 @@ class FinalScoreCalculatorTest {
         LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
         LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
         response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M1")));
+        // explicit ROUTINE on both blocks isolates the moved-invocation discount from the mechanical fallback
+        response.setBlockCategories(List.of(routine("Foo.java", "billed()"), routine("Foo.java", "destination()")));
 
         calculator.apply(response, preComputed, request);
 
@@ -925,9 +983,8 @@ class FinalScoreCalculatorTest {
         LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
         LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
         response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M1")));
-        // explicit ROUTINE on the NEW destination isolates the moved-invocation discount from the mechanical floor
-        response.setBlockCategories(List.of(CodeBlockCategoryView.builder()
-                .file("Foo.java").signature("destination()").category(CodeBlockCategory.ROUTINE).build()));
+        // explicit ROUTINE on both blocks isolates the moved-invocation discount from the mechanical fallback
+        response.setBlockCategories(List.of(routine("Foo.java", "billed()"), routine("Foo.java", "destination()")));
 
         calculator.apply(response, preComputed, request);
 
@@ -950,6 +1007,7 @@ class FinalScoreCalculatorTest {
         LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
         LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
         response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M1")));
+        response.setBlockCategories(List.of(routine("Foo.java", "first()"), routine("Foo.java", "second()")));
 
         calculator.apply(response, preComputed, request);
 
@@ -1158,6 +1216,35 @@ class FinalScoreCalculatorTest {
                 .fileEfforts(new ArrayList<>(List.of(fileEffort)))
                 .build();
     }
+    /**
+     * mirrors the synthetic block calculateDeletionOnlyFileEfforts emits: no signature (nothing the LLM
+     * could name), operation DELETE, and bucketBaseline 0 so it stays out of the global-cap budget
+     */
+    private static PreComputedScores scoresWithDeletionBlock(String file, double blockEffort) {
+        CodeBlockEffort cbe = new CodeBlockEffort(file, file, null,
+                Operation.DELETE,
+                /*ncss*/ 0, /*invocations*/ 0, /*effInvocsChanged*/ 0,
+                /*nonCommentCodeLines*/ 0, /*commentLines*/ 0, /*effLinesChanged*/ (int) blockEffort,
+                /*changeRatio*/ 0.0, /*scaledLines*/ 0.0, /*scaledNcss*/ 0.0, /*scaledInvocations*/ 0.0,
+                /*driverScore*/ blockEffort, /*cappedStatements*/ (int) blockEffort,
+                /*effort*/ blockEffort, /*bucketBaseline*/ 0.0, /*isTest*/ false,
+                /*deviationNcss*/ 0.0, /*deviationInvocations*/ 0.0, /*ratioOutlier*/ false,
+                /*effortShare*/ 1.0, /*globalCapDriver*/ false,
+                0, 0, 0, /*isConfig*/ false);
+        FileEffort fileEffort = new FileEffort(file, blockEffort, false, List.of(cbe), 0, 0, 0.0, 0.0, false);
+
+        return PreComputedScores.builder()
+                .blockEffortSum(blockEffort)
+                .totalEffortRaw(blockEffort)
+                .totalBaseline(1000.0)
+                .globalCap(10000.0)
+                .filesScopeMultiplier(1.0)
+                .volumeScore(blockEffort)
+                .baseEffort(blockEffort)
+                .codeBlockEfforts(new ArrayList<>(List.of(cbe)))
+                .fileEfforts(new ArrayList<>(List.of(fileEffort)))
+                .build();
+    }
     private static PreComputedScores scoresWithBlocks(String file, CodeBlockEffort... blocks) {
         double total = 0.0;
         for (CodeBlockEffort block : blocks) {
@@ -1279,12 +1366,22 @@ class FinalScoreCalculatorTest {
         }
         return toReturn;
     }
+    /**
+     * Pins ROUTINE on the standard block so these tests measure the per-file / per-block factor they are
+     * about and nothing else. Without it every expectation here would silently carry the uncategorized
+     * fallback coefficient as well, and would have to be restated whenever that default moved. Tests that
+     * care about the category set their own afterwards, which replaces this.
+     */
+    private static CodeBlockCategoryView routine(String file, String signature) {
+        return CodeBlockCategoryView.builder().file(file).signature(signature).category(CodeBlockCategory.ROUTINE).build();
+    }
     private static LlmScoringResponse responseWithClassification(FileDiffClassification... perFile) {
         DiffClassification classification = DiffClassification.builder()
                 .perFile(new ArrayList<>(List.of(perFile)))
                 .build();
         LlmScoringResponse response = new LlmScoringResponse();
         response.setEffortBreakdown(EffortBreakdown.builder().diffClassification(classification).build());
+        response.setBlockCategories(List.of(routine("Foo.java", "doStuff()")));
         return response;
     }
 }
