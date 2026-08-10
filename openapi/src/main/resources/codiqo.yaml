@@ -298,7 +298,7 @@ components:
           type: string
           description: Optional human-readable reason for excluding this analysis
         category:
-          description: Structured exclusion category (build/dependency failure, revert commit, reverted original, merge commit, branch/author filter, no relevant files, duplicate commit)
+          description: Structured exclusion category (build/dependency failure, revert commit, reverted original, merge commit, branch/author filter, no relevant files, duplicate commit, author-requested skip)
           allOf:
             - $ref: '#/components/schemas/AnalysisExcludeCategory'
         detail:
@@ -327,6 +327,7 @@ components:
         - MERGE_COMMIT
         - FILTERED_BY_RULES
         - DUPLICATE_COMMIT
+        - SELF_EXCLUDED
 
     AnalysisBuildFailureModel:
       type: object
@@ -3554,6 +3555,14 @@ components:
         deleteRewardWeight:
           type: number
           format: double
+        deleteRewardMaxQuantileUnits:
+          type: number
+          format: double
+          description: |
+            Absolute ceiling on a commit's total deletion reward, in bucket-quantile units
+            (K × methodCapQuantile). The per-block global cap cannot bound a deletion sweep — a mass
+            removal is broad and shallow, so its cap budget grows with file count as fast as its effort
+            does. 0 disables the ceiling.
         qualityMultiplierMin:
           type: number
           format: double

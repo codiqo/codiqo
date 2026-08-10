@@ -82,6 +82,7 @@ public class Maven {
      * whole graph from remote — as LATEST snapshots wherever the host lacks the time-machine extension — and the
      * ClassGraph scan indexes jars other than the ones the fork compiled and tested against.
      */
+    @SuppressWarnings("deprecation")
     public static void pinLocalRepository(RepositorySystem repositorySystem, ProjectBuildingRequest request, File localRepository) {
         DefaultRepositorySystemSession derived = new DefaultRepositorySystemSession(request.getRepositorySession());
         derived.setLocalRepositoryManager(repositorySystem.newLocalRepositoryManager(derived, new LocalRepository(localRepository)));

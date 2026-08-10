@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.metrics.DriverScaler;
+import io.codiqo.api.metrics.DriverScore;
 import io.codiqo.llm.VolumeScoreCalculator.CodeBlockEffort;
 import io.codiqo.llm.VolumeScoreCalculator.CpdPreComputed;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
@@ -603,7 +604,7 @@ class VolumeScoreCalculatorTest {
         double weight = 0.2;
 
         double deleteEffort = VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
-                List.of(deletionOnlyFile(40, false)), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, weight, false)
+                List.of(deletionOnlyFile(40, false)), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, weight, false, 0, 0, 0.0)
                 .get(0).getEffort();
         double modifyEffort = VolumeScoreCalculator.calculateCodeBlockEfforts(
                 List.of(newModifyBlock(40, 40, 0)), scaler, scaler, scaler, scaler,
@@ -615,10 +616,99 @@ class VolumeScoreCalculatorTest {
         assertTrue(deleteEffort < modifyEffort, "a removal must always score below the equivalent in-place modification");
     }
     @Test
+    void defaultDeleteRewardCeilingIsTenQuantileUnits() {
+        assertEquals(10.0, new RunArgs().getDeleteRewardMaxQuantileUnits(), 0.0,
+                "a commit's total deletion reward is capped at ten p95-sized method removals by default");
+    }
+    @Test
+    void massDeletionIsClampedToTheQuantileCeiling() {
+        DriverScaler scaler = uniformScaler(1, 100);
+        int quantile = 20;
+        double maxUnits = 10.0;
+
+        /**
+         * 40 files × 60 deleted lines each. Every file is individually unremarkable, so the per-block
+         * global cap would never bind — this is exactly the shape the absolute ceiling exists to bound.
+         */
+        List<FileChange> sweep = new ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            sweep.add(FileChange.builder().path("Gone" + i + ".java")
+                    .changeType(LlmScoringRequest.FileChangeType.MODIFIED).isConfig(false)
+                    .linesJustificationRequired(true).linesAdded(0).linesDeleted(60).build());
+        }
+
+        double clamped = VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
+                sweep, Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2, false, quantile, quantile, maxUnits)
+                .stream().mapToDouble(CodeBlockEffort::getEffort).sum();
+        double unclamped = VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
+                sweep, Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2, false, quantile, quantile, 0.0)
+                .stream().mapToDouble(CodeBlockEffort::getEffort).sum();
+
+        assertEquals(maxUnits * quantile * MODIFY_MULT * 0.2, clamped, 0.001,
+                "total deletion effort must land exactly on maxQuantileUnits × quantile × modifyMult × weight");
+        assertTrue(clamped < unclamped, "the ceiling must actually reduce a mass deletion's reward");
+    }
+    @Test
+    void modestDeletionIsUntouchedByTheCeiling() {
+        DriverScaler scaler = uniformScaler(1, 100);
+
+        double clamped = VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
+                List.of(deletionOnlyFile(40, false)), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2, false, 20, 20, 10.0)
+                .get(0).getEffort();
+        double unclamped = VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
+                List.of(deletionOnlyFile(40, false)), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2, false, 0, 0, 0.0)
+                .get(0).getEffort();
+
+        assertEquals(unclamped, clamped, 0.001,
+                "an everyday removal sits far below the ceiling and must score identically to the uncapped path");
+    }
+    /**
+     * the ceiling counts p95-sized method removals, and a test file's effort is priced on the test scaler —
+     * clipping it against the production quantile scored dead-test removal below identical dead-production
+     * removal in any project whose test methods are the larger of the two, for a reason the model states
+     * nowhere
+     */
+    @Test
+    void testOnlySweepIsClippedAgainstTheTestQuantile() {
+        DriverScaler scaler = uniformScaler(1, 100);
+        List<FileChange> sweep = new ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            sweep.add(deletionOnlyFile(60, true));
+        }
+
+        double blended = deletionEffortSum(sweep, scaler, 5, 40);
+        double testQuantileOnly = deletionEffortSum(sweep, scaler, 0, 40);
+        double productionQuantileOnly = deletionEffortSum(sweep, scaler, 5, 0);
+
+        assertEquals(testQuantileOnly, blended, 0.001,
+                "a sweep deleting only test code must be clipped against the test quantile whether or not the project also has a production one");
+        assertTrue(blended > productionQuantileOnly,
+                "the smaller production quantile must not bound a removal that contains no production code");
+    }
+    private static double deletionEffortSum(List<FileChange> sweep, DriverScaler scaler, int quantileProd, int quantileTest) {
+        return VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
+                sweep, Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2, false, quantileProd, quantileTest, 10.0)
+                .stream().mapToDouble(CodeBlockEffort::getEffort).sum();
+    }
+    @Test
+    void deletionCeilingIsInertWithoutABucketQuantile() {
+        DriverScaler scaler = uniformScaler(1, 100);
+
+        double withoutQuantile = VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
+                List.of(deletionOnlyFile(4000, false)), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2, false, 0, 0, 10.0)
+                .get(0).getEffort();
+        double uncapped = VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
+                List.of(deletionOnlyFile(4000, false)), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2, false, 0, 0, 0.0)
+                .get(0).getEffort();
+
+        assertEquals(uncapped, withoutQuantile, 0.001,
+                "an empty bucket population yields no ceiling — the reward must pass through rather than collapse to zero");
+    }
+    @Test
     void deletionRewardProducesNothingWhenWeightZero() {
         DriverScaler scaler = uniformScaler(1, 100);
         assertTrue(VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
-                List.of(deletionOnlyFile(40, false)), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.0, false).isEmpty(),
+                List.of(deletionOnlyFile(40, false)), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.0, false, 0, 0, 0.0).isEmpty(),
                 "weight 0 disables the deletion reward");
     }
     @Test
@@ -629,7 +719,7 @@ class VolumeScoreCalculatorTest {
                 .linesJustificationRequired(true).linesAdded(3).linesDeleted(20).build();
 
         assertTrue(VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
-                List.of(mixed), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2, false).isEmpty(),
+                List.of(mixed), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2, false, 0, 0, 0.0).isEmpty(),
                 "a file with any added line keeps existing behavior — no separate deletion reward");
     }
     @Test
@@ -643,7 +733,7 @@ class VolumeScoreCalculatorTest {
                 .linesJustificationRequired(true).linesAdded(0).linesDeleted(200).build();
 
         assertTrue(VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
-                List.of(config, removed), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2, false).isEmpty(),
+                List.of(config, removed), Set.of(), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2, false, 0, 0, 0.0).isEmpty(),
                 "config deletions are line-count scored elsewhere; whole-file removals are excluded");
     }
     @Test
@@ -651,7 +741,7 @@ class VolumeScoreCalculatorTest {
         DriverScaler scaler = uniformScaler(1, 100);
 
         assertTrue(VolumeScoreCalculator.calculateDeletionOnlyFileEfforts(
-                List.of(deletionOnlyFile(40, false)), Set.of("Foo.java"), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2, false).isEmpty(),
+                List.of(deletionOnlyFile(40, false)), Set.of("Foo.java"), scaler, scaler, MODIFY_MULT, TEST_MULT, 0.2, false, 0, 0, 0.0).isEmpty(),
                 "a deletion-only file that already produced a scored code block must not be credited a second time");
     }
     @Test

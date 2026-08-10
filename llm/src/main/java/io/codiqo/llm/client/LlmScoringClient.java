@@ -196,8 +196,7 @@ public class LlmScoringClient implements ScoringClient {
             paramsBuilder.addTool(WebSearchTool.class);
         }
 
-        int totalPromptTokens = 0;
-        int totalCompletionTokens = 0;
+        LlmUsage totalUsage = LlmUsage.NONE;
         List<String> toolCallsMade = new ArrayList<>();
 
         OpenAIClientWrapper.StreamingHandler bridgeHandler = new OpenAIClientWrapper.StreamingHandler() {
@@ -210,8 +209,7 @@ public class LlmScoringClient implements ScoringClient {
         for (int iteration = 0; iteration < MAX_TOOL_CALLS; iteration++) {
             StreamingResult streamResult = streamWithRetry(paramsBuilder.build(), bridgeHandler);
 
-            totalPromptTokens += streamResult.getPromptTokens();
-            totalCompletionTokens += streamResult.getCompletionTokens();
+            totalUsage = totalUsage.plus(LlmUsage.of(streamResult));
 
             if (CollectionUtils.isNotEmpty(streamResult.getToolCalls())) {
                 ChatCompletionAssistantMessageParam.Builder assistantMsg = ChatCompletionAssistantMessageParam.builder();
@@ -279,8 +277,7 @@ public class LlmScoringClient implements ScoringClient {
                     Thread.sleep(backoffMs);
 
                     streamResult = streamWithRetry(paramsBuilder.build(), bridgeHandler);
-                    totalPromptTokens += streamResult.getPromptTokens();
-                    totalCompletionTokens += streamResult.getCompletionTokens();
+                    totalUsage = totalUsage.plus(LlmUsage.of(streamResult));
                 }
             }
 
@@ -304,8 +301,7 @@ public class LlmScoringClient implements ScoringClient {
                 paramsBuilder.addUserMessage(promptBuilder.buildValidationFeedback(report));
 
                 StreamingResult retryStream = streamWithRetry(paramsBuilder.build(), bridgeHandler);
-                totalPromptTokens += retryStream.getPromptTokens();
-                totalCompletionTokens += retryStream.getCompletionTokens();
+                totalUsage = totalUsage.plus(LlmUsage.of(retryStream));
 
                 if (!FINISH_REASON_STOP.equals(retryStream.getFinishReason())) {
                     log.warn("validation retry produced non-stop finish: " + retryStream.getFinishReason() + "; keeping prior response");
@@ -329,8 +325,7 @@ public class LlmScoringClient implements ScoringClient {
                     .preComputedScores(preComputedScores)
                     .rawJson(rawContent)
                     .thinking(scoringResponse.getThinking())
-                    .promptTokens(totalPromptTokens)
-                    .completionTokens(totalCompletionTokens)
+                    .usage(totalUsage)
                     .promptLength(promptLength)
                     .toolCallsMade(toolCallsMade)
                     .build();

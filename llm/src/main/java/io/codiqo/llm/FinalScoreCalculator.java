@@ -1,6 +1,7 @@
 package io.codiqo.llm;
 
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -47,6 +48,9 @@ public class FinalScoreCalculator {
     private static final int MAX_ARCHITECTURE_IMPACT = 10;
     private static final String COMMIT_SCOPE = "(commit)";
     private static final double DEGRADED_QUALITY_MULTIPLIER_MAX = 1.0;
+    private static final double LOW_CATEGORY_COVERAGE_RATIO = 0.5;
+    private static final EnumSet<LlmScoringRequest.Operation> FLOORED_OPERATIONS =
+            EnumSet.of(LlmScoringRequest.Operation.NEW, LlmScoringRequest.Operation.MODIFY);
 
     private final RunArgs args;
     private final VolumeScoreCalculator volumeScoreCalculator;
@@ -265,23 +269,72 @@ public class FinalScoreCalculator {
         return toReturn;
     }
     /**
-     * Explicit LLM categories are authoritative. Any NEW code unit the LLM left uncategorized falls
-     * back to the MECHANICAL coefficient rather than the neutral 1.0: omission means the model did not
-     * judge the unit worth promoting above trivial. A MODIFY unit's trivial churn is already collapsed
-     * line-by-line (in-place / true-modify pairing), which pure additions cannot be, so the category is
-     * a NEW unit's main triviality signal; the per-file cosmetic / wrapped-continuation factor still
-     * applies to both operations. MODIFY and config units keep the neutral default. The floor is
-     * skipped for degraded (build-failure) analyses, where the prompt instructs the LLM to emit no
-     * categories at all — flooring there would discount parsed NEW files while unparsed synthetic ones
-     * (blank signature) stayed neutral. Signature-less blocks are not LLM-categorizable and are skipped.
+     * Explicit LLM categories are authoritative; every other categorizable block falls back to the
+     * MECHANICAL coefficient rather than the neutral 1.0.
+     *
+     * <p>The fallback is <em>not</em> a reading of the model's silence. Omission tracks how many blocks
+     * the model was asked to label, not what any block contains: measured over 1,149 analyses, 3% of
+     * blocks are uncategorized on commits with ≤5 blocks and 68% on commits with 40+. The model returns
+     * `finishReason=stop` with output budget to spare — it simply emits a partial list on long
+     * enumerations. So an uncategorized block carries no signal at all, and the fallback has to be the
+     * empirical prior rather than a neutral guess: of the MODIFY blocks the model does label, 82% are
+     * MECHANICAL (mean coefficient 0.77); the NEW split is similar.
+     *
+     * <p>Leaving MODIFY at 1.0 coupled the score to the model's verbosity — the same commit scored 325
+     * with 176 blocks uncategorized and 381 with 263, on identical inputs and an identical quality
+     * multiplier, because uncategorized MODIFY work was billed at full price. Flooring both operations
+     * removes that coupling; it damps run-to-run variance as much as it corrects the bias.
+     *
+     * <p>The floor is skipped for degraded (build-failure) analyses, where the prompt instructs the LLM
+     * to emit no categories at all — flooring there would discount parsed files while unparsed synthetic
+     * ones (blank signature) stayed neutral. Config units and signature-less blocks are not
+     * LLM-categorizable and keep the neutral default. Deletion blocks are handled separately below.
      */
     private Map<String, Double> buildPerBlockCoeff(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
+        Set<String> knownBlocks = preComputed.getCodeBlockEfforts().stream()
+                .map(cbe -> VolumeScoreCalculator.blockKey(cbe.getFile(), cbe.getSignature()))
+                .collect(Collectors.toSet());
+
         Map<String, Double> toReturn = new HashMap<>();
+        int unmatched = 0;
         for (CodeBlockCategoryView view : CollectionUtils.emptyIfNull(response.getBlockCategories())) {
             if (Objects.isNull(view.getCategory()) || StringUtils.isBlank(view.getSignature())) {
                 continue;
             }
-            toReturn.put(VolumeScoreCalculator.blockKey(view.getFile(), view.getSignature()), categoryCoeff(view.getCategory()));
+            String key = VolumeScoreCalculator.blockKey(view.getFile(), view.getSignature());
+            if (knownBlocks.contains(key)) {
+                toReturn.put(key, categoryCoeff(view.getCategory()));
+                continue;
+            }
+            unmatched++;
+        }
+
+        /**
+         * a category the model echoed against a key no block carries is indistinguishable, downstream, from a
+         * block it never categorized — both leave the floor to apply. Now that the floor covers MODIFY as
+         * well as NEW, systematic drift in what the model echoes back (a leading "./", a differently rendered
+         * generic or varargs signature) would silently discount an entire commit to MECHANICAL, so the miss
+         * is counted and reported rather than absorbed
+         */
+        if (unmatched > 0) {
+            log.warn("block categories: %d label(s) did not match any pre-computed block key and were dropped — "
+                    + "those blocks fall back to the floor; suspect signature drift between the prompt and the response", unmatched);
+        }
+
+        double mechanicalCoeff = args.getCategoryMechanicalCoeff();
+
+        /**
+         * Deletion blocks are file-level synthetics deliberately kept out of codeBlockChanges, so the LLM
+         * never sees one and none can ever carry a category — leaving the most mechanical work in a cleanup
+         * as the only work without the mechanical discount. They carry no signature, so this keys on the
+         * same null the block itself was built with. Unlike the NEW floor below this also applies to
+         * degraded analyses: no deletion is categorized in any mode, so there is no parsed/unparsed
+         * asymmetry to protect against.
+         */
+        for (CodeBlockEffort cbe : preComputed.getCodeBlockEfforts()) {
+            if (cbe.getOperation() == LlmScoringRequest.Operation.DELETE) {
+                toReturn.put(VolumeScoreCalculator.blockKey(cbe.getFile(), cbe.getSignature()), mechanicalCoeff);
+            }
         }
 
         boolean degraded = Objects.nonNull(request) && Objects.nonNull(request.getBuildFailure());
@@ -289,17 +342,37 @@ public class FinalScoreCalculator {
             return toReturn;
         }
 
-        double mechanicalCoeff = args.getCategoryMechanicalCoeff();
+        int categorizable = 0;
+        int uncategorized = 0;
         for (CodeBlockEffort cbe : preComputed.getCodeBlockEfforts()) {
-            if (BooleanUtils.or(new boolean[] {
-                    cbe.getOperation() != LlmScoringRequest.Operation.NEW,
-                    cbe.isConfig(),
-                    StringUtils.isBlank(cbe.getSignature()) })) {
-                continue;
+            if (BooleanUtils.and(new boolean[] {
+                    FLOORED_OPERATIONS.contains(cbe.getOperation()),
+                    !cbe.isConfig(),
+                    StringUtils.isNotBlank(cbe.getSignature()) })) {
+                categorizable++;
+                if (Objects.isNull(toReturn.putIfAbsent(VolumeScoreCalculator.blockKey(cbe.getFile(), cbe.getSignature()), mechanicalCoeff))) {
+                    uncategorized++;
+                }
             }
-            toReturn.putIfAbsent(VolumeScoreCalculator.blockKey(cbe.getFile(), cbe.getSignature()), mechanicalCoeff);
         }
+        logCategoryCoverage(categorizable, uncategorized);
         return toReturn;
+    }
+    /**
+     * Coverage is otherwise invisible — the label is not persisted per block, so a commit whose
+     * categories were mostly omitted is indistinguishable from one the model judged mechanical
+     * throughout. It degraded silently for a long time before anyone looked, hence the loud branch.
+     */
+    private void logCategoryCoverage(int categorizable, int uncategorized) {
+        if (categorizable > 0) {
+            String message = String.format("block categories: %d/%d labelled by the LLM, %d fell back to MECHANICAL",
+                    categorizable - uncategorized, categorizable, uncategorized);
+            if (uncategorized > categorizable * LOW_CATEGORY_COVERAGE_RATIO) {
+                log.warn(message + " — most of this commit's difficulty signal is a fallback, not a judgement");
+                return;
+            }
+            log.info(message);
+        }
     }
     private double categoryCoeff(CodeBlockCategory category) {
         return switch (category) {

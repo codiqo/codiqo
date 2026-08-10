@@ -3,7 +3,6 @@ package io.codiqo.llm;
 import static java.util.function.Predicate.not;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -13,14 +12,12 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.IdentityHashMap;
 import java.util.ArrayList;
+import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
-import org.thymeleaf.TemplateEngine;
 import org.thymeleaf.context.Context;
-import org.thymeleaf.templatemode.TemplateMode;
-import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver;
 
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -44,28 +41,8 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private static final String TEMPLATE_PRE_COMPUTED_SCORES = "pre-computed-scores";
     private static final String TEMPLATE_VALIDATION_FEEDBACK = "validation-feedback";
 
-    /**
-     * Retain the highest-signal callers first when trimming to fit the token budget:
-     * production before test, higher call-site coupling before lower, non-deprecated before deprecated.
-     */
-    private static final Comparator<LlmScoringRequest.CallerInfo> CALLER_PRIORITY =
-            Comparator.comparing(LlmScoringRequest.CallerInfo::isTestCaller)
-                    .thenComparing(Comparator.comparingInt(LlmScoringRequest.CallerInfo::getCallSiteCount).reversed())
-                    .thenComparing(LlmScoringRequest.CallerInfo::isDeprecated);
-
-    private static final TemplateEngine TEMPLATE_ENGINE;
     private static final ObjectMapper MAPPER;
     static {
-        ClassLoaderTemplateResolver resolver = new ClassLoaderTemplateResolver();
-        resolver.setPrefix("thymeleaf/templates/");
-        resolver.setSuffix(".txt");
-        resolver.setTemplateMode(TemplateMode.TEXT);
-        resolver.setCharacterEncoding(StandardCharsets.UTF_8.name());
-        resolver.setCacheable(true);
-
-        TEMPLATE_ENGINE = new TemplateEngine();
-        TEMPLATE_ENGINE.setTemplateResolver(resolver);
-
         MAPPER = new ObjectMapper();
         MAPPER.setDateFormat(new StdDateFormat().withColonInTimeZone(true));
         MAPPER.setDefaultPropertyInclusion(Include.NON_NULL);
@@ -92,7 +69,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     @Override
     public String buildSystemPrompt(PromptContext context) {
         Context ctx = createContext(context);
-        return TEMPLATE_ENGINE.process(TEMPLATE_SYSTEM_PROMPT, ctx);
+        return PromptTemplates.process(TEMPLATE_SYSTEM_PROMPT, ctx);
     }
     @SneakyThrows
     @Override
@@ -128,7 +105,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         ctx.setVariable("preComputedScores", preComputedScores);
         ctx.setVariable("preComputedScoresSection", buildPreComputedScoresSection(preComputedScores));
 
-        String message = TEMPLATE_ENGINE.process(TEMPLATE_USER_PROMPT, ctx);
+        String message = PromptTemplates.process(TEMPLATE_USER_PROMPT, ctx);
         return new UserMessageResult(message, preComputedScores);
     }
     private void logPromptMetrics(String model, LlmScoringRequest request, PreComputedScores scores, String requestJson, int requestTokens) {
@@ -169,13 +146,13 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         Context ctx = new Context(Locale.ENGLISH);
         ctx.setVariable("query", query);
         ctx.setVariable("results", Optional.ofNullable(results).orElse(Collections.emptyList()));
-        return TEMPLATE_ENGINE.process(TEMPLATE_WEB_SEARCH_RESULTS, ctx);
+        return PromptTemplates.process(TEMPLATE_WEB_SEARCH_RESULTS, ctx);
     }
     @Override
     public String buildValidationFeedback(FinalScoreCalculator.ValidationReport report) {
         Context ctx = new Context(Locale.ENGLISH);
         ctx.setVariable("failures", report.getFailures());
-        return TEMPLATE_ENGINE.process(TEMPLATE_VALIDATION_FEEDBACK, ctx);
+        return PromptTemplates.process(TEMPLATE_VALIDATION_FEEDBACK, ctx);
     }
     @Override
     public int estimateTokens(String model, String text) {
@@ -236,7 +213,8 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private static int effectivePromptTokenBudget(RunArgs args) {
         int numCtx = Optional.ofNullable(args.getLlmNumCtx()).orElse(RunArgs.DEFAULT_NUM_CTX);
         // a window at or below the reserve cannot fit any request; clamp to 0 so callers are fully trimmed rather than leaving a negative budget
-        return Math.max(0, Math.min(args.getLlmPromptTokenBudget(), numCtx - RunArgs.PROMPT_TOKEN_RESERVE));
+        int window = Math.max(0, numCtx - RunArgs.PROMPT_TOKEN_RESERVE);
+        return Optional.ofNullable(args.getLlmPromptTokenBudget()).map(cap -> Math.min(cap, window)).orElse(window);
     }
     /**
      * Per-block caller caps to try when the prompt is over budget, descending along the Fibonacci
@@ -298,7 +276,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
             }
 
             List<LlmScoringRequest.CallerInfo> ranked = new ArrayList<>(full);
-            ranked.sort(CALLER_PRIORITY);
+            ranked.sort(callerPriority(full));
             List<LlmScoringRequest.CallerInfo> kept = new ArrayList<>(ranked.subList(0, cap));
             long fullProduction = full.stream().filter(not(LlmScoringRequest.CallerInfo::isTestCaller)).count();
             long keptProduction = kept.stream().filter(not(LlmScoringRequest.CallerInfo::isTestCaller)).count();
@@ -307,6 +285,33 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
             block.setOmittedCallerCount(full.size() - cap);
             block.setOmittedProductionCallerCount((int) (fullProduction - keptProduction));
         });
+    }
+    /**
+     * Retain the highest-signal callers first when trimming to fit the token budget: production before test,
+     * then callers from whichever classes contribute the most of them, then higher call-site coupling,
+     * non-deprecated before deprecated.
+     *
+     * <p>Test callers are ranked last rather than dropped: they only take a slot once every production
+     * caller has one, and a change to a test file has nothing but test callers, so excluding them would
+     * leave those blocks looking uncalled. Each entry carries its own {@code isTestCaller} flag, so the
+     * model can tell which kind it is reading.
+     *
+     * <p>The class-concentration term keeps a truncated list legible — ranking on coupling alone leaves the
+     * survivors scattered one-per-class, which tells the model only that the changed code is used, where
+     * keeping whole classes together shows how a caller uses it. It sits BELOW callSiteCount deliberately:
+     * promoting it above cost the single most-coupled caller its slot whenever a class of weakly-coupled
+     * callers outnumbered it, which is the opposite of what the cap is for. Grouping is by file rather than
+     * by parsing the signature, so it carries to languages where a file is not one class.
+     */
+    private static Comparator<LlmScoringRequest.CallerInfo> callerPriority(List<LlmScoringRequest.CallerInfo> callers) {
+        Map<String, Long> perClass = callers.stream()
+                .collect(Collectors.groupingBy(caller -> StringUtils.defaultString(caller.getFile()), Collectors.counting()));
+
+        return Comparator.comparing(LlmScoringRequest.CallerInfo::isTestCaller)
+                .thenComparing(Comparator.comparingInt(LlmScoringRequest.CallerInfo::getCallSiteCount).reversed())
+                .thenComparing(Comparator.comparingLong(
+                        (LlmScoringRequest.CallerInfo caller) -> perClass.getOrDefault(StringUtils.defaultString(caller.getFile()), 0L)).reversed())
+                .thenComparing(LlmScoringRequest.CallerInfo::isDeprecated);
     }
     private static void restoreCallerLists(Map<LlmScoringRequest.CodeBlockChange, List<LlmScoringRequest.CallerInfo>> originals) {
         originals.forEach((block, full) -> {
@@ -333,7 +338,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private static String buildPreComputedScoresSection(PreComputedScores scores) {
         Context ctx = new Context(Locale.ENGLISH);
         ctx.setVariable("scores", scores);
-        return TEMPLATE_ENGINE.process(TEMPLATE_PRE_COMPUTED_SCORES, ctx);
+        return PromptTemplates.process(TEMPLATE_PRE_COMPUTED_SCORES, ctx);
     }
     private static Context createContext(PromptContext promptContext) {
         Context ctx = new Context(Locale.ENGLISH);
@@ -351,6 +356,8 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         ctx.setVariable("cpd_moderate_penalty", String.format("+%.2f", args.getCpdModeratePenalty()));
         ctx.setVariable("cpd_high_penalty", String.format("+%.2f", args.getCpdHighPenalty()));
         ctx.setVariable("cpd_severe_penalty", String.format("+%.2f", args.getCpdSeverePenalty()));
+        ctx.setVariable("test_code_penalty_weight", String.format("%.2f", args.getTestCodePenaltyWeight()));
+        ctx.setVariable("test_code_penalty_percent", Math.round(args.getTestCodePenaltyWeight() * 100));
         ctx.setVariable("static_analysis_clean_bonus", String.format("+%.2f", args.getStaticAnalysisCleanBonus()));
         ctx.setVariable("pmd_p1_penalty", String.format("+%.2f", args.getPmdPriority1Penalty()));
         ctx.setVariable("pmd_p2_penalty", String.format("+%.2f", args.getPmdPriority2Penalty()));
