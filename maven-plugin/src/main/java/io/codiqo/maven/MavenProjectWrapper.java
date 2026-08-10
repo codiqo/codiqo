@@ -2,7 +2,6 @@ package io.codiqo.maven;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Date;
 import java.util.Map;
@@ -17,6 +16,7 @@ import org.apache.commons.collections4.bidimap.DualHashBidiMap;
 
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.MavenProjectSpec;
+import io.codiqo.api.PathContainment;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
@@ -62,20 +62,11 @@ public class MavenProjectWrapper implements MavenProjectSpec {
     @Override
     public boolean isTestResource(File destination) {
         for (File dir : getTestCompileSourceRoots()) {
-            if (dir.isDirectory()) {
-                Path dirPath = dir.toPath().normalize();
-                Path filePath = destination.toPath().normalize();
-
-                if (filePath.startsWith(dirPath)) {
-                    return true;
-                }
+            if (dir.isDirectory() && PathContainment.isUnder(dir, destination)) {
+                return true;
             }
         }
         return false;
-    }
-    @Override
-    public boolean contains(File filePath) {
-        return filePath.toPath().normalize().startsWith(getBaseDirectory().toPath().normalize());
     }
     @Override
     public void setLatestModified(Date date) {

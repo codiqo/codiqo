@@ -85,7 +85,8 @@ class RunArgsCliTest {
     void pmdMinPriorityResolvesUnderALocaleWithNonAsciiUppercasing() {
         Locale original = Locale.getDefault();
         try {
-            Locale.setDefault(new Locale("tr", "TR"));
+            // Locale.of is JDK 19; the reactor targets 17 via -source/-target, so it would only compile by accident of the build JDK
+            Locale.setDefault(new Locale.Builder().setLanguage("tr").setRegion("TR").build());
 
             RunArgs args = new RunArgs();
             args.setPmdMinPriority("medium-high");

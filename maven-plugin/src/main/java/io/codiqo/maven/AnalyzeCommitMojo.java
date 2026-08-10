@@ -7,10 +7,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.LinkedList;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.CharUtils;
@@ -34,7 +34,6 @@ import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.RefSpec;
 
-
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisExcludeCategory;
@@ -51,7 +50,11 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
      * updatePolicy is daily): each rung steps the resolution target further back from the commit instant
      */
     private static final List<Duration> TIME_MACHINE_BACKOFF_LADDER = List.of(
-            Duration.ZERO, Duration.ofMinutes(15), Duration.ofHours(1), Duration.ofHours(4), Duration.ofDays(1));
+            Duration.ZERO,
+            Duration.ofMinutes(15),
+            Duration.ofHours(1),
+            Duration.ofHours(4),
+            Duration.ofDays(1));
     /**
      * per-attempt excerpt of the structured failure detail kept in the exclusion history — enough to carry the
      * actual compiler/model errors (not just the first line) without ballooning the persisted detail
@@ -82,8 +85,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                 doExcludeAnalysis(commitId, mergeSkip.get(), AnalysisExcludeCategory.MERGE_COMMIT);
                 return;
             }
-            getLog().info(String.format("merge commit %s analyzed via first-parent delta, credited to side-branch author %s",
-                    commitId, resolveAuthorEmail(args)));
+            getLog().info(String.format("merge commit %s analyzed via first-parent delta, credited to side-branch author %s", commitId, resolveAuthorEmail(args)));
         }
 
         if (args.isExcludedAuthor(resolveAuthorEmail(args))) {
@@ -106,9 +108,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
         String sourceUri = args.getGit().getDirectory().toURI().toString();
         ObjectId sourceHead = args.getGit().resolve(org.eclipse.jgit.lib.Constants.HEAD);
 
-        Repository clone = new FileRepositoryBuilder()
-                .setGitDir(new File(temp, ".git"))
-                .build();
+        Repository clone = new FileRepositoryBuilder().setGitDir(new File(temp, ".git")).build();
         clone.create(false);
 
         StoredConfig initialConfig = clone.getConfig();

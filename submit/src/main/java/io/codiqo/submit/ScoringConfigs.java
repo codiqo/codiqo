@@ -65,6 +65,7 @@ public class ScoringConfigs {
         toReturn.setAddMultiplierBase(args.getAddMultiplierBase());
         toReturn.setAddMultiplierScale(args.getAddMultiplierScale());
         toReturn.setDeleteRewardWeight(args.getDeleteRewardWeight());
+        toReturn.setDeleteRewardMaxQuantileUnits(args.getDeleteRewardMaxQuantileUnits());
         toReturn.setQualityMultiplierMin(args.getQualityMultiplierMin());
         toReturn.setQualityMultiplierMax(args.getQualityMultiplierMax());
 

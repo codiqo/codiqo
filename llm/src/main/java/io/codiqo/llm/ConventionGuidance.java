@@ -57,13 +57,6 @@ public class ConventionGuidance {
     // UTF-8 spends at most four bytes per char, so a byte total above cap × 4 cannot decode to a char total within cap
     private static final long MAX_BYTES_PER_CHAR = 4;
 
-    /**
-     * the user message fences the guidance between these markers so the model can tell repo-authored text
-     * from the prompt itself; a file containing the closing marker would break out of that fence, so the
-     * marker is removed from the content before it is appended.
-     */
-    private static final String END_MARKER = "<<<END PROJECT CONVENTIONS>>>";
-
     public static String read(RunArgs args, Log log) throws IOException {
         boolean anySource = BooleanUtils.or(new boolean[] {
                 CollectionUtils.isNotEmpty(args.getLlmConventionFiles()),
@@ -101,8 +94,7 @@ public class ConventionGuidance {
             throw overBudget(toReturn.length() + " chars", cap);
         }
 
-        log.info("agent instructions attached: %d file(s), %d of %d chars — %s",
-                sources.size(), toReturn.length(), cap, describe(root, sources));
+        log.info("agent instructions attached: %d file(s), %d of %d chars — %s", sources.size(), toReturn.length(), cap, describe(root, sources));
         return StringUtils.strip(toReturn.toString());
     }
     /**
@@ -178,9 +170,16 @@ public class ConventionGuidance {
     }
     private static void append(StringBuilder buffer, Path root, Path file, Log log) {
         try {
-            String content = StringUtils.strip(StringUtils.remove(FileUtils.readFileToString(file.toFile(), StandardCharsets.UTF_8), END_MARKER));
+            String content = StringUtils.strip(PromptFences.strip(FileUtils.readFileToString(file.toFile(), StandardCharsets.UTF_8)));
             if (StringUtils.isNotBlank(content)) {
-                buffer.append("### ").append(root.relativize(file)).append("\n\n").append(content).append("\n\n");
+                /**
+                 * the heading carries a repository-controlled path into the same fenced region as the body, so
+                 * it has to be stripped too — a committed file whose name or parent directory contains the
+                 * closing marker is legal on POSIX and would end the fence from inside the heading, handing the
+                 * rest of the region (and the request JSON after it) to the model as prompt
+                 */
+                buffer.append("### ").append(PromptFences.strip(root.relativize(file).toString()))
+                        .append("\n\n").append(content).append("\n\n");
             }
         } catch (IOException err) {
             // advisory input: an unreadable instruction file degrades bug triage, it does not invalidate the score
