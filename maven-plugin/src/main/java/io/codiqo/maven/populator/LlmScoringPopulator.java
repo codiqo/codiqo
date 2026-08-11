@@ -37,7 +37,6 @@ import io.codiqo.client.model.DiagnosticModel;
 import io.codiqo.client.model.ModuleModel;
 import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.client.model.ProjectQualityModel;
-import io.codiqo.llm.HtmlReportBuilder;
 import io.codiqo.llm.LlmResponseMapper;
 import io.codiqo.llm.PromptBuilder.PromptContext;
 import io.codiqo.llm.ReportBuilder.ReportContext;
@@ -106,16 +105,23 @@ public class LlmScoringPopulator implements SubmissionPopulator {
                     result.getTotalTokens(),
                     response.getTotalBugCount()));
 
+            /**
+             * the console report is the point of a local scoring run, so it is not gated on
+             * dumpAnalysis — that flag governs writing the submission document to disk, which is a
+             * separate concern. This populator only runs on the local-LLM path; the CI goal
+             * overrides doLlmScoring and submits instead, where the check mojos already print.
+             */
+            printConsoleReport(ctx, result, request, duration);
+
             if (args.isDumpAnalysis()) {
-                generateHtmlReport(ctx, result, request, duration);
                 dumpResultYaml(submission, result, duration, args);
             }
         } catch (Exception err) {
             ExceptionUtils.wrapAndThrow(err);
         }
     }
-    private void generateHtmlReport(SubmissionContext ctx, ScoringResult result, LlmScoringRequest request, Duration duration) throws IOException {
-        HtmlReportBuilder builder = new HtmlReportBuilder(ctx.getArgs());
+    private void printConsoleReport(SubmissionContext ctx, ScoringResult result, LlmScoringRequest request, Duration duration) {
+        ConsoleReportBuilder builder = new ConsoleReportBuilder(ctx.getArgs());
         AnalysisSubmissionModel submission = ctx.getSubmissionModel();
         CommitModel commit = submission.getCommit();
 
@@ -129,32 +135,22 @@ public class LlmScoringPopulator implements SubmissionPopulator {
                 .mergeCommit(Boolean.TRUE.equals(commit.getIsMerge()))
                 .revertCommit(Boolean.TRUE.equals(commit.getIsRevert()))
                 .revertedCommitId(commit.getRevertedCommitId())
-                .repositoryName(Objects.nonNull(ctx.getIndex())
-                        ? ctx.getIndex().getProjectRoot().getName()
-                        : submission.getProject().getName())
+                /**
+                 * the submission's project name first: a commit analysis indexes a throwaway worktree,
+                 * so the index root is a temp directory name ("codiqo6290787775051848632")
+                 */
+                .repositoryName(StringUtils.defaultIfBlank(
+                        submission.getProject().getName(),
+                        Objects.nonNull(ctx.getIndex()) ? ctx.getIndex().getProjectRoot().getName() : null))
                 .llmModel(ctx.getLlmModel())
                 .analysisDuration(duration)
                 .criticalViolationsByModule(extractCriticalViolations(submission))
                 .build();
 
-        String html = builder.buildReport(result, request, reportContext);
-
-        String commitSha = commit.getSha();
-        File outputDir = ctx.getArgs().getOutputDirectory();
-        File htmlFile;
-        if (Objects.nonNull(outputDir)) {
-            FileUtils.forceMkdir(outputDir);
-            htmlFile = new File(outputDir, "codiqo-analysis-" + commitSha + ".html");
-        } else {
-            htmlFile = Files.createTempFile("codiqo-analysis-", ".html").toFile();
+        // one log call per line, so each carries the logger's prefix and nothing wraps mid-table
+        for (String line : StringUtils.splitPreserveAllTokens(builder.buildReport(result, request, reportContext), '\n')) {
+            log.info(line);
         }
-        try (OutputStream stream = Files.newOutputStream(htmlFile.toPath())) {
-            try (BufferedOutputStream bufferedStream = new BufferedOutputStream(stream)) {
-                bufferedStream.write(html.getBytes(StandardCharsets.UTF_8));
-                bufferedStream.flush();
-            }
-        }
-        log.info("HTML report: " + htmlFile.getAbsolutePath());
     }
     private void dumpResultYaml(AnalysisSubmissionModel submission, ScoringResult result, Duration duration, RunArgs args) throws IOException {
         AnalysisResultModel analysisResult = new AnalysisResultModel();

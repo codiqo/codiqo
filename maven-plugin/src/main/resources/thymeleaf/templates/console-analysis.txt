@@ -1,0 +1,38 @@
+[(${title})]
+[(${separator})]
+commit:   [(${commitSha})][# th:if="${branches != ''}"]   (branch: [(${branches})])[/]
+author:   [(${author})] <[(${authorEmail})]>
+date:     [(${timestamp})]
+project:  [(${project})]
+message:  [(${message})]
+
+score:    [(${score})]   ([(${classification})])
+          [(${scoreCalculation})]
+quality:  [(${qualityMultiplier})]x multiplier   (clamped to [(${qualityMultiplierMin})] .. [(${qualityMultiplierMax})])
+risk:     [(${riskScore})]/[(${riskScoreMax})]   ([(${riskLevel})])
+review:   senior review [(${seniorReview})]/10   (recommended at [(${seniorReviewThreshold})])
+
+files:    [(${filesChanged})] changed   (prod: [(${prodFilesChanged})], test: [(${testFilesChanged})], config: [(${configFilesChanged})])
+blocks:   [(${blocksAdded})] new, [(${blocksModified})] modified   ([(${linesChanged})] lines)
+effort:   base [(${baseEffort})]   volume [(${volumeScore})]
+blast:    [(${callersTotal})] callers   (prod: [(${callersProduction})], test: [(${callersTest})])   risk [(${blastRiskLevel})]
+
+key dimensions:
+[(${dimensionTable})]
+
+changed files:
+[(${fileTable})]
+[# th:if="${fileOverflow != ''}"][(${fileOverflow})]
+[/]
+findings ([(${findingCount})]):
+[(${findingTable})]
+[# th:if="${findingOverflow != ''}"][(${findingOverflow})]
+[/]
+tags:     technical:  [(${technicalTags})]
+          functional: [(${functionalTags})]
+
+summary:
+[(${summary})]
+
+---
+model [(${llmModel})]   tokens [(${promptTokens})] in / [(${completionTokens})] out   in [(${durationSeconds})]s
