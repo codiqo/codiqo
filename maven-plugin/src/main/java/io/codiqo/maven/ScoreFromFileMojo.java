@@ -15,6 +15,7 @@ import java.util.concurrent.ExecutorService;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -34,7 +35,6 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisResultModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CommitModel;
-import io.codiqo.llm.HtmlReportBuilder;
 import io.codiqo.llm.LlmResponseMapper;
 import io.codiqo.llm.PromptBuilder.PromptContext;
 import io.codiqo.llm.ReportBuilder.ReportContext;
@@ -47,6 +47,7 @@ import io.codiqo.llm.client.ScoringClient.ScoringResult;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import io.codiqo.maven.logging.MavenMessageReporter;
+import io.codiqo.maven.populator.ConsoleReportBuilder;
 import io.codiqo.maven.populator.LlmScoringPopulator;
 import io.codiqo.util.Env;
 
@@ -186,7 +187,7 @@ public class ScoreFromFileMojo extends AbstractMojo {
 
             if (dumpAnalysis) {
                 FileUtils.forceMkdir(outputDirectory);
-                generateHtmlReport(args, submission, result, request, stopWatch);
+                printConsoleReport(args, submission, result, request, stopWatch);
                 dumpResultYaml(submission, result, stopWatch, args);
             }
         } catch (Exception err) {
@@ -226,13 +227,13 @@ public class ScoreFromFileMojo extends AbstractMojo {
         toReturn.validate();
         return toReturn;
     }
-    private void generateHtmlReport(
+    private void printConsoleReport(
             RunArgs args,
             AnalysisSubmissionModel submission,
             ScoringResult result,
             LlmScoringRequest request,
-            StopWatch stopWatch) throws IOException {
-        HtmlReportBuilder builder = new HtmlReportBuilder(args);
+            StopWatch stopWatch) {
+        ConsoleReportBuilder builder = new ConsoleReportBuilder(args);
         CommitModel commit = submission.getCommit();
 
         ReportContext.ReportContextBuilder contextBuilder = ReportContext.builder()
@@ -256,15 +257,9 @@ public class ScoreFromFileMojo extends AbstractMojo {
             }
         }
 
-        String html = builder.buildReport(result, request, contextBuilder.build());
-
-        String commitSha = submission.getCommit().getSha();
-        File htmlFile = new File(outputDirectory, "codiqo-analysis-" + commitSha + ".html");
-        try (BufferedOutputStream stream = new BufferedOutputStream(Files.newOutputStream(htmlFile.toPath()))) {
-            stream.write(html.getBytes(StandardCharsets.UTF_8));
-            stream.flush();
+        for (String line : StringUtils.splitPreserveAllTokens(builder.buildReport(result, request, contextBuilder.build()), '\n')) {
+            getLog().info(line);
         }
-        getLog().info("HTML report: " + htmlFile.getAbsolutePath());
     }
     private void dumpResultYaml(AnalysisSubmissionModel submission, ScoringResult result, StopWatch stopWatch, RunArgs args) throws IOException {
         AnalysisResultModel analysisResult = new AnalysisResultModel();
