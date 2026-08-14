@@ -52,7 +52,7 @@
         <!-- CORE -->
         <!-- -->
         <slf4j.version>2.0.18</slf4j.version>
-        <logback.version>1.6.1</logback.version>
+        <logback.version>1.6.2</logback.version>
         <asm.version>9.10.1</asm.version>
         <javax.inject.version>1</javax.inject.version>
         <jakarta.annotation-api.version>3.0.0</jakarta.annotation-api.version>
@@ -66,6 +66,7 @@
         <google-api-services-artifactregistry.version>v1-rev20260702-2.0.0</google-api-services-artifactregistry.version>
         <artifactregistry-auth-common.version>2.2.5</artifactregistry-auth-common.version>
         <jackson.version>2.22.1</jackson.version>
+        <scribejava.version>8.3.3</scribejava.version>
         <snakeyaml.version>2.6</snakeyaml.version>
         <okio.version>3.18.1</okio.version>
         <okhttp.version>5.4.0</okhttp.version>
@@ -75,17 +76,18 @@
         <ztzip.version>1.18.2</ztzip.version>
         <ztkill.version>1.12.0</ztkill.version>
         <ztexec.version>1.13.0</ztexec.version>
+        <dorkbox.desktop.version>1.1</dorkbox.desktop.version>
         <jarchivelib.version>1.2.0</jarchivelib.version>
         <ecj.version>3.46.0</ecj.version>
         <lsp4j.version>1.0.0</lsp4j.version>
-        <openrewrite.version>8.88.2</openrewrite.version>
-        <openrewrite.recipe.version>2.40.0</openrewrite.recipe.version>
+        <openrewrite.version>8.89.0</openrewrite.version>
+        <openrewrite.recipe.version>2.41.0</openrewrite.recipe.version>
         <pmd.version>7.26.0</pmd.version>
         <spotbugs.version>4.10.3</spotbugs.version>
         <findbugs.sec.version>1.14.0</findbugs.sec.version>
         <findbugs.contrib.version>7.7.4</findbugs.contrib.version>
         <jacoco.version>0.8.15</jacoco.version>
-        <classgraph.version>4.8.187</classgraph.version>
+        <classgraph.version>4.8.192</classgraph.version>
         <oshi.version>7.4.4</oshi.version>
         <openapi.version>4.50.0</openapi.version>
         <djl.tokenizers.version>0.36.0</djl.tokenizers.version>
@@ -93,7 +95,7 @@
         <gradle.api.version>8.11.1</gradle.api.version>
         <thymeleaf.version>3.1.5.RELEASE</thymeleaf.version>
         <commons-lang3.version>3.20.0</commons-lang3.version>
-        <commons-collections4.version>4.5.0</commons-collections4.version>
+        <commons-collections4.version>4.6.0</commons-collections4.version>
         <commons-cli.version>1.11.0</commons-cli.version>
         <commons-io.version>2.22.0</commons-io.version>
         <commons-text.version>1.15.0</commons-text.version>
@@ -421,6 +423,11 @@
                 <version>${gson.version}</version>
             </dependency>
             <dependency>
+                <groupId>com.github.scribejava</groupId>
+                <artifactId>scribejava-core</artifactId>
+                <version>${scribejava.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>com.fasterxml.jackson.core</groupId>
                 <artifactId>jackson-databind</artifactId>
                 <version>${jackson.version}</version>
@@ -709,6 +716,18 @@
                 <groupId>org.zeroturnaround</groupId>
                 <artifactId>zt-exec</artifactId>
                 <version>${ztexec.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.dorkbox</groupId>
+                <artifactId>Desktop</artifactId>
+                <version>${dorkbox.desktop.version}</version>
+                <exclusions>
+                    <!-- its Executor pins slf4j 1.8.0-beta4, an abandoned beta line that must not reach a plugin realm -->
+                    <exclusion>
+                        <groupId>org.slf4j</groupId>
+                        <artifactId>slf4j-api</artifactId>
+                    </exclusion>
+                </exclusions>
             </dependency>
             <dependency>
                 <groupId>org.rauschig</groupId>

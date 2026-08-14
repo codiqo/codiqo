@@ -77,6 +77,8 @@ import okhttp3.HttpUrl;
 @Data
 public class RunArgs {
     public static final String DEFAULT_API_URL = "https://api.codiqo.io";
+    public static final String DEFAULT_AUTH_URL = "https://codiqo.io";
+
     public static final int DEFAULT_NUM_CTX = 256 * 1024;
     // head room reserved on top of the request JSON for the system prompt (~25k) + completion (~33k) + margin
     public static final int PROMPT_TOKEN_RESERVE = 72 * 1024;

@@ -1,18 +1,18 @@
 package io.codiqo.maven;
 
+import java.util.List;
+
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
-
-import java.util.List;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisAcceptedModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.ProjectMetricsModel;
+import io.codiqo.maven.auth.BrowserLogin;
 import io.codiqo.submit.SubmissionContext;
-import io.codiqo.util.Env;
 
 @Mojo(name = "submit-commit-analysis",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
@@ -25,9 +25,12 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
     @Parameter(property = "codiqo.apiKey")
     private String apiKey;
 
+    @Parameter(property = "codiqo.authUrl", defaultValue = RunArgs.DEFAULT_AUTH_URL)
+    private String authUrl;
+
     @Override
     protected void doLlmScoring(SubmissionContext ctx) throws Exception {
-        String resolvedApiKey = Env.resolveRequired(apiKey, "codiqo.apiKey");
+        String resolvedApiKey = BrowserLogin.resolveApiKey(apiKey, authUrl, getLog());
 
         AnalysisAcceptedModel response = AnalysisSubmitter.submit(
                 apiUrl,
@@ -40,7 +43,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
     }
     @Override
     protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files, ProjectMetricsModel projectMetrics) throws Exception {
-        String resolvedApiKey = Env.resolveRequired(apiKey, "codiqo.apiKey");
+        String resolvedApiKey = BrowserLogin.resolveApiKey(apiKey, authUrl, getLog());
 
         AnalysisSubmitter.exclude(
                 apiUrl,
