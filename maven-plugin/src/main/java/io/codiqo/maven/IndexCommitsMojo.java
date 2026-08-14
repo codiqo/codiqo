@@ -9,16 +9,17 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.Period;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.LinkedHashSet;
-import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.ListUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -37,8 +38,6 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 
-import org.apache.commons.collections4.ListUtils;
-
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.ApiClient;
 import io.codiqo.client.ApiException;
@@ -48,8 +47,8 @@ import io.codiqo.client.model.CommitIndexBatchResultModel;
 import io.codiqo.client.model.CommitModel;
 import io.codiqo.client.model.MissingAnalysesModel;
 import io.codiqo.client.model.ProjectModel;
+import io.codiqo.maven.auth.BrowserLogin;
 import io.codiqo.submit.CommitIndexer;
-import io.codiqo.util.Env;
 import io.codiqo.util.JGit;
 import io.codiqo.util.RepositoryUrls;
 
@@ -70,6 +69,9 @@ public class IndexCommitsMojo extends AbstractMojo {
 
     @Parameter(property = "codiqo.apiKey")
     private String apiKey;
+
+    @Parameter(property = "codiqo.authUrl", defaultValue = RunArgs.DEFAULT_AUTH_URL)
+    private String authUrl;
 
     @Parameter(property = "codiqo.indexRef", defaultValue = "HEAD")
     private String indexRef;
@@ -110,7 +112,7 @@ public class IndexCommitsMojo extends AbstractMojo {
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try (Repository repo = JGit.openRepository(project.getBasedir())) {
-            String resolvedApiKey = Env.resolveRequired(apiKey, "codiqo.apiKey");
+            String resolvedApiKey = BrowserLogin.resolveApiKey(apiKey, authUrl, getLog());
             String projectId = project.getGroupId() + ":" + project.getArtifactId();
             getLog().info("using projectId: " + projectId);
 

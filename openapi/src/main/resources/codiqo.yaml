@@ -71,6 +71,35 @@ paths:
       security:
         - apiKey: []
 
+  /api/v1/analyses/uncommitted:
+    post:
+      operationId: submitUncommittedAnalysis
+      tags: [Analysis]
+      summary: Submit an analysis of uncommitted working-tree changes
+      description: |
+        Scores work that has not been committed yet. The payload is the same one the commit path takes — the
+        engine treats the working tree as if it were a commit — but the result is stored separately, expires,
+        and is addressed by its own share link rather than by a commit sha. The submission is attributed to the
+        developer behind the local git identity; if that identity maps to no user in the organization the
+        request is rejected rather than stored unattributed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalysisSubmissionModel'
+      responses:
+        '202':
+          description: Analysis accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisAcceptedModel'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+      security:
+        - apiKey: []
+
   /api/v1/analyses/{analysisId}:
     get:
       operationId: getAnalysis

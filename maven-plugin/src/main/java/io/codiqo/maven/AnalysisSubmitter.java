@@ -33,6 +33,18 @@ public class AnalysisSubmitter {
 
         return ApiRetry.call(log, "submitAnalysis", apiUrl, () -> client.submitAnalysis(submission));
     }
+    public static AnalysisAcceptedModel submitUncommitted(
+            String apiUrl,
+            String apiKey,
+            long connectTimeoutSeconds,
+            long readTimeoutSeconds,
+            AnalysisSubmissionModel submission,
+            Log log) throws ApiException {
+        AnalysisApi client = buildClient(apiUrl, apiKey, connectTimeoutSeconds, readTimeoutSeconds);
+        log.info("submitting uncommitted changes to " + apiUrl);
+
+        return ApiRetry.call(log, "submitUncommittedAnalysis", apiUrl, () -> client.submitUncommittedAnalysis(submission));
+    }
     public static void exclude(
             String apiUrl,
             String apiKey,
