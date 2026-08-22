@@ -29,11 +29,8 @@ public class ApiRetry {
                 .withJitter(JITTER_FACTOR)
                 .withMaxAttempts(MAX_ATTEMPTS)
                 .withMaxDuration(MAX_TOTAL_DURATION)
-                .onRetryScheduled(event -> log.warn(operation + " failed " + event.getAttemptCount() + "/" + MAX_ATTEMPTS
-                        + " (" + apiUrl + "): " + summarize(event.getLastException())
-                        + "; retry in " + formatDelay(event.getDelay())))
-                .onRetriesExceeded(event -> log.error(operation + " gave up after " + MAX_ATTEMPTS + " attempts ("
-                        + apiUrl + "): " + summarize(event.getException())))
+                .onRetryScheduled(event -> log.warn(operation + " failed " + event.getAttemptCount() + "/" + MAX_ATTEMPTS + " (" + apiUrl + "): " + summarize(event.getLastException()) + "; retry in " + formatDelay(event.getDelay())))
+                .onRetriesExceeded(event -> log.error(operation + " gave up after " + MAX_ATTEMPTS + " attempts (" + apiUrl + "): " + summarize(event.getException())))
                 .build();
         try {
             return Failsafe.with(policy).get(supplier);

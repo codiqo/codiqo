@@ -138,10 +138,13 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     }
     private static DriverScalers extractScalers(AnalysisSubmissionModel submission) {
         DriverScalers toReturn = new DriverScalers();
-        if (Objects.isNull(submission.getProjectMetrics()) || Objects.isNull(submission.getProjectMetrics().getDriverScalers())) {
+        if (Objects.isNull(submission.getProjectMetrics())) {
             return toReturn;
         }
         DriverScalersModel model = submission.getProjectMetrics().getDriverScalers();
+        if (Objects.isNull(model)) {
+            return toReturn;
+        }
         toReturn.methodProd = toScaler(model.getMethodScalerProd());
         toReturn.methodTest = toScaler(model.getMethodScalerTest());
         toReturn.ctorProd = toScaler(model.getConstructorScalerProd());

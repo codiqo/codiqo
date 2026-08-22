@@ -22,6 +22,7 @@ import com.openai.models.chat.completions.ChatCompletionStreamOptions;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.llm.client.OpenAIClientWrapper.StreamingResult;
+import lombok.Value;
 
 /**
  * one prompt in, one JSON object out, with the sampling knobs and retry policy the module has settled on.
@@ -150,6 +151,9 @@ public class JsonCompletionClient implements LlmClient {
         }
     }
 
-    public record Result<T>(T response, LlmUsage usage) {
+    @Value
+    public static class Result<T> {
+        T response;
+        LlmUsage usage;
     }
 }

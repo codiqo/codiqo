@@ -27,6 +27,8 @@ public class AnalysisRequest implements Serializable {
 
     private boolean ignoreCoverage;
     private boolean ignoreCpd;
+    private String excludeProjects;
+    private String excludePaths;
     private boolean ignoreDiagnostics;
     private boolean ignoreComplexity;
     private boolean failOnJdtlsError;

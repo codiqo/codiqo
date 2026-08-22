@@ -2,10 +2,16 @@ package io.codiqo.util;
 
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
+import java.lang.management.MemoryPoolMXBean;
+import java.lang.management.MemoryType;
 import java.lang.management.MemoryUsage;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.BooleanUtils;
+import org.openjdk.jol.info.GraphLayout;
 
 import com.sun.management.OperatingSystemMXBean;
 
@@ -16,6 +22,20 @@ import oshi.software.os.OperatingSystem;
 
 @UtilityClass
 public class MemoryReport {
+    /**
+     * Deep object-graph measurement walks every reachable reference and keeps an identity set of what it has seen,
+     * so on the very structures worth measuring it costs about as much memory as the thing it is measuring. Off
+     * unless asked for, which keeps a normal run paying nothing for it.
+     */
+    public static final String PROFILING_PROPERTY = "codiqo.memoryProfiling";
+
+    /**
+     * JOL reads field offsets through Unsafe, which a strongly-encapsulated JDK refuses for classes like Thread —
+     * and an analysis graph reaches those. Setting this before JOL loads buys the traversal back; set here rather
+     * than demanded as a JVM flag, and never over an explicit choice.
+     */
+    private static final String JOL_MAGIC_FIELD_OFFSET = "jol.magicFieldOffset";
+
     private static final SystemInfo SYSTEM_INFO = new SystemInfo();
     private static final OperatingSystemMXBean OS_BEAN = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
 
@@ -49,7 +69,37 @@ public class MemoryReport {
 
         return sb.toString();
     }
-    private static String human(long bytes) {
+    public static long peakHeapUsed() {
+        return heapPools().stream().mapToLong(pool -> pool.getPeakUsage().getUsed()).sum();
+    }
+    public static void resetHeapPeak() {
+        heapPools().forEach(MemoryPoolMXBean::resetPeakUsage);
+    }
+    public static long heapUsed() {
+        return heapPools().stream().mapToLong(pool -> pool.getUsage().getUsed()).sum();
+    }
+    public static Optional<String> retained(Object... roots) {
+        if (BooleanUtils.negate(isProfiling())) {
+            return Optional.empty();
+        }
+        if (Objects.isNull(System.getProperty(JOL_MAGIC_FIELD_OFFSET))) {
+            System.setProperty(JOL_MAGIC_FIELD_OFFSET, Boolean.TRUE.toString());
+        }
+        try {
+            return Optional.of(human(GraphLayout.parseInstance(roots).totalSize()));
+        } catch (RuntimeException err) {
+            return Optional.of("unavailable (" + err.getClass().getSimpleName() + ": " + err.getMessage() + ")");
+        }
+    }
+    public static boolean isProfiling() {
+        return Boolean.parseBoolean(System.getProperty(PROFILING_PROPERTY, Boolean.FALSE.toString()));
+    }
+    public static String human(long bytes) {
         return FileUtils.byteCountToDisplaySize(bytes);
+    }
+    private static List<MemoryPoolMXBean> heapPools() {
+        return ManagementFactory.getMemoryPoolMXBeans().stream()
+                .filter(pool -> pool.getType() == MemoryType.HEAP)
+                .toList();
     }
 }

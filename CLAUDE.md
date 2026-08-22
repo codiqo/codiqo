@@ -77,6 +77,37 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - **Bad:** `boolean isJava = isJavaFile(file);` used to gate line-filtering.
 - **Good:** `boolean requiresLineFiltering = LanguageCapabilities.requiresLineFiltering(file);` — the predicate names the capability, and the per-language answer lives in one place (a `LanguageCapabilities` `@UtilityClass`, since `LanguageEnum` is generated from OpenAPI and can't host instance methods).
 
+## Build Facts Come From the Build Tool
+
+**Never infer a build fact from the directory layout.** Where a module's classes, coverage data or test reports live is
+a build-tool decision, and every one of those locations is configurable. Ask Maven or Gradle for it and propagate the
+answer through `ProjectSpec`/`JvmProjectSpec` — the way `coverage()` and `getTestReportDirectories()` already do. The
+analysis side must never rebuild one path from another.
+
+- **Maven:** read the effective POM — `MavenProject.getPlugin(...)`, then the plugin-level and per-execution `Xpp3Dom`
+  configuration, falling back to the plugin's documented default. `SurefirePlugins` and `TestReportDirectories` are the
+  pattern to copy. Remember that a plugin parameter with no `<expression>` in its descriptor (surefire's
+  `reportsDirectory`, for one) cannot be overridden with `-D`, so the configured value is the only source of truth.
+- **Gradle:** read the task or extension that owns the answer — `test.getReports().getJunitXml().getOutputLocation()`,
+  `sourceSet.getJava().getClassesDirectory()` — in `GradleModelCollector`, and carry it across the process boundary in
+  `ModuleData`.
+- If codiqo depends on a build setting being enabled, pin it where codiqo already owns the task (`ownJacoco`,
+  `ownTestExecution`) instead of hoping the project left it alone.
+
+```java
+// Bad - walks up from target/classes and straight off the end of the repository
+File buildDir = outputDir.getParentFile();
+File gradleBuild = buildDir.getParentFile().getParentFile();   // for Maven this is ABOVE the module
+if (containsJunitReports(new File(gradleBuild, "test-results"))) { ... }
+
+// Good - the build tool said where the reports are, so only look there
+return jvm.getTestReportDirectories().stream().anyMatch(JavaLanguageSpec::containsJunitReports);
+```
+
+**A corner-case patch is not a fix.** When a guard exists to paper over a wrong model — a path-suffix comparison
+standing in for a real relativization, a fallback that derives a file name from a class name — correct the model and
+delete the guard. Prefer the fundamental change even when it touches more files than the workaround would.
+
 ## Code Organization
 
 ### Method Ordering in Classes
@@ -419,6 +450,49 @@ List<String> tags = Objects.nonNull(response.getTags()) && Objects.nonNull(respo
         : Collections.emptyList();
 ```
 
+### Never Re-Walk a Getter Chain Inside a Condition
+
+**A compound condition must not evaluate the same getter chain twice.** Operand *count* is not the problem —
+`if (enabled && Objects.nonNull(request))` is fine. The problem is re-deriving the same value, which makes the
+condition long, hides what is actually being tested, and forces the reader to diff two near-identical chains.
+
+Bind the intermediate once. Where the outer hop is a null check, nesting is what makes the binding possible:
+
+```java
+// Bad - the chain is walked 5 times across 6 lines
+if (Objects.nonNull(response.getEffortBreakdown())
+        && Objects.nonNull(response.getEffortBreakdown().getDiffClassification())
+        && CollectionUtils.isNotEmpty(response.getEffortBreakdown().getDiffClassification().getMovedPairs())) {
+    log.warn("count=%d", response.getEffortBreakdown().getDiffClassification().getMovedPairs().size());
+    response.getEffortBreakdown().getDiffClassification().setMovedPairs(new ArrayList<>());
+}
+
+// Good - nest the outer null check so the intermediate can be named
+if (Objects.nonNull(submission.getProject())) {
+    for (ModuleModel module : CollectionUtils.emptyIfNull(submission.getProject().getModules())) {
+        ModuleQualityModel quality = module.getQuality();
+        if (Objects.nonNull(quality) && CollectionUtils.isNotEmpty(quality.getCriticalViolations())) { ... }
+    }
+}
+```
+
+When three or more call sites need the same two-hop walk, give it one accessor returning `Optional` rather than
+repeating the guard:
+
+```java
+private static Optional<DiffClassification> diffClassification(LlmScoringResponse response) {
+    return Optional.ofNullable(response.getEffortBreakdown()).map(EffortBreakdown::getDiffClassification);
+}
+
+// call sites then read as
+diffClassification(response).filter(c -> CollectionUtils.isNotEmpty(c.getMovedPairs())).ifPresent(c -> { ... });
+if (diffClassification(response).isEmpty()) { return PerFileResult.empty(); }
+```
+
+This does **not** apply to a condition that tests the same cheap accessor with two different predicates
+(`block.getLocation().getStartLine() <= start && end <= block.getLocation().getEndLine()`) — that is one range
+test, and splitting it obscures the range. Leave those alone.
+
 For nested ternaries, use if/else if:
 
 ```java
@@ -558,9 +632,13 @@ public int calculate() {
 }
 ```
 
-## Utility Libraries - Guava, Apache Commons & Lombok
+## Utility Libraries - Apache Commons & Lombok
 
-Guava, Apache Commons, and Lombok are always on the classpath. **Prefer these utilities over manual implementations**.
+Apache Commons and Lombok are always on the classpath. **Prefer these utilities over manual implementations**.
+
+Before hand-rolling anything — a file filter, a path join, a separator character, a null-safe default, a value class —
+check whether commons-lang3, commons-io, commons-collections4, commons-math3, ASM or Lombok already ships it. They
+usually do, and the shipped version already handles the edge case the hand-rolled one is about to get wrong.
 
 ### Math - Use Apache Commons Math
 
@@ -573,21 +651,29 @@ double rounded = Precision.round(value, 2);
 double rounded = Math.round(value * 100.0) / 100.0;
 ```
 
-### Collections - Use Guava
+### Collections - JDK Constructors & Apache Commons
 
-Prefer Guava factory methods over `new` constructors:
+Plain collections use the JDK constructors directly; immutable ones use the JDK factories:
 
 ```java
 // Good
-List<String> items = Lists.newArrayList();
-Set<String> unique = Sets.newHashSet();
-Map<String, Integer> counts = Maps.newHashMap();
-
-// Avoid
 List<String> items = new ArrayList<>();
 Set<String> unique = new HashSet<>();
 Map<String, Integer> counts = new HashMap<>();
+Set<String> fixed = Set.of("a", "b");
 ```
+
+For the structures the JDK does not provide, use commons-collections4:
+
+```java
+// Good
+BidiMap<String, String> bidi = new DualHashBidiMap<>();   // bidirectional lookup, .getKey() for the reverse
+MultiValuedMap<String, Item> byKey = new HashSetValuedHashMap<>();
+MultiSet<String> counts = new HashMultiSet<>();           // .getCount(x), .setCount(x, n), .uniqueSet()
+```
+
+`Bag`/`HashBag` are **deprecated since commons-collections4 4.6.0** — `Bag` violated the `Collection`
+contract. Use `MultiSet`/`HashMultiSet` instead.
 
 ### Lombok @UtilityClass for Static-Only Classes
 
@@ -619,19 +705,19 @@ Apply this to every existing and new utility class. Examples already in the code
 
 ### Lombok @Builder with Collections
 
-**When using Lombok `@Builder`, all collection fields (List, Set, Map) must have `@Builder.Default` with Guava factory initialization**:
+**When using Lombok `@Builder`, all collection fields (List, Set, Map) must have `@Builder.Default` initialized to an empty collection**:
 
 ```java
-// Good - @Builder.Default with Guava factory
+// Good - @Builder.Default with an empty collection
 @Data
 @Builder
 public class Response {
     @Builder.Default
-    private List<String> items = Lists.newArrayList();
+    private List<String> items = new ArrayList<>();
     @Builder.Default
-    private Set<Integer> ids = Sets.newHashSet();
+    private Set<Integer> ids = new HashSet<>();
     @Builder.Default
-    private Map<String, Object> metadata = Maps.newHashMap();
+    private Map<String, Object> metadata = new HashMap<>();
 }
 
 // Bad - no @Builder.Default (builder creates null collections)
@@ -642,22 +728,49 @@ public class Response {
     private Set<Integer> ids;
     private Map<String, Object> metadata;
 }
-
-// Bad - @Builder.Default without Guava
-@Data
-@Builder
-public class Response {
-    @Builder.Default
-    private List<String> items = new ArrayList<>();  // Use Lists.newArrayList()
-}
 ```
 
 This ensures:
 - Collections are never null when using the builder
-- Consistent use of Guava factories
 - Safe iteration without null checks
 
-### Strings - Use Apache Commons & Guava
+### Lombok @Value Instead of Java Records
+
+**Do not declare Java `record`s.** Immutable value objects use Lombok `@Value`; mutable holders use `@Data`. Every data
+class in the codebase is then generated the same way.
+
+```java
+// Good
+@Value
+private static class CoverageTotals {
+    int classes;
+    int packages;
+    int lines;
+    int coveredLines;
+}
+
+// Bad
+private record CoverageTotals(int classes, int packages, int lines, int coveredLines) {}
+```
+
+`@Value` supplies final fields, getters, `equals`/`hashCode`/`toString` and an all-args constructor, so it is a direct
+replacement — but the accessors are named differently and three details bite:
+
+- **Accessors become `getXxx()`, and a `boolean` field becomes `isXxx()`** — `timedOut` reads as `isTimedOut()`, never
+  `getTimedOut()`. Method *references* break as well (`FileRow::path` becomes `FileRow::getPath`), and javac reports
+  those as "invalid method reference" rather than "cannot find symbol", so grepping for `.method()` misses them.
+- **A hand-written constructor suppresses the generated one.** `@Value` omits its all-args constructor as soon as any
+  constructor exists, so a class that keeps a convenience constructor must add `@AllArgsConstructor` explicitly.
+- **In a `sealed` hierarchy, write `final` yourself.** A permitted subclass has to be `final`, `sealed` or `non-sealed`
+  when javac checks the permits clause; do not depend on Lombok adding `final` during annotation processing.
+
+Nested classes need an explicit `static` (records were implicitly static). A hand-written `toString()` is fine — Lombok
+skips generating any method that already exists.
+
+The one exception is Java source embedded in a test fixture *as a string* (the PMD type-inference crash reproduction,
+for example): that is input data, not project code.
+
+### Strings - Use Apache Commons
 
 **Use Apache Commons for null-safe checks and defaults:**
 
@@ -670,29 +783,63 @@ String result = StringUtils.defaultIfEmpty(value, "default");
 if (input == null || input.trim().isEmpty()) { ... }
 ```
 
-**Use Guava `Splitter` for splitting strings** — always use `trimResults()` and `omitEmptyStrings()`:
+**Use `io.codiqo.util.Split` for splitting strings** — it trims every part and drops the empty ones, so a
+caller never has to post-process the result:
 
 ```java
-// Good - Guava Splitter with trimResults and omitEmptyStrings
-List<String> items = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(input);
-List<String> lines = Splitter.on('\n').trimResults().omitEmptyStrings().splitToList(text);
+// Good - Split trims and omits empties
+List<String> items = Split.on(input, ',');
+List<String> lines = Split.on(text, '\n');
+List<String> words = Split.onWhitespace(input);
 
 // Avoid - manual split + trim
 String[] items = input.split(",");
 Arrays.stream(items).map(String::trim).filter(s -> !s.isEmpty())...
 ```
 
-**Use Guava `Joiner` for joining strings** — use `skipNulls()` when nulls are possible:
+**Use Apache Commons for joining strings** — `StringUtils.join` is null-safe on the collection itself:
 
 ```java
-// Good - Guava Joiner
-String joined = Joiner.on(", ").join(items);
-String joined = Joiner.on(", ").skipNulls().join(items);
-
-// Avoid
+// Good
 String joined = StringUtils.join(items, ", ");
-String joined = String.join(", ", items);
+String joined = StringUtils.joinWith(", ", first, second);
+String joined = items.stream().map(Item::getName).collect(Collectors.joining(", "));
 ```
+
+### Character and String Constants
+
+**Never write a bare `'\n'`, `"\n"` or `""`.** commons-lang3 publishes both the `char` and the `String` form of each,
+and mixing literals with constants is how one separator ends up spelled three different ways in a single module.
+
+| Literal | Constant |
+| --- | --- |
+| `'\n'` (char argument) | `CharUtils.LF` |
+| `"\n"` (String argument) | `StringUtils.LF` |
+| `'\r'` / `"\r"` | `CharUtils.CR` / `StringUtils.CR` |
+| `""` | `StringUtils.EMPTY` |
+| `" "` | `StringUtils.SPACE` |
+| `"."` in front of an extension | `FilenameUtils.EXTENSION_SEPARATOR_STR` |
+
+```java
+// Good - pick the form the API actually takes
+StringUtils.splitPreserveAllTokens(report, CharUtils.LF);        // takes a char
+StringUtils.substringBefore(message, StringUtils.LF);            // takes a String
+String.join(StringUtils.LF, lines);
+FileFilterUtils.suffixFileFilter(FilenameUtils.EXTENSION_SEPARATOR_STR + CLASS_EXTENSION);
+
+// Bad - raw literals
+StringUtils.splitPreserveAllTokens(report, '\n');
+String.join("\n", lines);
+log.info("");
+
+// Bad - rebuilding a constant that already exists
+private static final String LF = CharUtils.toString(CharUtils.LF);
+```
+
+`IOUtils.LINE_SEPARATOR` is deprecated: use `StringUtils.LF` for the unix form, and `System.lineSeparator()` only when
+the platform's own separator is genuinely what is wanted.
+
+Exception: a `\n` inside a larger literal is content, not a separator — leave `"line one\nline two"` alone.
 
 ### File Paths - Use Apache Commons IO
 
@@ -718,6 +865,51 @@ if ("java".equals(FilenameUtils.getExtension(path))) { ... }
 
 // Avoid
 if (path.endsWith(".java")) { ... }
+```
+
+**Compose paths with the `Path` API, never with string concatenation.** A path is not a string. An empty component —
+JaCoCo reports the default package as `""` — turns `packageName + '/' + fileName` into `/Foo.java`, which matches
+nothing, while `Paths.get(packageName, fileName)` correctly yields `Foo.java`. Convert to the unix form with commons-io
+where a comparison needs it, so both sides of that comparison are built by the same two primitives:
+
+```java
+// Good - the JDK composes, commons-io normalizes the separators
+Path relative = Paths.get(packageName, fileName);
+String key = FilenameUtils.separatorsToUnix(relative.toString());
+String key = FilenameUtils.separatorsToUnix(sourceRoot.relativize(file).toString());   // the same key, other side
+
+// Bad - hand-joined, and wrong for an empty component
+String key = packageName + '/' + fileName;
+
+// Bad - String.join has the identical empty-component bug; the problem is treating a path as a string
+String key = String.join("/", packageName, fileName);
+
+// Bad - FilenameUtils.concat emits SYSTEM separators and applies `..` normalization, neither of which a lookup key wants
+String key = FilenameUtils.concat(packageName, fileName);
+```
+
+**Match paths by relativizing against a known root, not by comparing suffixes.**
+`path.endsWith("com/example/Foo.java")` also matches `.../notcom/example/Foo.java`, and it cannot tell two same-named
+files in different modules apart — which is precisely the situation duplicate-name handling runs in.
+
+```java
+// Good - exact, and the key form both JaCoCo and SpotBugs report locations in
+Map<String, File> byRelativePath = indexBySourceRootRelativePath(files, sourceRoots);
+
+// Bad
+FilenameUtils.separatorsToUnix(location.getPath()).endsWith(packageName + "/" + fileName)
+```
+
+**Convert bytecode names with ASM, not with `replace`.** `org.ow2.asm` is a direct dependency and
+`io.codiqo.core.java.JavaBinaryFormat` owns both directions:
+
+```java
+// Good
+JavaBinaryFormat.getBinaryName(internalName);    // Type.getObjectType(n).getClassName()
+JavaBinaryFormat.getInternalName(binaryName);
+
+// Bad
+cls.getName().replace('/', '.');
 ```
 
 ### Directory Creation - Use Apache Commons IO

@@ -132,9 +132,6 @@ public class NormalizeSourcesMojo extends AbstractMojo {
             StringLiteralEquality.class,
             UnnecessaryReturnAsLastStatement.class,
             UsePortableNewlines.class,
-            //
-            // ~ import / syntax cleanup
-            //
             RemoveUnusedImports.class,
             UnnecessaryParentheses.class,
             RemoveExtraSemicolons.class,
@@ -143,13 +140,9 @@ public class NormalizeSourcesMojo extends AbstractMojo {
             ModifierOrder.class,
             UseJavaStyleArrayDeclarations.class,
             ShortenFullyQualifiedTypeReferences.class,
-            //
-            // ~ lambda normalisation (last — operates on output of prior recipes)
-            //
+            // must stay last: these operate on the output of the recipes above
             ReplaceLambdaWithMethodReference.class,
-            LambdaBlockToExpression.class
-            //.add(UseLambdaForFunctionalInterface.class)
-            );
+            LambdaBlockToExpression.class);
 
     @Parameter(property = "codiqo.recipes")
     private String recipes;

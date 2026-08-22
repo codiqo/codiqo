@@ -1578,8 +1578,12 @@ components:
         author:
           type: string
         authorEmail:
+          # Deliberately NOT `format: email`. This is whatever git recorded, not an address anyone sends to, and
+          # bean validation rejects the whole batch when one entry offends: GitHub's bot addresses
+          # (49699333+dependabot[bot]@users.noreply.github.com) are RFC-invalid because of the brackets, yet
+          # universal, so a single bot commit made 30 good commits unindexable with HTTP 400. Addresses codiqo
+          # actually mails are checked at the point of use by EmailAddressValidator instead.
           type: string
-          format: email
         timestamp:
           type: string
           format: date-time

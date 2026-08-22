@@ -38,11 +38,13 @@ public class CodiqoGradlePlugin implements Plugin<Project> {
             task.setGroup(TASK_GROUP);
             task.setDescription("Analyze the current checkout and dump the Codiqo analysis submission as YAML");
 
-            // When tests run in the same build, the dump merges each Test task's build/jacoco/codiqo-<task>.exec
-            // part into the module's codiqo.exec, so it must run after every Test task has written its part —
-            // otherwise the dump's fast JDT import finishes first under parallel execution and coverage comes
-            // out empty. Lazy Callable: the subproject test tasks are registered later (the init script applies
-            // jacoco), so they are enumerated only when Gradle resolves the execution graph.
+            /**
+             * When tests run in the same build, the dump merges each Test task's build/jacoco/codiqo-<task>.exec part
+             * into the module's codiqo.exec, so it must run after every Test task has written its part — otherwise the
+             * dump's fast JDT import finishes first under parallel execution and coverage comes out empty. Lazy
+             * Callable: the subproject test tasks are registered later (the init script applies jacoco), so they are
+             * enumerated only when Gradle resolves the execution graph.
+             */
             task.mustRunAfter((Callable<List<Test>>) () -> allTestTasks(project));
         });
         project.getTasks().register("codiqoIndexCommits", CodiqoIndexCommitsTask.class, task -> {
@@ -50,11 +52,13 @@ public class CodiqoGradlePlugin implements Plugin<Project> {
             task.setDescription("Walk git history over the commit window and write analyzable commit SHAs to a file");
         });
 
-        // Snapshot the Gradle model off the task-execution path so subproject classpaths are
-        // resolved at configuration time (works under parallel execution, no --no-parallel).
+        /**
+         * Snapshot the Gradle model off the task-execution path so subproject classpaths are resolved at configuration
+         * time (works under parallel execution, no --no-parallel).
+         */
         project.getGradle().getTaskGraph().whenReady(graph -> {
             CodiqoDumpAnalysisTask task = (CodiqoDumpAnalysisTask) project.getTasks().findByName(DUMP_TASK);
-            if (task != null && graph.hasTask(task)) {
+            if (Objects.nonNull(task) && graph.hasTask(task)) {
                 task.setRequest(GradleModelCollector.collect(project.getRootProject(), ext));
             }
         });
@@ -165,6 +169,14 @@ public class CodiqoGradlePlugin implements Plugin<Project> {
             test.systemProperty(TIMEOUT_DEFAULT_KEY, timeouts.getPerTestTimeout().getSeconds());
             test.systemProperty(TIMEOUT_THREAD_MODE_KEY, SEPARATE_THREAD);
         }
+
+        /**
+         * the JUnit XML is the analysis's only evidence that this task forked and ran something — it is what
+         * JavaLanguageSpec.expectsCoverage reads to tell a module whose tests produced no coverage from a module that
+         * legitimately has no tests. pinned for the same reason the exec file's own switches are: a project that turned
+         * the report off would make every module look test-less and codiqo.failOnUninstrumentedModule could never fire.
+         */
+        test.getReports().getJunitXml().getRequired().set(true);
     }
     /**
      * RunArgs owns the derivation (an unset per-test timeout becomes testTimeout/2, capped) so the Gradle daemon and

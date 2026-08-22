@@ -1,5 +1,7 @@
 package io.codiqo.gradle;
 
+import java.util.Objects;
+
 import org.gradle.api.DefaultTask;
 import org.gradle.api.tasks.TaskAction;
 
@@ -20,7 +22,7 @@ public class CodiqoDumpAnalysisTask extends DefaultTask {
     }
     @TaskAction
     public void dump() throws Exception {
-        if (request == null) {
+        if (Objects.isNull(request)) {
             throw new IllegalStateException(
                     "Codiqo model was not collected — apply the plugin to the root project (via the codiqo init script) so it can snapshot the build.");
         }

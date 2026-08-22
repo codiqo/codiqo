@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.ArrayList;
 
 
+import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 
 import io.codiqo.api.RunArgs;
@@ -280,15 +281,16 @@ class FinalScoreCalculatorTest {
                 "an explicit judgement always wins over the fallback, including when it is the neutral one");
     }
     @Test
-    void degradedModeSkipsMechanicalFloorForModifyBlocks() {
+    void degradedModeFloorsUncategorizedModifyBlocksToo() {
         RunArgs args = new RunArgs();
         FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
 
         LlmScoringResponse response = new LlmScoringResponse();
         calculator.apply(response, scoresWithFileEffort("Foo.java", 100.0, Operation.MODIFY), degradedRequest());
 
-        assertEquals(100.0, response.getScore(), 0.001,
-                "degraded analyses emit no categories at all, so flooring would penalise only the parsed files");
+        double expected = Math.round(Math.pow(100.0 * args.getCategoryMechanicalCoeff(), args.getVolumeExponent()));
+        assertEquals(expected, response.getScore(), 0.001,
+                "a build failure must never buy the neutral 1.0 a built commit would have floored to 0.7");
     }
     @Test
     void deletionBlockIsChargedAsMechanical() {
@@ -317,17 +319,33 @@ class FinalScoreCalculatorTest {
                 "the deletion coefficient applies in degraded mode too");
     }
     @Test
-    void degradedModeSkipsMechanicalFloorForNewBlocks() {
+    void degradedModeFloorsUncategorizedNewBlocksToo() {
         RunArgs args = new RunArgs();
         FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
 
-        // a build-failure analysis instructs the LLM to emit no categories, so flooring parsed NEW
-        // blocks would invert scoring against unparsed synthetic files — the floor must not apply
         LlmScoringResponse response = new LlmScoringResponse();
         calculator.apply(response, scoresWithFileEffort("Foo.java", 100.0, Operation.NEW), degradedRequest());
 
-        assertEquals(100.0, response.getScore(), 0.001,
-                "a NEW block in degraded mode keeps the neutral 1.0 default — the mechanical floor is skipped");
+        double expected = Math.round(Math.pow(100.0 * args.getCategoryMechanicalCoeff(), args.getVolumeExponent()));
+        assertEquals(expected, response.getScore(), 0.001,
+                "degraded scoring is meant to be conservative, so a NEW block cannot escape the floor either");
+    }
+    @Test
+    void degradedUnparsedSourceFileIsFlooredLikeAParsedBlock() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
+
+        /**
+         * the synthetic block a degraded run creates for a file the index could not parse carries no
+         * signature, so it could never be labelled. flooring it alongside the parsed blocks is what keeps
+         * the floor from inverting scoring between parsed and unparsed files inside one commit
+         */
+        LlmScoringResponse response = new LlmScoringResponse();
+        calculator.apply(response, scoresWithUnparsedSourceFile("Unparsed.java", 100.0), degradedRequest());
+
+        double expected = Math.round(Math.pow(100.0 * args.getCategoryMechanicalCoeff(), args.getVolumeExponent()));
+        assertEquals(expected, response.getScore(), 0.001,
+                "an unparsed source file is the least understood work in the commit, so it cannot stay neutral");
     }
     @Test
     void allCosmeticClassificationDropsBlockEffortToZero() {
@@ -913,7 +931,7 @@ class FinalScoreCalculatorTest {
     @Test
     void applyDerivesAndDiscountsConfirmedMoves() {
         // real diff: "registry.register(handler, priority);" deleted at old 11, re-added at new 29
-        String moveDiff = String.join("\n",
+        String moveDiff = String.join(StringUtils.LF,
                 "--- a/Foo.java",
                 "+++ b/Foo.java",
                 "@@ -10,3 +10,1 @@",
@@ -1017,7 +1035,7 @@ class FinalScoreCalculatorTest {
     }
     @Test
     void validateAcceptsConfirmedMoveIdFromCandidates() {
-        String moveDiff = String.join("\n",
+        String moveDiff = String.join(StringUtils.LF,
                 "--- a/Foo.java",
                 "+++ b/Foo.java",
                 "@@ -10,3 +10,1 @@",
@@ -1220,6 +1238,31 @@ class FinalScoreCalculatorTest {
      * mirrors the synthetic block calculateDeletionOnlyFileEfforts emits: no signature (nothing the LLM
      * could name), operation DELETE, and bucketBaseline 0 so it stays out of the global-cap budget
      */
+    private static PreComputedScores scoresWithUnparsedSourceFile(String file, double blockEffort) {
+        CodeBlockEffort cbe = new CodeBlockEffort(file, file, null,
+                Operation.NEW,
+                /*ncss*/ 0, /*invocations*/ 0, /*effInvocsChanged*/ 0,
+                /*nonCommentCodeLines*/ 0, /*commentLines*/ 0, /*effLinesChanged*/ (int) blockEffort,
+                /*changeRatio*/ 0.0, /*scaledLines*/ blockEffort, /*scaledNcss*/ 0.0, /*scaledInvocations*/ 0.0,
+                /*driverScore*/ blockEffort, /*cappedStatements*/ (int) blockEffort,
+                /*effort*/ blockEffort, /*bucketBaseline*/ 0.0, /*isTest*/ false,
+                /*deviationNcss*/ 0.0, /*deviationInvocations*/ 0.0, /*ratioOutlier*/ false,
+                /*effortShare*/ 1.0, /*globalCapDriver*/ false,
+                0, 0, 0, /*isConfig*/ false);
+        FileEffort fileEffort = new FileEffort(file, blockEffort, false, List.of(cbe), 0, 0, 0.0, 0.0, false);
+
+        return PreComputedScores.builder()
+                .blockEffortSum(blockEffort)
+                .totalEffortRaw(blockEffort)
+                .totalBaseline(1000.0)
+                .globalCap(10000.0)
+                .filesScopeMultiplier(1.0)
+                .volumeScore(blockEffort)
+                .baseEffort(blockEffort)
+                .codeBlockEfforts(new ArrayList<>(List.of(cbe)))
+                .fileEfforts(new ArrayList<>(List.of(fileEffort)))
+                .build();
+    }
     private static PreComputedScores scoresWithDeletionBlock(String file, double blockEffort) {
         CodeBlockEffort cbe = new CodeBlockEffort(file, file, null,
                 Operation.DELETE,
@@ -1291,7 +1334,7 @@ class FinalScoreCalculatorTest {
                 bodyStart, bodyEnd, bodyCodeLines, /*isConfig*/ false);
     }
     // single hunk: deleted old-file lines {11, 13}, added new-file line {11}
-    private static final String VALIDATION_DIFF = String.join("\n",
+    private static final String VALIDATION_DIFF = String.join(StringUtils.LF,
             "--- a/Foo.java",
             "+++ b/Foo.java",
             "@@ -10,5 +10,4 @@",
@@ -1302,7 +1345,7 @@ class FinalScoreCalculatorTest {
             "-old line B",
             " context3");
     // detector candidate M1: deleted at old 11 (anchor = new 11), re-added at new 29
-    private static final String MOVE_DIFF = String.join("\n",
+    private static final String MOVE_DIFF = String.join(StringUtils.LF,
             "--- a/Foo.java",
             "+++ b/Foo.java",
             "@@ -10,3 +10,1 @@",

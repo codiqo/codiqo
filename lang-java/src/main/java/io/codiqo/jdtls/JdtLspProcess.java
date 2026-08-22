@@ -60,9 +60,6 @@ class JdtLspProcess implements Closeable {
         Path data = Files.createTempDirectory("data-" + args.effectiveJdtlsVersion());
         data.toFile().deleteOnExit();
 
-        //
-        // ~ well there must be only one equinox launcher jar
-        //
         try (Stream<Path> files = Files.list(tempDir.resolve("plugins"))) {
             launcherJar = files
                     .filter(p -> p.getFileName().toString().startsWith("org.eclipse.equinox.launcher_"))
@@ -100,16 +97,16 @@ class JdtLspProcess implements Closeable {
                         "-Djava.awt.headless=true",
                         "-Dfile.encoding=UTF-8"));
 
-        //
-        // ~ the embedded m2e resolves each module's parent POM before it can read that POM's own
-        // ~ <repositories>, so it sees only the repositories declared in settings.xml. Maven's enhanced
-        // ~ local repository refuses to serve an already-downloaded artifact whose recording repository id
-        // ~ in _remote.repositories is not in scope ("present, but unavailable"), which fails every project
-        // ~ import and leaves the workspace without a Java model — jdt.ls then answers null to every
-        // ~ call-hierarchy query and the whole analysis reports zero callers. The fork build has already
-        // ~ populated the local repository by this point, so ignoring the tracking metadata is safe and
-        // ~ keeps the call graph working regardless of how the host settings.xml names its repositories.
-        //
+        /**
+         * the embedded m2e resolves each module's parent POM before it can read that POM's own
+         * <repositories>, so it sees only the repositories declared in settings.xml. Maven's enhanced
+         * local repository refuses to serve an already-downloaded artifact whose recording repository id
+         * in _remote.repositories is not in scope ("present, but unavailable"), which fails every project
+         * import and leaves the workspace without a Java model — jdt.ls then answers null to every
+         * call-hierarchy query and the whole analysis reports zero callers. The fork build has already
+         * populated the local repository by this point, so ignoring the tracking metadata is safe and
+         * keeps the call graph working regardless of how the host settings.xml names its repositories.
+         */
         cmd.add("-Dmaven.legacyLocalRepo=true");
 
         cmd.add("--enable-native-access=ALL-UNNAMED");
@@ -160,9 +157,7 @@ class JdtLspProcess implements Closeable {
         cmd.addAll(List.of("-configuration", config.toString()));
         cmd.addAll(List.of("-data", data.toString()));
 
-        //
-        // ~ advance JVM options matched to the spawned JDK, not the current JVM
-        //
+        // advanced JVM options are matched to the spawned JDK, not to the JVM running this code
         Runtime.Version spawnedJavaVersion = detectSpawnedJavaVersion(args.getJavaHome());
         cmd.add(spawnedJavaVersion.feature() >= MIN_JDK_ZGC ? "-XX:+UseZGC" : "-XX:+UseParallelGC");
         if (spawnedJavaVersion.feature() >= MIN_JDK_NATIVE_ACCESS) {

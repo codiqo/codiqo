@@ -93,9 +93,8 @@ diagnostics, CPD duplication and the resolved dependency registry — comparable
   task performs no cross-project configuration resolution during execution — it runs under
   Gradle's parallel execution.
 - **Engine runs in-process, not in a worker.** A process-isolated worker was considered for
-  Guava/classloader isolation, but that conflict never materialized (Gradle 9 isolates the plugin
-  classloader; the spring-kafka run was clean), and Guava is used in 180+ sites across codiqo so
-  dropping it is neither feasible nor necessary. In-process is simpler.
+  classloader isolation, but no conflict materialized (Gradle 9 isolates the plugin classloader;
+  the spring-kafka run was clean). In-process is simpler.
 
 ## codiqoIndexCommits
 

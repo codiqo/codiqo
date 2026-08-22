@@ -9,9 +9,8 @@ import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
 
 import org.jacoco.core.data.ExecutionDataWriter;
-import org.jacoco.core.tools.ExecFileLoader;
-import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.event.Level;
 
 import io.codiqo.api.logging.Log;

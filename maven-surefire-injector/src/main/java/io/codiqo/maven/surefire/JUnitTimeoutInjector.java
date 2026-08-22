@@ -12,7 +12,6 @@ import org.apache.maven.AbstractMavenLifecycleParticipant;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.model.PluginExecution;
-import org.apache.maven.model.PluginManagement;
 import org.apache.maven.project.MavenProject;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 
@@ -37,10 +36,6 @@ import lombok.extern.slf4j.Slf4j;
 @Singleton
 @Named("codiqo-junit-timeout-injector")
 public class JUnitTimeoutInjector extends AbstractMavenLifecycleParticipant {
-    private static final String MAVEN_PLUGINS_GROUP_ID = "org.apache.maven.plugins";
-    private static final String SUREFIRE_ARTIFACT_ID = "maven-surefire-plugin";
-    private static final String FAILSAFE_ARTIFACT_ID = "maven-failsafe-plugin";
-
     private static final String CONFIGURATION = "configuration";
     private static final String ARG_LINE = "argLine";
     private static final String POM_PACKAGING = "pom";
@@ -67,7 +62,8 @@ public class JUnitTimeoutInjector extends AbstractMavenLifecycleParticipant {
         String argLineProperty = StringUtils.trimToEmpty(project.getProperties().getProperty(ARG_LINE));
 
         injectArgLine(resolveSurefire(project), timeoutArgs, argLineProperty);
-        findDeclaredPlugin(project, FAILSAFE_ARTIFACT_ID).ifPresent(failsafe -> injectArgLine(failsafe, timeoutArgs, argLineProperty));
+        SurefirePlugins.findDeclared(project, SurefirePlugins.FAILSAFE_ARTIFACT_ID)
+                .ifPresent(failsafe -> injectArgLine(failsafe, timeoutArgs, argLineProperty));
 
         log.info("[codiqo] injected JUnit per-test timeout into {} ({}s, SEPARATE_THREAD)", project.getArtifactId(), timeoutSeconds);
     }
@@ -113,31 +109,15 @@ public class JUnitTimeoutInjector extends AbstractMavenLifecycleParticipant {
         return "-D" + TIMEOUT_DEFAULT_KEY + "=" + timeoutSeconds + " -D" + TIMEOUT_THREAD_MODE_KEY + "=" + SEPARATE_THREAD;
     }
     private static Plugin resolveSurefire(MavenProject project) {
-        Optional<Plugin> declared = findDeclaredPlugin(project, SUREFIRE_ARTIFACT_ID);
+        Optional<Plugin> declared = SurefirePlugins.findDeclared(project, SurefirePlugins.SUREFIRE_ARTIFACT_ID);
         if (declared.isPresent()) {
             return declared.get();
         }
 
         Plugin created = new Plugin();
-        created.setGroupId(MAVEN_PLUGINS_GROUP_ID);
-        created.setArtifactId(SUREFIRE_ARTIFACT_ID);
+        created.setGroupId(SurefirePlugins.MAVEN_PLUGINS_GROUP_ID);
+        created.setArtifactId(SurefirePlugins.SUREFIRE_ARTIFACT_ID);
         project.getBuild().addPlugin(created);
         return created;
-    }
-    private static Optional<Plugin> findDeclaredPlugin(MavenProject project, String artifactId) {
-        Optional<Plugin> inBuild = project.getBuild().getPlugins().stream()
-                .filter(plugin -> artifactId.equals(plugin.getArtifactId()))
-                .findFirst();
-        if (inBuild.isPresent()) {
-            return inBuild;
-        }
-
-        PluginManagement pluginManagement = project.getBuild().getPluginManagement();
-        if (Objects.nonNull(pluginManagement)) {
-            return pluginManagement.getPlugins().stream()
-                    .filter(plugin -> artifactId.equals(plugin.getArtifactId()))
-                    .findFirst();
-        }
-        return Optional.empty();
     }
 }

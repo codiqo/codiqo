@@ -7,12 +7,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.CharUtils;
 import org.junit.jupiter.api.Test;
 
 
 class EffectiveLineParserTest {
-    private static final String DIFF = String.join("\n",
+    private static final String DIFF = String.join(StringUtils.LF,
             "diff --git a/A.java b/A.java",
             "--- a/A.java",
             "+++ b/A.java",
@@ -25,7 +26,7 @@ class EffectiveLineParserTest {
             "+int added = 1;",
             "-int removed = 2;",
             " int kept = 3;",
-            "") + "\n";
+            "") + StringUtils.LF;
 
     private static final IneffectiveLineFilter C_STYLE = new IneffectiveLineFilter(CommentSyntax.C_STYLE, IneffectiveLineFilter.IMPORT_PREFIX);
 

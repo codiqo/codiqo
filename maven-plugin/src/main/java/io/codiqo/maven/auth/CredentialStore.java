@@ -25,6 +25,8 @@ import java.util.Set;
 
 import org.apache.commons.lang3.StringUtils;
 
+import lombok.Value;
+
 /**
  * The key a browser login leaves behind, in {@code ~/.codiqo/credentials-<host>} — beside where gh, aws and gcloud
  * keep theirs, so a developer knows where to look and what to delete.
@@ -64,10 +66,10 @@ public class CredentialStore {
     }
     public void store(Credentials credentials) throws IOException {
         Properties stored = new Properties();
-        stored.setProperty("key", credentials.key());
+        stored.setProperty("key", credentials.getKey());
         // written for whoever opens the file wondering which organisation a key belongs to; nothing reads it back
-        stored.setProperty("organizationId", StringUtils.defaultString(credentials.organizationId()));
-        stored.setProperty("expiresAt", StringUtils.defaultString(credentials.expiresAt()));
+        stored.setProperty("organizationId", StringUtils.defaultString(credentials.getOrganizationId()));
+        stored.setProperty("expiresAt", StringUtils.defaultString(credentials.getExpiresAt()));
 
         createOwnerOnly();
 
@@ -154,6 +156,10 @@ public class CredentialStore {
             return false;
         }
     }
-    public record Credentials(String key, String organizationId, String expiresAt) {
+    @Value
+    public static class Credentials {
+        String key;
+        String organizationId;
+        String expiresAt;
     }
 }

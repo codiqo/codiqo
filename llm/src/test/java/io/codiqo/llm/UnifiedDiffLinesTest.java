@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 
+import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 
 
@@ -19,7 +20,7 @@ class UnifiedDiffLinesTest {
 
     // shape of the real a95206ac bootstrapper regression: two hunks, old/new numbering drifting
     // apart because the new file is shorter than the old one
-    private static final String TWO_HUNK_DIFF = String.join("\n",
+    private static final String TWO_HUNK_DIFF = String.join(StringUtils.LF,
             "diff --git a/src/Foo.java b/src/Foo.java",
             "index 87bbd79..da3327e 100644",
             "--- a/src/Foo.java",

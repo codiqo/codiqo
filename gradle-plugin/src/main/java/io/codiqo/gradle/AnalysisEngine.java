@@ -6,6 +6,7 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.LinkedHashSet;
@@ -19,6 +20,7 @@ import org.eclipse.jgit.lib.Repository;
 import org.jacoco.core.tools.ExecFileLoader;
 
 
+import io.codiqo.api.BuildTool;
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.DeltaAnalyzer;
 import io.codiqo.api.IndexingSummary;
@@ -62,6 +64,9 @@ public class AnalysisEngine {
         args.setDumpAnalysis(true);
         args.setIgnoreCoverage(request.isIgnoreCoverage());
         args.setIgnoreCpd(request.isIgnoreCpd());
+        args.setExcludeProjects(request.getExcludeProjects());
+        args.setExcludePaths(request.getExcludePaths());
+        args.setBuildTool(BuildTool.GRADLE);
         args.setIgnoreDiagnostics(request.isIgnoreDiagnostics());
         args.setIgnoreComplexity(request.isIgnoreComplexity());
         args.setFailOnJdtlsError(request.isFailOnJdtlsError());
@@ -85,7 +90,7 @@ public class AnalysisEngine {
             }
         }
 
-        try (ClassGraphSpec scan = buildProjects(request, args)) {
+        try (ClassGraphSpec scan = buildProjects(request, args, logFactory.getLogger(AnalysisEngine.class))) {
             try (Repository git = JGit.openRepository(new File(request.getRootDir()))) {
                 args.setGit(git);
                 args.setDefaultBranch(JGit.currentBranchOrDefault(git));
@@ -140,11 +145,20 @@ public class AnalysisEngine {
         }
 
         log.info("merged %d jacoco exec part(s) for %s into %s (stamped %s from the oldest part)",
-                parts.length, module.getArtifactId(), merged.getAbsolutePath(), Instant.ofEpochMilli(oldestPart));
+                parts.length,
+                module.getArtifactId(),
+                merged.getAbsolutePath(),
+                Instant.ofEpochMilli(oldestPart));
     }
-    private static ClassGraphSpec buildProjects(AnalysisRequest request, RunArgs args) {
+    private static ClassGraphSpec buildProjects(AnalysisRequest request, RunArgs args, Log log) {
         Set<URI> jars = new LinkedHashSet<>();
         for (ModuleData module : request.getModules()) {
+            if (args.isExcludedProject(module.getGroupId(), module.getArtifactId())) {
+                log.info("excluding module %s:%s (codiqo.excludeProjects)", module.getGroupId(), module.getArtifactId());
+                args.getExcludedProjectDirs().add(new File(module.getBaseDirectory()));
+                continue;
+            }
+
             GradleProjectWrapper wrapper = new GradleProjectWrapper();
             wrapper.setId(module.getId());
             wrapper.setGroupId(module.getGroupId());
@@ -177,6 +191,9 @@ public class AnalysisEngine {
                 if (dir.exists()) {
                     wrapper.getTestCompileSourceRoots().add(dir);
                 }
+            }
+            for (String path : module.getTestReportDirectories()) {
+                wrapper.getTestReportDirectories().add(new File(path));
             }
             for (String path : module.getCompileClasspathElements()) {
                 File file = new File(path);
@@ -211,7 +228,7 @@ public class AnalysisEngine {
         return graphSpec;
     }
     private static String resolveCommitId(AnalysisRequest request, Repository git) throws Exception {
-        if (request.getCommitId() != null) {
+        if (Objects.nonNull(request.getCommitId())) {
             return request.getCommitId();
         }
         ObjectId head = git.resolve("HEAD");
@@ -239,7 +256,8 @@ public class AnalysisEngine {
                 });
                 if (toApply.isFalse()) {
                     log.log(org.slf4j.event.Level.WARN, "commit %s: no diff files match registered languages %s — nothing to dump",
-                            args.getCommitId(), registry.extensions());
+                            args.getCommitId(),
+                            registry.extensions());
                     return;
                 }
 

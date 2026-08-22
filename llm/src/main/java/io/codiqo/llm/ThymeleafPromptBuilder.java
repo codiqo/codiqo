@@ -33,6 +33,7 @@ import io.codiqo.llm.schema.LlmScoringRequest;
 import lombok.Builder;
 import lombok.Data;
 import lombok.SneakyThrows;
+import lombok.Value;
 
 public class ThymeleafPromptBuilder implements PromptBuilder {
     private static final String TEMPLATE_SYSTEM_PROMPT = "system-prompt";
@@ -90,7 +91,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         restoreDiffs(savedDiffs);
         restoreSourceSlices(savedSlices);
 
-        ctx.setVariable("requestJson", budgeted.json());
+        ctx.setVariable("requestJson", budgeted.getJson());
         ctx.setVariable("moveCandidates", movedLineDetector.detect(request));
 
         PreComputedScores preComputedScores = volumeCalculator.calculate(
@@ -101,7 +102,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
                 context.getMethodCapQuantileTest(),
                 context.getConstructorCapQuantileProd(),
                 context.getConstructorCapQuantileTest());
-        logPromptMetrics(context.getArgs().getLlmModel(), request, preComputedScores, budgeted.json(), budgeted.tokens());
+        logPromptMetrics(context.getArgs().getLlmModel(), request, preComputedScores, budgeted.getJson(), budgeted.getTokens());
         ctx.setVariable("preComputedScores", preComputedScores);
         ctx.setVariable("preComputedScoresSection", buildPreComputedScoresSection(preComputedScores));
 
@@ -160,8 +161,9 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     }
     private static Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> stripSourceSlices(LlmScoringRequest request) {
         Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> saved = new IdentityHashMap<>();
-        if (Objects.nonNull(request.getDuplication()) && CollectionUtils.isNotEmpty(request.getDuplication().getCloneDetails())) {
-            for (LlmScoringRequest.DuplicationInfo.CloneDetail cd : request.getDuplication().getCloneDetails()) {
+        if (Objects.nonNull(request.getDuplication())) {
+            for (LlmScoringRequest.DuplicationInfo.CloneDetail cd
+                    : CollectionUtils.emptyIfNull(request.getDuplication().getCloneDetails())) {
                 if (CollectionUtils.isNotEmpty(cd.getLocations())) {
                     for (LlmScoringRequest.DuplicationInfo.CloneLocation loc : cd.getLocations()) {
                         if (Objects.nonNull(loc.getSourceSlice())) {
@@ -199,11 +201,16 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
                 }
             }
             if (tokens > budget) {
-                log.warn("prompt still over budget (%d > %d tokens, %d reserved for agent instructions) after capping callers to %d per block; "
-                        + "the diff dominates the prompt and the request may be rejected by the model", tokens, budget, reservedTokens, appliedCap);
+                log.warn("prompt still over budget (%d > %d tokens, %d reserved for agent instructions) after capping callers to %d per block; the diff dominates the prompt and the request may be rejected by the model",
+                        tokens,
+                        budget,
+                        reservedTokens,
+                        appliedCap);
             } else {
                 log.info("prompt over budget; capped callers to %d per block (~%d tokens, %d reserved for agent instructions)",
-                        appliedCap, tokens, reservedTokens);
+                        appliedCap,
+                        tokens,
+                        reservedTokens);
             }
         }
 
@@ -423,6 +430,9 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         int linesChanged;
     }
 
-    private record BudgetedRequest(String json, int tokens) {
+    @Value
+    private static class BudgetedRequest {
+        String json;
+        int tokens;
     }
 }

@@ -17,6 +17,7 @@ import io.codiqo.api.logging.Log;
 import io.codiqo.llm.PromptFences;
 import io.codiqo.llm.PromptTemplates;
 import io.codiqo.llm.schema.SkipRequestResponse;
+import lombok.Value;
 
 /**
  * decides whether a commit message asks, in prose, that codiqo not count the commit.
@@ -93,7 +94,7 @@ public class SkipRequestClient implements LlmClient {
 
         JsonCompletionClient.Result<SkipRequestResponse> result = completions
                 .complete(LABEL, PromptTemplates.process(TEMPLATE_SKIP_REQUEST, ctx), SkipRequestResponse.class);
-        return new Detection(groundedQuote(commitMessage, result.response(), log), result.usage());
+        return new Detection(groundedQuote(commitMessage, result.getResponse(), log), result.getUsage());
     }
     @Override
     public void close() {
@@ -158,6 +159,9 @@ public class SkipRequestClient implements LlmClient {
                 .count();
     }
 
-    public record Detection(Optional<String> skipReason, LlmUsage usage) {
+    @Value
+    public static class Detection {
+        Optional<String> skipReason;
+        LlmUsage usage;
     }
 }

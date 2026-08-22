@@ -20,8 +20,8 @@ public class ExcludedCoverageClassPopulator implements SubmissionPopulator {
     }
     private static ExcludedCoverageClassModel map(ExcludedCoverageClass excluded) {
         ExcludedCoverageClassModel toReturn = new ExcludedCoverageClassModel();
-        toReturn.setClassName(excluded.className());
-        toReturn.setReason(mapReason(excluded.reason()));
+        toReturn.setClassName(excluded.getClassName());
+        toReturn.setReason(mapReason(excluded.getReason()));
         return toReturn;
     }
     private static CoverageExclusionReason mapReason(io.codiqo.api.coverage.CoverageExclusionReason reason) {

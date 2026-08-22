@@ -1,4 +1,9 @@
 package io.codiqo.api.coverage;
 
-public record ExcludedCoverageClass(String className, CoverageExclusionReason reason) {
+import lombok.Value;
+
+@Value
+public class ExcludedCoverageClass {
+    String className;
+    CoverageExclusionReason reason;
 }

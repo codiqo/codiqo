@@ -7,9 +7,9 @@ import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.apache.commons.collections4.Bag;
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.collections4.bag.HashBag;
+import org.apache.commons.collections4.MultiSet;
+import org.apache.commons.collections4.multiset.HashMultiSet;
 import org.apache.commons.lang3.StringUtils;
 
 import io.codiqo.api.RunArgs;
@@ -106,7 +106,7 @@ public class MovedLineDetector {
     }
     private static void collectEntries(String file, Map<Integer, String> contentByLine, List<LineEntry> target) {
         for (Map.Entry<Integer, String> entry : contentByLine.entrySet()) {
-            Bag<String> tokens = tokenize(entry.getValue());
+            MultiSet<String> tokens = tokenize(entry.getValue());
             if (tokens.size() >= MIN_INFORMATIVE_TOKENS) {
                 target.add(new LineEntry(file, entry.getKey(), entry.getValue().trim(), tokens));
             }
@@ -131,14 +131,14 @@ public class MovedLineDetector {
         }
         return distance < bestDistance;
     }
-    private static boolean isSizeCompatible(Bag<String> a, Bag<String> b) {
+    private static boolean isSizeCompatible(MultiSet<String> a, MultiSet<String> b) {
         return (double) Math.min(a.size(), b.size()) / Math.max(a.size(), b.size()) >= SIZE_RATIO_MIN;
     }
-    private static double containment(Bag<String> a, Bag<String> b) {
+    private static double containment(MultiSet<String> a, MultiSet<String> b) {
         return (double) CollectionUtils.intersection(a, b).size() / Math.min(a.size(), b.size());
     }
-    private static Bag<String> tokenize(String content) {
-        Bag<String> toReturn = new HashBag<>();
+    private static MultiSet<String> tokenize(String content) {
+        MultiSet<String> toReturn = new HashMultiSet<>();
 
         Matcher matcher = WORD_TOKEN.matcher(content);
         while (matcher.find()) {
@@ -163,6 +163,6 @@ public class MovedLineDetector {
         String file;
         int line;
         String content;
-        Bag<String> tokens;
+        MultiSet<String> tokens;
     }
 }

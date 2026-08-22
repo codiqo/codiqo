@@ -31,6 +31,7 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MultiValuedMap;
 import org.apache.commons.collections4.multimap.HashSetValuedHashMap;
 import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.commons.lang3.time.StopWatch;
@@ -63,6 +64,7 @@ import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.lang.spec.PmdAffectedSymbolInfo;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
+import io.codiqo.util.MemoryReport;
 import net.sourceforge.pmd.cpd.CPDConfiguration;
 import net.sourceforge.pmd.cpd.CpdAnalysis;
 import net.sourceforge.pmd.cpd.Match;
@@ -85,11 +87,11 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     }
     @Override
     public void collectAndCapture(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
-        captureCopyPaste(summary, analysis);
-        captureCoverage(summary, analysis);
-        captureViolations(summary, analysis);
-        captureIncomingCalls(summary, analysis);
-        captureComplexity(summary, analysis);
+        measure("cpd", this::captureCopyPaste, summary, analysis);
+        measure("coverage", this::captureCoverage, summary, analysis);
+        measure("diagnostics", this::captureViolations, summary, analysis);
+        measure("incoming calls", this::captureIncomingCalls, summary, analysis);
+        measure("complexity", this::captureComplexity, summary, analysis);
         for (FileAnalysis fileAnalysis : analysis) {
             for (AffectedSymbolInfo affectedSymbolInfo : fileAnalysis.getPotentiallyAffectedSymbols()) {
                 affectedSymbolInfo.block().ifPresent(block -> {
@@ -131,6 +133,8 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         };
         List<Path> totalFiles = new ArrayList<>();
         List<Path> ignoredFiles = new ArrayList<>();
+        List<Path> excludedFiles = new ArrayList<>();
+        List<Path> excludedTrees = new ArrayList<>();
         List<Path> skippedFiles = new ArrayList<>();
         AtomicInteger skippedTrivial = new AtomicInteger();
         AtomicInteger totalSymbols = new AtomicInteger();
@@ -161,8 +165,26 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
 
             StopWatch stopWatch = StopWatch.createStarted();
             Files.walkFileTree(projectRoot.toPath(), new SimpleFileVisitor<>() {
+                /**
+                 * a module dropped by codiqo.excludeProjects is excluded from the indexed file set too, not merely
+                 * from the project list. CPD and the symbol index read this walk rather than the project list, so
+                 * leaving the tree in would keep feeding them the very sources the exclusion was asked for.
+                 */
+                @Override
+                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                    if (isExcluded(dir)) {
+                        excludedTrees.add(dir);
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
                 @Override
                 public FileVisitResult visitFile(Path path, BasicFileAttributes attrs) {
+                    if (isExcluded(path)) {
+                        ignoredFiles.add(path);
+                        excludedFiles.add(path);
+                        return FileVisitResult.CONTINUE;
+                    }
                     if (indexed.contains(path)) {
                         File file = path.toFile();
                         if (FilenameUtils.isExtension(file.getName(), extensions)) {
@@ -191,6 +213,13 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                         ignoredFiles.add(path);
                     }
                     return FileVisitResult.CONTINUE;
+                }
+                private boolean isExcluded(Path path) {
+                    File file = path.toFile();
+                    return BooleanUtils.or(new boolean[] {
+                            args.isExcludedProjectPath(file),
+                            args.isExcludedPath(projectRoot, file)
+                    });
                 }
             });
 
@@ -236,6 +265,15 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
             }
 
             stopWatch.stop();
+
+            /**
+             * a pruned subtree never reaches visitFile, so the exclusion options have no signal in the counts above —
+             * "ignored" also carries every path that is simply untracked, which dwarfs them. report what the patterns
+             * actually dropped, and name the trees: that is the one figure worth checking a new pattern against.
+             */
+            if (BooleanUtils.or(new boolean[] {CollectionUtils.isNotEmpty(excludedFiles), CollectionUtils.isNotEmpty(excludedTrees) })) {
+                log.info("exclusion patterns dropped %d files and %d whole trees from the index walk: %s", excludedFiles.size(), excludedTrees.size(), excludedTrees);
+            }
 
             log.info("indexed %d symbols from %d files (skipped: %d, ignored: %d, trivial: %d) in %s",
                     totalSymbols.get(),
@@ -301,6 +339,36 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         }
 
         log.info("identified %d potentially affected symbols", identified.get());
+    }
+    /**
+     * Runs one capture stage and reports what it cost. Peak heap rather than a before/after difference, because a
+     * stage that allocates its way to the heap ceiling and then releases everything shows up as free in a
+     * difference — CPD on a reactor holding two copies of the same tree is exactly that shape.
+     */
+    private void measure(String stage, CaptureStage capture, IndexingSummary summary, CommitAnalysis analysis) throws IOException {
+        long entryHeap = MemoryReport.heapUsed();
+        MemoryReport.resetHeapPeak();
+        StopWatch stopWatch = StopWatch.createStarted();
+
+        try {
+            capture.run(summary, analysis);
+        } finally {
+            /**
+             * reported in a finally block because the stage that runs out of heap is the one worth measuring, and
+             * a report emitted only on success says nothing about it. retained size is skipped on the failure path:
+             * walking an object graph needs the head room the stage has just exhausted.
+             */
+            stopWatch.stop();
+            long peak = MemoryReport.peakHeapUsed();
+            log.info("memory (%s) peak-heap=%s/%s (+%s over stage entry) in %s",
+                    stage,
+                    MemoryReport.human(peak),
+                    MemoryReport.human(Runtime.getRuntime().maxMemory()),
+                    MemoryReport.human(Math.max(0, peak - entryHeap)),
+                    stopWatch);
+        }
+
+        MemoryReport.retained(summary, analysis).ifPresent(size -> log.info("memory (%s) retained(index+analysis)=%s", stage, size));
     }
     @Override
     public void captureCopyPaste(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
@@ -432,5 +500,9 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         if (Objects.nonNull(err)) {
             throw new LanguageTerminationException(err);
         }
+    }
+    @FunctionalInterface
+    private interface CaptureStage {
+        void run(IndexingSummary summary, CommitAnalysis analysis) throws IOException;
     }
 }

@@ -2,6 +2,8 @@ package io.codiqo.gradle;
 
 import java.io.File;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.HashSet;
 
@@ -14,6 +16,7 @@ import org.gradle.api.artifacts.result.ResolvedArtifactResult;
 import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.SourceSetContainer;
+import org.gradle.api.tasks.testing.Test;
 
 import io.codiqo.gradle.model.AnalysisRequest;
 import io.codiqo.gradle.model.DependencyData;
@@ -43,6 +46,8 @@ public class GradleModelCollector {
 
         request.setIgnoreCoverage(boolProp(root, "codiqo.ignoreCoverage", ext.isIgnoreCoverage()));
         request.setIgnoreCpd(boolProp(root, "codiqo.ignoreCpd", ext.isIgnoreCpd()));
+        request.setExcludeProjects(stringProp(root, "codiqo.excludeProjects", ext.getExcludeProjects()));
+        request.setExcludePaths(stringProp(root, "codiqo.excludePaths", ext.getExcludePaths()));
         request.setIgnoreDiagnostics(boolProp(root, "codiqo.ignoreDiagnostics", ext.isIgnoreDiagnostics()));
         request.setIgnoreComplexity(boolProp(root, "codiqo.ignoreComplexity", ext.isIgnoreComplexity()));
         request.setFailOnJdtlsError(ext.isFailOnJdtlsError());
@@ -56,19 +61,21 @@ public class GradleModelCollector {
         request.setLspQueryTimeoutSeconds(longProp(root, "codiqo.lspQueryTimeoutSeconds", ext.getLspQueryTimeoutSeconds()));
 
         for (Project project : root.getAllprojects()) {
-            // skip container/aggregator projects (Maven parity: reactor.getModules() empty) — an
-            // ancestor whose dir contains a subproject's sources must not become that file's owner
-            // via RunArgs.owner()'s contains()+findAny() lookup
+            /**
+             * skip container/aggregator projects (Maven parity: reactor.getModules() empty) — an ancestor whose dir
+             * contains a subproject's sources must not become that file's owner via RunArgs.owner()'s
+             * contains()+findAny() lookup
+             */
             if (CollectionUtils.isNotEmpty(project.getSubprojects())) {
                 continue;
             }
             JavaPluginExtension javaExt = project.getExtensions().findByType(JavaPluginExtension.class);
-            if (javaExt == null) {
+            if (Objects.isNull(javaExt)) {
                 continue;
             }
             SourceSetContainer sourceSets = javaExt.getSourceSets();
             SourceSet main = sourceSets.findByName(SourceSet.MAIN_SOURCE_SET_NAME);
-            if (main == null) {
+            if (Objects.isNull(main)) {
                 continue;
             }
             SourceSet test = sourceSets.findByName(SourceSet.TEST_SOURCE_SET_NAME);
@@ -90,7 +97,7 @@ public class GradleModelCollector {
             for (File file : main.getCompileClasspath().getFiles()) {
                 module.getCompileClasspathElements().add(file.getAbsolutePath());
             }
-            if (test != null) {
+            if (Objects.nonNull(test)) {
                 for (File dir : test.getJava().getSrcDirs()) {
                     module.getTestCompileSourceRoots().add(dir.getAbsolutePath());
                 }
@@ -98,6 +105,15 @@ public class GradleModelCollector {
                     module.getTestClasspathElements().add(file.getAbsolutePath());
                 }
             }
+
+            /**
+             * every Test task, not just `test`: an integrationTest task writes its own report directory, and a module
+             * whose only executed tests live there must still count as a module whose test fork ran
+             */
+            for (Test testTask : project.getTasks().withType(Test.class)) {
+                module.getTestReportDirectories().add(GradleBuildSupport.junitXmlDir(testTask).getAbsolutePath());
+            }
+
             collectDependencies(project, module);
 
             request.getModules().add(module);
@@ -105,13 +121,15 @@ public class GradleModelCollector {
         return request;
     }
     private static void collectDependencies(Project project, ModuleData module) {
-        // the ClassGraph scan (AnalysisEngine.buildProjects) uses compile + test classpaths, so
-        // resolve coordinates for all of them — runtimeClasspath alone drops compileOnly/provided
-        // and test-only deps whose classes are scanned, losing their artifact attribution
+        /**
+         * the ClassGraph scan (AnalysisEngine.buildProjects) uses compile + test classpaths, so resolve coordinates for
+         * all of them — runtimeClasspath alone drops compileOnly/provided and test-only deps whose classes are scanned,
+         * losing their artifact attribution
+         */
         Set<String> seenFiles = new HashSet<>();
         for (String configName : DEPENDENCY_CONFIGURATIONS) {
             Configuration config = project.getConfigurations().findByName(configName);
-            if (config != null && config.isCanBeResolved()) {
+            if (Objects.nonNull(config) && config.isCanBeResolved()) {
                 for (ResolvedArtifactResult artifact : config.getIncoming().getArtifacts()) {
                     if (artifact.getId().getComponentIdentifier() instanceof ModuleComponentIdentifier component) {
                         String filePath = artifact.getFile().getAbsolutePath();
@@ -141,15 +159,12 @@ public class GradleModelCollector {
                 : new File(root.getLayout().getBuildDirectory().getAsFile().get(), "codiqo").getAbsolutePath();
     }
     private static String stringProp(Project project, String name, String fallback) {
-        Object value = project.findProperty(name);
-        return value != null ? value.toString() : fallback;
+        return Optional.ofNullable(project.findProperty(name)).map(Object::toString).orElse(fallback);
     }
     private static boolean boolProp(Project project, String name, boolean fallback) {
-        Object value = project.findProperty(name);
-        return value != null ? Boolean.parseBoolean(value.toString()) : fallback;
+        return Optional.ofNullable(project.findProperty(name)).map(Object::toString).map(Boolean::parseBoolean).orElse(fallback);
     }
     private static long longProp(Project project, String name, long fallback) {
-        Object value = project.findProperty(name);
-        return value != null ? Long.parseLong(value.toString()) : fallback;
+        return Optional.ofNullable(project.findProperty(name)).map(Object::toString).map(Long::parseLong).orElse(fallback);
     }
 }

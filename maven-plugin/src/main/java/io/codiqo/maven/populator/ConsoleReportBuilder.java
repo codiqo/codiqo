@@ -37,6 +37,7 @@ import io.codiqo.llm.schema.LlmScoringResponse.Bug;
 import io.codiqo.llm.schema.LlmScoringResponse.DimensionScore;
 import io.codiqo.llm.schema.LlmScoringResponse.EffortBreakdown;
 import io.codiqo.llm.schema.LlmScoringResponse.QualityDimensions;
+import lombok.Value;
 
 /**
  * Renders a commit analysis as an ASCII page for the console, mirroring the basic layout of the
@@ -79,23 +80,23 @@ public class ConsoleReportBuilder implements ReportBuilder {
         TEMPLATE_ENGINE.setTemplateResolver(resolver);
 
         DIMENSION_COLUMNS = Arrays.<ColumnData<DimensionRow>> asList(
-                new Column().header("Dimension").dataAlign(HorizontalAlign.LEFT).with(DimensionRow::name),
-                new Column().header("Score").dataAlign(HorizontalAlign.RIGHT).with(DimensionRow::score),
-                new Column().header("Gate").dataAlign(HorizontalAlign.CENTER).with(DimensionRow::gate));
+                new Column().header("Dimension").dataAlign(HorizontalAlign.LEFT).with(DimensionRow::getName),
+                new Column().header("Score").dataAlign(HorizontalAlign.RIGHT).with(DimensionRow::getScore),
+                new Column().header("Gate").dataAlign(HorizontalAlign.CENTER).with(DimensionRow::getGate));
 
         FILE_COLUMNS = Arrays.<ColumnData<FileRow>> asList(
-                new Column().header("File").dataAlign(HorizontalAlign.LEFT).with(FileRow::path),
-                new Column().header("Type").dataAlign(HorizontalAlign.LEFT).with(FileRow::changeType),
-                new Column().header("+").dataAlign(HorizontalAlign.RIGHT).with(FileRow::added),
-                new Column().header("-").dataAlign(HorizontalAlign.RIGHT).with(FileRow::deleted),
-                new Column().header("Blocks").dataAlign(HorizontalAlign.RIGHT).with(FileRow::blocks),
-                new Column().header("Scope").dataAlign(HorizontalAlign.LEFT).with(FileRow::scope));
+                new Column().header("File").dataAlign(HorizontalAlign.LEFT).with(FileRow::getPath),
+                new Column().header("Type").dataAlign(HorizontalAlign.LEFT).with(FileRow::getChangeType),
+                new Column().header("+").dataAlign(HorizontalAlign.RIGHT).with(FileRow::getAdded),
+                new Column().header("-").dataAlign(HorizontalAlign.RIGHT).with(FileRow::getDeleted),
+                new Column().header("Blocks").dataAlign(HorizontalAlign.RIGHT).with(FileRow::getBlocks),
+                new Column().header("Scope").dataAlign(HorizontalAlign.LEFT).with(FileRow::getScope));
 
         FINDING_COLUMNS = Arrays.<ColumnData<FindingRow>> asList(
-                new Column().header("Severity").dataAlign(HorizontalAlign.LEFT).with(FindingRow::severity),
-                new Column().header("Finding").dataAlign(HorizontalAlign.LEFT).with(FindingRow::title),
-                new Column().header("File").dataAlign(HorizontalAlign.LEFT).with(FindingRow::file),
-                new Column().header("Line").dataAlign(HorizontalAlign.RIGHT).with(FindingRow::line));
+                new Column().header("Severity").dataAlign(HorizontalAlign.LEFT).with(FindingRow::getSeverity),
+                new Column().header("Finding").dataAlign(HorizontalAlign.LEFT).with(FindingRow::getTitle),
+                new Column().header("File").dataAlign(HorizontalAlign.LEFT).with(FindingRow::getFile),
+                new Column().header("Line").dataAlign(HorizontalAlign.RIGHT).with(FindingRow::getLine));
     }
 
     private final RunArgs args;
@@ -355,7 +356,7 @@ public class ConsoleReportBuilder implements ReportBuilder {
         return StringUtils.EMPTY;
     }
     private static String firstLine(String message) {
-        return StringUtils.abbreviate(StringUtils.defaultString(StringUtils.substringBefore(message, "\n")).trim(), MESSAGE_MAX_CHARS);
+        return StringUtils.abbreviate(StringUtils.defaultString(StringUtils.substringBefore(message, StringUtils.LF)).trim(), MESSAGE_MAX_CHARS);
     }
     /**
      * paths are discriminated by their tail (module + class), so an over-long one keeps its end and
@@ -392,10 +393,26 @@ public class ConsoleReportBuilder implements ReportBuilder {
         }
         return toReturn.toString();
     }
-    private record DimensionRow(String name, String score, String gate) {
+    @Value
+    private static class DimensionRow {
+        String name;
+        String score;
+        String gate;
     }
-    private record FileRow(String path, String changeType, String added, String deleted, String blocks, String scope) {
+    @Value
+    private static class FileRow {
+        String path;
+        String changeType;
+        String added;
+        String deleted;
+        String blocks;
+        String scope;
     }
-    private record FindingRow(String severity, String title, String file, String line) {
+    @Value
+    private static class FindingRow {
+        String severity;
+        String title;
+        String file;
+        String line;
     }
 }

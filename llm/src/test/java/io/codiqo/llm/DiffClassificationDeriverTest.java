@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.ArrayList;
 
+import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 
 
@@ -22,7 +23,7 @@ import io.codiqo.llm.schema.LlmScoringResponse.LinePair;
 
 class DiffClassificationDeriverTest {
     // B1: deleted {11} / added {11}; B2: deleted {13, 14} / added {13} (delete-heavy run)
-    private static final String DIFF = String.join("\n",
+    private static final String DIFF = String.join(StringUtils.LF,
             "--- a/Foo.java",
             "+++ b/Foo.java",
             "@@ -10,6 +10,5 @@",

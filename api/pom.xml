@@ -71,6 +71,10 @@
             <groupId>com.github.oshi</groupId>
             <artifactId>oshi-common</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.openjdk.jol</groupId>
+            <artifactId>jol-core</artifactId>
+        </dependency>
         <!-- -->
         <!-- provided -->
         <!-- -->

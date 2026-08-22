@@ -273,7 +273,9 @@ public class LlmScoringClient implements ScoringClient {
                     long backoffMs = Math.min(RESPONSE_RETRY_BACKOFF_MAX_MS, RESPONSE_RETRY_BACKOFF_BASE_MS << responseAttempt - 1);
                     log.warn(String.format("retrying due to %s LLM response (%d/%d), backing off %dms",
                             emptyResponse ? "empty (likely provider throttling/overload)" : "malformed",
-                            responseAttempt, maxRetries, backoffMs));
+                            responseAttempt,
+                            maxRetries,
+                            backoffMs));
                     Thread.sleep(backoffMs);
 
                     streamResult = streamWithRetry(paramsBuilder.build(), bridgeHandler);
