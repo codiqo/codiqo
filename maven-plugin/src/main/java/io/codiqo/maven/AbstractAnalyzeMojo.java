@@ -143,6 +143,12 @@ import lombok.RequiredArgsConstructor;
 
 abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Artifact, Collection<File>> {
     private static final Set<String> NON_CODE_PACKAGINGS = Set.of("pom", "bom");
+    /**
+     * Grep marker for the one transition that silently changes the scoring regime. It is written into the
+     * persisted build-failure detail as well as the log, because a log line outlives nothing: retention is
+     * finite, and the question of why an analysis scored the way it did outlives it.
+     */
+    private static final String DIFF_ONLY_FALLBACK_MARKER = "[codiqo] source-only degraded index failed";
     private static final String JAR_EXTENSION = "jar";
 
     private static final String LOMBOK_GROUP_ID = "org.projectlombok";
@@ -1420,8 +1426,24 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             if (BooleanUtils.negate(hadProjectModel)) {
                 args.getProjects().clear();
             }
-            return buildDiffOnlyDegradedSubmission(args, reason, category, detail);
+            return buildDiffOnlyDegradedSubmission(args, reason, category, diffOnlyFallbackDetail(detail, err));
         }
+    }
+    /**
+     * Records WHY a degraded analysis fell back to diff-only, in the detail column that every degraded row
+     * already persists. A diff-only submission carries no project metrics, so {@code DriverScaler} is empty:
+     * blocks are priced on raw line counts instead of the project's own distribution, and because the
+     * baseline is zero the global cap cannot bind either. That is a materially different scoring regime from
+     * a source-only degraded run, and until now the only record of having entered it was a log line.
+     */
+    private static String diffOnlyFallbackDetail(String detail, IOException err) {
+        String note = String.format("%s (%s) — scored diff-only: no project metrics, so driver scores are raw"
+                + " line counts and the global cap does not bind",
+                DIFF_ONLY_FALLBACK_MARKER, ExceptionUtils.getRootCauseMessage(err));
+        if (StringUtils.isBlank(detail)) {
+            return note;
+        }
+        return detail + StringUtils.repeat(CharUtils.LF, 2) + note;
     }
     protected SubmissionContext buildSourceOnlyDegradedSubmission(RunArgs args, String reason, AnalysisExcludeCategory category, String detail) throws Exception {
         LogFactory logFactory = new MavenLogFactory(getLog());
