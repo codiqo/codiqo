@@ -48,6 +48,7 @@ public class GradleProjectWrapper implements JvmProjectSpec {
     private Collection<File> compileClasspathElements = new ArrayList<>();
     private Collection<File> testCompileSourceRoots = new ArrayList<>();
     private Collection<File> testClasspathElements = new ArrayList<>();
+    private Collection<File> testReportDirectories = new ArrayList<>();
 
     private List<DependencyData> dependencies = new ArrayList<>();
 

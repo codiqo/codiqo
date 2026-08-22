@@ -15,6 +15,7 @@ import java.util.concurrent.ExecutorService;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.CharUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.maven.plugin.AbstractMojo;
@@ -257,7 +258,7 @@ public class ScoreFromFileMojo extends AbstractMojo {
             }
         }
 
-        for (String line : StringUtils.splitPreserveAllTokens(builder.buildReport(result, request, contextBuilder.build()), '\n')) {
+        for (String line : StringUtils.splitPreserveAllTokens(builder.buildReport(result, request, contextBuilder.build()), CharUtils.LF)) {
             getLog().info(line);
         }
     }

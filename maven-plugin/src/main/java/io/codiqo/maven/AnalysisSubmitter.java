@@ -1,7 +1,11 @@
 package io.codiqo.maven;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 
 import org.apache.commons.lang3.Strings;
 import org.apache.maven.plugin.logging.Log;
@@ -12,6 +16,7 @@ import io.codiqo.client.api.AnalysisApi;
 import io.codiqo.client.model.AnalysisAcceptedModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.AnalysisExcludeModel;
+import io.codiqo.client.model.AnalysisResultModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.ProjectMetricsModel;
@@ -20,6 +25,8 @@ import lombok.experimental.UtilityClass;
 @UtilityClass
 public class AnalysisSubmitter {
     private static final String API_KEY_HEADER = "X-API-Key";
+    private static final String ANALYSIS_PATH = "%s/api/v1/analyses/%s";
+    private static final Set<AnalysisResultModel.StatusEnum> TERMINAL_STATUSES = EnumSet.of(AnalysisResultModel.StatusEnum.COMPLETED, AnalysisResultModel.StatusEnum.FAILED);
 
     public static AnalysisAcceptedModel submit(
             String apiUrl,
@@ -71,6 +78,55 @@ public class AnalysisSubmitter {
             client.excludeAnalysis(commitSha, body);
             return new Object();
         });
+    }
+    /**
+     * Polls the analysis until it reaches a terminal status or the deadline passes, and returns the last state seen.
+     *
+     * <p>Scoring is asynchronous, so a submission alone tells the caller nothing about the outcome. An uncommitted run
+     * is interactive — someone is waiting on it — so this reports progress rather than sitting silent, and gives up on
+     * the deadline instead of blocking forever: a scorer that never finishes must not wedge the build.
+     *
+     * <p>Each request is bounded by the same read timeout as every other API call. The overall wait is the caller's
+     * to choose and is deliberately not the build timeout: that one is sized for a forked CI build, so borrowing it
+     * would leave an interactive terminal blocked for the better part of an hour whenever the scorer wedged.
+     */
+    public static AnalysisResultModel awaitCompletion(
+            String apiUrl,
+            String apiKey,
+            long connectTimeoutSeconds,
+            long readTimeoutSeconds,
+            UUID analysisId,
+            Duration deadline,
+            Duration pollInterval,
+            Log log) throws ApiException {
+        AnalysisApi client = buildClient(apiUrl, apiKey, connectTimeoutSeconds, readTimeoutSeconds);
+        Instant giveUpAt = Instant.now().plus(deadline);
+        log.info(String.format("waiting up to %s for analysis %s to finish", deadline, analysisId));
+
+        for (;;) {
+            AnalysisResultModel last = ApiRetry.call(log, "getAnalysis", apiUrl, () -> client.getAnalysis(analysisId));
+            AnalysisResultModel.StatusEnum status = last.getStatus();
+            if (TERMINAL_STATUSES.contains(status)) {
+                log.info(String.format("analysis %s finished with status %s", analysisId, status));
+                return last;
+            }
+            if (Instant.now().plus(pollInterval).isAfter(giveUpAt)) {
+                log.warn(String.format(
+                        "gave up waiting for analysis %s after %s; last status was %s. The analysis keeps running server-side — poll %s to see the result",
+                        analysisId,
+                        deadline,
+                        status,
+                        ANALYSIS_PATH.formatted(Strings.CS.removeEnd(apiUrl, "/"), analysisId)));
+                return last;
+            }
+            try {
+                Thread.sleep(pollInterval.toMillis());
+            } catch (InterruptedException err) {
+                Thread.currentThread().interrupt();
+                log.warn("interrupted while waiting for analysis " + analysisId);
+                return last;
+            }
+        }
     }
     public static AnalysisApi buildClient(String apiUrl, String apiKey, long connectTimeoutSeconds, long readTimeoutSeconds) {
         ApiClient apiClient = new ApiClient();

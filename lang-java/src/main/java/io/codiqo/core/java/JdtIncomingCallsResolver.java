@@ -74,9 +74,12 @@ class JdtIncomingCallsResolver implements IncomingCallsResolver {
                             try {
                                 long lspTimeout = args.getLspQueryTimeout().getSeconds();
                                 log.info("querying incoming calls for: %s in %s [%d:%d-%d:%d]",
-                                        pmdSymbol.getName(), block.getFile().getName(),
-                                        item.getRange().getStart().getLine(), item.getRange().getStart().getCharacter(),
-                                        item.getRange().getEnd().getLine(), item.getRange().getEnd().getCharacter());
+                                        pmdSymbol.getName(),
+                                        block.getFile().getName(),
+                                        item.getRange().getStart().getLine(),
+                                        item.getRange().getStart().getCharacter(),
+                                        item.getRange().getEnd().getLine(),
+                                        item.getRange().getEnd().getCharacter());
                                 List<CallHierarchyIncomingCall> calls = jdt.callHierarchyIncomingCalls(item).get(lspTimeout, TimeUnit.SECONDS);
 
                                 if (Objects.nonNull(calls)) {
@@ -147,18 +150,25 @@ class JdtIncomingCallsResolver implements IncomingCallsResolver {
 
         watch.stop();
         log.info("incoming calls resolved via JDT LS in %s: %d/%d symbols resolved, %d have callers (%d unresolved, %d failed)",
-                watch, resolved.get(), total.get(), withCallers.get(), unresolved.get(), failed.get());
+                watch,
+                resolved.get(),
+                total.get(),
+                withCallers.get(),
+                unresolved.get(),
+                failed.get());
 
         if (unresolved.get() > 0) {
-            log.warn("JDT LS returned no call hierarchy for %d/%d symbols — those files did not map to an imported workspace project, "
-                    + "so their callers were never searched and blast radius is understated; first unresolved uri: %s",
-                    unresolved.get(), total.get(), firstUnresolvedUri.get());
+            log.warn("JDT LS returned no call hierarchy for %d/%d symbols — those files did not map to an imported workspace project, so their callers were never searched and blast radius is understated; first unresolved uri: %s",
+                    unresolved.get(),
+                    total.get(),
+                    firstUnresolvedUri.get());
         }
 
         if (BooleanUtils.and(new boolean[] { total.get() > 0, resolved.get() == 0 })) {
-            log.error("JDT LS resolved none of the %d queried symbols (%d unresolved, %d failed) — every caller count in this analysis "
-                    + "is zero regardless of the real call graph, so treat the blast radius as unknown rather than empty",
-                    total.get(), unresolved.get(), failed.get());
+            log.error("JDT LS resolved none of the %d queried symbols (%d unresolved, %d failed) — every caller count in this analysis is zero regardless of the real call graph, so treat the blast radius as unknown rather than empty",
+                    total.get(),
+                    unresolved.get(),
+                    failed.get());
         }
     }
 }

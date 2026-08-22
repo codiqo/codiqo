@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.List;
 import java.util.ArrayList;
 
+import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 
 
@@ -19,7 +20,7 @@ class MovedLineDetectorTest {
      * a method body is deleted and re-added lower in the same file with re-qualified receivers
      * (props.X → channel.props.X). deleted lines are old-file 11-14, added lines are new-file 25-28
      */
-    private static final String RELOCATION_DIFF = String.join("\n",
+    private static final String RELOCATION_DIFF = String.join(StringUtils.LF,
             "--- a/Channel.java",
             "+++ b/Channel.java",
             "@@ -10,6 +10,2 @@",
@@ -56,14 +57,14 @@ class MovedLineDetectorTest {
     }
     @Test
     void crossFileMoveDetected() {
-        String deletedSide = String.join("\n",
+        String deletedSide = String.join(StringUtils.LF,
                 "--- a/Source.java",
                 "+++ b/Source.java",
                 "@@ -5,3 +5,1 @@",
                 " context",
                 "-keystore.store(out, SelfSignedCertificateGenerator.PASSWORD.toCharArray());",
                 " context2");
-        String addedSide = String.join("\n",
+        String addedSide = String.join(StringUtils.LF,
                 "--- a/Target.java",
                 "+++ b/Target.java",
                 "@@ -40,1 +40,2 @@",
@@ -83,7 +84,7 @@ class MovedLineDetectorTest {
     }
     @Test
     void trivialLinesAreNeverCandidates() {
-        String diff = String.join("\n",
+        String diff = String.join(StringUtils.LF,
                 "--- a/Foo.java",
                 "+++ b/Foo.java",
                 "@@ -5,4 +5,1 @@",
@@ -104,7 +105,7 @@ class MovedLineDetectorTest {
     }
     @Test
     void sizeRatioGuardRejectsShortLineAbsorbedByLongLine() {
-        String diff = String.join("\n",
+        String diff = String.join(StringUtils.LF,
                 "--- a/Foo.java",
                 "+++ b/Foo.java",
                 "@@ -5,2 +5,2 @@",
@@ -118,7 +119,7 @@ class MovedLineDetectorTest {
     }
     @Test
     void duplicateAddedLinesConsumeOneToOne() {
-        String diff = String.join("\n",
+        String diff = String.join(StringUtils.LF,
                 "--- a/Foo.java",
                 "+++ b/Foo.java",
                 "@@ -5,2 +5,3 @@",

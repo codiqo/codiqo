@@ -1,17 +1,17 @@
 package io.codiqo.llm;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
-import java.util.LinkedHashSet;
-import java.util.HashSet;
-import java.util.HashMap;
-import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
@@ -19,7 +19,6 @@ import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.math3.util.Precision;
 import org.slf4j.event.Level;
-
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.JavaInvocationCounter;
@@ -36,6 +35,7 @@ import io.codiqo.llm.schema.LlmScoringResponse.CodeBlockCategory;
 import io.codiqo.llm.schema.LlmScoringResponse.CodeBlockCategoryView;
 import io.codiqo.llm.schema.LlmScoringResponse.CodeBlockEffortView;
 import io.codiqo.llm.schema.LlmScoringResponse.DiffClassification;
+import io.codiqo.llm.schema.LlmScoringResponse.EffortBreakdown;
 import io.codiqo.llm.schema.LlmScoringResponse.FileDiffClassification;
 import io.codiqo.llm.schema.LlmScoringResponse.FileEffortView;
 import io.codiqo.llm.schema.LlmScoringResponse.LinePair;
@@ -93,7 +93,7 @@ public class FinalScoreCalculator {
 
         /**
          * a diff-only degraded analysis (build failure) has no coverage/static-analysis/duplication data,
-         * so quality bonuses are unverifiable — and the commit broke the build. cap the multiplier at 1.0
+         * so quality bonuses are non verifiable — and the commit broke the build. cap the multiplier at 1.0
          */
         double qualityMultiplierMax = args.getQualityMultiplierMax();
         if (Objects.nonNull(request) && Objects.nonNull(request.getBuildFailure())) {
@@ -174,16 +174,17 @@ public class FinalScoreCalculator {
         if (args.isMoveDetectionEnabled()) {
             return;
         }
-        if (Objects.nonNull(response.getEffortBreakdown()) && Objects.nonNull(response.getEffortBreakdown().getDiffClassification())
-                && CollectionUtils.isNotEmpty(response.getEffortBreakdown().getDiffClassification().getMovedPairs())) {
-            log.warn("diffClassification.droppedMovedPairs count=%d — move detection is disabled",
-                    response.getEffortBreakdown().getDiffClassification().getMovedPairs().size());
-            response.getEffortBreakdown().getDiffClassification().setMovedPairs(new ArrayList<>());
-        }
+        diffClassification(response)
+                .filter(classification -> CollectionUtils.isNotEmpty(classification.getMovedPairs()))
+                .ifPresent(classification -> {
+                    log.warn("diffClassification.droppedMovedPairs count=%d — move detection is disabled",
+                            classification.getMovedPairs().size());
+                    classification.setMovedPairs(new ArrayList<>());
+                });
     }
     private DiffAdjustment computeDiffAdjustment(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
         PerFileResult perFile = computePerFileFactors(response, request);
-        Map<String, Double> perBlockCoeff = buildPerBlockCoeff(response, preComputed, request);
+        Map<String, Double> perBlockCoeff = buildPerBlockCoeff(response, preComputed);
         Map<String, Double> perBlockMovedFactor = buildPerBlockMovedFactor(response, preComputed, request);
 
         if (perFile.getFactors().isEmpty() && perBlockCoeff.isEmpty() && perBlockMovedFactor.isEmpty()) {
@@ -206,7 +207,7 @@ public class FinalScoreCalculator {
         if (Objects.isNull(request) || CollectionUtils.isEmpty(request.getFileChanges()) || CollectionUtils.isEmpty(preComputed.getCodeBlockEfforts())) {
             return toReturn;
         }
-        if (Objects.isNull(response.getEffortBreakdown()) || Objects.isNull(response.getEffortBreakdown().getDiffClassification())) {
+        if (diffClassification(response).isEmpty()) {
             return toReturn;
         }
 
@@ -285,12 +286,17 @@ public class FinalScoreCalculator {
      * multiplier, because uncategorized MODIFY work was billed at full price. Flooring both operations
      * removes that coupling; it damps run-to-run variance as much as it corrects the bias.
      *
-     * <p>The floor is skipped for degraded (build-failure) analyses, where the prompt instructs the LLM
-     * to emit no categories at all — flooring there would discount parsed files while unparsed synthetic
-     * ones (blank signature) stayed neutral. Config units and signature-less blocks are not
-     * LLM-categorizable and keep the neutral default. Deletion blocks are handled separately below.
+     * <p>The floor applies to degraded (build-failure) analyses too. It was once skipped there on the
+     * belief that such a prompt asks for no categories at all, but the prompt requests one per code unit
+     * in every mode and the model merely omits most of them under block-count pressure — 2.9% labelled
+     * on an 867-block commit. Skipping therefore left 97% of blocks at the neutral 1.0 where a built
+     * commit floors them to 0.7, so a broken build out-scored the same work built. The parsed/unparsed
+     * asymmetry that motivated the skip is closed instead by flooring the blank-signature synthetics
+     * alongside the parsed blocks: a file the index could not parse is the least understood work in the
+     * commit, so neutral was never right for it either. Config units keep the neutral default because
+     * they are not code; deletion blocks are handled separately below.
      */
-    private Map<String, Double> buildPerBlockCoeff(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
+    private Map<String, Double> buildPerBlockCoeff(LlmScoringResponse response, PreComputedScores preComputed) {
         Set<String> knownBlocks = preComputed.getCodeBlockEfforts().stream()
                 .map(cbe -> VolumeScoreCalculator.blockKey(cbe.getFile(), cbe.getSignature()))
                 .collect(Collectors.toSet());
@@ -317,8 +323,8 @@ public class FinalScoreCalculator {
          * is counted and reported rather than absorbed
          */
         if (unmatched > 0) {
-            log.warn("block categories: %d label(s) did not match any pre-computed block key and were dropped — "
-                    + "those blocks fall back to the floor; suspect signature drift between the prompt and the response", unmatched);
+            log.warn("block categories: %d label(s) did not match any pre-computed block key and were dropped — those blocks fall back to the floor; suspect signature drift between the prompt and the response",
+                    unmatched);
         }
 
         double mechanicalCoeff = args.getCategoryMechanicalCoeff();
@@ -327,9 +333,8 @@ public class FinalScoreCalculator {
          * Deletion blocks are file-level synthetics deliberately kept out of codeBlockChanges, so the LLM
          * never sees one and none can ever carry a category — leaving the most mechanical work in a cleanup
          * as the only work without the mechanical discount. They carry no signature, so this keys on the
-         * same null the block itself was built with. Unlike the NEW floor below this also applies to
-         * degraded analyses: no deletion is categorized in any mode, so there is no parsed/unparsed
-         * asymmetry to protect against.
+         * same null the block itself was built with. Like the floor below, this applies in every mode:
+         * no deletion is categorized whether the build succeeded or not.
          */
         for (CodeBlockEffort cbe : preComputed.getCodeBlockEfforts()) {
             if (cbe.getOperation() == LlmScoringRequest.Operation.DELETE) {
@@ -337,21 +342,23 @@ public class FinalScoreCalculator {
             }
         }
 
-        boolean degraded = Objects.nonNull(request) && Objects.nonNull(request.getBuildFailure());
-        if (degraded) {
-            return toReturn;
-        }
-
         int categorizable = 0;
         int uncategorized = 0;
         for (CodeBlockEffort cbe : preComputed.getCodeBlockEfforts()) {
             if (BooleanUtils.and(new boolean[] {
                     FLOORED_OPERATIONS.contains(cbe.getOperation()),
-                    !cbe.isConfig(),
-                    StringUtils.isNotBlank(cbe.getSignature()) })) {
-                categorizable++;
-                if (Objects.isNull(toReturn.putIfAbsent(VolumeScoreCalculator.blockKey(cbe.getFile(), cbe.getSignature()), mechanicalCoeff))) {
-                    uncategorized++;
+                    !cbe.isConfig() })) {
+                boolean floored = Objects.isNull(
+                        toReturn.putIfAbsent(VolumeScoreCalculator.blockKey(cbe.getFile(), cbe.getSignature()), mechanicalCoeff));
+                /**
+                 * only signature-bearing blocks were ever offered to the model, so only they belong in the
+                 * coverage figure — a synthetic file-level block can never carry a label
+                 */
+                if (StringUtils.isNotBlank(cbe.getSignature())) {
+                    categorizable++;
+                    if (floored) {
+                        uncategorized++;
+                    }
                 }
             }
         }
@@ -384,7 +391,7 @@ public class FinalScoreCalculator {
         };
     }
     private PerFileResult computePerFileFactors(LlmScoringResponse response, LlmScoringRequest request) {
-        if (Objects.isNull(response.getEffortBreakdown()) || Objects.isNull(response.getEffortBreakdown().getDiffClassification())) {
+        if (diffClassification(response).isEmpty()) {
             return PerFileResult.empty();
         }
         if (Objects.isNull(request) || CollectionUtils.isEmpty(request.getFileChanges())) {
@@ -526,11 +533,20 @@ public class FinalScoreCalculator {
         classification.setPureAddDeleteLines(classification.getPerFile().stream().mapToInt(FileDiffClassification::getPureAddDeleteLines).sum());
         classification.setMovedLines(classification.getPerFile().stream().mapToInt(FileDiffClassification::getMovedLines).sum());
     }
+    /**
+     * The classification the whole diff-adjustment path reads, resolved in one place. Both hops are optional on the
+     * wire — a response may omit the breakdown entirely, or carry one with no classification — and five call sites
+     * need the same two-hop walk, so re-walking it inline made each of their guards longer than the work they guard.
+     */
+    private static Optional<DiffClassification> diffClassification(LlmScoringResponse response) {
+        return Optional.ofNullable(response.getEffortBreakdown()).map(EffortBreakdown::getDiffClassification);
+    }
     private static Map<String, FileDiffClassification> buildClassificationByFile(LlmScoringResponse response) {
-        if (Objects.isNull(response.getEffortBreakdown()) || Objects.isNull(response.getEffortBreakdown().getDiffClassification())) {
+        Optional<DiffClassification> classification = diffClassification(response);
+        if (classification.isEmpty()) {
             return new HashMap<>();
         }
-        List<FileDiffClassification> perFile = response.getEffortBreakdown().getDiffClassification().getPerFile();
+        List<FileDiffClassification> perFile = classification.get().getPerFile();
         if (CollectionUtils.isEmpty(perFile)) {
             return new HashMap<>();
         }
@@ -728,7 +744,7 @@ public class FinalScoreCalculator {
     public ValidationReport validate(LlmScoringResponse response, LlmScoringRequest request) {
         List<ValidationFailure> failures = new ArrayList<>();
 
-        if (Objects.isNull(response.getEffortBreakdown()) || Objects.isNull(response.getEffortBreakdown().getDiffClassification())) {
+        if (diffClassification(response).isEmpty()) {
             return new ValidationReport(failures);
         }
         if (CollectionUtils.isEmpty(request.getFileChanges())) {

@@ -51,6 +51,7 @@ public class MavenProjectWrapper implements MavenProjectSpec {
     private Collection<File> compileClasspathElements = new ArrayList<>();
     private Collection<File> testCompileSourceRoots = new ArrayList<>();
     private Collection<File> testClasspathElements = new ArrayList<>();
+    private Collection<File> testReportDirectories = new ArrayList<>();
     private BidiMap<Artifact, File> artifacts = new DualHashBidiMap<>();
     @Delegate
     private ClassGraphSpec scan;

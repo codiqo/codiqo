@@ -30,6 +30,14 @@ public class GradleBuildSupport {
          */
         return new File(jacocoDir(test.getProject()), EXEC_PART_PREFIX + test.getName() + EXEC_EXTENSION);
     }
+    /**
+     * where this task writes its JUnit XML, taken from the task's own report container rather than from Gradle's
+     * default layout: the location is configurable per task, and it is the analysis's only evidence that the task
+     * actually forked and ran something.
+     */
+    public File junitXmlDir(Test test) {
+        return test.getReports().getJunitXml().getOutputLocation().getAsFile().get();
+    }
     private static File jacocoDir(Project project) {
         return new File(project.getLayout().getBuildDirectory().getAsFile().get(), JACOCO_DIR);
     }

@@ -183,7 +183,7 @@ public class BrowserLogin {
 
             Credentials fresh = new BrowserLogin(authUrl, log).login();
             store.store(fresh);
-            return fresh.key();
+            return fresh.getKey();
         } catch (Exception err) {
             /**
              * The advice belongs here rather than at the failure itself: whatever went wrong inside the login — no

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.Map;
 
+import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 
 
@@ -29,7 +30,7 @@ class JavaLineCountAnalyzerTest {
 
     @Test
     void bareMethodCountsSignatureAndBraces() throws Exception {
-        String source = String.join("\n",
+        String source = String.join(StringUtils.LF,
                 "class C {",
                 "    void m() {",
                 "        return;",
@@ -43,7 +44,7 @@ class JavaLineCountAnalyzerTest {
     }
     @Test
     void trailingLineCommentCountsAsBothCodeAndComment() throws Exception {
-        String source = String.join("\n",
+        String source = String.join(StringUtils.LF,
                 "class C {",
                 "    void m() {",
                 "        int x = 1; // trailing",
@@ -57,7 +58,7 @@ class JavaLineCountAnalyzerTest {
     }
     @Test
     void lineCommentOnlyLineIsCommentNotCode() throws Exception {
-        String source = String.join("\n",
+        String source = String.join(StringUtils.LF,
                 "class C {",
                 "    void m() {",
                 "        // only",
@@ -72,7 +73,7 @@ class JavaLineCountAnalyzerTest {
     }
     @Test
     void multiLineBlockCommentWithTrailingCodeCountsMixedLine() throws Exception {
-        String source = String.join("\n",
+        String source = String.join(StringUtils.LF,
                 "class C {",
                 "    void m() {",
                 "        /* start",
@@ -88,7 +89,7 @@ class JavaLineCountAnalyzerTest {
     }
     @Test
     void blockCommentBeforeCodeOnSameLineCountsAsBoth() throws Exception {
-        String source = String.join("\n",
+        String source = String.join(StringUtils.LF,
                 "class C {",
                 "    void m() {",
                 "        /* doc */ int x = 1;",
@@ -102,7 +103,7 @@ class JavaLineCountAnalyzerTest {
     }
     @Test
     void inlineBlockCommentInSignatureCountsAsBoth() throws Exception {
-        String source = String.join("\n",
+        String source = String.join(StringUtils.LF,
                 "class C {",
                 "    int add(int /* x */ a, int b /* y */) {",
                 "        return a + b;",
@@ -116,7 +117,7 @@ class JavaLineCountAnalyzerTest {
     }
     @Test
     void commentMarkersInsideStringsAndCharLiteralsAreNotComments() throws Exception {
-        String source = String.join("\n",
+        String source = String.join(StringUtils.LF,
                 "class C {",
                 "    String m() {",
                 "        String url = \"https://codiqo.io\";",
@@ -134,7 +135,7 @@ class JavaLineCountAnalyzerTest {
     }
     @Test
     void javadocAboveMethodIsNotCounted() throws Exception {
-        String source = String.join("\n",
+        String source = String.join(StringUtils.LF,
                 "class C {",
                 "    /**",
                 "     * javadoc line",
@@ -151,7 +152,7 @@ class JavaLineCountAnalyzerTest {
     }
     @Test
     void trailingCommentAfterClosingBraceStillCountsOnBraceLine() throws Exception {
-        String source = String.join("\n",
+        String source = String.join(StringUtils.LF,
                 "class C {",
                 "    void m() {",
                 "        return;",
@@ -174,7 +175,7 @@ class JavaLineCountAnalyzerTest {
     }
     @Test
     void abstractMethodCountsSignatureLineOnly() throws Exception {
-        String source = String.join("\n",
+        String source = String.join(StringUtils.LF,
                 "abstract class C {",
                 "    abstract void m();",
                 "}");
@@ -190,7 +191,7 @@ class JavaLineCountAnalyzerTest {
     }
     @Test
     void bodyCountsExcludeSingleLineSignature() throws Exception {
-        String source = String.join("\n",
+        String source = String.join(StringUtils.LF,
                 "class C {",
                 "    void m() {",
                 "        return;",
@@ -207,7 +208,7 @@ class JavaLineCountAnalyzerTest {
     }
     @Test
     void bodyCountsExcludeMultiLineSignature() throws Exception {
-        String source = String.join("\n",
+        String source = String.join(StringUtils.LF,
                 "class C {",
                 "    void m(",
                 "            String a,",
@@ -227,7 +228,7 @@ class JavaLineCountAnalyzerTest {
     }
     @Test
     void bodyCountsExcludeStackedAnnotationsInSignature() throws Exception {
-        String source = String.join("\n",
+        String source = String.join(StringUtils.LF,
                 "class C {",
                 "    @Deprecated",
                 "    @SuppressWarnings(\"unused\")",
@@ -246,7 +247,7 @@ class JavaLineCountAnalyzerTest {
     }
     @Test
     void bodyCountsExcludeMultiLineThrowsClause() throws Exception {
-        String source = String.join("\n",
+        String source = String.join(StringUtils.LF,
                 "class C {",
                 "    void m()",
                 "            throws java.io.IOException,",
@@ -264,7 +265,7 @@ class JavaLineCountAnalyzerTest {
     }
     @Test
     void interfaceMethodHasNoBody() throws Exception {
-        String source = String.join("\n",
+        String source = String.join(StringUtils.LF,
                 "interface I {",
                 "    void m();",
                 "}");
@@ -279,7 +280,7 @@ class JavaLineCountAnalyzerTest {
     }
     @Test
     void declarationLineCountsBraceOnOwnLineAsBodyOnly() throws Exception {
-        String source = String.join("\n",
+        String source = String.join(StringUtils.LF,
                 "class C {",
                 "    void m()",
                 "    {",
@@ -296,7 +297,7 @@ class JavaLineCountAnalyzerTest {
     }
     @Test
     void declarationLineCountsStackedAnnotations() throws Exception {
-        String source = String.join("\n",
+        String source = String.join(StringUtils.LF,
                 "class C {",
                 "    @Deprecated",
                 "    @SuppressWarnings(\"unused\")",

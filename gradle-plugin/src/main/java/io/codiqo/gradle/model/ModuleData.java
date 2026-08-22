@@ -23,6 +23,7 @@ public class ModuleData implements Serializable {
 
     private List<String> compileSourceRoots = new ArrayList<>();
     private List<String> testCompileSourceRoots = new ArrayList<>();
+    private List<String> testReportDirectories = new ArrayList<>();
     private List<String> compileClasspathElements = new ArrayList<>();
     private List<String> testClasspathElements = new ArrayList<>();
     private List<DependencyData> dependencies = new ArrayList<>();

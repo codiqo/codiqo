@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.PathMatcher;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -26,6 +27,7 @@ import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Option.Builder;
 import org.apache.commons.cli.Options;
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.IOCase;
 import org.apache.commons.io.IOUtils;
@@ -576,6 +578,48 @@ public class RunArgs {
     private String excludeAuthorEmails;
 
     /**
+     * Comma-separated build-tool coordinates whose module is dropped from the analysis entirely, matched as
+     * case-insensitive <b>wildcards</b> against both {@code groupId:artifactId} and the bare {@code artifactId}
+     * ({@code com.google.guava:guava-gwt}, {@code guava-gwt}, {@code *-gwt}). An excluded module contributes no
+     * sources, no compiled classes and no coverage. This is what a reactor recompiling another module's sources
+     * under a second artifact needs — guava-gwt unpacks guava and guava-testlib sources, so the same
+     * fully-qualified name reaches the analysis twice, which makes JaCoCo abort outright and gives CPD a whole
+     * tree to match against its own copy.
+     */
+    @Nullable
+    private String excludeProjects;
+
+    /**
+     * Base directories of the modules {@link #excludeProjects} dropped, recorded as the build tool resolves the
+     * reactor so the indexer can skip those trees. Transient: derived from {@link #excludeProjects}, never an input.
+     */
+    private transient List<File> excludedProjectDirs = new ArrayList<>();
+
+    /**
+     * Comma-separated <b>glob</b> patterns matched against each path relative to the work tree, dropping whole
+     * trees ({@code android/**}) or families of files ({@code **}{@code /*.generated.java}) from the analysis.
+     * Applied in the index walk that CPD and the symbol index read, and again where a coverage record is resolved
+     * back to a source file — JaCoCo walks compiled output rather than the work tree, so it has to be filtered
+     * separately for one pattern to reach all three. This is what {@link #excludeProjects} cannot express: a directory that is not a reactor
+     * module has no coordinates to name, and guava's android/ tree — a file-for-file mirror of guava/ — is exactly
+     * that. A file the commit touched still appears as a change; it simply contributes no code units.
+     */
+    @Nullable
+    private String excludePaths;
+
+    /** Compiled form of {@link #excludePaths}, derived once on first use — RunArgs is assembled, then read. */
+    private transient List<PathMatcher> excludePathMatchers;
+
+    /**
+     * Which build tool's reactor this run analyses, set by the integration that owns it. The language server is told
+     * to run this importer and skip the others: a repository can carry a stray build of the other kind — guava keeps
+     * an `integration-tests/gradle` build inside a Maven reactor — and importing it fails in a way that is reported
+     * as a failure of the whole workspace.
+     */
+    @Nullable
+    private transient BuildTool buildTool;
+
+    /**
      * Index only the first-parent (mainline) history, dropping commits that arrived as merged-in feature-branch
      * work. On by default so a PR is counted once, at the merge node, rather than once per intermediate commit.
      */
@@ -583,7 +627,7 @@ public class RunArgs {
     private boolean firstParentOnly = true;
 
     /**
-     * Divisor turning project size into the dimensionless size factor {@code cbrt(totalStatements) / divisor} that
+     * Divisor turning project size into the dimension less size factor {@code cbrt(totalStatements) / divisor} that
      * drives both operation multipliers. Raising it flattens the size response of {@link #modifyMultiplierScale}
      * and {@link #addMultiplierScale} — it is the knob for "how quickly does a codebase count as large".
      */
@@ -1259,16 +1303,53 @@ public class RunArgs {
         List<String> patterns = Split.on(excludeAuthorEmails, ',');
         return patterns.stream().anyMatch(pattern -> FilenameUtils.wildcardMatch(authorEmail, pattern, IOCase.INSENSITIVE));
     }
+    /**
+     * Whether the path is dropped by {@link #excludePaths}. Paths outside the work tree are never excluded: the
+     * pattern is relative to it, so a path it cannot be relativized against is not something the pattern describes.
+     */
+    public boolean isExcludedPath(File workTree, File candidate) {
+        if (StringUtils.isEmpty(excludePaths)) {
+            return false;
+        }
+        Path root = workTree.toPath().normalize().toAbsolutePath();
+        Path path = candidate.toPath().normalize().toAbsolutePath();
+        if (BooleanUtils.negate(path.startsWith(root))) {
+            return false;
+        }
+        Path relative = root.relativize(path);
+        return excludePathMatchers().stream().anyMatch(matcher -> matcher.matches(relative));
+    }
+    private List<PathMatcher> excludePathMatchers() {
+        if (Objects.isNull(excludePathMatchers)) {
+            excludePathMatchers = Split.on(excludePaths, ',').stream()
+                    .map(pattern -> FileSystems.getDefault().getPathMatcher("glob:" + pattern))
+                    .toList();
+        }
+        return excludePathMatchers;
+    }
+    public boolean isExcludedProjectPath(File file) {
+        if (CollectionUtils.isEmpty(excludedProjectDirs)) {
+            return false;
+        }
+        Path candidate = file.toPath().normalize().toAbsolutePath();
+        return excludedProjectDirs.stream().anyMatch(dir -> candidate.startsWith(dir.toPath().normalize().toAbsolutePath()));
+    }
+    public boolean isExcludedProject(String groupId, String artifactId) {
+        if (StringUtils.isEmpty(excludeProjects)) {
+            return false;
+        }
+        String coordinates = groupId + ":" + artifactId;
+        return Split.on(excludeProjects, ',').stream().anyMatch(pattern -> BooleanUtils.or(new boolean[] {
+                FilenameUtils.wildcardMatch(coordinates, pattern, IOCase.INSENSITIVE),
+                FilenameUtils.wildcardMatch(artifactId, pattern, IOCase.INSENSITIVE)
+        }));
+    }
     public boolean isAuthorAllowed(String authorEmail) {
         return BooleanUtils.and(new boolean[] {
                 matchesByAuthor(authorEmail),
                 BooleanUtils.negate(isExcludedAuthor(authorEmail))
         });
     }
-    /**
-     * the PMD threshold as the enum, so the string is parsed in exactly one place. Callers get the canonical value
-     * without re-deriving it from {@link #pmdMinPriority}, which validate() has already normalised.
-     */
     public RulePriority pmdMinRulePriority() {
         return pmdRulePriority(this.pmdMinPriority);
     }
@@ -1290,8 +1371,8 @@ public class RunArgs {
 
         /**
          * clamping alone cannot reject a non-finite value — Math.min/max propagate NaN rather than replacing
-         * it — and a NaN that reaches the scoring maths poisons every product it touches all the way to the
-         * persisted score, silently and without an exception at the point of misconfiguration
+         * it — and a NaN that reaches the scoring math poisons every product it touches all the way to the
+         * persisted score, silently and without an exception at the point of miss configuration
          */
         this.statsQuantile = Math.max(0.85, requireFinite(this.statsQuantile, "statsQuantile"));
         this.deleteRewardWeight = Math.min(0.20, Math.max(0.0, requireFinite(this.deleteRewardWeight, "deleteRewardWeight")));

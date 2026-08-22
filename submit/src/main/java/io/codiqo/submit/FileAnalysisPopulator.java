@@ -581,7 +581,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         }
     }
     private static Optional<String> extractCallerLines(String content, Range range) {
-        String[] lines = content.split(CharUtils.toString(CharUtils.LF), -1);
+        String[] lines = content.split(StringUtils.LF, -1);
         int startLine = range.getStart().getLine();
         if (startLine >= lines.length) {
             return Optional.empty();

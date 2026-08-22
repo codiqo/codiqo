@@ -33,6 +33,7 @@ import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.patch.FileHeader;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.treewalk.AbstractTreeIterator;
 import org.eclipse.jgit.treewalk.CanonicalTreeParser;
 import org.eclipse.jgit.treewalk.EmptyTreeIterator;
 import org.eclipse.jgit.treewalk.FileTreeIterator;
@@ -180,22 +181,37 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         toReturn.getParentIds().addAll(JGit.parentShas(commit));
         toReturn.getBranches().addAll(JGit.branchesContaining(args.getGit(), commit.getName()));
 
-        if (commit.getParentCount() == 0) {
-            return toReturn;
-        }
-
-        RevCommit parent = commit.getParent(BigInteger.ZERO.intValue());
         try (RevWalk walk = new RevWalk(args.getGit())) {
             try (ObjectReader reader = args.getGit().newObjectReader()) {
                 try (DiffFormatter formatter = new DiffFormatter(DisabledOutputStream.INSTANCE)) {
                     RevCommit fullCommit = walk.parseCommit(commit.getId());
-                    RevCommit fullParent = walk.parseCommit(parent.getId());
 
                     formatter.setRepository(args.getGit());
                     formatter.setDetectRenames(true);
 
-                    CanonicalTreeParser oldTree = new CanonicalTreeParser();
-                    oldTree.reset(reader, fullParent.getTree().getId());
+                    /**
+                     * a root commit has no parent tree, so the empty tree is its baseline and every
+                     * entry comes back as ADD — the initial commit is a real contribution and must
+                     * not be dropped. a shallow graft is indistinguishable through getParentCount():
+                     * JGit reports zero parents for every commit listed in .git/shallow, and giving
+                     * one of those the empty-tree baseline would bill the whole repository to a
+                     * single commit. so only a commit that is genuinely parent-less gets that
+                     * baseline; on the shallow boundary the true delta is unknowable and the commit
+                     * is left file-less for the caller to skip, as the action documents
+                     */
+                    Optional<RevCommit> parent = Optional.empty();
+                    AbstractTreeIterator oldTree = new EmptyTreeIterator();
+                    if (commit.getParentCount() > 0) {
+                        RevCommit fullParent = walk.parseCommit(commit.getParent(BigInteger.ZERO.intValue()).getId());
+                        parent = Optional.of(fullParent);
+
+                        CanonicalTreeParser parentTree = new CanonicalTreeParser();
+                        parentTree.reset(reader, fullParent.getTree().getId());
+                        oldTree = parentTree;
+                    } else if (reader.getShallowCommits().contains(commit.getId())) {
+                        log.log(Level.WARN, "commit " + commit.getName() + " sits on the shallow-clone boundary, so its parent is not available locally and its delta cannot be computed — re-run with full history (fetch-depth: 0) to analyze it");
+                        return toReturn;
+                    }
 
                     CanonicalTreeParser newTree = new CanonicalTreeParser();
                     newTree.reset(reader, fullCommit.getTree().getId());
@@ -203,7 +219,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
                     List<DiffEntry> diffs = formatter.scan(oldTree, newTree);
                     log.log(Level.DEBUG, "analyzing commit: " + commit.getName() + " with " + diffs);
                     for (DiffEntry diff : diffs) {
-                        analyzeFileDiff(diff, formatter, fullParent, fullCommit).ifPresent(toReturn.getFiles()::add);
+                        analyzeFileDiff(diff, formatter, parent, fullCommit).ifPresent(toReturn.getFiles()::add);
                     }
 
                     toReturn.setFilesChanged(toReturn.getFiles().size());
@@ -429,7 +445,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         return Optional.empty();
     }
     @Override
-    public Optional<FileAnalysis> analyzeFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit parent, RevCommit current) throws Exception {
+    public Optional<FileAnalysis> analyzeFileDiff(DiffEntry diff, DiffFormatter formatter, Optional<RevCommit> parent, RevCommit current) throws Exception {
         String path = JGit.effectivePath(diff);
         applyWhitespacePolicy(formatter, path);
 
@@ -448,7 +464,9 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
             toReturn.setFile(destination);
             toReturn.setChangeType(diff.getChangeType());
             if (JGit.hasContentBefore(diff.getChangeType())) {
-                fileContentFromCommit(parent, diff.getOldPath()).ifPresent(toReturn::setContentBefore);
+                fileContentFromCommit(parent.orElseThrow(() -> new IllegalStateException(String.format(
+                        "%s of %s reports content before the change but the commit has no parent to read it from",
+                        diff.getChangeType(), path))), diff.getOldPath()).ifPresent(toReturn::setContentBefore);
             }
             if (JGit.hasContentAfter(diff.getChangeType())) {
                 fileContentFromCommit(current, diff.getNewPath()).ifPresent(toReturn::setContentAfter);

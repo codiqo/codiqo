@@ -40,6 +40,9 @@ public class JavaBinaryFormat {
     public static String getInternalName(String binaryName) {
         return binaryName.replace('.', '/');
     }
+    public static String getBinaryName(String internalName) {
+        return Type.getObjectType(internalName).getClassName();
+    }
     public static Type toOwnerType(JClassSymbol symbol) {
         return Type.getObjectType(getInternalName(symbol.getBinaryName()));
     }

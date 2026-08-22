@@ -91,7 +91,6 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
                 : new File(root.getLayout().getBuildDirectory().getAsFile().get(), "codiqo/indexed-commits.txt");
     }
     private String prop(String name, String fallback) {
-        Object value = getProject().findProperty(name);
-        return value != null ? value.toString() : fallback;
+        return Optional.ofNullable(getProject().findProperty(name)).map(Object::toString).orElse(fallback);
     }
 }

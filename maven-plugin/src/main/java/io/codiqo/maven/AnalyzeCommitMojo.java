@@ -2,19 +2,35 @@ package io.codiqo.maven;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
+import javax.xml.XMLConstants;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
+
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.CharUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
@@ -33,12 +49,18 @@ import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.RefSpec;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import org.xml.sax.SAXException;
 
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.util.JGit;
 import io.codiqo.util.MemoryReport;
+import lombok.Value;
 
 @Mojo(name = "analyze-commit",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
@@ -55,6 +77,17 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             Duration.ofHours(1),
             Duration.ofHours(4),
             Duration.ofDays(1));
+    private static final String POM_FILE_NAME = "pom.xml";
+    private static final String BUILD_ELEMENT = "build";
+    private static final String DIRECTORY_ELEMENT_NAME = "directory";
+    private static final Set<String> RESOURCE_ELEMENTS = Set.of("resource", "testResource");
+    /** a pom under one of these is a test fixture or build output, never a reactor module */
+    private static final Set<String> NON_MODULE_PATH_SEGMENTS = Set.of("src", "target");
+    private static final String DISALLOW_DOCTYPE_DECL = "http://apache.org/xml/features/disallow-doctype-decl";
+    /** In-module and deliberately absent, so maven copies nothing from it and m2e maps it without complaint. */
+    private static final String NEUTRALISED_RESOURCE_DIR = "target/codiqo-out-of-module-resources";
+    /** attribute-tolerant so a {@code <directory>} carrying e.g. {@code xml:space} is still seen */
+    private static final Pattern DIRECTORY_ELEMENT = Pattern.compile("(<directory[^>]*>)([^<]*)(</directory>)");
     /**
      * per-attempt excerpt of the structured failure detail kept in the exclusion history — enough to carry the
      * actual compiler/model errors (not just the first line) without ballooning the persisted detail
@@ -190,7 +223,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
              * genuine dependency problem resurfaces there with the full back-off ladder recorded
              */
             if (resolveDependenciesOffline(args) instanceof BuildOutcome.Skipped skipped) {
-                getLog().warn(String.format("pre-flight host model building failed (%s), deferring to fork build", skipped.reason()));
+                getLog().warn(String.format("pre-flight host model building failed (%s), deferring to fork build", skipped.getReason()));
             }
 
             /**
@@ -206,19 +239,21 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                     ? buildWithBackoff(args, buildingReq)
                     : buildProject(args, invocationRequest(args, false, Duration.ZERO), buildingReq);
             if (buildOutcome instanceof BuildOutcome.Skipped skipped) {
-                doDegradedAnalysis(args, skipped.reason(), skipped.category(), skipped.detail());
+                doDegradedAnalysis(args, skipped.getReason(), skipped.getCategory(), skipped.getDetail());
                 return;
             }
-            ProjectBuildingResult result = ((BuildOutcome.Proceeded) buildOutcome).result();
+            ProjectBuildingResult result = ((BuildOutcome.Proceeded) buildOutcome).getResult();
 
             Collection<MavenProject> reactors = new LinkedList<>();
             Optional<BuildOutcome.Skipped> moduleOutcome = buildAndCollectModules(
                     result.getProject(), clone.getWorkTree(), buildingReq, args, reactors);
             if (moduleOutcome.isPresent()) {
                 BuildOutcome.Skipped skipped = moduleOutcome.get();
-                doDegradedAnalysis(args, skipped.reason(), skipped.category(), skipped.detail());
+                doDegradedAnalysis(args, skipped.getReason(), skipped.getCategory(), skipped.getDetail());
                 return;
             }
+            relaxOutOfModuleResourceDirs(clone.getWorkTree());
+
             try (ClassGraphSpec scan = scanProjects(args, reactors)) {
                 getLog().info(MemoryReport.snapshot("after classgraph scan"));
                 args.setClassGraph(scan);
@@ -265,21 +300,21 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
              * the deadline wrapping the whole commit can absorb, so the process would be killed mid-ladder and this
              * exclusion would never be recorded at all.
              */
-            if (skipped.timedOut()) {
+            if (skipped.isTimedOut()) {
                 getLog().warn(String.format("commit %s: time-machine build timed out at offset %s, not retrying", commitId, offset));
                 return new BuildOutcome.Skipped(
-                        firstSkipped.reason(), firstSkipped.category(), attemptHistoryDetail(attemptFailures), true);
+                        firstSkipped.getReason(), firstSkipped.getCategory(), attemptHistoryDetail(attemptFailures), true);
             }
 
             Optional<Duration> next;
-            if (AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE == skipped.category()) {
+            if (AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE == skipped.getCategory()) {
                 next = Optional.empty();
             } else {
                 List<Instant> pickedDeploys = TimeMachineBackoff.readPickedDeploys(args.getTimeMachineMetaDir());
                 next = TimeMachineBackoff.nextOffset(TIME_MACHINE_BACKOFF_LADDER, offset, commitTimestamp, pickedDeploys);
             }
             if (next.isEmpty()) {
-                getLog().warn(String.format("commit %s: time-machine build failed at offset %s (%s), retrying with latest snapshots", commitId, offset, skipped.reason()));
+                getLog().warn(String.format("commit %s: time-machine build failed at offset %s (%s), retrying with latest snapshots", commitId, offset, skipped.getReason()));
                 args.setTimeMachineTargetOffset(null);
                 BuildOutcome latest = buildProject(args, invocationRequest(args, false, Duration.ZERO), buildingReq);
                 if (latest instanceof BuildOutcome.Skipped lastSkipped) {
@@ -289,19 +324,19 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                      * describes the commit's true state, while later attempts fail against increasingly anachronistic
                      * dependency picks. headline the first failure; the full ladder lives in the detail.
                      */
-                    return new BuildOutcome.Skipped(firstSkipped.reason(), firstSkipped.category(), attemptHistoryDetail(attemptFailures));
+                    return new BuildOutcome.Skipped(firstSkipped.getReason(), firstSkipped.getCategory(), attemptHistoryDetail(attemptFailures));
                 }
                 return latest;
             }
 
             offset = next.get();
-            getLog().warn(String.format("commit %s: time-machine build failed (%s), retrying with target offset %s", commitId, skipped.reason(), offset));
+            getLog().warn(String.format("commit %s: time-machine build failed (%s), retrying with target offset %s", commitId, skipped.getReason(), offset));
         }
     }
     private static String attemptEntry(String label, BuildOutcome.Skipped skipped) {
-        String toReturn = label + ": " + skipped.reason();
-        if (StringUtils.isNotBlank(skipped.detail())) {
-            toReturn += CharUtils.LF + StringUtils.abbreviate(skipped.detail(), ATTEMPT_DETAIL_LIMIT);
+        String toReturn = label + ": " + skipped.getReason();
+        if (StringUtils.isNotBlank(skipped.getDetail())) {
+            toReturn += CharUtils.LF + StringUtils.abbreviate(skipped.getDetail(), ATTEMPT_DETAIL_LIMIT);
         }
         return toReturn;
     }
@@ -355,5 +390,200 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             }
             return commit.getAuthorIdent().getEmailAddress();
         }
+    }
+    /**
+     * Drops build resource directories that resolve outside their own module from the POMs of the CLONE, so the
+     * language server can import the project.
+     *
+     * <p>m2e cannot map such a directory into a workspace project: it relativizes the path against the project, gets
+     * {@code ..}, and Eclipse rejects the resulting {@code /} outright — the whole module then fails to configure, and
+     * a module with no workspace project answers every call-hierarchy query with nothing, so blast radius silently
+     * reads zero. This is <a href="https://github.com/eclipse-m2e/m2e-core/issues/1790">m2e-core#1790</a>, open since
+     * July 2024 and still present in m2e 2.10.0; it is reported against guava, Apache RAT, Apache FOP and Dubbo. The
+     * fix proposed upstream skips the offending directory, which is exactly what removing it here achieves.
+     *
+     * <p>Only ever applied to the throwaway clone, and only to {@code <build>} resources — a plugin execution's own
+     * {@code <configuration><resources>} is left alone, because m2e does not read it; where the same path is
+     * configured in both, neither is touched and the path is reported. Resources contribute no source
+     * roots, dependencies or classpath entries, so nothing the analysis measures changes.
+     *
+     * <p>Runs after every build attempt, never before one: a directory that escapes its module can still be one the
+     * build needs — a {@code testResource} under {@code ../shared} feeds tests, and tests are where coverage comes
+     * from — so rewriting it up front failed those tests and degraded a commit whose own build is green. The import
+     * this exists for happens later still, when the language server loads in {@code doAnalyze}, so the build reads
+     * the POMs exactly as committed and the jar it packages is complete.
+     */
+    void relaxOutOfModuleResourceDirs(File workTree) throws IOException {
+        Path root = workTree.toPath().normalize().toAbsolutePath();
+        try (Stream<Path> poms = Files.walk(root)) {
+            for (Path pom : poms.filter(path -> isBuildPom(root, path)).toList()) {
+                stripEscapingResourceDirs(root, pom);
+            }
+        }
+    }
+    /**
+     * Repoints every escaping directory at a path inside the module instead of deleting the element. m2e only needs
+     * {@code getFolder} to yield a legal in-project path; the directory does not have to exist, and maven skips a
+     * resource directory that is absent. Editing one text value keeps every other byte of the POM as it was — a
+     * DOM round-trip does not: re-serializing guava's root POM moved its namespace declaration onto {@code <scm>}
+     * and maven then rejected the file outright.
+     *
+     * <p>Which values to edit comes from the DOM, so formatting cannot change the outcome — the earlier line-oriented
+     * scan needed {@code <resources>} alone on its own line and silently rewrote nothing for a POM that put it
+     * anywhere else.
+     */
+    private void stripEscapingResourceDirs(Path workTree, Path pom) throws IOException {
+        Path moduleDir = pom.getParent().normalize().toAbsolutePath();
+
+        ResourceDirScan scan = scanResourceDirs(pom, moduleDir);
+        if (CollectionUtils.isEmpty(scan.getRewritable())) {
+            return;
+        }
+
+        Matcher matcher = DIRECTORY_ELEMENT.matcher(Files.readString(pom, scan.getCharset()));
+        StringBuilder rewritten = new StringBuilder();
+        boolean changed = false;
+        while (matcher.find()) {
+            if (scan.getRewritable().contains(StringUtils.trimToEmpty(matcher.group(2)))) {
+                matcher.appendReplacement(rewritten,
+                        Matcher.quoteReplacement(matcher.group(1) + NEUTRALISED_RESOURCE_DIR + matcher.group(3)));
+                changed = true;
+                getLog().info(String.format("repointing resource directory outside its module in %s/pom.xml: %s -> %s (m2e-core#1790)",
+                        StringUtils.defaultIfEmpty(workTree.relativize(moduleDir).toString(), "."),
+                        StringUtils.trimToEmpty(matcher.group(2)),
+                        NEUTRALISED_RESOURCE_DIR));
+            }
+        }
+        matcher.appendTail(rewritten);
+
+        if (changed) {
+            Files.writeString(pom, rewritten, scan.getCharset());
+        }
+    }
+    /**
+     * Read-only inspection: which {@code <build>} resource directory values of this POM resolve outside the module,
+     * and in which charset the file has to be rewritten. A value that also appears outside a {@code <build>} resource
+     * is reported and left alone — the two occurrences are indistinguishable in the text, and repointing a plugin's
+     * own {@code <configuration>} would hand it a directory that is not there.
+     */
+    private ResourceDirScan scanResourceDirs(Path pom, Path moduleDir) {
+        Set<String> escaping = new LinkedHashSet<>();
+        Set<String> outsideBuild = new LinkedHashSet<>();
+        Charset charset = StandardCharsets.UTF_8;
+        try {
+            Document document = secureDocumentBuilderFactory().newDocumentBuilder().parse(pom.toFile());
+
+            /**
+             * the prolog decides how the bytes were read, so it has to decide how they are written back too —
+             * assuming UTF-8 either fails outright on an ISO-8859-1 POM or silently re-encodes it under a
+             * declaration that now lies. the declared encoding comes first because getInputEncoding reports the
+             * parser's initial auto-detection (UTF-8) rather than the declaration it went on to honour.
+             */
+            charset = Optional.ofNullable(document.getXmlEncoding())
+                    .or(() -> Optional.ofNullable(document.getInputEncoding()))
+                    .map(Charset::forName)
+                    .orElse(StandardCharsets.UTF_8);
+
+            NodeList directories = document.getElementsByTagName(DIRECTORY_ELEMENT_NAME);
+            for (int i = 0; i < directories.getLength(); i++) {
+                Element directory = (Element) directories.item(i);
+                String value = StringUtils.trimToEmpty(directory.getTextContent());
+                if (isBuildResourceDirectory(directory)) {
+                    if (escapesModule(value, moduleDir, pom)) {
+                        escaping.add(value);
+                    }
+                } else {
+                    outsideBuild.add(value);
+                }
+            }
+        } catch (ParserConfigurationException | SAXException | IOException err) {
+            /**
+             * a POM this cannot parse is one maven itself would reject, so leave it exactly as it is and let the build
+             * report the real problem rather than turning it into an XML error from here
+             */
+            getLog().warn(String.format("could not inspect %s for out-of-module resource directories: %s", pom, err.getMessage()));
+        }
+
+        Set<String> rewritable = new LinkedHashSet<>(escaping);
+        for (String shared : CollectionUtils.intersection(escaping, outsideBuild)) {
+            getLog().warn(String.format("leaving resource directory %s of %s as it is: the same path is configured outside <build> too, and the two cannot be told apart in the text — name the tree in codiqo.excludePaths if the import fails (m2e-core#1790)",
+                    shared,
+                    pom));
+            rewritable.remove(shared);
+        }
+        return new ResourceDirScan(rewritable, charset);
+    }
+    private boolean escapesModule(String directory, Path moduleDir, Path pom) {
+        if (StringUtils.isBlank(directory)) {
+            return false;
+        }
+
+        String interpolated = interpolateModulePaths(directory, moduleDir);
+        if (interpolated.contains("${")) {
+            getLog().warn(String.format("cannot tell whether resource directory %s of %s stays inside its module: it interpolates a property this check does not evaluate — if the import fails with m2e-core#1790, name the tree in codiqo.excludePaths",
+                    directory,
+                    pom));
+            return false;
+        }
+
+        Path resolved = Paths.get(interpolated);
+        if (BooleanUtils.negate(resolved.isAbsolute())) {
+            resolved = moduleDir.resolve(interpolated);
+        }
+        return BooleanUtils.negate(resolved.normalize().startsWith(moduleDir));
+    }
+    /**
+     * A POM under a {@code src} or {@code target} segment is a test fixture or build output, not a reactor module.
+     * Rewriting a fixture changes what the clone's own tests exercise, and the tests are where coverage comes from.
+     */
+    private static boolean isBuildPom(Path root, Path candidate) {
+        if (BooleanUtils.negate(POM_FILE_NAME.equals(candidate.getFileName().toString()))) {
+            return false;
+        }
+        for (Path segment : root.relativize(candidate)) {
+            if (NON_MODULE_PATH_SEGMENTS.contains(segment.toString())) {
+                return false;
+            }
+        }
+        return true;
+    }
+    /**
+     * Only a {@code <build>} resource counts: the great-grandparent check keeps a plugin execution's own
+     * {@code <configuration><resources>} out of scope, since m2e never reads it.
+     */
+    private static boolean isBuildResourceDirectory(Element directory) {
+        Node resource = directory.getParentNode();
+        if (Objects.isNull(resource) || BooleanUtils.negate(RESOURCE_ELEMENTS.contains(resource.getNodeName()))) {
+            return false;
+        }
+
+        Node resources = resource.getParentNode();
+        if (Objects.isNull(resources) || Objects.isNull(resources.getParentNode())) {
+            return false;
+        }
+        return BUILD_ELEMENT.equals(resources.getParentNode().getNodeName());
+    }
+    /**
+     * The three properties a resource directory realistically uses. {@code ${project.basedir}/../shared} is the
+     * common form of the escaping directory this whole pass exists for, so leaving it un-interpolated meant the
+     * import kept failing with nothing logged; anything else is reported rather than guessed at.
+     */
+    private static String interpolateModulePaths(String directory, Path moduleDir) {
+        String toReturn = Strings.CS.replace(directory, "${project.build.directory}", moduleDir.resolve("target").toString());
+        toReturn = Strings.CS.replace(toReturn, "${project.basedir}", moduleDir.toString());
+        return Strings.CS.replace(toReturn, "${basedir}", moduleDir.toString());
+    }
+    private static DocumentBuilderFactory secureDocumentBuilderFactory() throws ParserConfigurationException {
+        DocumentBuilderFactory toReturn = DocumentBuilderFactory.newInstance();
+        toReturn.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+        toReturn.setFeature(DISALLOW_DOCTYPE_DECL, true);
+        toReturn.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, StringUtils.EMPTY);
+        toReturn.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, StringUtils.EMPTY);
+        return toReturn;
+    }
+    @Value
+    private static class ResourceDirScan {
+        Set<String> rewritable;
+        Charset charset;
     }
 }

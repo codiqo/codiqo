@@ -80,15 +80,16 @@
         <jarchivelib.version>1.2.0</jarchivelib.version>
         <ecj.version>3.46.0</ecj.version>
         <lsp4j.version>1.0.0</lsp4j.version>
-        <openrewrite.version>8.90.1</openrewrite.version>
-        <openrewrite.recipe.version>2.41.0</openrewrite.recipe.version>
+        <openrewrite.version>8.90.3</openrewrite.version>
+        <openrewrite.recipe.version>2.41.1</openrewrite.recipe.version>
         <pmd.version>7.26.0</pmd.version>
-        <spotbugs.version>4.10.3</spotbugs.version>
+        <spotbugs.version>4.10.4</spotbugs.version>
         <findbugs.sec.version>1.14.0</findbugs.sec.version>
         <findbugs.contrib.version>7.7.4</findbugs.contrib.version>
         <jacoco.version>0.8.15</jacoco.version>
         <classgraph.version>4.8.192</classgraph.version>
         <oshi.version>7.5.0</oshi.version>
+        <jol.version>0.17</jol.version>
         <openapi.version>4.52.0</openapi.version>
         <djl.tokenizers.version>0.36.0</djl.tokenizers.version>
         <jtokkit.version>1.1.0</jtokkit.version>
@@ -748,6 +749,11 @@
                 <groupId>com.github.oshi</groupId>
                 <artifactId>oshi-common</artifactId>
                 <version>${oshi.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.openjdk.jol</groupId>
+                <artifactId>jol-core</artifactId>
+                <version>${jol.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.apache.commons</groupId>

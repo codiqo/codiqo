@@ -38,6 +38,7 @@ import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.util.JGit;
+import lombok.Value;
 
 /**
  * Behavioral coverage for the build-failure degraded path: scoreOnBuildFailure=false must keep the
@@ -125,18 +126,18 @@ class DegradedAnalysisMojoTest {
         assertNull(mojo.scoredCtx, "flag off (default) must not run degraded scoring");
         assertEquals(1, mojo.exclusions.size());
         Exclusion exclusion = mojo.exclusions.iterator().next();
-        assertEquals("[ERROR] COMPILATION ERROR", exclusion.reason());
-        assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, exclusion.category());
-        assertEquals("cannot find symbol", exclusion.detail());
-        assertTrue(CollectionUtils.isNotEmpty(exclusion.files()), "exclusion must carry the captured diff files");
+        assertEquals("[ERROR] COMPILATION ERROR", exclusion.getReason());
+        assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, exclusion.getCategory());
+        assertEquals("cannot find symbol", exclusion.getDetail());
+        assertTrue(CollectionUtils.isNotEmpty(exclusion.getFiles()), "exclusion must carry the captured diff files");
 
         /**
          * the source-only exclude payload now carries whole-project driver-score statistics so a later
          * degraded re-score prices real code volume instead of config lines (capture-at-exclude fix)
          */
-        assertNotNull(exclusion.projectMetrics(), "build-failure exclusion must carry projectMetrics");
-        assertNotNull(exclusion.projectMetrics().getDriverScalers());
-        assertTrue(exclusion.projectMetrics().getDriverScalers().getMethodScalerProd().getPopulation() > 0,
+        assertNotNull(exclusion.getProjectMetrics(), "build-failure exclusion must carry projectMetrics");
+        assertNotNull(exclusion.getProjectMetrics().getDriverScalers());
+        assertTrue(exclusion.getProjectMetrics().getDriverScalers().getMethodScalerProd().getPopulation() > 0,
                 "exclusion projectMetrics must carry a non-empty driver-scaler population");
     }
     @Test
@@ -225,13 +226,13 @@ class DegradedAnalysisMojoTest {
 
         Iterator<Exclusion> it = mojo.exclusions.iterator();
         Exclusion revertExclusion = it.next();
-        assertEquals(revert.getName(), revertExclusion.commitSha());
-        assertEquals(AnalysisExcludeCategory.REVERT_COMMIT, revertExclusion.category());
+        assertEquals(revert.getName(), revertExclusion.getCommitSha());
+        assertEquals(AnalysisExcludeCategory.REVERT_COMMIT, revertExclusion.getCategory());
 
         Exclusion originalExclusion = it.next();
-        assertEquals(second.getName(), originalExclusion.commitSha());
-        assertEquals(AnalysisExcludeCategory.REVERTED, originalExclusion.category());
-        assertEquals("reverted by commit " + JGit.shortSha(revert.getName()), originalExclusion.reason());
+        assertEquals(second.getName(), originalExclusion.getCommitSha());
+        assertEquals(AnalysisExcludeCategory.REVERTED, originalExclusion.getCategory());
+        assertEquals("reverted by commit " + JGit.shortSha(revert.getName()), originalExclusion.getReason());
     }
     @Test
     void excludeRevertedCommitsOffExcludesOnlyRevertItself() throws Exception {
@@ -246,8 +247,8 @@ class DegradedAnalysisMojoTest {
 
         assertEquals(1, mojo.exclusions.size());
         Exclusion exclusion = mojo.exclusions.iterator().next();
-        assertEquals(revert.getName(), exclusion.commitSha());
-        assertEquals(AnalysisExcludeCategory.REVERT_COMMIT, exclusion.category());
+        assertEquals(revert.getName(), exclusion.getCommitSha());
+        assertEquals(AnalysisExcludeCategory.REVERT_COMMIT, exclusion.getCategory());
     }
     @Test
     void originalCommitUnknownToBackendIsTolerated() throws Exception {
@@ -261,7 +262,7 @@ class DegradedAnalysisMojoTest {
         mojo.doDegradedAnalysis(args, "[ERROR] COMPILATION ERROR", AnalysisExcludeCategory.BUILD_FAILURE, null);
 
         assertEquals(1, mojo.exclusions.size());
-        assertEquals(AnalysisExcludeCategory.REVERT_COMMIT, mojo.exclusions.iterator().next().category());
+        assertEquals(AnalysisExcludeCategory.REVERT_COMMIT, mojo.exclusions.iterator().next().getCategory());
     }
 
     private RunArgs argsFor(RevCommit commit) {
@@ -301,6 +302,13 @@ class DegradedAnalysisMojoTest {
             exclusions.add(new Exclusion(commitSha, reason, category, detail, files, projectMetrics));
         }
     }
-    private record Exclusion(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files, ProjectMetricsModel projectMetrics) {
+    @Value
+    private static class Exclusion {
+        String commitSha;
+        String reason;
+        AnalysisExcludeCategory category;
+        String detail;
+        List<FileChangeModel> files;
+        ProjectMetricsModel projectMetrics;
     }
 }

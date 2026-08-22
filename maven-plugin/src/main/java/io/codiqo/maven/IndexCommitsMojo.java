@@ -51,6 +51,7 @@ import io.codiqo.maven.auth.BrowserLogin;
 import io.codiqo.submit.CommitIndexer;
 import io.codiqo.util.JGit;
 import io.codiqo.util.RepositoryUrls;
+import lombok.Value;
 
 @Mojo(name = "index-commits",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
@@ -128,8 +129,7 @@ public class IndexCommitsMojo extends AbstractMojo {
             Period window = Period.parse(commitWindow);
             Date cutoff = Date.from(LocalDate.now(ZoneOffset.UTC).minus(window).atStartOfDay(ZoneOffset.UTC).toInstant());
             List<CommitModel> commits = CommitIndexer.extractCommits(repo, args, indexRef, cutoff, resolvedBranch);
-            getLog().info("extracted " + commits.size() + " commits since " + cutoff + " (window=" + commitWindow
-                    + ", selection=" + (firstParentOnly ? "first-parent/mainline" : "all-commits") + ")");
+            getLog().info("extracted " + commits.size() + " commits since " + cutoff + " (window=" + commitWindow + ", selection=" + (firstParentOnly ? "first-parent/mainline" : "all-commits") + ")");
 
             ProjectModel projectMetadata = buildProjectMetadata(projectId, repo);
 
@@ -214,16 +214,14 @@ public class IndexCommitsMojo extends AbstractMojo {
         MissingAnalysesSelection selection = selectAnalyzableMissingAnalyses(repo, shas);
 
         FileUtils.forceMkdir(missingAnalysesOutputFile.getParentFile());
-        FileUtils.writeLines(missingAnalysesOutputFile, StandardCharsets.UTF_8.name(), selection.analyzableShas());
-        getLog().info("wrote " + selection.analyzableShas().size() + " missing-analysis SHAs to " + missingAnalysesOutputFile.getAbsolutePath());
+        FileUtils.writeLines(missingAnalysesOutputFile, StandardCharsets.UTF_8.name(), selection.getAnalyzableShas());
+        getLog().info("wrote " + selection.getAnalyzableShas().size() + " missing-analysis SHAs to " + missingAnalysesOutputFile.getAbsolutePath());
 
         if (BooleanUtils.or(new boolean[] {
-                selection.skippedMissingCommitCount() > 0,
-                selection.skippedMissingParentCount() > 0
+                selection.getSkippedMissingCommitCount() > 0,
+                selection.getSkippedMissingParentCount() > 0
         })) {
-            getLog().warn("skipped " + selection.skippedMissingCommitCount() + " commits not present locally and "
-                    + selection.skippedMissingParentCount() + " commits whose first parent is not present locally"
-                    + " (deepen the Jenkins clone if you want these analyzed)");
+            getLog().warn("skipped " + selection.getSkippedMissingCommitCount() + " commits not present locally and " + selection.getSkippedMissingParentCount() + " commits whose first parent is not present locally (deepen the Jenkins clone if you want these analyzed)");
         }
     }
     private String resolveBranch(Repository repo) throws IOException, MojoExecutionException {
@@ -262,10 +260,12 @@ public class IndexCommitsMojo extends AbstractMojo {
 
         return new MissingAnalysesSelection(analyzable, skippedMissingCommit, skippedMissingParent);
     }
-    record MissingAnalysesSelection(
-            List<String> analyzableShas,
-            int skippedMissingCommitCount,
-            int skippedMissingParentCount) {}
+    @Value
+    static class MissingAnalysesSelection {
+        List<String> analyzableShas;
+        int skippedMissingCommitCount;
+        int skippedMissingParentCount;
+    }
 
     private void addRepositoryUri(List<URI> repoUrls, String rawUrl, String source) {
         try {

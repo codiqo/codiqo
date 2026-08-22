@@ -1,6 +1,7 @@
 package io.codiqo.llm.client;
 
 import io.codiqo.llm.client.OpenAIClientWrapper.StreamingResult;
+import lombok.Value;
 
 /**
  * token accounting for one logical LLM operation, however many round trips it took. every client in this
@@ -12,8 +13,13 @@ import io.codiqo.llm.client.OpenAIClientWrapper.StreamingResult;
  * prompt + completion (cached-prompt and reasoning tokens land in the total on some gateways), and the
  * ledger should carry what was actually billed.
  */
-public record LlmUsage(int promptTokens, int completionTokens, int totalTokens) {
+@Value
+public class LlmUsage {
     public static final LlmUsage NONE = new LlmUsage(0, 0, 0);
+
+    int promptTokens;
+    int completionTokens;
+    int totalTokens;
 
     /**
      * the provider's own total wins when it reports one, but a gateway that populates prompt and completion

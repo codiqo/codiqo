@@ -39,13 +39,13 @@ public interface ScoringClient extends Scorer<ScoringClient.Params, ScoringClien
         List<String> toolCallsMade = new ArrayList<>();
 
         public int getPromptTokens() {
-            return usage.promptTokens();
+            return usage.getPromptTokens();
         }
         public int getCompletionTokens() {
-            return usage.completionTokens();
+            return usage.getCompletionTokens();
         }
         public int getTotalTokens() {
-            return usage.totalTokens();
+            return usage.getTotalTokens();
         }
         public boolean usedTools() {
             return CollectionUtils.isNotEmpty(toolCallsMade);

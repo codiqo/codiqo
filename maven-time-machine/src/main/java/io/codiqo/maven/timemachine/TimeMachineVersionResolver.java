@@ -27,6 +27,7 @@ import org.eclipse.aether.resolution.VersionResult;
 import org.eclipse.sisu.Priority;
 
 import io.codiqo.maven.timemachine.repo.RepoClient;
+import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
@@ -202,5 +203,9 @@ public class TimeMachineVersionResolver implements VersionResolver {
         return matcher.find() ? Integer.valueOf(matcher.group(1)) : null;
     }
 
-    private record CacheKey(Artifact artifact, Instant target) {}
+    @Value
+    private static class CacheKey {
+        Artifact artifact;
+        Instant target;
+    }
 }

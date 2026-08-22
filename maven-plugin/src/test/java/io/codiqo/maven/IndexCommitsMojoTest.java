@@ -154,9 +154,9 @@ class IndexCommitsMojoTest {
                 List.of(root.getName(), linear.getName(), merge.getNewHead().getName()));
 
         // merges flow through selection so the analyze step can exclude them (excluded=true row)
-        assertEquals(List.of(root.getName(), linear.getName(), merge.getNewHead().getName()), selection.analyzableShas());
-        assertEquals(0, selection.skippedMissingCommitCount());
-        assertEquals(0, selection.skippedMissingParentCount());
+        assertEquals(List.of(root.getName(), linear.getName(), merge.getNewHead().getName()), selection.getAnalyzableShas());
+        assertEquals(0, selection.getSkippedMissingCommitCount());
+        assertEquals(0, selection.getSkippedMissingParentCount());
     }
     @Test
     void missingAnalysisSelectionCountsMissingCommitShas() throws Exception {
@@ -166,9 +166,9 @@ class IndexCommitsMojoTest {
                 repository,
                 List.of("missing-sha", kept.getName()));
 
-        assertEquals(List.of(kept.getName()), selection.analyzableShas());
-        assertEquals(1, selection.skippedMissingCommitCount());
-        assertEquals(0, selection.skippedMissingParentCount());
+        assertEquals(List.of(kept.getName()), selection.getAnalyzableShas());
+        assertEquals(1, selection.getSkippedMissingCommitCount());
+        assertEquals(0, selection.getSkippedMissingParentCount());
     }
     @Test
     void missingAnalysisSelectionSkipsFullShaAbsentFromObjectDb() throws Exception {
@@ -179,9 +179,9 @@ class IndexCommitsMojoTest {
                 repository,
                 List.of(absentFullSha, kept.getName()));
 
-        assertEquals(List.of(kept.getName()), selection.analyzableShas());
-        assertEquals(1, selection.skippedMissingCommitCount());
-        assertEquals(0, selection.skippedMissingParentCount());
+        assertEquals(List.of(kept.getName()), selection.getAnalyzableShas());
+        assertEquals(1, selection.getSkippedMissingCommitCount());
+        assertEquals(0, selection.getSkippedMissingParentCount());
     }
     @Test
     void missingAnalysisSelectionCountsCommitWithAbsentFirstParent() throws Exception {
@@ -196,9 +196,9 @@ class IndexCommitsMojoTest {
                     truncated,
                     List.of(child.getName()));
 
-            assertEquals(List.of(), selection.analyzableShas(), "a commit whose first parent is missing cannot be analyzed");
-            assertEquals(0, selection.skippedMissingCommitCount());
-            assertEquals(1, selection.skippedMissingParentCount());
+            assertEquals(List.of(), selection.getAnalyzableShas(), "a commit whose first parent is missing cannot be analyzed");
+            assertEquals(0, selection.getSkippedMissingCommitCount());
+            assertEquals(1, selection.getSkippedMissingParentCount());
         }
     }
     @Test
@@ -215,9 +215,9 @@ class IndexCommitsMojoTest {
                     truncated,
                     List.of(absentFullSha, child.getName(), standalone.getName()));
 
-            assertEquals(List.of(standalone.getName()), selection.analyzableShas());
-            assertEquals(1, selection.skippedMissingCommitCount());
-            assertEquals(1, selection.skippedMissingParentCount());
+            assertEquals(List.of(standalone.getName()), selection.getAnalyzableShas());
+            assertEquals(1, selection.getSkippedMissingCommitCount());
+            assertEquals(1, selection.getSkippedMissingParentCount());
         }
     }
     @Test

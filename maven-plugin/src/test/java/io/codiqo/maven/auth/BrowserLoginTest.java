@@ -79,8 +79,8 @@ class BrowserLoginTest {
 
         Credentials credentials = login().login();
 
-        assertEquals("cdq_live_abc", credentials.key());
-        assertEquals("org-7", credentials.organizationId());
+        assertEquals("cdq_live_abc", credentials.getKey());
+        assertEquals("org-7", credentials.getOrganizationId());
         assertEquals(2, tokenRequests.size(), "authorization_pending must be retried rather than raised");
 
         JsonNode body = MAPPER.readTree(tokenRequests.iterator().next());

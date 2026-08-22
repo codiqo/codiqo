@@ -13,6 +13,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.ArrayList;
 
+import org.apache.commons.lang3.StringUtils;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
@@ -476,7 +477,7 @@ class PromptTemplateSmokeTest {
     @Test
     void userPromptRendersSlimMovedCandidateTable() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
-        String moveDiff = String.join("\n",
+        String moveDiff = String.join(StringUtils.LF,
                 "--- a/Foo.java",
                 "+++ b/Foo.java",
                 "@@ -10,3 +10,1 @@",
@@ -677,7 +678,7 @@ class PromptTemplateSmokeTest {
     @Test
     void userPromptAnnotatesDiffLineNumbersAndRestoresOriginal() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
-        String diff = String.join("\n",
+        String diff = String.join(StringUtils.LF,
                 "--- a/Foo.java",
                 "+++ b/Foo.java",
                 "@@ -10,3 +10,3 @@",

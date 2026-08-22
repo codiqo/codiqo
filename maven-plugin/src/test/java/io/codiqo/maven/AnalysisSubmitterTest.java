@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -26,6 +27,7 @@ import com.sun.net.httpserver.HttpServer;
 
 import io.codiqo.client.ApiException;
 import io.codiqo.client.model.AnalysisAcceptedModel;
+import io.codiqo.client.model.AnalysisResultModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CommitModel;
 import io.codiqo.client.model.ProjectModel;
@@ -77,6 +79,18 @@ class AnalysisSubmitterTest {
         assertEquals(400, err.getCode());
         assertEquals(1, callCount.get(), "4xx must not be retried");
     }
+    @Test
+    void awaitCompletionReturnsAFailedAnalysisInsteadOfThrowing() throws Exception {
+        UUID analysisId = UUID.randomUUID();
+        installHandler(200, jsonResultBody(analysisId, "failed"));
+
+        AnalysisResultModel result = AnalysisSubmitter.awaitCompletion(
+                serverUrl(), API_KEY, 5, 5, analysisId, Duration.ofSeconds(30), Duration.ofSeconds(1), LOG);
+
+        assertEquals(AnalysisResultModel.StatusEnum.FAILED, result.getStatus(),
+                "a failed analysis is returned, so every caller has to inspect the status itself");
+        assertEquals(1, callCount.get(), "failed is terminal and must not be polled again");
+    }
     private void installHandler(int status, String responseBody) {
         server.createContext("/api/v1/analyses", exchange -> {
             callCount.incrementAndGet();
@@ -107,6 +121,12 @@ class AnalysisSubmitterTest {
         submission.setProject(project);
         submission.setCommit(commit);
         return submission;
+    }
+    private static String jsonResultBody(UUID analysisId, String status) {
+        return "{\"analysisId\":\"" + analysisId + "\",\"status\":\"" + status + "\","
+                + "\"project\":{\"code\":\"codiqo-test\"},"
+                + "\"commit\":{\"sha\":\"0123456789abcdef0123456789abcdef01234567\"},"
+                + "\"riskScore\":{\"overall\":0.0,\"grade\":\"F\"}}";
     }
     private static String jsonAcceptedBody(UUID analysisId, String status) {
         return "{\"analysisId\":\"" + analysisId + "\",\"status\":\"" + status + "\"}";

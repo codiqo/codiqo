@@ -34,7 +34,10 @@ public class TagConsolidationClient implements LlmClient {
 
         String prompt = PromptTemplates.process(TEMPLATE_TAG_CONSOLIDATION, ctx);
         log.info(String.format("tag consolidation prompt: %d chars (%d technical, %d functional, cap %d)",
-                prompt.length(), technicalTags.size(), functionalTags.size(), vocabularyCap));
+                prompt.length(),
+                technicalTags.size(),
+                functionalTags.size(),
+                vocabularyCap));
 
         return completions.complete(LABEL, prompt, TagConsolidationResponse.class);
     }

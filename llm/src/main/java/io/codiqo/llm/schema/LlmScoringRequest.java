@@ -390,8 +390,8 @@ public class LlmScoringRequest {
         private double methodComplexityQuantile;
 
         private int complexityDelta; // Positive = more complex overall
-        private int newHighComplexityMethods; // New methods with high complexity (bad)
-        private int modifiedHighComplexityMethods; // Modified complex methods (hard work)
+        private int newHighComplexityMethods;
+        private int modifiedHighComplexityMethods;
 
         private int complexityThreshold;
     }

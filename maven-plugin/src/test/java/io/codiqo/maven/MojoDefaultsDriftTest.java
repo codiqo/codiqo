@@ -51,6 +51,20 @@ class MojoDefaultsDriftTest {
         assertTrue(reference.getTestTimeout().compareTo(reference.getBuildTimeout()) < 0,
                 "testTimeout " + reference.getTestTimeout() + " must be shorter than buildTimeout " + reference.getBuildTimeout());
     }
+    /**
+     * The interactive wait for a submitted analysis is its own parameter. It used to borrow buildTimeout, which is
+     * sized for a forked CI build, so a wedged scorer blocked a developer's terminal for three quarters of an hour.
+     */
+    @Test
+    void interactiveScoringWaitIsBoundedWellBelowTheForkedBuildTimeout() throws Exception {
+        RunArgs reference = new RunArgs();
+
+        long scoringTimeoutMinutes = Long.parseLong(defaultValueOf(parsePluginDescriptor(), "scoringTimeoutMinutes"));
+
+        assertTrue(scoringTimeoutMinutes < reference.getBuildTimeout().toMinutes(),
+                "scoringTimeoutMinutes " + scoringTimeoutMinutes + " must be shorter than buildTimeout "
+                        + reference.getBuildTimeout().toMinutes() + " minutes — it bounds an interactive wait, not a build");
+    }
     private static Document parsePluginDescriptor() throws Exception {
         try (InputStream in = MojoDefaultsDriftTest.class.getResourceAsStream("/META-INF/maven/plugin.xml")) {
             assertNotNull(in, "plugin descriptor must be generated before tests run");

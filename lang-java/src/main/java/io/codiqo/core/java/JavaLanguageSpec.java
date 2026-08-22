@@ -2,7 +2,6 @@ package io.codiqo.core.java;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.math.BigDecimal;
@@ -11,41 +10,37 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.Date;
 import java.util.EnumSet;
 import java.util.Enumeration;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.MapUtils;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
-import org.apache.commons.io.IOUtils;
+import org.apache.commons.io.filefilter.FileFilterUtils;
+import org.apache.commons.io.filefilter.IOFileFilter;
+import org.apache.commons.io.filefilter.TrueFileFilter;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.BooleanUtils;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
-import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.commons.lang3.time.StopWatch;
 import org.eclipse.lsp4j.SymbolKind;
 import org.jacoco.core.analysis.Analyzer;
@@ -56,6 +51,7 @@ import org.jacoco.core.analysis.ICounter;
 import org.jacoco.core.analysis.ILine;
 import org.jacoco.core.analysis.IPackageCoverage;
 import org.jacoco.core.analysis.ISourceFileCoverage;
+import org.jacoco.core.data.ExecutionData;
 import org.jacoco.core.data.ExecutionDataStore;
 import org.jacoco.core.tools.ExecFileLoader;
 import org.slf4j.event.Level;
@@ -67,6 +63,7 @@ import edu.umd.cs.findbugs.DetectorFactoryCollection;
 import edu.umd.cs.findbugs.FindBugs;
 import edu.umd.cs.findbugs.FindBugs2;
 import edu.umd.cs.findbugs.Plugin;
+import edu.umd.cs.findbugs.PluginException;
 import edu.umd.cs.findbugs.PluginLoader;
 import edu.umd.cs.findbugs.SourceLineAnnotation;
 import edu.umd.cs.findbugs.config.UserPreferences;
@@ -82,6 +79,7 @@ import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.coverage.CoverageExclusionReason;
 import io.codiqo.api.coverage.ExcludedCoverageClass;
 import io.codiqo.api.diff.CommitAnalysis;
+import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.jdtls.JdtLspProjectImporter;
@@ -89,6 +87,7 @@ import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.Split;
+import lombok.Value;
 import net.sourceforge.pmd.PMDConfiguration;
 import net.sourceforge.pmd.PmdAnalysis;
 import net.sourceforge.pmd.lang.JvmLanguagePropertyBundle;
@@ -96,12 +95,10 @@ import net.sourceforge.pmd.lang.Language;
 import net.sourceforge.pmd.lang.LanguageProcessorRegistry;
 import net.sourceforge.pmd.lang.LanguagePropertyBundle;
 import net.sourceforge.pmd.lang.LanguageRegistry;
-import net.sourceforge.pmd.lang.ast.Node;
 import net.sourceforge.pmd.lang.ast.NodeStream;
 import net.sourceforge.pmd.lang.ast.Parser;
 import net.sourceforge.pmd.lang.ast.Parser.ParserTask;
 import net.sourceforge.pmd.lang.ast.SemanticErrorReporter;
-import net.sourceforge.pmd.lang.document.FileId;
 import net.sourceforge.pmd.lang.document.FileLocation;
 import net.sourceforge.pmd.lang.document.TextDocument;
 import net.sourceforge.pmd.lang.document.TextFile;
@@ -127,6 +124,22 @@ import net.sourceforge.pmd.reporting.Report;
 public class JavaLanguageSpec implements LanguageSpec {
     public static final EnumSet<SymbolKind> TYPES = EnumSet.of(SymbolKind.Class, SymbolKind.Interface, SymbolKind.Enum);
     public static final EnumSet<SymbolKind> SYMBOLS = EnumSet.of(SymbolKind.Method, SymbolKind.Function, SymbolKind.Constructor);
+
+    public static final String CLASS_EXTENSION = "class";
+
+    private static final String XML_EXTENSION = "xml";
+    private static final String JUNIT_REPORT_PREFIX = "TEST-";
+
+    private static final String META_INF_DIR = "META-INF";
+    private static final String FINDBUGS_DESCRIPTOR = "findbugs" + FilenameUtils.EXTENSION_SEPARATOR_STR + XML_EXTENSION;
+    private static final String JAR_URL_PREFIX = "jar:";
+
+    private static final IOFileFilter CLASS_FILE_FILTER = FileFilterUtils.suffixFileFilter(FilenameUtils.EXTENSION_SEPARATOR_STR + CLASS_EXTENSION);
+
+    /** surefire, failsafe and Gradle's junitXml writer all name a JUnit XML report the same way */
+    private static final IOFileFilter JUNIT_REPORT_FILTER = FileFilterUtils.and(
+            FileFilterUtils.prefixFileFilter(JUNIT_REPORT_PREFIX),
+            FileFilterUtils.suffixFileFilter(FilenameUtils.EXTENSION_SEPARATOR_STR + XML_EXTENSION));
 
     private final Log log;
     private final RunArgs args;
@@ -189,9 +202,9 @@ public class JavaLanguageSpec implements LanguageSpec {
 
         if (owner instanceof JvmProjectSpec jvm) {
             Set<String> jars = new LinkedHashSet<>();
-            jvm.getCompileClasspathElements().stream().forEach(element -> jars.add(element.getAbsolutePath()));
-            jvm.getTestClasspathElements().stream().forEach(element -> jars.add(element.getAbsolutePath()));
-            bundle.setProperty(JvmLanguagePropertyBundle.AUX_CLASSPATH, jars.stream().collect(Collectors.joining(File.pathSeparator)));
+            jvm.getCompileClasspathElements().forEach(element -> jars.add(element.getAbsolutePath()));
+            jvm.getTestClasspathElements().forEach(element -> jars.add(element.getAbsolutePath()));
+            bundle.setProperty(JvmLanguagePropertyBundle.AUX_CLASSPATH, String.join(File.pathSeparator, jars));
         }
 
         LanguageRegistry languageRegistry = LanguageRegistry.singleton(language);
@@ -201,83 +214,8 @@ public class JavaLanguageSpec implements LanguageSpec {
             SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
 
             for (File destination : files) {
-                if (BooleanUtils.negate(FilenameUtils.isExtension(destination.getName(), lang().getExtensions()))) {
-                    continue;
-                }
-
-                try (InputStream io = Files.newInputStream(destination.toPath())) {
-                    String source = IOUtils.toString(io, StandardCharsets.UTF_8);
-                    FileId fileId = FileId.fromPath(destination.toPath().normalize());
-                    try (TextFile file = TextFile.forCharSeq(source, fileId, language.getDefaultVersion())) {
-                        try (TextDocument doc = TextDocument.create(file)) {
-                            ParserTask task = new ParserTask(doc, errorReporter, processingRegistry);
-                            List<CodeBlockInfo> fileBlocks = new ArrayList<>();
-
-                            /**
-                             * PMD's type inference can crash on valid code it fails to disambiguate
-                             * (e.g. diamond anonymous classes like "new TypeToken<>() {}", pmd/pmd#4436) —
-                             * degrade to zero code units for the offending file instead of failing the run
-                             */
-                            try {
-                                ASTCompilationUnit tree = (ASTCompilationUnit) pmd.parse(task);
-
-                                Consumer<ASTExecutableDeclaration> consumer = executable -> {
-                                    ASTBlock block = executable.getBody();
-                                    ASTTypeDeclaration enclosing = executable.getEnclosingType();
-                                    ASTTypeDeclaration type = executable
-                                            .ancestors(ASTTypeDeclaration.class)
-                                            .filter(t -> BooleanUtils.negate(t instanceof ASTAnonymousClassDeclaration))
-                                            .first();
-
-                                    if (Objects.nonNull(block) && BooleanUtils.negate(block.isEmpty())) {
-                                        String body = executable.getText().toString();
-                                        FileLocation reportLocation = tree.getTextDocument().toLocation(executable.getTextRegion());
-
-                                        SourceLocation location = SourceLocation.builder()
-                                                .startLine(reportLocation.getStartLine())
-                                                .endLine(reportLocation.getEndLine())
-                                                .startColumn(reportLocation.getStartColumn())
-                                                .endColumn(reportLocation.getEndColumn())
-                                                .build();
-
-                                        NodeStream<JavaNode> calls = executable.descendants(JavaNode.class).filter(node -> node instanceof MethodUsage).cached();
-                                        Collection<JInvocationBlock> toAdd = outboundASTconverter.apply(calls);
-
-                                        if (executable instanceof ASTMethodDeclaration) {
-                                            fileBlocks.add(JavaPmdMethodInfo.builder()
-                                                    .file(destination)
-                                                    .location(location)
-                                                    .type(type)
-                                                    .enclosingType(enclosing)
-                                                    .node(executable)
-                                                    .invocations(toAdd)
-                                                    .body(body)
-                                                    .build());
-                                        } else if (executable instanceof ASTConstructorDeclaration) {
-                                            fileBlocks.add(JavaPmdConstructorInfo.builder()
-                                                    .file(destination)
-                                                    .location(location)
-                                                    .type(type)
-                                                    .enclosingType(enclosing)
-                                                    .node(executable)
-                                                    .invocations(toAdd)
-                                                    .body(body)
-                                                    .build());
-                                        }
-
-                                        if (owner instanceof JvmProjectSpec jvm) {
-                                            toAdd.stream().forEach(signature -> signature.accept(jvm));
-                                        }
-                                    }
-                                };
-
-                                collectExecutables(tree, consumer);
-                                builder.addAll(fileBlocks);
-                            } catch (RuntimeException err) {
-                                log.warn("PMD failed to analyze %s, skipping code unit indexing for this file: %s", destination, ExceptionUtils.getRootCauseMessage(err));
-                            }
-                        }
-                    }
+                if (FilenameUtils.isExtension(destination.getName(), lang().getExtensions())) {
+                    builder.addAll(parseFile(owner, destination, pmd, errorReporter, processingRegistry));
                 }
             }
         }
@@ -292,6 +230,10 @@ public class JavaLanguageSpec implements LanguageSpec {
     @Override
     public void captureCoverage(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
         captureJacocoCoverage(summary, analysis);
+    }
+    @Override
+    public void captureIncomingCalls(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
+        incomingCallsResolver.resolve(summary, analysis);
     }
     @Override
     public int hashCode() {
@@ -310,55 +252,156 @@ public class JavaLanguageSpec implements LanguageSpec {
     }
     @Override
     public void close() throws IOException {
-        if (Objects.nonNull(jdt)) {
-            jdt.close();
+        jdt.close();
+    }
+    private List<CodeBlockInfo> parseFile(
+            ProjectSpec owner,
+            File destination,
+            Parser pmd,
+            SemanticErrorReporter errorReporter,
+            LanguageProcessorRegistry processingRegistry) throws IOException {
+        List<CodeBlockInfo> toReturn = new ArrayList<>();
+
+        try (TextFile file = TextFile.forPath(destination.toPath().normalize(), StandardCharsets.UTF_8, language.getDefaultVersion())) {
+            try (TextDocument doc = TextDocument.create(file)) {
+                /**
+                 * PMD's type inference can crash on valid code it fails to disambiguate
+                 * (e.g. diamond anonymous classes like "new TypeToken<>() {}", pmd/pmd#4436) —
+                 * degrade to zero code units for the offending file instead of failing the run
+                 */
+                try {
+                    ASTCompilationUnit tree = (ASTCompilationUnit) pmd.parse(new ParserTask(doc, errorReporter, processingRegistry));
+
+                    /**
+                     * crossFindBoundaries is required rather than cosmetic: every type declaration, anonymous class
+                     * and lambda is a find boundary in PMD's Java AST, so the default traversal stops before it
+                     * reaches a single method body
+                     */
+                    tree.descendants(ASTExecutableDeclaration.class)
+                            .crossFindBoundaries()
+                            .forEach(executable -> collectBlock(owner, destination, tree, executable, toReturn));
+                } catch (RuntimeException err) {
+                    log.warn("PMD failed to analyze %s, skipping code unit indexing for this file: %s", destination, ExceptionUtils.getRootCauseMessage(err));
+                    return List.of();
+                }
+            }
+        }
+
+        return toReturn;
+    }
+    private void collectBlock(
+            ProjectSpec owner,
+            File destination,
+            ASTCompilationUnit tree,
+            ASTExecutableDeclaration executable,
+            List<CodeBlockInfo> target) {
+        ASTBlock block = executable.getBody();
+        if (Objects.nonNull(block) && BooleanUtils.negate(block.isEmpty())) {
+            String body = executable.getText().toString();
+            ASTTypeDeclaration enclosing = executable.getEnclosingType();
+            ASTTypeDeclaration type = executable
+                    .ancestors(ASTTypeDeclaration.class)
+                    .filter(t -> BooleanUtils.negate(t instanceof ASTAnonymousClassDeclaration))
+                    .first();
+
+            FileLocation reportLocation = tree.getTextDocument().toLocation(executable.getTextRegion());
+            SourceLocation location = SourceLocation.builder()
+                    .startLine(reportLocation.getStartLine())
+                    .endLine(reportLocation.getEndLine())
+                    .startColumn(reportLocation.getStartColumn())
+                    .endColumn(reportLocation.getEndColumn())
+                    .build();
+
+            NodeStream<JavaNode> calls = executable.descendants(JavaNode.class).filter(node -> node instanceof MethodUsage).cached();
+            Collection<JInvocationBlock> invocations = outboundASTconverter.apply(calls);
+
+            if (executable instanceof ASTMethodDeclaration) {
+                target.add(JavaPmdMethodInfo.builder()
+                        .file(destination)
+                        .location(location)
+                        .type(type)
+                        .enclosingType(enclosing)
+                        .node(executable)
+                        .invocations(invocations)
+                        .body(body)
+                        .build());
+            } else if (executable instanceof ASTConstructorDeclaration) {
+                target.add(JavaPmdConstructorInfo.builder()
+                        .file(destination)
+                        .location(location)
+                        .type(type)
+                        .enclosingType(enclosing)
+                        .node(executable)
+                        .invocations(invocations)
+                        .body(body)
+                        .build());
+            }
+
+            if (owner instanceof JvmProjectSpec jvm) {
+                invocations.forEach(signature -> signature.accept(jvm));
+            }
         }
     }
     private void captureJacocoCoverage(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
         StopWatch stopWatch = StopWatch.createStarted();
 
         ExecFileLoader loader = new ExecFileLoader();
+        Map<File, LoadedExec> loadedExecs = new LinkedHashMap<>();
+        List<ProjectSpec> coveredProjects = loadOwnedCoverage(summary, loader, loadedExecs);
 
-        List<ProjectSpec> coveredProjects = new ArrayList<>();
-        List<String> uninstrumentedModules = new CopyOnWriteArrayList<>();
-        Set<File> loadedCoverageFiles = ConcurrentHashMap.newKeySet();
+        if (MapUtils.isNotEmpty(loadedExecs)) {
+            admitCrossModuleCoverage(summary, loadedExecs.values(), coveredProjects);
+        }
+
+        if (CollectionUtils.isEmpty(coveredProjects)) {
+            return;
+        }
+
+        Map<File, ISourceFileCoverage> coverages = new LinkedHashMap<>();
+        List<IClassCoverage> collisions = new ArrayList<>();
+        CoverageTotals totals = analyzeModules(coveredProjects, loader.getExecutionDataStore(), coverages, collisions);
+
+        if (CollectionUtils.isNotEmpty(collisions)) {
+            reportCollisions(collisions, coverages, summary, analysis);
+        }
+
+        log.info("coverage: %d/%d lines covered across %d modules (%d packages, %d classes analyzed)",
+                totals.getCoveredLines(),
+                totals.getLines(),
+                coveredProjects.size(),
+                totals.getPackages(),
+                totals.getClasses());
+
+        attributeBlockCoverage(summary, coverages);
+        attributeFileCoverage(analysis, coverages);
+
+        stopWatch.stop();
+        log.info("jacoco coverage analysis completed in %s", stopWatch);
+    }
+    /**
+     * Loads the exec file each module produced for itself, and refuses to go on when a module whose tests demonstrably
+     * ran produced none at all.
+     */
+    private List<ProjectSpec> loadOwnedCoverage(IndexingSummary summary, ExecFileLoader loader, Map<File, LoadedExec> loadedExecs) throws IOException {
+        List<ProjectSpec> toReturn = new ArrayList<>();
+        List<String> uninstrumentedModules = new ArrayList<>();
 
         for (ProjectSpec project : summary.getProjects()) {
             Optional<File> coverage = project.coverage();
             if (coverage.isPresent()) {
-                /**
-                 * we have to ensure the coverage file is not older than the project's latest modified time, otherwise we have to abort
-                 */
                 File file = coverage.get();
-                BasicFileAttributes attrs = Files.readAttributes(file.toPath(), BasicFileAttributes.class);
-                FileTime fileTime = attrs.lastModifiedTime();
-                if (Objects.nonNull(fileTime)) {
-                    Optional<Date> lm = project.latestModified();
-                    if (lm.isPresent()) {
-                        Date latestModified = lm.get();
-                        log.log(Level.TRACE,
-                                "checking coverage file %s modified time %s against project's latest modified time %s",
-                                file.getAbsolutePath(),
-                                fileTime.toInstant(),
-                                latestModified.toInstant());
-                        if (fileTime.toInstant().isBefore(latestModified.toInstant())) {
-                            throw new IOException(String.format(
-                                    "coverage file %s modified time %s is before project's latest modified time %s indicating the coverage data may be stale, please rebuild the project and rerun the tests",
-                                    file.getAbsolutePath(),
-                                    fileTime.toInstant(),
-                                    latestModified.toInstant()));
-                        }
-                    }
-                }
+                verifyCoverageNotStale(project, file);
+
                 /**
                  * aggregated destFile configurations point every module at the same file — load it once.
                  * the per-module staleness check above still runs for each module.
                  */
-                if (loadedCoverageFiles.add(file)) {
+                if (BooleanUtils.negate(loadedExecs.containsKey(file))) {
                     loader.load(file);
+                    loadedExecs.put(file, readExecContents(file));
                 }
                 if (project.getOutputDirectory().exists()) {
-                    coveredProjects.add(project);
+                    toReturn.add(project);
                 }
             } else if (args.isFailOnUninstrumentedModule() && expectsCoverage(project)) {
                 uninstrumentedModules.add(project.getName());
@@ -371,179 +414,231 @@ public class JavaLanguageSpec implements LanguageSpec {
                     String.join(", ", uninstrumentedModules)));
         }
 
-        if (CollectionUtils.isEmpty(coveredProjects)) {
-            return;
+        return toReturn;
+    }
+    private void verifyCoverageNotStale(ProjectSpec project, File coverage) throws IOException {
+        /**
+         * coverage recorded before the module's sources changed describes other code, and no amount of analysis can
+         * tell which — abort rather than report it
+         */
+        FileTime fileTime = Files.readAttributes(coverage.toPath(), BasicFileAttributes.class).lastModifiedTime();
+        Optional<Date> lm = project.latestModified();
+        if (lm.isPresent()) {
+            Date latestModified = lm.get();
+            log.log(Level.TRACE,
+                    "checking coverage file %s modified time %s against project's latest modified time %s",
+                    coverage.getAbsolutePath(),
+                    fileTime.toInstant(),
+                    latestModified.toInstant());
+            if (fileTime.toInstant().isBefore(latestModified.toInstant())) {
+                throw new IOException(String.format(
+                        "coverage file %s modified time %s is before project's latest modified time %s indicating the coverage data may be stale, please rebuild the project and rerun the tests",
+                        coverage.getAbsolutePath(),
+                        fileTime.toInstant(),
+                        latestModified.toInstant()));
+            }
         }
+    }
+    /**
+     * A module whose own tests never ran still has its classes exercised by another module's tests — guava keeps its
+     * production code in `guava` and every test in `guava-tests`, so `guava/target/jacoco.exec` is never written and the
+     * classes that the commit actually changed would carry no coverage at all. JaCoCo records probes per class, not per
+     * module, and every exec file loaded went into one store, so any module's classes can be resolved against it. Admit
+     * them, but only once something was loaded: with no exec data at all this would analyze every class and report a
+     * confident 0%.
+     */
+    private void admitCrossModuleCoverage(
+            IndexingSummary summary,
+            Collection<LoadedExec> loadedExecs,
+            List<ProjectSpec> coveredProjects) throws IOException {
+        for (ProjectSpec project : summary.getProjects()) {
+            if (coveredProjects.contains(project)) {
+                continue;
+            }
+            if (BooleanUtils.negate(project.getOutputDirectory().exists())) {
+                continue;
+            }
+            /**
+             * a code generator or a fixtures module no test ever touches would otherwise fold into the totals at
+             * a confident 0% and dilute the figure for the code actually under test
+             */
+            Optional<Date> exercisedAt = newestExecContaining(loadedExecs, compiledClassNames(project.getOutputDirectory()));
+            if (exercisedAt.isEmpty()) {
+                log.info("skipping coverage for %s: no test anywhere loaded any of its classes", project.getName());
+                continue;
+            }
+            /**
+             * the staleness guard the owning-module branch applies to its own exec file, applied here against the
+             * newest exec that actually carries this module's classes. the newest exec overall is the wrong
+             * comparison: a fresh run of an unrelated module would vouch for probes that were recorded before this
+             * module's sources changed, and those probes describe other code.
+             */
+            Optional<Date> latestModified = project.latestModified();
+            if (latestModified.isPresent() && exercisedAt.get().toInstant().isBefore(latestModified.get().toInstant())) {
+                log.warn("skipping coverage for %s: the newest coverage data covering its classes (%s) predates the module's latest source change (%s)",
+                        project.getName(),
+                        exercisedAt.get().toInstant(),
+                        latestModified.get().toInstant());
+                continue;
+            }
 
-        ExecutionDataStore data = loader.getExecutionDataStore();
+            log.info("including %s in coverage analysis against another module's execution data", project.getName());
+            coveredProjects.add(project);
+        }
+    }
+    /**
+     * Each module is analyzed with its own {@link CoverageBuilder}. A single shared builder throws "Can't add different
+     * class with same name" when two modules legitimately declare the same fully-qualified class with different bodies
+     * (e.g. a mapper class of the same name exists in both a gateway-client module and a worker module). Per-module
+     * builders also let each module's source files resolve against that module's own source roots only, avoiding
+     * cross-module mis-attribution of duplicate class names.
+     */
+    private CoverageTotals analyzeModules(
+            Collection<ProjectSpec> coveredProjects,
+            ExecutionDataStore data,
+            Map<File, ISourceFileCoverage> coverages,
+            List<IClassCoverage> collisions) throws IOException {
+        File workTree = args.getGit().getWorkTree();
 
-        int totalAnalyzed = 0;
+        int analyzedClasses = 0;
         int totalLines = 0;
         int coveredLines = 0;
-        int totalPackages = 0;
-
-        List<IClassCoverage> noMatch = new ArrayList<>();
-        Map<File, ISourceFileCoverage> coverages = new ConcurrentHashMap<>();
 
         /**
-         * aggregate line totals dedupe by class id and packages by name so identical copies of a class across
-         * modules are not double-counted.
+         * line totals dedupe by class id and packages by name so identical copies of a class across modules are not
+         * double-counted
          */
         Set<Long> countedClassIds = new HashSet<>();
         Set<String> countedPackages = new HashSet<>();
 
-        /**
-         * each module is analyzed with its own CoverageBuilder. a single shared builder throws
-         * "Can't add different class with same name" when two modules legitimately declare the same
-         * fully-qualified class with different bodies (e.g. uam's bi.bloomreach.data.BloomreachMapper
-         * exists in both the gateway-client and worker modules). per-module builders also let each
-         * module's source files resolve against that module's own source roots only, avoiding
-         * cross-module mis-attribution of duplicate class names.
-         */
         for (ProjectSpec project : coveredProjects) {
             CoverageBuilder coverageBuilder = new CoverageBuilder();
             Analyzer analyzer = new Analyzer(data, coverageBuilder);
 
             File outputDir = project.getOutputDirectory();
-            int count = analyzer.analyzeAll(outputDir);
-            totalAnalyzed += count;
+            int count = analyzeClassRoots(analyzer, outputDir);
+            analyzedClasses += count;
             log.info("analyzed JaCoCo coverage for %d classes from %s", count, outputDir.getAbsolutePath());
 
-            noMatch.addAll(coverageBuilder.getNoMatchClasses());
+            collisions.addAll(coverageBuilder.getNoMatchClasses());
 
             IBundleCoverage bundle = coverageBuilder.getBundle(language.getName());
-            for (IPackageCoverage pkg : bundle.getPackages()) {
-                if (countedPackages.add(pkg.getName())) {
-                    totalPackages++;
-                }
-                for (IClassCoverage cls : pkg.getClasses()) {
-                    if (countedClassIds.add(cls.getId())) {
-                        totalLines += cls.getLineCounter().getTotalCount();
-                        coveredLines += cls.getLineCounter().getCoveredCount();
-                    }
-                }
-            }
 
+            Set<CoverageSourceFile> excludedSources = Collections.emptySet();
             if (project instanceof JvmProjectSpec jvm) {
-                for (File sourceRoot : jvm.getCompileSourceRoots()) {
-                    Path normalized = sourceRoot.toPath().normalize().toAbsolutePath();
-                    for (IPackageCoverage pkg : bundle.getPackages()) {
-                        for (ISourceFileCoverage source : pkg.getSourceFiles()) {
-                            Path sourcePath = Paths.get(source.getPackageName(), source.getName());
-                            File resolved = normalized.resolve(sourcePath).normalize().toFile();
-                            if (resolved.exists()) {
-                                coverages.put(resolved, source);
-                            }
-                        }
+                excludedSources = collectSourceCoverage(args, workTree, jvm, bundle, coverages);
+            }
+
+            for (IPackageCoverage pkg : bundle.getPackages()) {
+                countedPackages.add(pkg.getName());
+                for (IClassCoverage cls : pkg.getClasses()) {
+                    if (CoverageSourceFile.of(cls).filter(excludedSources::contains).isPresent()) {
+                        continue;
+                    }
+                    if (countedClassIds.add(cls.getId())) {
+                        ICounter lines = cls.getLineCounter();
+                        totalLines += lines.getTotalCount();
+                        coveredLines += lines.getCoveredCount();
                     }
                 }
             }
         }
 
-        /**
-         * a noMatch means the class name is present in the aggregated execution data under a different class id than
-         * the compiled target/classes. the cause is a duplicate fully-qualified name on the classpath — the same FQN
-         * shipped by more than one artifact (two reactor modules, or a reactor module shadowed by a dependency jar,
-         * e.g. uam's admin.AdminServerProperties in both com.turbospaces.uam:admin-ui-server and the legacy
-         * com.patrianna.uam:admin-server-common) — or another -javaagent transforming the class at load time. codiqo
-         * cannot tell which copy the recorded probes belong to, so the name's coverage is untrustworthy from EVERY
-         * copy: every source file carrying a collided name is dropped from coverage entirely (safer than trusting one
-         * copy). this never fails the analysis — a classpath collision cannot be fixed by rebuilding, and time-machined
-         * historical commits predate any maven-enforcer duplicate-class ban.
-         */
-        if (CollectionUtils.isNotEmpty(noMatch)) {
-            noMatch.forEach(cls -> analysis.excludedCoverageClasses().add(
-                    new ExcludedCoverageClass(cls.getName().replace('/', '.'), CoverageExclusionReason.DUPLICATE_FULLY_QUALIFIED_NAME)));
+        return new CoverageTotals(analyzedClasses, countedPackages.size(), totalLines, coveredLines);
+    }
+    /**
+     * A collision means the class name is present in the aggregated execution data under a different class id than the
+     * compiled target/classes. The cause is a duplicate fully-qualified name on the classpath — the same FQN shipped by
+     * more than one artifact (two reactor modules, or a reactor module shadowed by a dependency jar carrying an older
+     * copy of the same class) — or another -javaagent transforming the class at load time. Codiqo cannot
+     * tell which copy the recorded probes belong to, so the name's coverage is untrustworthy from EVERY copy: every
+     * source file carrying a collided name is dropped from coverage entirely (safer than trusting one copy). This never
+     * fails the analysis — a classpath collision cannot be fixed by rebuilding, and time-machined historical commits
+     * predate any maven-enforcer duplicate-class ban.
+     */
+    private void reportCollisions(
+            List<IClassCoverage> collisions,
+            Map<File, ISourceFileCoverage> coverages,
+            IndexingSummary summary,
+            CommitAnalysis analysis) {
+        collisions.forEach(cls -> analysis.excludedCoverageClasses().add(
+                new ExcludedCoverageClass(JavaBinaryFormat.getBinaryName(cls.getName()), CoverageExclusionReason.DUPLICATE_FULLY_QUALIFIED_NAME)));
 
-            Set<String> collidedSourceFiles = noMatch.stream()
-                    .map(cls -> cls.getPackageName() + "/" + cls.getSourceFileName())
-                    .collect(Collectors.toSet());
-            coverages.values().removeIf(source -> collidedSourceFiles.contains(source.getPackageName() + "/" + source.getName()));
+        Set<CoverageSourceFile> collided = collisions.stream()
+                .map(CoverageSourceFile::of)
+                .flatMap(Optional::stream)
+                .collect(Collectors.toSet());
+        coverages.values().removeIf(source -> collided.contains(CoverageSourceFile.of(source)));
 
-            List<IClassCoverage> changedCollisions = noMatch.stream()
-                    .filter(cls -> touchesAnalyzedFile(cls, analysis))
-                    .toList();
-            if (CollectionUtils.isNotEmpty(changedCollisions)) {
-                log.warn("%d of the commit's changed classes have a duplicate fully-qualified name on the classpath — coverage is unavailable for them and excluded (no copy is trusted)", changedCollisions.size());
-                changedCollisions.forEach(cls -> log.warn("  - %s", cls.getName()));
-            }
-
-            log.warn("%d classes excluded from coverage — their fully-qualified name resolves to more than one class on the classpath (duplicate FQN) or was transformed at load time, so JaCoCo cannot attribute execution data to a single copy", noMatch.size());
-            noMatch.forEach(cls -> log.warn("  - %s", cls.getName()));
+        Map<String, File> analyzedBySourcePath = indexBySourceRootRelativePath(analysis.locations(), sourceRoots(summary.getProjects()));
+        List<File> changed = new ArrayList<>();
+        for (CoverageSourceFile source : collided) {
+            Optional.ofNullable(analyzedBySourcePath.get(source.unixPath())).ifPresent(changed::add);
         }
 
-        log.info("coverage: %d/%d lines covered across %d modules (%d packages, %d classes analyzed)",
-                coveredLines,
-                totalLines,
-                coveredProjects.size(),
-                totalPackages,
-                totalAnalyzed);
+        if (CollectionUtils.isNotEmpty(changed)) {
+            log.warn("%d of the commit's changed files have a duplicate fully-qualified name on the classpath — coverage is unavailable for them and excluded (no copy is trusted)", changed.size());
+            changed.forEach(file -> log.warn("  - %s", file));
+        }
 
-        /**
-         * capture coverage for ALL code blocks in the project (not just commit-affected).
-         * this enables full project coverage metrics for quality gates and reporting.
-         */
-        AtomicInteger totalBlocksWithCoverage = new AtomicInteger();
-        AtomicInteger totalBlocksProcessed = new AtomicInteger();
+        log.warn("%d classes excluded from coverage — their fully-qualified name resolves to more than one class on the classpath (duplicate FQN) or was transformed at load time, so JaCoCo cannot attribute execution data to a single copy", collisions.size());
+        collisions.forEach(cls -> log.warn("  - %s", cls.getName()));
+    }
+    /**
+     * Captures coverage for ALL code blocks in the project, not just the commit-affected ones, so quality gates and
+     * reporting can speak for the whole project.
+     */
+    private void attributeBlockCoverage(IndexingSummary summary, Map<File, ISourceFileCoverage> coverages) {
+        int blocksWithCoverage = 0;
+        int blocksProcessed = 0;
 
-        summary.getBlocks().asMap().forEach((file, blocksCollection) -> {
-            if (FilenameUtils.isExtension(file.getName(), lang().getExtensions())) {
-                ISourceFileCoverage source = coverages.get(file);
+        for (Entry<File, Collection<CodeBlockInfo>> entry : summary.getBlocks().asMap().entrySet()) {
+            if (FilenameUtils.isExtension(entry.getKey().getName(), lang().getExtensions())) {
+                ISourceFileCoverage source = coverages.get(entry.getKey());
                 if (Objects.nonNull(source)) {
-                    for (CodeBlockInfo block : blocksCollection) {
+                    for (CodeBlockInfo block : entry.getValue()) {
                         if (block instanceof JavaCodeBlockInfo javaBlock) {
-                            int startLine = block.getLocation().getStartLine();
-                            int endLine = block.getLocation().getEndLine();
-                            boolean hasCoverage = false;
-
-                            for (int lineNum = startLine; lineNum <= endLine; lineNum++) {
-                                ILine l = source.getLine(lineNum);
-                                javaBlock.lineCoverage(lineNum, l);
-                                if (BooleanUtils.or(new boolean[] { l.getStatus() == ICounter.FULLY_COVERED, l.getStatus() == ICounter.PARTLY_COVERED })) {
-                                    hasCoverage = true;
-                                }
-                            }
-
-                            totalBlocksProcessed.incrementAndGet();
-                            if (hasCoverage) {
-                                totalBlocksWithCoverage.incrementAndGet();
+                            blocksProcessed++;
+                            if (attributeLines(javaBlock, source)) {
+                                blocksWithCoverage++;
                             }
                         }
                     }
                 }
             }
-        });
+        }
 
-        log.info("full project coverage: %d/%d code blocks have coverage data", totalBlocksWithCoverage.get(), totalBlocksProcessed.get());
+        log.info("full project coverage: %d/%d code blocks have coverage data", blocksWithCoverage, blocksProcessed);
+    }
+    private void attributeFileCoverage(CommitAnalysis analysis, Map<File, ISourceFileCoverage> coverages) {
+        int matched = 0;
+        int unmatched = 0;
+        int linesWithCoverage = 0;
 
-        AtomicInteger matched = new AtomicInteger();
-        AtomicInteger unmatched = new AtomicInteger();
-        AtomicInteger linesWithCoverage = new AtomicInteger();
-
-        analysis.forEach(fileAnalysis -> {
+        for (FileAnalysis fileAnalysis : analysis) {
             if (fileAnalysis.isExtension(lang())) {
                 ISourceFileCoverage source = coverages.get(fileAnalysis.getFile());
                 if (Objects.nonNull(source)) {
-                    matched.incrementAndGet();
+                    matched++;
 
-                    if (source.getFirstLine() > 0) {
-                        for (int lineNum = source.getFirstLine(); lineNum <= source.getLastLine(); lineNum++) {
-                            ILine line = source.getLine(lineNum);
-                            fileAnalysis.lineCoverage(lineNum, line);
-                            if (BooleanUtils.or(new boolean[] { line.getStatus() == ICounter.FULLY_COVERED, line.getStatus() == ICounter.PARTLY_COVERED })) {
-                                linesWithCoverage.incrementAndGet();
+                    int firstLine = source.getFirstLine();
+                    int lastLine = source.getLastLine();
+                    if (firstLine > 0) {
+                        for (int lineNumber = firstLine; lineNumber <= lastLine; lineNumber++) {
+                            ILine line = source.getLine(lineNumber);
+                            fileAnalysis.lineCoverage(lineNumber, line);
+                            if (isCovered(line)) {
+                                linesWithCoverage++;
                             }
                         }
                     }
                 } else {
-                    unmatched.incrementAndGet();
+                    unmatched++;
                 }
             }
-        });
-        stopWatch.stop();
+        }
 
-        log.info("jacoco coverage analysis completed in %s", stopWatch);
-        log.info("coverage analysis: %d files affected matched, %d unmatched, %d lines with coverage", matched.get(), unmatched.get(), linesWithCoverage.get());
+        log.info("coverage analysis: %d files affected matched, %d unmatched, %d lines with coverage", matched, unmatched, linesWithCoverage);
     }
     private void capturePmdViolations(IndexingSummary summary, CommitAnalysis analysis) {
         Map<ProjectSpec, List<File>> filesByProject = new LinkedHashMap<>();
@@ -584,20 +679,15 @@ public class JavaLanguageSpec implements LanguageSpec {
 
         try (PmdAnalysis pmd = PmdAnalysis.create(cfg)) {
             pmd.addRuleSets(pmd.newRuleSetLoader().warnDeprecated(false).loadFromResources(args.getPmdRules()));
-            MutableBoolean toApply = new MutableBoolean();
 
+            Map<String, File> filesByAbsolutePath = new LinkedHashMap<>();
             for (File sourceFile : filesForProject) {
                 if (pmd.files().addFile(sourceFile.toPath().normalize())) {
-                    toApply.setTrue();
+                    filesByAbsolutePath.put(sourceFile.getAbsolutePath(), sourceFile);
                 }
             }
 
-            if (toApply.isTrue()) {
-                Map<String, File> filesByAbsolutePath = new HashMap<>();
-                for (File sourceFile : filesForProject) {
-                    filesByAbsolutePath.put(sourceFile.getAbsolutePath(), sourceFile);
-                }
-
+            if (MapUtils.isNotEmpty(filesByAbsolutePath)) {
                 Report report = pmd.performAnalysisAndCollectReport();
                 report.getViolations().forEach(violation -> {
                     File sourceFile = filesByAbsolutePath.get(violation.getFileId().getAbsolutePath());
@@ -625,223 +715,321 @@ public class JavaLanguageSpec implements LanguageSpec {
         }
     }
     private void captureSpotbugsViolations(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
-        Map<ProjectSpec, edu.umd.cs.findbugs.Project> projects = new HashMap<>();
+        Map<ProjectSpec, edu.umd.cs.findbugs.Project> projects = new LinkedHashMap<>();
         for (ProjectSpec project : summary.getProjects()) {
             if (project instanceof JvmProjectSpec jvm) {
                 File outputDir = project.getOutputDirectory();
                 if (outputDir.exists()) {
-                    if (hasClassFiles(outputDir)) {
+                    if (hasFilesWithExtension(outputDir, CLASS_EXTENSION)) {
                         verifyClassesNotStale(project, outputDir);
-                        projects.computeIfAbsent(project, target -> {
-                            edu.umd.cs.findbugs.Project spotbugs = new edu.umd.cs.findbugs.Project();
-                            spotbugs.setProjectName(target.getName());
-                            spotbugs.addFile(target.getOutputDirectory().getAbsolutePath());
-
-                            jvm.getCompileClasspathElements().stream().forEach(element -> spotbugs.addAuxClasspathEntry(element.getAbsolutePath()));
-                            jvm.getTestClasspathElements().stream().forEach(element -> spotbugs.addAuxClasspathEntry(element.getAbsolutePath()));
-
-                            for (File dir : jvm.getCompileSourceRoots()) {
-                                spotbugs.addSourceDirs(Collections.singletonList(dir.getAbsolutePath()));
-                            }
-                            for (File dir : jvm.getTestCompileSourceRoots()) {
-                                spotbugs.addSourceDirs(Collections.singletonList(dir.getAbsolutePath()));
-                            }
-
-                            return spotbugs;
-                        });
+                        projects.put(project, spotbugsProject(jvm));
                     } else {
                         log.info("skipping spotbugs for project '%s': no .class files in %s (likely a pom-only aggregator, a test-only module, or an un-compiled module)",
-                                project.getName(), outputDir.getAbsolutePath());
+                                project.getName(),
+                                outputDir.getAbsolutePath());
                     }
                 }
             }
         }
 
-        Set<Plugin> plugins = new HashSet<>();
-        Set<String> current = Plugin.getAllPlugins()
+        UnhiddenDetectorFactoryCollection detectorFactory = new UnhiddenDetectorFactoryCollection(loadCustomSpotbugsPlugins());
+        DetectorFactoryCollection.resetInstance(detectorFactory);
+
+        Map<String, File> filesBySourcePath = indexBySourceRootRelativePath(summary.getBlocks().keySet(), sourceRoots(projects.keySet()));
+        Set<String> omitVisitors = new HashSet<>(Split.on(args.getSpotbugsOmitVisitors(), ','));
+
+        StopWatch spotbugsWatch = StopWatch.createStarted();
+        for (edu.umd.cs.findbugs.Project spotbugs : projects.values()) {
+            try {
+                runSpotbugs(spotbugs, detectorFactory, omitVisitors, filesBySourcePath, summary, analysis);
+            } catch (InterruptedException err) {
+                Thread.currentThread().interrupt();
+                throw new IOException("spotbugs analysis was interrupted", err);
+            } finally {
+                spotbugs.close();
+            }
+        }
+        spotbugsWatch.stop();
+
+        log.info("spotbugs analysis completed in %s", spotbugsWatch);
+    }
+    private void runSpotbugs(
+            edu.umd.cs.findbugs.Project spotbugs,
+            DetectorFactoryCollection detectorFactory,
+            Set<String> omitVisitors,
+            Map<String, File> filesBySourcePath,
+            IndexingSummary summary,
+            CommitAnalysis analysis) throws IOException, InterruptedException {
+        try (StringWriter writer = new StringWriter()) {
+            try (PrintWriter printer = new PrintWriter(writer)) {
+                BugCollectionBugReporter bugReporter = new BugCollectionBugReporter(spotbugs, printer);
+                bugReporter.setPriorityThreshold(args.getSpotbugsPriorityThreshold());
+
+                try (FindBugs2 findBugs = new FindBugs2()) {
+                    findBugs.setProject(spotbugs);
+                    findBugs.setBugReporter(bugReporter);
+                    findBugs.setDetectorFactoryCollection(detectorFactory);
+                    findBugs.setNoClassOk(false);
+                    findBugs.setScanNestedArchives(false);
+
+                    UserPreferences prefs = UserPreferences.createDefaultUserPreferences();
+
+                    detectorFactory.factoryIterator().forEachRemaining(factory -> {
+                        if (omitVisitors.contains(factory.getShortName())) {
+                            prefs.enableDetector(factory, false);
+                        }
+                    });
+
+                    findBugs.setUserPreferences(prefs);
+                    findBugs.setAnalysisFeatureSettings(FindBugs.DEFAULT_EFFORT);
+                    findBugs.execute();
+
+                    collectSpotbugs(bugReporter.getBugCollection(), filesBySourcePath, summary, analysis);
+                }
+            }
+        }
+    }
+    private void collectSpotbugs(
+            BugCollection bugCollection,
+            Map<String, File> filesBySourcePath,
+            IndexingSummary summary,
+            CommitAnalysis analysis) {
+        for (BugInstance bug : bugCollection) {
+            SourceLineAnnotation sourceLine = bug.getPrimarySourceLineAnnotation();
+            int markStart = sourceLine.getStartLine();
+            int markEnd = sourceLine.getEndLine();
+
+            File sourceFile = filesBySourcePath.get(sourceLine.getSourcePath());
+            if (Objects.nonNull(sourceFile)) {
+                Collection<CodeBlockInfo> blocks = summary.getBlocks().get(sourceFile);
+                for (CodeBlockInfo block : blocks) {
+                    if (block.getLocation().getStartLine() <= markStart && markEnd <= block.getLocation().getEndLine()) {
+                        if (block instanceof JavaCodeBlockInfo javaBlock) {
+                            javaBlock.spotbug(bug);
+                        }
+                        if (analysis.isPresent(sourceFile, block)) {
+                            log.info("detected spotbug violation for %s : line(%d-%d)  %s ( %s )",
+                                    block,
+                                    sourceLine.getStartLine(),
+                                    sourceLine.getEndLine(),
+                                    bug.getType(),
+                                    bug.getMessage());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    /**
+     * SpotBugs plugins reachable on codiqo's own classpath, minus the ones a previous run already registered globally.
+     */
+    private Set<Plugin> loadCustomSpotbugsPlugins() throws IOException {
+        Set<String> registered = Plugin.getAllPlugins()
                 .stream()
                 .map(Plugin::getPluginLoader)
                 .map(PluginLoader::getURL)
                 .map(URL::toString)
                 .collect(Collectors.toSet());
 
-        try {
-            Enumeration<URL> resources = getClass().getClassLoader().getResources("findbugs.xml");
-            while (resources.hasMoreElements()) {
-                URL resource = resources.nextElement();
-                String path = resource.toString();
-                if (path.startsWith("jar:")) {
-                    JarURLConnection jarConnection = (JarURLConnection) resource.openConnection();
-                    resource = jarConnection.getJarFileURL();
-                }
-
-                if (current.contains(resource.toString())) {
-                    continue;
-                }
-
-                try {
-                    Plugin customPlugin = Plugin.addCustomPlugin(resource);
-                    log.info("loaded custom spotbugs plugin from %s with id '%s'", resource, customPlugin.getPluginId());
-                    plugins.add(customPlugin);
-                } catch (DuplicatePluginIdException err) {
-                    log.log(Level.DEBUG, "spotbugs plugin from %s already registered: %s", resource, err.getMessage());
-                }
+        Set<Plugin> toReturn = new HashSet<>();
+        Enumeration<URL> resources = getClass().getClassLoader().getResources(FINDBUGS_DESCRIPTOR);
+        while (resources.hasMoreElements()) {
+            URL resource = resources.nextElement();
+            if (resource.toString().startsWith(JAR_URL_PREFIX)) {
+                resource = ((JarURLConnection) resource.openConnection()).getJarFileURL();
             }
-        } catch (Exception err) {
-            ExceptionUtils.wrapAndThrow(err);
-        }
+            if (registered.contains(resource.toString())) {
+                continue;
+            }
 
-        UnhiddenDetectorFactoryCollection detectorFactory = new UnhiddenDetectorFactoryCollection(plugins);
-        DetectorFactoryCollection.resetInstance(detectorFactory);
-
-        Set<Path> sourceRoots = new HashSet<>();
-        for (ProjectSpec project : projects.keySet()) {
-            if (project instanceof JvmProjectSpec jvm) {
-                jvm.getCompileSourceRoots().forEach(dir -> sourceRoots.add(dir.toPath().normalize()));
-                jvm.getTestCompileSourceRoots().forEach(dir -> sourceRoots.add(dir.toPath().normalize()));
+            try {
+                Plugin custom = Plugin.addCustomPlugin(resource);
+                log.info("loaded custom spotbugs plugin from %s with id '%s'", resource, custom.getPluginId());
+                toReturn.add(custom);
+            } catch (DuplicatePluginIdException err) {
+                log.log(Level.DEBUG, "spotbugs plugin from %s already registered: %s", resource, err.getMessage());
+            } catch (PluginException err) {
+                throw new IOException("failed to load the custom spotbugs plugin at " + resource, err);
             }
         }
 
-        Map<String, File> filesBySourcePath = new HashMap<>();
-        for (File sourceFile : summary.getBlocks().keySet()) {
-            Path normalized = sourceFile.toPath().normalize();
-            for (Path rootPath : sourceRoots) {
-                if (normalized.startsWith(rootPath)) {
-                    filesBySourcePath.put(rootPath.relativize(normalized).toString(), sourceFile);
+        return toReturn;
+    }
+    static boolean expectsCoverage(ProjectSpec project) throws IOException {
+        /**
+         * a module "expects" coverage only when its test run actually happened: compiled main classes AND at least one
+         * JUnit XML report in a directory the build tool named for it. a pom aggregator, a code-less module, or a module
+         * whose only src/test sources are main()-style helpers (dev-server starters, migration generators) with no
+         * @Test methods runs no tests, forks no JVM, and legitimately produces no exec file — so it must not be
+         * flagged. keying on executed reports still catches the real regression: tests ran (reports present) but the
+         * agent never attached (no exec file).
+         */
+        if (project instanceof JvmProjectSpec jvm) {
+            File outputDir = jvm.getOutputDirectory();
+            if (outputDir.isDirectory() && hasFilesWithExtension(outputDir, CLASS_EXTENSION)) {
+                return jvm.getTestReportDirectories().stream().anyMatch(JavaLanguageSpec::containsJunitReports);
+            }
+        }
+        return false;
+    }
+    /**
+     * Resolves each coverage record back to the source file it describes, and reports the ones an exclusion pattern
+     * drops. This is the only place the two can be connected: {@code codiqo.excludePaths} names paths in the work
+     * tree, while JaCoCo walks compiled output and never sees the index walk the pattern was written against — so
+     * without filtering here an excluded tree still lands in the coverage totals.
+     */
+    static Set<CoverageSourceFile> collectSourceCoverage(
+            RunArgs args,
+            File workTree,
+            JvmProjectSpec jvm,
+            IBundleCoverage bundle,
+            Map<File, ISourceFileCoverage> coverages) {
+        Set<CoverageSourceFile> toReturn = new HashSet<>();
+        for (File sourceRoot : jvm.getCompileSourceRoots()) {
+            Path normalized = sourceRoot.toPath().normalize().toAbsolutePath();
+            for (IPackageCoverage pkg : bundle.getPackages()) {
+                for (ISourceFileCoverage source : pkg.getSourceFiles()) {
+                    CoverageSourceFile id = CoverageSourceFile.of(source);
+                    File resolved = normalized.resolve(id.relativePath()).normalize().toFile();
+                    if (resolved.exists()) {
+                        if (args.isExcludedPath(workTree, resolved)) {
+                            toReturn.add(id);
+                        } else {
+                            coverages.put(resolved, source);
+                        }
+                    }
+                }
+            }
+        }
+        return toReturn;
+    }
+    /**
+     * The VM names of every class compiled into this module's output, in the form JaCoCo records execution data under.
+     * A compiled directory is not evidence that anything ran against it — matching these against an exec file's
+     * contents is.
+     */
+    static Set<String> compiledClassNames(File outputDir) throws IOException {
+        Path root = outputDir.toPath();
+        try (Stream<Path> compiled = Files.walk(root)) {
+            return compiled.filter(path -> CLASS_EXTENSION.equals(FilenameUtils.getExtension(path.toString())))
+                    .map(path -> FilenameUtils.separatorsToUnix(FilenameUtils.removeExtension(root.relativize(path).toString())))
+                    .collect(Collectors.toSet());
+        }
+    }
+    /**
+     * When the module's classes were last exercised: the modification time of the newest exec file that holds a record
+     * for any of them. Empty when no loaded exec mentions the module at all, which is how a module no test ever touched
+     * is told apart from one whose coverage is merely old.
+     */
+    static Optional<Date> newestExecContaining(Collection<LoadedExec> loadedExecs, Set<String> compiledClassNames) {
+        return loadedExecs.stream()
+                .filter(exec -> CollectionUtils.containsAny(exec.getClassNames(), compiledClassNames))
+                .map(exec -> exec.getFile().lastModified())
+                .max(Long::compare)
+                .map(Date::new);
+    }
+    /**
+     * Read once per exec file so membership stays attributable to the file it came from. The shared store the analysis
+     * runs against is a merge of all of them and cannot answer which file a class name arrived in.
+     */
+    private static LoadedExec readExecContents(File file) throws IOException {
+        ExecFileLoader toRead = new ExecFileLoader();
+        toRead.load(file);
+        return new LoadedExec(file, executionDataClassNames(toRead));
+    }
+    /**
+     * Every given file keyed by its path below the source root it lives under — the form both SpotBugs
+     * ({@code SourceLineAnnotation.getSourcePath}) and JaCoCo (package name plus source file name) report locations in.
+     * Matching on that key is exact, where comparing path suffixes conflates two same-named files in different modules.
+     */
+    private static Map<String, File> indexBySourceRootRelativePath(Collection<File> files, Collection<Path> sourceRoots) {
+        Map<String, File> toReturn = new LinkedHashMap<>();
+        for (File file : files) {
+            Path normalized = file.toPath().normalize();
+            for (Path root : sourceRoots) {
+                if (normalized.startsWith(root)) {
+                    toReturn.put(FilenameUtils.separatorsToUnix(root.relativize(normalized).toString()), file);
                     break;
                 }
             }
         }
-
-        Set<String> omitVisitors = new HashSet<>(Split.on(args.getSpotbugsOmitVisitors(), ','));
-
-        StopWatch spotbugsWatch = StopWatch.createStarted();
-        projects.values().forEach(spotbugs -> {
-            try (StringWriter writer = new StringWriter()) {
-                try (PrintWriter printer = new PrintWriter(writer)) {
-                    BugCollectionBugReporter bugReporter = new BugCollectionBugReporter(spotbugs, printer);
-                    bugReporter.setPriorityThreshold(args.getSpotbugsPriorityThreshold());
-
-                    try (FindBugs2 findBugs = new FindBugs2()) {
-                        findBugs.setProject(spotbugs);
-                        findBugs.setBugReporter(bugReporter);
-                        findBugs.setDetectorFactoryCollection(detectorFactory);
-                        findBugs.setNoClassOk(false);
-                        findBugs.setScanNestedArchives(false);
-
-                        UserPreferences prefs = UserPreferences.createDefaultUserPreferences();
-
-                        detectorFactory.factoryIterator().forEachRemaining(factory -> {
-                            if (omitVisitors.contains(factory.getShortName())) {
-                                prefs.enableDetector(factory, false);
-                            }
-                        });
-
-                        findBugs.setUserPreferences(prefs);
-                        findBugs.setAnalysisFeatureSettings(FindBugs.DEFAULT_EFFORT);
-                        findBugs.execute();
-
-                        BugCollection bugCollection = bugReporter.getBugCollection();
-                        for (BugInstance bug : bugCollection) {
-                            SourceLineAnnotation sourceLine = bug.getPrimarySourceLineAnnotation();
-                            int markStart = sourceLine.getStartLine();
-                            int markEnd = sourceLine.getEndLine();
-
-                            File sourceFile = filesBySourcePath.get(sourceLine.getSourcePath());
-                            if (Objects.nonNull(sourceFile)) {
-                                Collection<CodeBlockInfo> blocks = summary.getBlocks().get(sourceFile);
-                                for (CodeBlockInfo block : blocks) {
-                                    if (block.getLocation().getStartLine() <= markStart && markEnd <= block.getLocation().getEndLine()) {
-                                        if (block instanceof JavaCodeBlockInfo) {
-                                            ((JavaCodeBlockInfo) block).spotbug(bug);
-                                        }
-                                        if (analysis.isPresent(sourceFile, block)) {
-                                            log.info("detected spotbug violation for %s : line(%d-%d)  %s ( %s )",
-                                                    block,
-                                                    sourceLine.getStartLine(),
-                                                    sourceLine.getEndLine(),
-                                                    bug.getType(),
-                                                    bug.getMessage());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (Exception err) {
-                ExceptionUtils.wrapAndThrow(err);
-            } finally {
-                spotbugs.close();
-            }
-        });
-
-        spotbugsWatch.stop();
-        log.info("spotbugs analysis completed in %s", spotbugsWatch);
+        return toReturn;
     }
-    static boolean expectsCoverage(ProjectSpec project) throws IOException {
-        /**
-         * a module "expects" coverage only when its test fork actually ran: compiled main classes AND at least one
-         * surefire/failsafe report. a pom aggregator, a code-less module, or a module whose only src/test sources are
-         * main()-style helpers (dev-server starters, migration generators) with no @Test methods runs no tests, forks
-         * no JVM, and legitimately produces no jacoco.exec — so it must not be flagged. keying on executed reports
-         * still catches the real regression: tests ran (reports present) but the agent never attached (no jacoco.exec).
-         */
-        if (project instanceof JvmProjectSpec) {
-            File outputDir = project.getOutputDirectory();
-            if (outputDir.isDirectory() && hasFilesWithExtension(outputDir, "class")) {
-                return ranTests(outputDir);
+    private static Set<Path> sourceRoots(Collection<ProjectSpec> projects) {
+        Set<Path> toReturn = new LinkedHashSet<>();
+        for (ProjectSpec project : projects) {
+            if (project instanceof JvmProjectSpec jvm) {
+                jvm.getCompileSourceRoots().forEach(dir -> toReturn.add(dir.toPath().normalize()));
+                jvm.getTestCompileSourceRoots().forEach(dir -> toReturn.add(dir.toPath().normalize()));
             }
         }
-        return false;
+        return toReturn;
     }
-    private static boolean ranTests(File outputDir) {
-        /**
-         * maven layout: target/classes with junit xml in target/{surefire,failsafe}-reports;
-         * gradle layout: build/classes/<lang>/<sourceSet> with junit xml in build/test-results/<task>
-         */
-        File mavenBuildDir = outputDir.getParentFile();
-        for (String reportDir : new String[] { "surefire-reports", "failsafe-reports" }) {
-            if (containsJunitReports(new File(mavenBuildDir, reportDir))) {
-                return true;
-            }
-        }
+    private static edu.umd.cs.findbugs.Project spotbugsProject(JvmProjectSpec jvm) {
+        edu.umd.cs.findbugs.Project toReturn = new edu.umd.cs.findbugs.Project();
+        toReturn.setProjectName(jvm.getName());
+        toReturn.addFile(jvm.getOutputDirectory().getAbsolutePath());
 
-        File gradleBuildDir = Optional.ofNullable(mavenBuildDir.getParentFile()).map(File::getParentFile).orElse(null);
-        if (Objects.nonNull(gradleBuildDir)) {
-            File[] taskDirs = new File(gradleBuildDir, "test-results").listFiles(File::isDirectory);
-            for (File taskDir : ArrayUtils.nullToEmpty(taskDirs, File[].class)) {
-                if (containsJunitReports(taskDir)) {
-                    return true;
-                }
+        jvm.getCompileClasspathElements().forEach(element -> toReturn.addAuxClasspathEntry(element.getAbsolutePath()));
+        jvm.getTestClasspathElements().forEach(element -> toReturn.addAuxClasspathEntry(element.getAbsolutePath()));
+
+        toReturn.addSourceDirs(absolutePaths(jvm.getCompileSourceRoots()));
+        toReturn.addSourceDirs(absolutePaths(jvm.getTestCompileSourceRoots()));
+        return toReturn;
+    }
+    private static boolean attributeLines(JavaCodeBlockInfo javaBlock, ISourceFileCoverage source) {
+        SourceLocation location = javaBlock.getLocation();
+
+        boolean toReturn = false;
+        for (int lineNumber = location.getStartLine(); lineNumber <= location.getEndLine(); lineNumber++) {
+            ILine line = source.getLine(lineNumber);
+            javaBlock.lineCoverage(lineNumber, line);
+            if (isCovered(line)) {
+                toReturn = true;
             }
         }
-        return false;
+        return toReturn;
+    }
+    /**
+     * {@link ICounter#PARTLY_COVERED} is {@code NOT_COVERED | FULLY_COVERED}, so the FULLY_COVERED bit is set for both
+     * the fully and the partly covered statuses — one bit test is the whole predicate.
+     */
+    private static boolean isCovered(ILine line) {
+        return (line.getStatus() & ICounter.FULLY_COVERED) != 0;
     }
     private static boolean containsJunitReports(File dir) {
-        if (dir.isDirectory()) {
-            return ArrayUtils.isNotEmpty(dir.listFiles((d, name) -> name.startsWith("TEST-") && name.endsWith(".xml")));
-        }
-        return false;
+        return dir.isDirectory() && CollectionUtils.isNotEmpty(FileUtils.listFiles(dir, JUNIT_REPORT_FILTER, null));
     }
-    private static boolean touchesAnalyzedFile(IClassCoverage cls, CommitAnalysis analysis) {
-        /**
-         * jacoco reports the source file when debug info is present; otherwise derive it from the outer class name so
-         * a mismatched class can still be matched against the commit's changed file locations
-         */
-        String sourceFile = Optional.ofNullable(cls.getSourceFileName())
-                .orElse(StringUtils.substringBefore(StringUtils.substringAfterLast(cls.getName(), "/"), "$") + ".java");
-        String relative = cls.getPackageName() + "/" + sourceFile;
+    /** Every class name the instrumented JVM loaded, hit or not — the record exists as soon as the class is loaded. */
+    private static Set<String> executionDataClassNames(ExecFileLoader loader) {
+        return loader.getExecutionDataStore().getContents().stream()
+                .map(ExecutionData::getName)
+                .collect(Collectors.toSet());
+    }
+    private static Optional<Date> newestModified(Collection<File> files) {
+        return files.stream()
+                .map(File::lastModified)
+                .max(Long::compare)
+                .map(Date::new);
+    }
+    /**
+     * Analyzes a module's compiled output, skipping {@code META-INF}. A multi-release build puts a second copy of a
+     * class under {@code META-INF/versions/<n>/}, and JaCoCo's directory walk reads both as one fully-qualified name
+     * with two different bodies — which aborts the whole coverage capture, not just that class. Only the base copy is
+     * analyzed; where the tests actually loaded a versioned copy its probes no longer match, and the existing
+     * duplicate-name handling drops that name from coverage rather than trusting the wrong body.
+     */
+    private static int analyzeClassRoots(Analyzer analyzer, File outputDir) throws IOException {
+        File[] roots = outputDir.listFiles(child -> BooleanUtils.negate(META_INF_DIR.equals(child.getName())));
+        if (ArrayUtils.isEmpty(roots)) {
+            return analyzer.analyzeAll(outputDir);
+        }
 
-        for (File location : analysis.locations()) {
-            if (FilenameUtils.separatorsToUnix(location.getPath()).endsWith(relative)) {
-                return true;
-            }
+        int toReturn = 0;
+        for (File root : roots) {
+            toReturn += analyzer.analyzeAll(root);
         }
-        return false;
-    }
-    private static boolean hasClassFiles(File outputDir) throws IOException {
-        return hasFilesWithExtension(outputDir, "class");
+        return toReturn;
     }
     private static boolean hasFilesWithExtension(File dir, String extension) throws IOException {
         try (Stream<Path> walk = Files.walk(dir.toPath())) {
@@ -852,21 +1040,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         Optional<Date> lm = project.latestSourceModified();
         if (lm.isPresent()) {
             Date latestModified = lm.get();
-
-            Optional<FileTime> latestClass;
-            try (Stream<Path> walk = Files.walk(outputDir.toPath())) {
-                latestClass = walk.filter(p -> p.toString().endsWith(".class"))
-                        .map(p -> {
-                            for (;;) {
-                                try {
-                                    return Files.getLastModifiedTime(p);
-                                } catch (IOException err) {
-                                    ExceptionUtils.wrapAndThrow(err);
-                                }
-                            }
-                        })
-                        .max(Comparator.naturalOrder());
-            }
+            Optional<Date> latestClass = newestModified(FileUtils.listFiles(outputDir, CLASS_FILE_FILTER, TrueFileFilter.INSTANCE));
 
             if (latestClass.isPresent() && latestClass.get().toInstant().isBefore(latestModified.toInstant())) {
                 throw new IOException(String.format(
@@ -877,17 +1051,23 @@ public class JavaLanguageSpec implements LanguageSpec {
             }
         }
     }
-    @Override
-    public void captureIncomingCalls(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
-        incomingCallsResolver.resolve(summary, analysis);
+    private static List<String> absolutePaths(Collection<File> files) {
+        return files.stream().map(File::getAbsolutePath).toList();
     }
-    private static void collectExecutables(Node node, Consumer<ASTExecutableDeclaration> consumer) {
-        if (node instanceof ASTExecutableDeclaration) {
-            consumer.accept((ASTExecutableDeclaration) node);
-        }
-        for (int i = 0; i < node.getNumChildren(); i++) {
-            collectExecutables(node.getChild(i), consumer);
-        }
+
+    /** one loaded exec file and the class names it holds records for */
+    @Value
+    static class LoadedExec {
+        File file;
+        Set<String> classNames;
+    }
+
+    @Value
+    private static class CoverageTotals {
+        int classes;
+        int packages;
+        int lines;
+        int coveredLines;
     }
 
     private static class UnhiddenDetectorFactoryCollection extends DetectorFactoryCollection {

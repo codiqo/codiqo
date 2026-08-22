@@ -91,6 +91,7 @@ import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.transport.HttpTransport;
 import org.eclipse.jgit.transport.TagOpt;
 
+import io.codiqo.api.BuildTool;
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.DeltaAnalyzer;
 import io.codiqo.api.IndexingSummary;
@@ -139,7 +140,9 @@ import io.codiqo.util.MemoryReport;
 import io.codiqo.util.Split;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
+import lombok.AllArgsConstructor;
 import lombok.RequiredArgsConstructor;
+import lombok.Value;
 
 abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Artifact, Collection<File>> {
     private static final Set<String> NON_CODE_PACKAGINGS = Set.of("pom", "bom");
@@ -367,6 +370,12 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.excludeAuthorEmails")
     protected String excludeAuthorEmails;
 
+    @Parameter(property = "codiqo.excludeProjects")
+    protected String excludeProjects;
+
+    @Parameter(property = "codiqo.excludePaths")
+    protected String excludePaths;
+
     @Parameter(property = "codiqo.jdtUseSharedIndex", defaultValue = "true")
     protected boolean jdtUseSharedIndex;
 
@@ -493,6 +502,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         Optional.ofNullable(includeBranches).ifPresent(args::setIncludeBranches);
         Optional.ofNullable(includeAuthorEmails).ifPresent(args::setIncludeAuthorEmails);
         Optional.ofNullable(excludeAuthorEmails).ifPresent(args::setExcludeAuthorEmails);
+        Optional.ofNullable(excludeProjects).ifPresent(args::setExcludeProjects);
+        Optional.ofNullable(excludePaths).ifPresent(args::setExcludePaths);
+        args.setBuildTool(BuildTool.MAVEN);
         args.setJdtUseSharedIndex(jdtUseSharedIndex);
         args.setJdtIncludeDecompiledSources(jdtIncludeDecompiledSources);
         args.setJdtDebugPort(jdtDebugPort);
@@ -559,7 +571,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                  * and leave the jars null — the per-test timeout then stays off instead of aborting the analysis. only
                  * resolved when the timeout is actually going to be applied (tests run only on this coverage path).
                  */
-                if (Objects.nonNull(args.getPerTestTimeout()) && args.getPerTestTimeout().compareTo(Duration.ZERO) > 0) {
+                Duration perTestTimeout = args.getPerTestTimeout();
+                if (Objects.nonNull(perTestTimeout) && perTestTimeout.compareTo(Duration.ZERO) > 0) {
                     try {
                         surefireInjectorJars = apply(new DefaultArtifact(CODIQO_GROUP_ID, SUREFIRE_INJECTOR_ARTIFACT_ID, JAR_EXTENSION, versions.get("codiqo.version").toString()));
                     } catch (Exception err) {
@@ -591,6 +604,14 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         Set<URI> jars = new LinkedHashSet<>();
         projects.stream()
                 .filter(reactor -> BooleanUtils.negate(NON_CODE_PACKAGINGS.contains(reactor.getPackaging())))
+                .filter(reactor -> {
+                    if (args.isExcludedProject(reactor.getGroupId(), reactor.getArtifactId())) {
+                        getLog().info("excluding module " + reactor.getGroupId() + ":" + reactor.getArtifactId() + " (codiqo.excludeProjects)");
+                        args.getExcludedProjectDirs().add(reactor.getBasedir());
+                        return false;
+                    }
+                    return true;
+                })
                 .filter(reactor -> CollectionUtils.isEmpty(reactor.getModules())).filter(reactor -> {
                     for (;;) {
                         try {
@@ -624,6 +645,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     if (jacocoDestFile.exists()) {
                         toReturn.setCoverage(Optional.of(jacocoDestFile));
                     }
+
+                    toReturn.getTestReportDirectories().addAll(TestReportDirectories.resolve(prj));
                     try {
                         prj.getCompileSourceRoots().forEach(root -> {
                             File file = new File(root);
@@ -814,7 +837,11 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 props.setProperty(TimeMachineConfig.PROP_TARGET_OFFSET, targetOffset.toString());
             }
             getLog().info(String.format("time-machine enabled for commit %s (timestamp: %s, offset: %s, metaDir: %s, localRepository: %s)",
-                    args.getCommitId(), ts, targetOffset, metaDir.getAbsolutePath(), localRepository.getAbsolutePath()));
+                    args.getCommitId(),
+                    ts,
+                    targetOffset,
+                    metaDir.getAbsolutePath(),
+                    localRepository.getAbsolutePath()));
         } else {
             /**
              * a non-time-machine attempt may follow a failed time-machine attempt; drop the failed attempt's
@@ -948,7 +975,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                         if (copyFallback.compareAndSet(false, true)) {
                             getLog().warn(String.format(
                                     "cannot hard-link into %s (%s) — seeding falls back to copying, which duplicates the release set on disk. Point java.io.tmpdir at the same filesystem as the local repository to avoid it.",
-                                    targetRoot, err.getMessage()));
+                                    targetRoot,
+                                    err.getMessage()));
                         }
                         Files.copy(file, link);
                     }
@@ -1422,7 +1450,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
              * fail loudly rather than silently masking a bug as a config-only score
              */
             getLog().warn(String.format("commit %s: source-only degraded index failed (%s) — falling back to diff-only scoring",
-                    args.getCommitId(), ExceptionUtils.getRootCauseMessage(err)), err);
+                    args.getCommitId(),
+                    ExceptionUtils.getRootCauseMessage(err)),
+                    err);
             if (BooleanUtils.negate(hadProjectModel)) {
                 args.getProjects().clear();
             }
@@ -1614,12 +1644,22 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
          * timedOut separates a fork the deadline killed from a fork that genuinely failed: only the latter is worth
          * another time-machine rung, because a timeout carries no evidence about which snapshots were picked.
          */
-        record Skipped(String reason, AnalysisExcludeCategory category, String detail, boolean timedOut) implements BuildOutcome {
+        @Value
+        @AllArgsConstructor
+        final class Skipped implements BuildOutcome {
+            String reason;
+            AnalysisExcludeCategory category;
+            String detail;
+            boolean timedOut;
+
             Skipped(String reason, AnalysisExcludeCategory category, String detail) {
                 this(reason, category, detail, false);
             }
         }
-        record Proceeded(ProjectBuildingResult result) implements BuildOutcome {}
+        @Value
+        final class Proceeded implements BuildOutcome {
+            ProjectBuildingResult result;
+        }
     }
 
     @RequiredArgsConstructor

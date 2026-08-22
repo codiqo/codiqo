@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.List;
 
+import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 
 import io.codiqo.client.model.AnalysisSubmissionModel;
@@ -16,7 +17,7 @@ import io.codiqo.client.model.MetricsModel;
 import io.codiqo.client.model.SymbolKindModel;
 
 class EffectiveChangePopulatorTest {
-    private static final String JAVA_DIFF = String.join("\n",
+    private static final String JAVA_DIFF = String.join(StringUtils.LF,
             "diff --git a/A.java b/A.java",
             "--- a/A.java",
             "+++ b/A.java",
@@ -30,9 +31,9 @@ class EffectiveChangePopulatorTest {
             "+        second.do();",
             "     }",
             " }",
-            "") + "\n";
+            "") + StringUtils.LF;
 
-    private static final String NEW_METHOD_DIFF = String.join("\n",
+    private static final String NEW_METHOD_DIFF = String.join(StringUtils.LF,
             "diff --git a/A.java b/A.java",
             "--- a/A.java",
             "+++ b/A.java",
@@ -45,7 +46,7 @@ class EffectiveChangePopulatorTest {
             "+    }",
             "+",
             " void after() {}",
-            "") + "\n";
+            "") + StringUtils.LF;
 
     @Test
     void promotesWhollyAddedMethodToNew() {
@@ -68,7 +69,7 @@ class EffectiveChangePopulatorTest {
     }
     @Test
     void keepsFullyRewrittenMethodAsModify() {
-        String diff = String.join("\n",
+        String diff = String.join(StringUtils.LF,
                 "diff --git a/A.java b/A.java",
                 "--- a/A.java",
                 "+++ b/A.java",
@@ -79,7 +80,7 @@ class EffectiveChangePopulatorTest {
                 "+    void m() {",
                 "+        neww();",
                 "+    }",
-                "") + "\n";
+                "") + StringUtils.LF;
         CodeUnitModel unit = modifyMethod(10, 12, List.of());
         SubmissionContext ctx = contextWith(javaFile(diff, unit));
 
@@ -109,7 +110,7 @@ class EffectiveChangePopulatorTest {
     }
     @Test
     void countsDeletedInvocationsOnAnchoredLinesViaJavaInvocationCounter() {
-        String diff = String.join("\n",
+        String diff = String.join(StringUtils.LF,
                 "diff --git a/A.java b/A.java",
                 "--- a/A.java",
                 "+++ b/A.java",
@@ -118,7 +119,7 @@ class EffectiveChangePopulatorTest {
                 "-    old.call(); other.do();",
                 "-    third.fn();",
                 " }",
-                "") + "\n";
+                "") + StringUtils.LF;
         CodeUnitModel unit = modifyMethod(10, 13, List.of());
         SubmissionContext ctx = contextWith(javaFile(diff, unit));
 
@@ -128,7 +129,7 @@ class EffectiveChangePopulatorTest {
     }
     @Test
     void nonJavaFilesGetZeroDeletedInvocations() {
-        String diff = String.join("\n",
+        String diff = String.join(StringUtils.LF,
                 "diff --git a/a.py b/a.py",
                 "--- a/a.py",
                 "+++ b/a.py",
@@ -136,7 +137,7 @@ class EffectiveChangePopulatorTest {
                 " def m():",
                 "-    old.call()",
                 "-    other.do()",
-                "") + "\n";
+                "") + StringUtils.LF;
         CodeUnitModel unit = modifyMethod(10, 12, List.of());
         FileChangeModel file = new FileChangeModel();
         file.setPath("a.py");
@@ -151,7 +152,7 @@ class EffectiveChangePopulatorTest {
     }
     @Test
     void linesInsideNestedBlockAttributeOnlyToInnermostUnit() {
-        String diff = String.join("\n",
+        String diff = String.join(StringUtils.LF,
                 "diff --git a/A.java b/A.java",
                 "--- a/A.java",
                 "+++ b/A.java",
@@ -159,7 +160,7 @@ class EffectiveChangePopulatorTest {
                 " protected Object createInstance() {",
                 "-    container.start();",
                 "+    container.restart();",
-                "") + "\n";
+                "") + StringUtils.LF;
         CodeUnitModel outer = modifyMethod(33, 53, List.of());
         outer.setKind(SymbolKindModel.METHOD);
         CodeUnitModel inner = modifyMethod(38, 43, List.of(39));

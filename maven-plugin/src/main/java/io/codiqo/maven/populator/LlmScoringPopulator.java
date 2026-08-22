@@ -3,20 +3,20 @@ package io.codiqo.maven.populator;
 import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.Duration;
 import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
-import java.util.HashMap;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.CharUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.time.StopWatch;
@@ -35,6 +35,7 @@ import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CommitModel;
 import io.codiqo.client.model.DiagnosticModel;
 import io.codiqo.client.model.ModuleModel;
+import io.codiqo.client.model.ModuleQualityModel;
 import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.client.model.ProjectQualityModel;
 import io.codiqo.llm.LlmResponseMapper;
@@ -136,8 +137,8 @@ public class LlmScoringPopulator implements SubmissionPopulator {
                 .revertCommit(Boolean.TRUE.equals(commit.getIsRevert()))
                 .revertedCommitId(commit.getRevertedCommitId())
                 /**
-                 * the submission's project name first: a commit analysis indexes a throwaway worktree,
-                 * so the index root is a temp directory name ("codiqo6290787775051848632")
+                 * the submission's project name first: a commit analysis indexes a throw away work tree,
+                 * so the index root is a temporary directory name ("codiqo6290787775051848632")
                  */
                 .repositoryName(StringUtils.defaultIfBlank(
                         submission.getProject().getName(),
@@ -147,8 +148,7 @@ public class LlmScoringPopulator implements SubmissionPopulator {
                 .criticalViolationsByModule(extractCriticalViolations(submission))
                 .build();
 
-        // one log call per line, so each carries the logger's prefix and nothing wraps mid-table
-        for (String line : StringUtils.splitPreserveAllTokens(builder.buildReport(result, request, reportContext), '\n')) {
+        for (String line : StringUtils.splitPreserveAllTokens(builder.buildReport(result, request, reportContext), CharUtils.LF)) {
             log.info(line);
         }
     }
@@ -218,7 +218,6 @@ public class LlmScoringPopulator implements SubmissionPopulator {
             codeUnitsAffected = projectQuality.getCodeUnitsAffected();
         }
 
-        // collected at submission assembly, where the work tree still exists — see AbstractAnalyzeMojo.applyAgentInstructions
         return PromptContext.withFullContext(args)
                 .conventionGuidance(StringUtils.defaultString(submission.getAgentInstructions()))
                 .projectTotalStatements(totalStatements)
@@ -233,10 +232,11 @@ public class LlmScoringPopulator implements SubmissionPopulator {
     }
     public static Map<String, List<DiagnosticModel>> extractCriticalViolations(AnalysisSubmissionModel submission) {
         Map<String, List<DiagnosticModel>> toReturn = new HashMap<>();
-        if (Objects.nonNull(submission.getProject()) && CollectionUtils.isNotEmpty(submission.getProject().getModules())) {
-            for (ModuleModel module : submission.getProject().getModules()) {
-                if (Objects.nonNull(module.getQuality()) && CollectionUtils.isNotEmpty(module.getQuality().getCriticalViolations())) {
-                    toReturn.put(module.getId(), module.getQuality().getCriticalViolations());
+        if (Objects.nonNull(submission.getProject())) {
+            for (ModuleModel module : CollectionUtils.emptyIfNull(submission.getProject().getModules())) {
+                ModuleQualityModel quality = module.getQuality();
+                if (Objects.nonNull(quality) && CollectionUtils.isNotEmpty(quality.getCriticalViolations())) {
+                    toReturn.put(module.getId(), quality.getCriticalViolations());
                 }
             }
         }

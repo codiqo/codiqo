@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 
+import org.apache.commons.lang3.StringUtils;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.diff.DiffEntry;
@@ -64,8 +65,10 @@ class JGitDeltaAnalyzerTest {
         }
     }
     @Test
-    void initialCommitYieldsZeroParentsAndEmptyFiles() throws Exception {
-        RevCommit first = commitFile("Foo.java", "class Foo {}", "initial");
+    void initialCommitDiffsAgainstTheEmptyTreeAndReportsEveryFileAsAdded() throws Exception {
+        writeFile("Bar.java", "class Bar {}\n");
+        git.add().addFilepattern("Bar.java").call();
+        RevCommit first = commitFile("Foo.java", "class Foo {}\n", "initial");
         args.setCommitId(first.getName());
 
         CommitAnalysis analysis = analyzer.analyze();
@@ -73,8 +76,36 @@ class JGitDeltaAnalyzerTest {
         assertEquals(first.getName(), analysis.getCommitId());
         assertTrue(((GitCommitAnalysis) analysis).getParentIds().isEmpty(),
                 "the initial commit has no parents, so parentIds stays empty");
-        assertTrue(((GitCommitAnalysis) analysis).getFiles().isEmpty(),
-                "early return on parentCount==0 leaves files empty — there is no parent to diff against");
+        assertEquals(2, analysis.getFilesChanged(), "a root commit's whole tree is its delta");
+
+        GitFileAnalysis foo = ((GitCommitAnalysis) analysis).getFiles().stream()
+                .map(GitFileAnalysis.class::cast)
+                .filter(file -> "Foo.java".equals(file.getNewPath()))
+                .iterator().next();
+        assertEquals(DiffEntry.ChangeType.ADD, foo.getChangeType());
+        assertNull(foo.getContentBefore(), "there is no parent revision, so nothing precedes an added file");
+        assertEquals("class Foo {}\n", foo.getContentAfter());
+        assertFalse(foo.getStructuredDiff().getHunks().isEmpty(), "an added file must produce at least one diff hunk");
+    }
+    @Test
+    void shallowBoundaryCommitIsNotBilledForTheWholeTree() throws Exception {
+        commitFile("Foo.java", "class Foo {}\n", "initial");
+        writeFile("Bar.java", "class Bar {}\n");
+        git.add().addFilepattern("Bar.java").call();
+        RevCommit second = commitFile("Baz.java", "class Baz {}\n", "second");
+
+        /**
+         * .git/shallow is what makes JGit report a grafted commit as parentless, so writing the sha
+         * into it reproduces a --depth 1 checkout without needing a real clone
+         */
+        Files.writeString(tempDir.resolve(".git/shallow"), second.getName() + StringUtils.LF, StandardCharsets.UTF_8);
+        args.setCommitId(second.getName());
+
+        CommitAnalysis analysis = analyzer.analyze();
+
+        assertEquals(0, ((GitCommitAnalysis) analysis).getFiles().size(),
+                "a shallow graft also reports zero parents, so it must not be diffed against the empty tree"
+                        + " — that would bill every pre-existing file to this one commit");
     }
     @Test
     void secondCommitProducesSingleModifiedFile() throws Exception {

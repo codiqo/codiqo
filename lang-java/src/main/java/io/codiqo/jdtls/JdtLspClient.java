@@ -97,6 +97,7 @@ import org.eclipse.lsp4j.services.LanguageServer;
 import org.slf4j.event.Level;
 
 
+import io.codiqo.api.BuildTool;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.jdtls.ServiceStatus;
 import io.codiqo.api.jdtls.ServiceStatusAdapter;
@@ -353,13 +354,13 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
          * written metadata, and updateSnapshots below stays false.
          */
         Map<String, Object> mavenImport = new HashMap<>();
-        mavenImport.put("enabled", true);
+        mavenImport.put("enabled", importerEnabled(BuildTool.MAVEN));
         mavenImport.put("offline", Map.of("enabled", false));
         mavenImport.put("disableTestClasspathFlag", false);
         importOpts.put("maven", mavenImport);
 
         Map<String, Object> gradleImport = new HashMap<>();
-        gradleImport.put("enabled", true);
+        gradleImport.put("enabled", importerEnabled(BuildTool.GRADLE));
         gradleImport.put("wrapper", Map.of("enabled", true));
         gradleImport.put("offline", Map.of("enabled", false));
         gradleImport.put("annotationProcessing", Map.of("enabled", true));
@@ -514,10 +515,7 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
             }
         }).get(args.getImportTimeout().getSeconds(), TimeUnit.SECONDS);
 
-        //
-        // ~ notify server that client is initialised (required by LSP specification)
-        // ~ this triggers JDT LS to copy shared indexes and complete initialisation
-        //
+        // the LSP spec requires this notification, and it is what makes JDT LS copy shared indexes
         remoteProxy.initialized(new org.eclipse.lsp4j.InitializedParams());
 
         return initResult;
@@ -617,5 +615,12 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
             startListening.cancel(true);
             executor.shutdown();
         }
+    }
+    private boolean importerEnabled(BuildTool importer) {
+        BuildTool buildTool = args.getBuildTool();
+        if (Objects.isNull(buildTool)) {
+            return true;
+        }
+        return buildTool == importer;
     }
 }
