@@ -173,6 +173,21 @@ class RunArgsCliTest {
         assertFalse(new RunArgs().isExcludedAuthor("bob@example.com"));
     }
     @Test
+    void defaultExcludesAuthorsWhoseAddressCarriesBot() {
+        RunArgs args = new RunArgs();
+
+        assertTrue(args.isExcludedAuthor("java-team-github-bot@google.com"));
+        assertTrue(args.isExcludedAuthor("github-actions[bot]@users.noreply.github.com"));
+        assertTrue(args.isExcludedAuthor("49699333+dependabot[bot]@users.noreply.github.com"));
+    }
+    @Test
+    void anEmptyExcludeListOptsOutOfTheBotDefault() {
+        RunArgs args = new RunArgs();
+        args.setExcludeAuthorEmails("");
+
+        assertFalse(args.isExcludedAuthor("java-team-github-bot@google.com"));
+    }
+    @Test
     void isExcludedAuthorMatchesTrimmedCommaList() {
         RunArgs args = new RunArgs();
         args.setExcludeAuthorEmails(" alice@example.com , bob@example.com ");

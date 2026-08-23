@@ -421,7 +421,14 @@ class IndexCommitsMojoTest {
         commit("m.txt", "m", "mainline");
         String mergeSha = mergeAs("feature", "Merge pull request #10", "CI Bot", "bot@ci.com");
 
-        List<CommitModel> fp = extract(new RunArgs(), "HEAD", EPOCH, "main");
+        /**
+         * the credited merge author is what this test observes, so lift the "*bot*" exclusion default that
+         * would otherwise drop the node before the credit rule can be seen
+         */
+        RunArgs keepsBotAuthors = new RunArgs();
+        keepsBotAuthors.setExcludeAuthorEmails(StringUtils.EMPTY);
+
+        List<CommitModel> fp = extract(keepsBotAuthors, "HEAD", EPOCH, "main");
 
         CommitModel mergeNode = fp.stream().filter(c -> mergeSha.equals(c.getSha())).findFirst().orElseThrow();
         assertEquals("bot@ci.com", mergeNode.getAuthorEmail(), "no sole side-branch author — the merge author is kept");

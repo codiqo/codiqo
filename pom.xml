@@ -87,7 +87,7 @@
         <findbugs.sec.version>1.14.0</findbugs.sec.version>
         <findbugs.contrib.version>7.7.4</findbugs.contrib.version>
         <jacoco.version>0.8.15</jacoco.version>
-        <classgraph.version>4.8.192</classgraph.version>
+        <classgraph.version>4.8.193</classgraph.version>
         <oshi.version>7.5.0</oshi.version>
         <jol.version>0.17</jol.version>
         <openapi.version>4.52.0</openapi.version>

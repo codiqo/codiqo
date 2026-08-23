@@ -573,9 +573,19 @@ public class RunArgs {
     @Nullable
     private String includeAuthorEmails;
 
-    /** Comma-separated author email patterns to exclude, matched as case-insensitive <b>wildcards</b> ({@code *bot@example.com}). Applied after {@link #includeAuthorEmails}, so exclusion wins. */
+    /**
+     * Comma-separated author email patterns to exclude, matched as case-insensitive <b>wildcards</b>
+     * ({@code *bot@example.com}). Applied after {@link #includeAuthorEmails}, so exclusion wins.
+     *
+     * <p>Defaults to {@code *bot*} because a bot's commit is machine output that no one spent effort on, and the
+     * addresses vary too much to name one by one — {@code dependabot[bot]@...} and
+     * {@code java-team-github-bot@google.com} share nothing but the word. The pattern matches anywhere in the
+     * address, so a human whose address happens to carry those three letters ({@code abbott@example.com}) is caught
+     * with them; override the value, or set it empty to exclude nobody, when that happens. Every entry point reads
+     * this default: the mojos and the Gradle tasks leave their own parameter unset.
+     */
     @Nullable
-    private String excludeAuthorEmails;
+    private String excludeAuthorEmails = "*bot*";
 
     /**
      * Comma-separated build-tool coordinates whose module is dropped from the analysis entirely, matched as
