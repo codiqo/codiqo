@@ -1,6 +1,7 @@
 package io.codiqo.util;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
@@ -8,7 +9,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
+import java.util.function.Predicate;
 
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.MergeCommand;
@@ -26,6 +29,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class JGitMergeSideAuthorTest {
+    /** mirrors the RunArgs default: any address carrying "bot" is rejected. */
+    private static final Predicate<String> NO_BOTS =
+            email -> !email.toLowerCase(Locale.ROOT).contains("bot");
+
     @TempDir
     Path tempDir;
 
@@ -129,6 +136,43 @@ class JGitMergeSideAuthorTest {
                 return walk.parseCommit(commitId);
             }
         }
+    }
+    /**
+     * the case the default {@code *bot*} exclusion would otherwise break: a merge queue lands a PR written by two
+     * people, so no sole side author exists and the node keeps the bot's identity. dropping it would drop their work.
+     */
+    @Test
+    void botMergeOfHumanWorkIsAdmittedThroughItsSideBranch() throws Exception {
+        commitAs("base.txt", "0", "base", "Maintainer", "maintainer@corp.com");
+        git.branchCreate().setName("feature").call();
+        git.checkout().setName("feature").call();
+        commitAs("f1.txt", "1", "PR commit 1", "Dev", "dev@corp.com");
+        commitAs("f2.txt", "2", "PR commit 2", "Other", "other@corp.com");
+        git.checkout().setName("main").call();
+        commitAs("m.txt", "m", "mainline", "Maintainer", "maintainer@corp.com");
+        RevCommit merge = mergeAs("feature", "Merge pull request #4", "CI Bot", "bot@ci.com");
+
+        assertTrue(JGit.isAuthorAdmitted(repository, merge, merge.getAuthorIdent(), NO_BOTS));
+    }
+    /** a bot merging its own bot-authored branch has no human behind it and stays excluded. */
+    @Test
+    void botMergeOfBotWorkStaysExcluded() throws Exception {
+        commitAs("base.txt", "0", "base", "Maintainer", "maintainer@corp.com");
+        git.branchCreate().setName("deps").call();
+        git.checkout().setName("deps").call();
+        commitAs("d1.txt", "1", "bump a dependency", "dependabot[bot]", "dependabot[bot]@users.noreply.github.com");
+        git.checkout().setName("main").call();
+        commitAs("m.txt", "m", "mainline", "Maintainer", "maintainer@corp.com");
+        RevCommit merge = mergeAs("deps", "Merge pull request #5", "CI Bot", "bot@ci.com");
+
+        assertFalse(JGit.isAuthorAdmitted(repository, merge, merge.getAuthorIdent(), NO_BOTS));
+    }
+    /** a plain bot commit has no side branch to look at, so the exclusion applies unchanged. */
+    @Test
+    void nonMergeBotCommitStaysExcluded() throws Exception {
+        RevCommit commit = commitAs("a.txt", "0", "generated", "Release Bot", "release-bot@corp.com");
+
+        assertFalse(JGit.isAuthorAdmitted(repository, commit, commit.getAuthorIdent(), NO_BOTS));
     }
     private RevCommit mergeAs(String branch, String message, String authorName, String authorEmail) throws Exception {
         repository.getConfig().setString("user", null, "name", authorName);

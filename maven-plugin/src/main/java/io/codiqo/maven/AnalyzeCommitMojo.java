@@ -121,7 +121,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             getLog().info(String.format("merge commit %s analyzed via first-parent delta, credited to side-branch author %s", commitId, resolveAuthorEmail(args)));
         }
 
-        if (args.isExcludedAuthor(resolveAuthorEmail(args))) {
+        if (BooleanUtils.negate(isAuthorAdmitted(args))) {
             String reason = "author excluded by codiqo.excludeAuthorEmails";
             getLog().warn(String.format("commit %s skipped: %s", commitId, reason));
             doExcludeAnalysis(commitId, reason, AnalysisExcludeCategory.FILTERED_BY_RULES);
@@ -377,6 +377,22 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             }
         }
         return Optional.of("merge commit (multiple parents)");
+    }
+    /**
+     * The index applies the same rule in {@link io.codiqo.submit.CommitIndexer}, and the two must agree: a commit the
+     * index keeps but the analysis excludes would be re-reported as missing on every run and rebuilt each time.
+     */
+    private static boolean isAuthorAdmitted(RunArgs args) throws IOException {
+        ObjectId objectId = args.getGit().resolve(args.getCommitId());
+        try (RevWalk walk = new RevWalk(args.getGit())) {
+            RevCommit commit = walk.parseCommit(objectId);
+            PersonIdent credited = commit.getAuthorIdent();
+            if (JGit.isMerge(commit)) {
+                credited = JGit.mergeSideSoleAuthor(args.getGit(), commit).orElse(credited);
+            }
+            return JGit.isAuthorAdmitted(args.getGit(), commit, credited,
+                    email -> BooleanUtils.negate(args.isExcludedAuthor(email)));
+        }
     }
     private static String resolveAuthorEmail(RunArgs args) throws IOException {
         ObjectId objectId = args.getGit().resolve(args.getCommitId());
