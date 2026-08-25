@@ -422,8 +422,9 @@ class IndexCommitsMojoTest {
         String mergeSha = mergeAs("feature", "Merge pull request #10", "CI Bot", "bot@ci.com");
 
         /**
-         * the credited merge author is what this test observes, so lift the "*bot*" exclusion default that
-         * would otherwise drop the node before the credit rule can be seen
+         * only the credit rule is under test here, so the "*bot*" exclusion default is lifted to keep the
+         * author filter out of it entirely — the default's own behaviour on this shape is asserted by
+         * botMergedMixedAuthorPrSurvivesTheDefaultExclusion below
          */
         RunArgs keepsBotAuthors = new RunArgs();
         keepsBotAuthors.setExcludeAuthorEmails(StringUtils.EMPTY);
@@ -432,6 +433,39 @@ class IndexCommitsMojoTest {
 
         CommitModel mergeNode = fp.stream().filter(c -> mergeSha.equals(c.getSha())).findFirst().orElseThrow();
         assertEquals("bot@ci.com", mergeNode.getAuthorEmail(), "no sole side-branch author — the merge author is kept");
+    }
+    /**
+     * the merge author is an integration identity, so the "*bot*" default must not take a two-author PR down with
+     * it: no sole side author exists, the node keeps the bot's address, and it survives because the side branch
+     * has humans on it.
+     */
+    @Test
+    void botMergedMixedAuthorPrSurvivesTheDefaultExclusion() throws Exception {
+        commit("base.txt", "0", "base");
+        git.branchCreate().setName("feature").call();
+        git.checkout().setName("feature").call();
+        commitAs("f1.txt", "1", "PR commit 1", "Dev", "dev@corp.com");
+        commitAs("f2.txt", "2", "PR commit 2", "Other", "other@corp.com");
+        git.checkout().setName("main").call();
+        commit("m.txt", "m", "mainline");
+        String mergeSha = mergeAs("feature", "Merge pull request #11", "CI Bot", "bot@ci.com");
+
+        assertTrue(shas(extract(new RunArgs(), "HEAD", EPOCH, "main")).contains(mergeSha),
+                "the PR's work must not disappear because a bot performed the merge");
+    }
+    /** a bot merging its own bot-authored branch has no human work behind it and stays excluded. */
+    @Test
+    void botMergedBotAuthoredBranchStaysExcludedByDefault() throws Exception {
+        commit("base.txt", "0", "base");
+        git.branchCreate().setName("deps").call();
+        git.checkout().setName("deps").call();
+        commitAs("d1.txt", "1", "bump a dependency", "dependabot[bot]", "dependabot[bot]@users.noreply.github.com");
+        git.checkout().setName("main").call();
+        commit("m.txt", "m", "mainline");
+        String mergeSha = mergeAs("deps", "Merge pull request #12", "CI Bot", "bot@ci.com");
+
+        assertFalse(shas(extract(new RunArgs(), "HEAD", EPOCH, "main")).contains(mergeSha),
+                "nothing human landed, so the default exclusion still applies");
     }
     private List<CommitModel> extract(RunArgs filter, String ref, Date cutoff, String branch) throws Exception {
         return CommitIndexer.extractCommits(repository, filter, ref, cutoff, branch);

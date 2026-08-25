@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Predicate;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -139,6 +140,28 @@ public class JGit {
             }
         }
         return Optional.ofNullable(soleAuthor);
+    }
+    /**
+     * whether the author filter admits a commit, given the author it was already credited to. a merge node's own
+     * author is an integration identity — a merge queue, a release bot, whoever clicked the button — so rejecting it
+     * would drop the side branch's human work with it. such a node is admitted when ANY side-branch author is
+     * admitted, which is the only case {@link #mergeSideSoleAuthor} cannot already express: it derives an author only
+     * when the side branch has exactly one. a bot merging its own bot-authored branch has no admitted side author and
+     * stays rejected, which is the point of excluding bots in the first place.
+     *
+     * <p>Restricted to two-parent merges, matching {@link #mergeSideSoleAuthor}: an octopus merge has no single side
+     * branch to read, so it is judged on its own author alone.
+     */
+    public static boolean isAuthorAdmitted(Repository repo, RevCommit commit, PersonIdent creditedAuthor, Predicate<String> admits)
+            throws IOException {
+        if (admits.test(creditedAuthor.getEmailAddress())) {
+            return true;
+        }
+        if (commit.getParentCount() != 2) {
+            return false;
+        }
+        return mergeSideCommits(repo, commit).stream()
+                .anyMatch(side -> admits.test(side.getAuthorIdent().getEmailAddress()));
     }
     public static List<String> branchesContaining(Repository repo, String commitSha) throws Exception {
         Set<String> toReturn = new LinkedHashSet<>();

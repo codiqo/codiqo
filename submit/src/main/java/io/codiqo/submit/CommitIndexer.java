@@ -73,7 +73,7 @@ public class CommitIndexer {
                 if (BooleanUtils.or(new boolean[] {
                         BooleanUtils.negate(branches.contains(branch)),
                         BooleanUtils.negate(filterArgs.matchesByBranch(branches)),
-                        BooleanUtils.negate(filterArgs.isAuthorAllowed(author.getEmailAddress()))
+                        BooleanUtils.negate(JGit.isAuthorAdmitted(repo, commit, author, filterArgs::isAuthorAllowed))
                 })) {
                     continue;
                 }
