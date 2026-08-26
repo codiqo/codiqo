@@ -148,7 +148,12 @@ public class MetricsAggregator implements SubmissionPopulator {
         if (complexityCount > 0) {
             projectQualityModel.setAverageComplexity(totalComplexity / complexityCount);
         }
-        if (totalStatements > 0 && totalDuplicatedLines > 0) {
+        /**
+         * guarded on the denominator alone, like every ratio above it: a run that measured statements and found no
+         * duplication is 0%, not unknown. Requiring duplicated lines too left null on every clean commit, which
+         * downstream cannot tell apart from "CPD never ran" — and on a public page those read very differently.
+         */
+        if (totalStatements > 0) {
             double cpdPercent = Math.min(totalDuplicatedLines * 100.0 / totalStatements, 100.0);
             projectQualityModel.setCpdDuplicationPercent(cpdPercent);
             ctx.getSubmissionModel().getDuplication().setDuplicatedPercentage(cpdPercent);
