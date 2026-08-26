@@ -50,12 +50,17 @@ class AnalyzeCommitMojoMergeGateTest {
         assertTrue(AnalyzeCommitMojo.mergeSkipReason(runArgs(mergeSha, true)).isEmpty(),
                 "a two-parent PR merge with a sole side-branch author proceeds to analysis");
     }
+    /**
+     * a multi-author PR used to be excluded here, terminally, because no single author could be credited. The
+     * work then appeared nowhere at all, so it is analysed now and credited to whoever dominates the side branch
+     * — or to the merge author when nobody does.
+     */
     @Test
-    void mixedAuthorPrMergeStaysExcluded() throws Exception {
+    void mixedAuthorPrMergeIsAnalyzedRatherThanExcluded() throws Exception {
         String mergeSha = prMerge("Dev", "dev@corp.com", "Other", "other@corp.com");
 
-        Optional<String> reason = AnalyzeCommitMojo.mergeSkipReason(runArgs(mergeSha, true));
-        assertEquals("merge side-branch commits have multiple authors", reason.orElseThrow());
+        assertTrue(AnalyzeCommitMojo.mergeSkipReason(runArgs(mergeSha, true)).isEmpty(),
+                "losing a two-author PR entirely is worse than crediting it imperfectly");
     }
     @Test
     void oursStrategyMergeLandingNoMainlineChangesStaysExcluded() throws Exception {
