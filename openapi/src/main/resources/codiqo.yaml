@@ -903,7 +903,11 @@ components:
           format: double
           minimum: 0
           maximum: 100
-          description: CPD duplication percentage across all changed files
+          description: |
+            Duplication density of the whole scanned codebase: distinct source lines inside a detected PMD-CPD clone
+            over the source lines of every file the detector read, times 100. Project-scoped on both sides, so it does
+            not move with the size of the commit. Absent when CPD never ran (ignoreCpd, or no CPD-capable language);
+            present and 0 when it ran and found no clones. For the commit-scoped figure see changedLineCpdPercent.
         filesChanged:
           type: integer
           minimum: 0
@@ -1454,11 +1458,17 @@ components:
         totalDuplicatedLines:
           type: integer
           minimum: 0
+          description: |
+            Distinct source lines inside a clone that this commit's changed symbols participate in. Deduplicated, so a
+            line shared by two clone groups counts once.
         duplicatedPercentage:
           type: number
           format: double
           minimum: 0
           maximum: 100
+          description: |
+            Duplication density of the whole scanned codebase — the same value as
+            ProjectQualityModel.cpdDuplicationPercent. Not a ratio of totalDuplicatedLines, which is commit-scoped.
 
     # ==========================================================================
     # Project & Commit
@@ -2234,11 +2244,17 @@ components:
         totalDuplicatedLines:
           type: integer
           minimum: 0
+          description: |
+            Distinct source lines inside a clone that this commit's changed symbols participate in. Deduplicated, so a
+            line shared by two clone groups counts once.
         duplicatedPercentage:
           type: number
           format: double
           minimum: 0
           maximum: 100
+          description: |
+            Duplication density of the whole scanned codebase — the same value as
+            ProjectQualityModel.cpdDuplicationPercent. Not a ratio of totalDuplicatedLines, which is commit-scoped.
         changedLineCpdPercent:
           type: number
           format: double
@@ -2246,8 +2262,8 @@ components:
           maximum: 100
           description: |
             Percent of the commit's changed lines that fall inside a detected PMD-CPD clone:
-            duplicated changed lines / effective changed lines * 100. Line-scoped (not the
-            method-statement-scoped duplicatedPercentage). Equals the pooled combination of
+            duplicated changed lines / effective changed lines * 100. Commit-scoped (not the
+            codebase-scoped duplicatedPercentage). Equals the pooled combination of
             addedLineCpdPercent and modifiedLineCpdPercent.
         addedLineCpdPercent:
           type: number

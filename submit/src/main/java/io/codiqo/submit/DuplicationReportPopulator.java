@@ -33,12 +33,8 @@ import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.LocationModel;
 import io.codiqo.client.model.NewCloneGroupModel;
 import io.codiqo.llm.lang.LanguageCapabilities;
-import lombok.Getter;
 
 public class DuplicationReportPopulator implements SubmissionPopulator {
-    @Getter
-    private int totalDuplicatedLines = 0;
-
     @Override
     public void accept(SubmissionContext ctx) {
         DuplicationReportModel duplicationReportModel = new DuplicationReportModel();
@@ -47,7 +43,6 @@ public class DuplicationReportPopulator implements SubmissionPopulator {
 
         Path workTreeRealPath = resolveRealPath(ctx.getWorkTree());
         int totalDuplicatedTokens = 0;
-        int duplicatedLines = 0;
         Map<String, Set<String>> duplicateOfBySignature = new LinkedHashMap<>();
         Map<String, Set<Integer>> duplicatedLinesByPath = new HashMap<>();
 
@@ -60,7 +55,6 @@ public class DuplicationReportPopulator implements SubmissionPopulator {
                 duplicationReportModel.getClones().add(cloneModel);
 
                 totalDuplicatedTokens += match.getTokenCount();
-                duplicatedLines += match.getLineCount();
 
                 for (DuplicateMark mark : match) {
                     CloneLocationModel locationModel = new CloneLocationModel();
@@ -109,10 +103,13 @@ public class DuplicationReportPopulator implements SubmissionPopulator {
             });
         }
 
-        this.totalDuplicatedLines = duplicatedLines;
-
         duplicationReportModel.setTotalDuplicatedTokens(totalDuplicatedTokens);
-        duplicationReportModel.setTotalDuplicatedLines(duplicatedLines);
+        /**
+         * distinct lines, not the sum of each match's span: a line inside two clone groups is one duplicated line,
+         * and a group of N marks spans its length N times over. duplicatedLinesByPath already holds the per-file line
+         * sets this needs.
+         */
+        duplicationReportModel.setTotalDuplicatedLines(duplicatedLinesByPath.values().stream().mapToInt(Set::size).sum());
 
         ctx.getSubmissionModel().setDuplication(duplicationReportModel);
 
