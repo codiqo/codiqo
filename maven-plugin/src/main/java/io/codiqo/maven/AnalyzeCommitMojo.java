@@ -370,9 +370,11 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                 if (JGit.mergeSideCommits(args.getGit(), merge).isEmpty()) {
                     return Optional.of("merge introduces no side-branch commits");
                 }
-                if (JGit.mergeSideSoleAuthor(args.getGit(), merge).isEmpty()) {
-                    return Optional.of("merge side-branch commits have multiple authors");
-                }
+                /**
+                 * a multi-author side branch used to be excluded here, terminally, on the grounds that nobody
+                 * could be credited. That lost the work outright — it appeared nowhere, not even in org totals —
+                 * so the merge is now analysed and credited to whoever dominates the side branch instead.
+                 */
                 return Optional.empty();
             }
         }
@@ -388,7 +390,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             RevCommit commit = walk.parseCommit(objectId);
             PersonIdent credited = commit.getAuthorIdent();
             if (JGit.isMerge(commit)) {
-                credited = JGit.mergeSideSoleAuthor(args.getGit(), commit).orElse(credited);
+                credited = JGit.mergeSideCreditedAuthor(args.getGit(), commit).orElse(credited);
             }
             return JGit.isAuthorAdmitted(args.getGit(), commit, credited,
                     email -> BooleanUtils.negate(args.isExcludedAuthor(email)));
@@ -399,7 +401,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
         try (RevWalk walk = new RevWalk(args.getGit())) {
             RevCommit commit = walk.parseCommit(objectId);
             if (JGit.isMerge(commit)) {
-                Optional<PersonIdent> sideAuthor = JGit.mergeSideSoleAuthor(args.getGit(), commit);
+                Optional<PersonIdent> sideAuthor = JGit.mergeSideCreditedAuthor(args.getGit(), commit);
                 if (sideAuthor.isPresent()) {
                     return sideAuthor.get().getEmailAddress();
                 }

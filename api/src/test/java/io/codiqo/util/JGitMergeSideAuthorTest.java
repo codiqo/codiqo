@@ -121,6 +121,53 @@ class JGitMergeSideAuthorTest {
         RevCommit octopus = rawMerge(List.of(base, side1, side2), "octopus merge");
         assertTrue(JGit.mergeSideSoleAuthor(repository, octopus).isEmpty());
     }
+    /** two commits against one: the majority writer is credited rather than the merge being thrown away. */
+    @Test
+    void multiAuthorSideBranchCreditsTheDominantAuthorByCommits() throws Exception {
+        commitAs("base.txt", "0", "base", "Maintainer", "maintainer@corp.com");
+        git.branchCreate().setName("feature").call();
+        git.checkout().setName("feature").call();
+        commitAs("f1.txt", "1", "PR commit 1", "Dev", "dev@corp.com");
+        commitAs("f2.txt", "2", "PR commit 2", "Dev", "dev@corp.com");
+        commitAs("f3.txt", "3", "a drive-by fix", "Other", "other@corp.com");
+        git.checkout().setName("main").call();
+        commitAs("m.txt", "m", "mainline", "Maintainer", "maintainer@corp.com");
+        RevCommit merge = mergeAs("feature", "Merge pull request #6", "CI Bot", "bot@ci.com");
+
+        Optional<PersonIdent> credited = JGit.mergeSideCreditedAuthor(repository, merge);
+        assertTrue(credited.isPresent());
+        assertEquals("dev@corp.com", credited.get().getEmailAddress());
+    }
+    /** equal commit counts fall through to lines, so the author of the larger change is credited. */
+    @Test
+    void equalCommitCountsAreBrokenByLinesChanged() throws Exception {
+        commitAs("base.txt", "0", "base", "Maintainer", "maintainer@corp.com");
+        git.branchCreate().setName("feature").call();
+        git.checkout().setName("feature").call();
+        commitAs("small.txt", "one line", "small change", "Small", "small@corp.com");
+        commitAs("big.txt", "a\nb\nc\nd\ne\nf\ng\nh", "big change", "Big", "big@corp.com");
+        git.checkout().setName("main").call();
+        commitAs("m.txt", "m", "mainline", "Maintainer", "maintainer@corp.com");
+        RevCommit merge = mergeAs("feature", "Merge pull request #7", "CI Bot", "bot@ci.com");
+
+        Optional<PersonIdent> credited = JGit.mergeSideCreditedAuthor(repository, merge);
+        assertTrue(credited.isPresent());
+        assertEquals("big@corp.com", credited.get().getEmailAddress());
+    }
+    /** a genuine tie resolves to empty, so the caller keeps the merge author rather than picking arbitrarily. */
+    @Test
+    void aGenuineTieCreditsNobody() throws Exception {
+        commitAs("base.txt", "0", "base", "Maintainer", "maintainer@corp.com");
+        git.branchCreate().setName("feature").call();
+        git.checkout().setName("feature").call();
+        commitAs("a.txt", "x", "one", "First", "first@corp.com");
+        commitAs("b.txt", "x", "two", "Second", "second@corp.com");
+        git.checkout().setName("main").call();
+        commitAs("m.txt", "m", "mainline", "Maintainer", "maintainer@corp.com");
+        RevCommit merge = mergeAs("feature", "Merge pull request #8", "CI Bot", "bot@ci.com");
+
+        assertTrue(JGit.mergeSideCreditedAuthor(repository, merge).isEmpty());
+    }
     private RevCommit rawMerge(List<RevCommit> parents, String message) throws Exception {
         try (ObjectInserter inserter = repository.newObjectInserter()) {
             CommitBuilder builder = new CommitBuilder();

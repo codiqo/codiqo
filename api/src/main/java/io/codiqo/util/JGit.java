@@ -21,6 +21,8 @@ import org.apache.commons.lang3.Strings;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ListBranchCommand.ListMode;
 import org.eclipse.jgit.diff.DiffEntry;
+import org.eclipse.jgit.diff.DiffFormatter;
+import org.eclipse.jgit.diff.Edit;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -30,6 +32,7 @@ import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
+import org.eclipse.jgit.util.io.DisabledOutputStream;
 
 import lombok.experimental.UtilityClass;
 
@@ -162,6 +165,75 @@ public class JGit {
         }
         return mergeSideCommits(repo, commit).stream()
                 .anyMatch(side -> admits.test(side.getAuthorIdent().getEmailAddress()));
+    }
+    /**
+     * who to credit for a merge node's parent[0] delta when the side branch has more than one author: the one who
+     * wrote most of it. Commits decide it, lines break a tie, and a genuine tie resolves to empty so the caller
+     * keeps the merge author rather than picking arbitrarily.
+     *
+     * <p>Exists because the alternative was worse. A multi-author PR has no sole author, and treating that as
+     * unattributable dropped the whole merge — terminally, so the work appeared nowhere, not even in org totals.
+     * Crediting the dominant author is imperfect and says so; losing the commit is not recoverable.
+     */
+    public static Optional<PersonIdent> mergeSideDominantAuthor(Repository repo, RevCommit merge) throws IOException {
+        if (merge.getParentCount() != 2) {
+            return Optional.empty();
+        }
+
+        Map<String, PersonIdent> byEmail = new HashMap<>();
+        Map<String, Integer> commits = new HashMap<>();
+        List<RevCommit> side = mergeSideCommits(repo, merge);
+        for (RevCommit commit : side) {
+            PersonIdent author = commit.getAuthorIdent();
+            String key = StringUtils.lowerCase(author.getEmailAddress());
+            byEmail.putIfAbsent(key, author);
+            commits.merge(key, BigDecimal.ONE.intValue(), Integer::sum);
+        }
+
+        Optional<String> byCommits = soleMaximum(commits);
+        if (byCommits.isPresent()) {
+            return Optional.of(byEmail.get(byCommits.get()));
+        }
+
+        Map<String, Integer> lines = new HashMap<>();
+        for (RevCommit commit : side) {
+            String key = StringUtils.lowerCase(commit.getAuthorIdent().getEmailAddress());
+            lines.merge(key, changedLines(repo, commit), Integer::sum);
+        }
+        return soleMaximum(lines).map(byEmail::get);
+    }
+    /** the credited author of a merge: its sole side author when there is one, otherwise whoever dominates it. */
+    public static Optional<PersonIdent> mergeSideCreditedAuthor(Repository repo, RevCommit merge) throws IOException {
+        Optional<PersonIdent> sole = mergeSideSoleAuthor(repo, merge);
+        return sole.isPresent() ? sole : mergeSideDominantAuthor(repo, merge);
+    }
+    /** the single largest value, or empty when nothing leads outright — a tie must not be resolved by map order. */
+    private static Optional<String> soleMaximum(Map<String, Integer> counts) {
+        int max = counts.values().stream().mapToInt(Integer::intValue).max().orElse(0);
+        if (max == 0) {
+            return Optional.empty();
+        }
+        List<String> leaders = counts.entrySet().stream()
+                .filter(entry -> entry.getValue() == max)
+                .map(Map.Entry::getKey)
+                .toList();
+        return leaders.size() == 1 ? Optional.of(leaders.iterator().next()) : Optional.empty();
+    }
+    /** added plus deleted lines a single-parent commit contributed; a merge or a root commit counts as nothing. */
+    private static int changedLines(Repository repo, RevCommit commit) throws IOException {
+        if (commit.getParentCount() != 1) {
+            return 0;
+        }
+        try (DiffFormatter formatter = new DiffFormatter(DisabledOutputStream.INSTANCE)) {
+            formatter.setRepository(repo);
+            int toReturn = 0;
+            for (DiffEntry entry : formatter.scan(commit.getParent(0), commit)) {
+                for (Edit edit : formatter.toFileHeader(entry).toEditList()) {
+                    toReturn += edit.getEndA() - edit.getBeginA() + edit.getEndB() - edit.getBeginB();
+                }
+            }
+            return toReturn;
+        }
     }
     public static List<String> branchesContaining(Repository repo, String commitSha) throws Exception {
         Set<String> toReturn = new LinkedHashSet<>();

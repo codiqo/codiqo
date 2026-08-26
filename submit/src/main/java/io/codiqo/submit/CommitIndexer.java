@@ -56,13 +56,14 @@ public class CommitIndexer {
                 List<String> branches = branchIndex.getOrDefault(commit.getName(), Collections.emptyList());
 
                 /**
-                 * merge nodes are credited to the side-branch sole author (the developer whose PR
-                 * landed), so the author filter must not drop a PR just because a bot or a teammate
-                 * clicked merge
+                 * merge nodes are credited to the developer whose PR landed — its sole side-branch author, or
+                 * whoever dominates a multi-author one — so the author filter must not drop a PR just because a
+                 * bot or a teammate clicked merge. AnalyzeCommitMojo resolves the same way: a commit the index
+                 * credits to one person and the analysis to another would report two different owners.
                  */
                 PersonIdent author = commit.getAuthorIdent();
                 if (JGit.isMerge(commit)) {
-                    author = JGit.mergeSideSoleAuthor(repo, commit).orElse(author);
+                    author = JGit.mergeSideCreditedAuthor(repo, commit).orElse(author);
                 }
 
                 /**
