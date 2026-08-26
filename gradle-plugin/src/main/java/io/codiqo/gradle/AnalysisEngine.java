@@ -287,9 +287,8 @@ public class AnalysisEngine {
                 new EffectiveChangePopulator().accept(ctx);
                 new IndexModelPopulator().accept(ctx);
 
-                DuplicationReportPopulator duplicationPopulator = new DuplicationReportPopulator();
-                duplicationPopulator.accept(ctx);
-                new MetricsAggregator(duplicationPopulator.getTotalDuplicatedLines()).accept(ctx);
+                new DuplicationReportPopulator().accept(ctx);
+                new MetricsAggregator().accept(ctx);
 
                 ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
                 new OutputSerializer(true, logFactory.getLogger(OutputSerializer.class)).accept(ctx);

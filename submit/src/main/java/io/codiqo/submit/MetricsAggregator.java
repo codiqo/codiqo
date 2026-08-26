@@ -1,7 +1,9 @@
 package io.codiqo.submit;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
+import java.util.OptionalDouble;
 import java.util.function.Function;
 import java.util.ArrayList;
 
@@ -9,6 +11,7 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.math3.stat.descriptive.rank.Percentile;
 
 
+import io.codiqo.api.cpd.CopyPasteDetectionSummary;
 import io.codiqo.api.metrics.DriverScaler;
 import io.codiqo.api.metrics.DriverScaler.DimensionStats;
 import io.codiqo.api.metrics.DriverScore;
@@ -21,19 +24,14 @@ import io.codiqo.client.model.ModuleModel;
 import io.codiqo.client.model.ModuleQualityModel;
 import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.client.model.ProjectQualityModel;
-import lombok.RequiredArgsConstructor;
 
-@RequiredArgsConstructor
 public class MetricsAggregator implements SubmissionPopulator {
-    private final int totalDuplicatedLines;
-
     @Override
     public void accept(SubmissionContext ctx) {
         int totalFilesChanged = 0;
         int totalCodeUnitsAffected = 0;
         int totalPmdViolations = 0;
         int totalSpotbugsIssues = 0;
-        int totalStatements = 0;
         double totalCoverage = 0.0;
         double totalComplexity = 0.0;
         int coverageCount = 0;
@@ -113,7 +111,6 @@ public class MetricsAggregator implements SubmissionPopulator {
                 totalCodeUnitsAffected += tracker.affectedCodeUnits().intValue();
                 totalPmdViolations += tracker.affectedPmdViolations().intValue();
                 totalSpotbugsIssues += tracker.affectedSpotbugsIssues().intValue();
-                totalStatements += tracker.affectedTotalStatements().intValue();
                 totalCoverage += tracker.affectedTotalCoverage().doubleValue();
                 totalComplexity += tracker.affectedTotalComplexity().doubleValue();
                 coverageCount += tracker.affectedCoverageCount().intValue();
@@ -148,16 +145,10 @@ public class MetricsAggregator implements SubmissionPopulator {
         if (complexityCount > 0) {
             projectQualityModel.setAverageComplexity(totalComplexity / complexityCount);
         }
-        /**
-         * guarded on the denominator alone, like every ratio above it: a run that measured statements and found no
-         * duplication is 0%, not unknown. Requiring duplicated lines too left null on every clean commit, which
-         * downstream cannot tell apart from "CPD never ran" — and on a public page those read very differently.
-         */
-        if (totalStatements > 0) {
-            double cpdPercent = Math.min(totalDuplicatedLines * 100.0 / totalStatements, 100.0);
+        cpdDuplicationPercent(ctx.getAnalysis().cpd()).ifPresent(cpdPercent -> {
             projectQualityModel.setCpdDuplicationPercent(cpdPercent);
             ctx.getSubmissionModel().getDuplication().setDuplicatedPercentage(cpdPercent);
-        }
+        });
 
         ctx.getSubmissionModel().setProjectQuality(projectQualityModel);
 
@@ -274,6 +265,30 @@ public class MetricsAggregator implements SubmissionPopulator {
         scalersModel.setConstructorScalerTest(toModel(constructorScalerTest));
         populateTrivialCounts(ctx, scalersModel);
         projectMetricsModel.setDriverScalers(scalersModel);
+    }
+    /**
+     * share of everything the detector read that sits inside a clone: distinct duplicated lines over the lines of the
+     * files it scanned, both sides from the same run. Two earlier denominators were wrong in opposite directions — the
+     * commit's own statements moved the figure inversely with commit size (42 cloned lines in a five-file commit read
+     * as 59%), and the reactor's statements left a commit-scoped numerator over a project-scoped denominator.
+     *
+     * empty only when CPD never ran — switched off via ignoreCpd, or unsupported for every indexed language — because
+     * that is genuinely unknown. A run that read code and found no clones is 0%, not unknown: guarding on the
+     * duplicated lines as well would leave null on every clean commit, which downstream cannot tell apart from "CPD
+     * never ran", and on a public page those read very differently.
+     */
+    static OptionalDouble cpdDuplicationPercent(Collection<CopyPasteDetectionSummary> cpd) {
+        if (CollectionUtils.isEmpty(cpd)) {
+            return OptionalDouble.empty();
+        }
+
+        int scannedLines = cpd.stream().mapToInt(CopyPasteDetectionSummary::scannedLines).sum();
+        if (scannedLines <= 0) {
+            return OptionalDouble.empty();
+        }
+
+        int duplicatedLines = cpd.stream().mapToInt(CopyPasteDetectionSummary::duplicatedLines).sum();
+        return OptionalDouble.of(Math.min(duplicatedLines * 100.0 / scannedLines, 100.0));
     }
     private static DriverScalerModel toModel(DriverScaler scaler) {
         DriverScalerModel toReturn = new DriverScalerModel();

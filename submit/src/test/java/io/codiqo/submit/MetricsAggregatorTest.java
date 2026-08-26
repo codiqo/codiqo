@@ -3,16 +3,52 @@ package io.codiqo.submit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.File;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.OptionalDouble;
+import java.util.Set;
 import java.util.ArrayList;
 
 import org.junit.jupiter.api.Test;
 
 
+import io.codiqo.api.code.CodeBlockInfo;
+import io.codiqo.api.cpd.CopyPasteDetectionSummary;
+import io.codiqo.api.cpd.DuplicationMatch;
 import io.codiqo.api.metrics.DriverScaler;
 import io.codiqo.api.metrics.DriverScore;
 
 class MetricsAggregatorTest {
+    @Test
+    void cpdPercentIsEmptyOnlyWhenTheDetectorNeverRan() {
+        assertTrue(MetricsAggregator.cpdDuplicationPercent(List.of()).isEmpty(),
+                "no summary at all is ignoreCpd or an unsupported language — unknown, and it must not publish a confident 0%");
+        assertTrue(MetricsAggregator.cpdDuplicationPercent(List.of(new ScannedCode(0, 0))).isEmpty(),
+                "a run that read nothing measured nothing");
+
+        assertEquals(0.0, MetricsAggregator.cpdDuplicationPercent(List.of(new ScannedCode(0, 53_000))).orElseThrow(),
+                "a run that read code and found no clones is a measured zero, not unknown");
+    }
+    /** the numbers are ebean's 1545e68c3e (42 duplicated lines) and c275953582 (133), over its ~53k-line reactor. */
+    @Test
+    void cpdPercentIsAShareOfEverythingScannedNotOfTheCommit() {
+        assertEquals(0.079, MetricsAggregator.cpdDuplicationPercent(List.of(new ScannedCode(42, 53_000))).orElseThrow(), 0.001);
+        assertEquals(0.251, MetricsAggregator.cpdDuplicationPercent(List.of(new ScannedCode(133, 53_000))).orElseThrow(), 0.001);
+    }
+    @Test
+    void cpdPercentPoolsEveryLanguageSummary() {
+        OptionalDouble pooled = MetricsAggregator.cpdDuplicationPercent(
+                List.of(new ScannedCode(30, 40_000), new ScannedCode(12, 13_000)));
+
+        assertEquals(0.079, pooled.orElseThrow(), 0.001,
+                "one summary per language: the ratio is of the pooled totals, not the mean of the per-language ratios (0.084)");
+    }
+    @Test
+    void cpdPercentIsClampedAtOneHundred() {
+        assertEquals(100.0, MetricsAggregator.cpdDuplicationPercent(List.of(new ScannedCode(900, 100))).orElseThrow());
+    }
     @Test
     void computeDriverQuantileReturnsZeroForEmptyPopulation() {
         DriverScaler scaler = DriverScaler.EMPTY;
@@ -69,5 +105,39 @@ class MetricsAggregatorTest {
         assertTrue(prodP90 < pooledP90,
                 "prod-only P90 must be tighter than pooled P90; pooled is inflated by test-code outliers (the whole point of the split)");
         assertTrue(testP90 > 0);
+    }
+
+    private static class ScannedCode implements CopyPasteDetectionSummary {
+        private final int duplicatedLines;
+        private final int scannedLines;
+
+        ScannedCode(int duplicatedLines, int scannedLines) {
+            this.duplicatedLines = duplicatedLines;
+            this.scannedLines = scannedLines;
+        }
+        @Override
+        public int duplicatedLines() {
+            return duplicatedLines;
+        }
+        @Override
+        public int scannedLines() {
+            return scannedLines;
+        }
+        @Override
+        public Map<File, Integer> tokensPerFile() {
+            return Collections.emptyMap();
+        }
+        @Override
+        public Set<DuplicationMatch> affected() {
+            return Collections.emptySet();
+        }
+        @Override
+        public Map<CodeBlockInfo, Set<CodeBlockInfo>> copyPasteFrom() {
+            return Collections.emptyMap();
+        }
+        @Override
+        public Set<Set<CodeBlockInfo>> copyPasteNew() {
+            return Collections.emptySet();
+        }
     }
 }

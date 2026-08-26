@@ -11,4 +11,6 @@ public interface CopyPasteDetectionSummary {
     Set<DuplicationMatch> affected();
     Map<CodeBlockInfo, Set<CodeBlockInfo>> copyPasteFrom();
     Set<Set<CodeBlockInfo>> copyPasteNew();
+    int duplicatedLines();
+    int scannedLines();
 }

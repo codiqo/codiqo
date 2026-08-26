@@ -1,13 +1,19 @@
 package io.codiqo.api.cpd;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.util.BitSet;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 
+import org.apache.commons.lang3.CharUtils;
 
 import io.codiqo.api.DuplicateMark;
 import io.codiqo.api.IndexingSummary;
@@ -25,6 +31,10 @@ public class PMDCopyPasteDetectionSummary implements CopyPasteDetectionSummary {
     private final Set<Set<CodeBlockInfo>> copyPasteNew = new LinkedHashSet<>();
     private final Set<DuplicationMatch> affected = new LinkedHashSet<>();
     private final Map<File, Integer> tokensPerFile;
+    private static final int READ_BUFFER_BYTES = 64 * 1024;
+
+    private final int duplicatedLines;
+    private final int scannedLines;
 
     public PMDCopyPasteDetectionSummary(
             Map<File, Integer> tokensPerFile,
@@ -32,6 +42,13 @@ public class PMDCopyPasteDetectionSummary implements CopyPasteDetectionSummary {
             IndexingSummary summary,
             CommitAnalysis analysis) {
         this.tokensPerFile = Objects.requireNonNull(tokensPerFile);
+
+        /**
+         * measured over every match, before the commit filter below narrows the set: a duplication density describes
+         * the codebase, so both of its sides have to be drawn from everything the detector read.
+         */
+        this.duplicatedLines = countDuplicatedLines(matches);
+        this.scannedLines = countSourceLines(tokensPerFile.keySet());
 
         matches.forEach(match -> {
             Collection<File> locations = analysis.locations();
@@ -93,5 +110,42 @@ public class PMDCopyPasteDetectionSummary implements CopyPasteDetectionSummary {
                 }
             }
         });
+    }
+    static int countDuplicatedLines(Set<DuplicationMatch> matches) {
+        Map<File, BitSet> linesByFile = new HashMap<>();
+
+        for (DuplicationMatch match : matches) {
+            for (DuplicateMark mark : match) {
+                BitSet lines = linesByFile.computeIfAbsent(mark.getFile(), file -> new BitSet());
+                lines.set(mark.getLocation().getStartLine(), mark.getLocation().getEndLine() + 1);
+            }
+        }
+
+        return linesByFile.values().stream().mapToInt(BitSet::cardinality).sum();
+    }
+    static int countSourceLines(Collection<File> files) {
+        int toReturn = 0;
+        byte[] buffer = new byte[READ_BUFFER_BYTES];
+
+        for (File file : files) {
+            try (InputStream in = Files.newInputStream(file.toPath())) {
+                int read;
+                int last = -1;
+                while ((read = in.read(buffer)) > 0) {
+                    for (int i = 0; i < read; i++) {
+                        if (buffer[i] == CharUtils.LF) {
+                            toReturn++;
+                        }
+                    }
+                    last = buffer[read - 1];
+                }
+                if (last >= 0 && last != CharUtils.LF) {
+                    toReturn++;
+                }
+            } catch (IOException err) {
+                continue;
+            }
+        }
+        return toReturn;
     }
 }

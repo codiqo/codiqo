@@ -1344,9 +1344,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     new FileAnalysisPopulator().accept(ctx);
                     new EffectiveChangePopulator().accept(ctx);
                     new IndexModelPopulator().accept(ctx);
-                    DuplicationReportPopulator duplicationPopulator = new DuplicationReportPopulator();
-                    duplicationPopulator.accept(ctx);
-                    new MetricsAggregator(duplicationPopulator.getTotalDuplicatedLines()).accept(ctx);
+                    new DuplicationReportPopulator().accept(ctx);
+                    new MetricsAggregator().accept(ctx);
                     new ExcludedCoverageClassPopulator().accept(ctx);
                     new SubmissionSummaryPrinter(getLog()).accept(ctx);
                     // set before the dump so codiqo-submission-<sha> replays carry the effective config
