@@ -181,6 +181,26 @@ class JGitDeltaAnalyzerParentShapeTest {
                 "the merge node carries the side branch's net change once, measured against parent[0]");
     }
     @Test
+    void multiAuthorMergeIsCreditedToWhoeverWroteMostOfTheBranch() throws Exception {
+        commit("Main.java", "class Main {}\n", "main line");
+
+        git.branchCreate().setName("feature").call();
+        git.checkout().setName("feature").call();
+        commitAs("A.java", "class A {}\n", "most of the work", "Dev B", "devb@example.com");
+        commitAs("B.java", "class B {}\n", "more of the work", "Dev B", "devb@example.com");
+        commitAs("C.java", "class C {}\n", "a drive-by fix", "Dev C", "devc@example.com");
+
+        git.checkout().setName(mainline).call();
+        RevCommit merge = merge(repository.resolve("feature"), "Merge pull request #2");
+        args.setCommitId(merge.getName());
+
+        CommitAnalysis analysis = analyzer.analyze();
+
+        assertTrue(analysis.isMergeCommit());
+        assertEquals("devb@example.com", analysis.getAuthorEmail(),
+                "no sole side author, so the credit follows the branch's majority writer rather than the merge author");
+    }
+    @Test
     void octopusMergeKeepsFirstParentDeltaAndItsOwnAuthor() throws Exception {
         commit("Main.java", "class Main {}\n", "main line");
         RevCommit base = commit("Shared.java", "class Shared {}\n", "shared");
