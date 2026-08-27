@@ -161,13 +161,17 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         });
 
         /**
-         * a merge node's parent[0] delta is the merged-in branch's net change, so credit goes to the
-         * side-branch sole author (the developer whose PR landed), not whoever clicked merge. the
-         * merge's own timestamp is kept — attribution changes who, not when
+         * a merge node's parent[0] delta is the merged-in branch's net change, so credit goes to the developer
+         * whose PR landed — its sole side-branch author, or whoever dominates a multi-author one — not whoever
+         * clicked merge. the merge's own timestamp is kept: attribution changes who, not when.
+         *
+         * this is the value the submission stores, so it has to resolve the same way as the index and the
+         * exclusion gate; reading only the sole author here left every multi-author merge credited to the
+         * integration identity while the log claimed otherwise
          */
         PersonIdent effectiveAuthor = commit.getAuthorIdent();
         if (JGit.isMerge(commit)) {
-            effectiveAuthor = JGit.mergeSideSoleAuthor(args.getGit(), commit).orElse(effectiveAuthor);
+            effectiveAuthor = JGit.mergeSideCreditedAuthor(args.getGit(), commit).orElse(effectiveAuthor);
         }
         toReturn.setAuthor(effectiveAuthor.getName());
         toReturn.setAuthorEmail(effectiveAuthor.getEmailAddress());
