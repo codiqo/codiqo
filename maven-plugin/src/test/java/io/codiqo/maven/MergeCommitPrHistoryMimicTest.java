@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Date;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -31,6 +32,7 @@ import io.codiqo.client.model.CommitModel;
 import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.core.diff.GitCommitAnalysis;
 import io.codiqo.core.logging.SlfLogFactory;
+import io.codiqo.submit.CommitExclusions;
 import io.codiqo.submit.CommitIndexer;
 
 /**
@@ -144,10 +146,10 @@ class MergeCommitPrHistoryMimicTest {
     }
     @AfterEach
     void closeRepo() {
-        if (git != null) {
+        if (Objects.nonNull(git)) {
             git.close();
         }
-        if (repository != null) {
+        if (Objects.nonNull(repository)) {
             repository.close();
         }
     }
@@ -185,7 +187,7 @@ class MergeCommitPrHistoryMimicTest {
     @Test
     void analyzeGateAdmitsEverySoleAuthorPrMerge() throws Exception {
         for (String mergeSha : List.of(pr1MergeSha, pr7MergeSha, syncMergeSha, pr18MergeSha)) {
-            assertTrue(AnalyzeCommitMojo.mergeSkipReason(runArgs(mergeSha, true)).isEmpty(),
+            assertTrue(CommitExclusions.mergeSkipReason(runArgs(mergeSha, true)).isEmpty(),
                     "sole-author merge must be analyzable, was excluded in production: " + mergeSha);
         }
     }

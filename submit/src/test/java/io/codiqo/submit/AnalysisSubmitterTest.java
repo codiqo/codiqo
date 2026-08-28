@@ -1,4 +1,4 @@
-package io.codiqo.maven;
+package io.codiqo.submit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -16,15 +16,15 @@ import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.apache.maven.plugin.logging.Log;
-import org.apache.maven.plugin.logging.SystemStreamLog;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.event.Level;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
+import io.codiqo.api.logging.Log;
 import io.codiqo.client.ApiException;
 import io.codiqo.client.model.AnalysisAcceptedModel;
 import io.codiqo.client.model.AnalysisResultModel;
@@ -34,7 +34,7 @@ import io.codiqo.client.model.ProjectModel;
 
 class AnalysisSubmitterTest {
     private static final String API_KEY = "test-api-key";
-    private static final Log LOG = new SystemStreamLog();
+    private static final Log LOG = new NoopLog();
 
     private HttpServer server;
     private final List<RecordedRequest> recorded = new CopyOnWriteArrayList<>();
@@ -58,7 +58,7 @@ class AnalysisSubmitterTest {
                 serverUrl(), API_KEY, 5, 5, sampleSubmission(), LOG);
 
         assertEquals(1, recorded.size());
-        RecordedRequest req = recorded.get(0);
+        RecordedRequest req = recorded.iterator().next();
         assertEquals("POST", req.method);
         assertEquals("/api/v1/analyses", req.path);
         assertEquals(API_KEY, req.apiKeyHeader);
@@ -149,6 +149,22 @@ class AnalysisSubmitterTest {
             String apiKeyHeader = exchange.getRequestHeaders().getFirst("X-API-Key");
             String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             return new RecordedRequest(method, path, apiKeyHeader, body);
+        }
+    }
+    private static final class NoopLog implements Log {
+        @Override
+        public boolean isLoggable(Level level) {
+            return false;
+        }
+        @Override
+        public void logEx(Level level, String message, Object[] formatArgs, Throwable error) {
+        }
+        @Override
+        public void log(Level level, String message, Object... formatArgs) {
+        }
+        @Override
+        public int numErrors() {
+            return 0;
         }
     }
 }

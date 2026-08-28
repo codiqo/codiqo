@@ -40,13 +40,11 @@ import org.apache.maven.project.ProjectBuildingRequest;
 import org.apache.maven.project.ProjectBuildingResult;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ResetCommand;
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.StoredConfig;
-import org.eclipse.jgit.revwalk.RevCommit;
-import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.RefSpec;
 import org.w3c.dom.Document;
@@ -58,6 +56,8 @@ import org.xml.sax.SAXException;
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisExcludeCategory;
+import io.codiqo.submit.CommitExclusions;
+import io.codiqo.submit.CommitExclusions.Exclusion;
 import io.codiqo.util.JGit;
 import io.codiqo.util.MemoryReport;
 import lombok.Value;
@@ -111,35 +111,27 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     }
     @Override
     protected void doExecute(RunArgs args) throws Exception {
-        if (JGit.isMerge(args.getGit(), commitId)) {
-            Optional<String> mergeSkip = mergeSkipReason(args);
-            if (mergeSkip.isPresent()) {
-                getLog().warn(String.format("commit %s skipped: %s", commitId, mergeSkip.get()));
-                doExcludeAnalysis(commitId, mergeSkip.get(), AnalysisExcludeCategory.MERGE_COMMIT);
-                return;
-            }
-            getLog().info(String.format("merge commit %s analyzed via first-parent delta, credited to side-branch author %s", commitId, resolveAuthorEmail(args)));
-        }
-
-        if (BooleanUtils.negate(isAuthorAdmitted(args))) {
-            String reason = "author excluded by codiqo.excludeAuthorEmails";
-            getLog().warn(String.format("commit %s skipped: %s", commitId, reason));
-            doExcludeAnalysis(commitId, reason, AnalysisExcludeCategory.FILTERED_BY_RULES);
+        Optional<Exclusion> excluded = CommitExclusions.beforeAnalysis(args);
+        if (excluded.isPresent()) {
+            getLog().warn(String.format("commit %s skipped: %s", commitId, excluded.get().getReason()));
+            doExcludeAnalysis(commitId, excluded.get().getReason(), excluded.get().getCategory());
             return;
+        }
+        if (JGit.isMerge(args.getGit(), commitId)) {
+            getLog().info(String.format("merge commit %s analyzed via first-parent delta, credited to side-branch author %s",
+                    commitId, CommitExclusions.creditedAuthorEmail(args)));
         }
 
         File temp = Files.createTempDirectory("codiqo").toFile();
         temp.deleteOnExit();
 
-        /**
-         * clone the repository to a temporary location to avoid modifying the user's working directory and excluding uncommitted files.
-         */
+        // clone to a temporary location, so the user's working directory is untouched and uncommitted files are excluded
         StopWatch stopWatch = StopWatch.createStarted();
         StoredConfig originalConfig = args.getGit().getConfig();
         args.setDefaultBranch(args.getGit().getBranch());
 
         String sourceUri = args.getGit().getDirectory().toURI().toString();
-        ObjectId sourceHead = args.getGit().resolve(org.eclipse.jgit.lib.Constants.HEAD);
+        ObjectId sourceHead = args.getGit().resolve(Constants.HEAD);
 
         Repository clone = new FileRepositoryBuilder().setGitDir(new File(temp, ".git")).build();
         clone.create(false);
@@ -155,16 +147,14 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                     .call();
         }
 
-        RefUpdate headUpdate = clone.updateRef(org.eclipse.jgit.lib.Constants.HEAD, true);
+        RefUpdate headUpdate = clone.updateRef(Constants.HEAD, true);
         headUpdate.setNewObjectId(sourceHead);
         headUpdate.forceUpdate();
 
         stopWatch.stop();
         getLog().info(String.format("cloned directory: %s for analysis in %s", temp.getAbsolutePath(), stopWatch.toString()));
 
-        /**
-         * copy over the remote URLs to the cloned repository to allow for proper resolution of relative URLs during build.
-         */
+        // the clone needs the original remote URLs so relative URLs still resolve during the build
         StoredConfig cloneConfig = clone.getConfig();
         try {
             for (String remote : originalConfig.getSubsections("remote")) {
@@ -183,9 +173,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
         }
 
         try {
-            /**
-             * checkout the specified commit ID for analysis exactly as it was at that point in time (it is cleaned cloned repository w/o anything untracked).
-             */
+            // check the commit out exactly as it was: the clone is clean, with nothing untracked
             args.setGit(clone);
             try (Git git = Git.wrap(clone)) {
                 git.clean().setCleanDirectories(true).setForce(true).call();
@@ -196,15 +184,11 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             }
 
             /**
-             * attempt to build the project at the specified commit ID (potentially completely different multiple modules structure).
-             * this may require different JDK/MVN home since the project's build requirements may have changed since then.
-             */
-            /**
-             * host-side ProjectBuilder calls (pre-flight, root/module model building) resolve snapshot parents and
-             * BOM imports in THIS JVM, where the time-machine only applies when the extension is loaded via the host
-             * maven.ext.class.path. pin those calls to the commit instant (shifted by the successful attempt's
-             * back-off offset) so a later snapshot deploy that breaks historical POM interpolation — e.g. a
-             * dependencyManagement removal — cannot fail the analysis of an older commit.
+             * host-side ProjectBuilder calls (pre-flight, root and module model building) resolve snapshot parents
+             * and BOM imports in THIS JVM, where the time-machine only applies when the extension is loaded via the
+             * host maven.ext.class.path. Pin those calls to the commit instant, shifted by the successful attempt's
+             * back-off offset, so a later snapshot deploy that breaks historical POM interpolation cannot fail the
+             * analysis of an older commit.
              */
             if (args.isTimeMachineEnabled()) {
                 args.setTimeMachineTargetOffset(Duration.ZERO);
@@ -218,9 +202,8 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             }
             /**
              * pre-flight host model building is advisory only: the host JVM lacks the analyzed project's
-             * .mvn/extensions.xml environment (artifactregistry:// transport, env-injected sysEnvRepo*
-             * repositories), so its resolution failures are not authoritative — the fork build decides, and a
-             * genuine dependency problem resurfaces there with the full back-off ladder recorded
+             * .mvn/extensions.xml environment, so its resolution failures are not authoritative — the fork build
+             * decides, and a genuine dependency problem resurfaces there
              */
             if (resolveDependenciesOffline(args) instanceof BuildOutcome.Skipped skipped) {
                 getLog().warn(String.format("pre-flight host model building failed (%s), deferring to fork build", skipped.getReason()));
@@ -228,12 +211,9 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
 
             /**
              * build with the time-machine snapshot resolver first, pinning each dependency's snapshot deploy closest
-             * to the commit date, so a reproducible commit is analyzed against its commit-date dependencies and emits
-             * snapshot metadata. if that build fails — the commit-date snapshot is unavailable, or the source no longer
-             * compiles against it — step the resolution target back through the back-off ladder (the developer's
-             * daily-updating local repository may never have seen a snapshot deployed shortly before the commit),
-             * then fall back to latest snapshots and analyze best-effort. when time-machine is disabled, only the
-             * latest build runs.
+             * to the commit date. If that fails — the commit-date snapshot is unavailable, or the source no longer
+             * compiles against it — step the resolution target back through the ladder, then fall back to latest
+             * snapshots and analyze best-effort.
              */
             BuildOutcome buildOutcome = args.isTimeMachineEnabled()
                     ? buildWithBackoff(args, buildingReq)
@@ -263,11 +243,9 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             clone.close();
             FileUtils.deleteDirectory(temp);
             /**
-             * the private local repository deliberately outlives the analysis: it is shared by every commit of
-             * this project, its seeded releases are what make the next commit cheap, and its snapshots — the only
-             * volatile part — are cleared before the next attempt reads them. It also holds the record of which
-             * timestamps the successful attempt pinned. Deleting it here would throw the seed away once per
-             * commit, so cleanup belongs at the end of the run, not here.
+             * the private local repository deliberately outlives the analysis: it is shared by every commit of this
+             * project and its seeded releases are what make the next commit cheap, so cleanup belongs at the end of
+             * the run rather than here.
              */
         }
     }
@@ -284,9 +262,9 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             }
 
             /**
-             * sidecars must be read before the next invocationRequest call — it deletes the superseded meta dir.
-             * a dependency-resolution failure (including the resolver's far-forward refusal) cannot be fixed by
-             * stepping further back, so the ladder short-circuits to the latest-snapshots attempt.
+             * sidecars must be read before the next invocationRequest call, which deletes the superseded meta dir.
+             * A dependency-resolution failure cannot be fixed by stepping further back, so the ladder short-circuits
+             * to the latest-snapshots attempt.
              */
             BuildOutcome.Skipped skipped = (BuildOutcome.Skipped) outcome;
             if (Objects.isNull(firstSkipped)) {
@@ -295,10 +273,9 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             attemptFailures.add(attemptEntry("offset " + offset, skipped));
 
             /**
-             * a timeout is the one failure the ladder must not answer with another attempt: it carries no evidence
-             * that the snapshot picks were wrong, and every further rung costs another full buildTimeout — more than
-             * the deadline wrapping the whole commit can absorb, so the process would be killed mid-ladder and this
-             * exclusion would never be recorded at all.
+             * a timeout is the one failure the ladder must not answer with another attempt: it is no evidence that
+             * the snapshot picks were wrong, and every further rung costs another full buildTimeout — more than the
+             * deadline wrapping the whole commit can absorb.
              */
             if (skipped.isTimedOut()) {
                 getLog().warn(String.format("commit %s: time-machine build timed out at offset %s, not retrying", commitId, offset));
@@ -320,9 +297,9 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                 if (latest instanceof BuildOutcome.Skipped lastSkipped) {
                     attemptFailures.add(attemptEntry("latest snapshots", lastSkipped));
                     /**
-                     * the first attempt resolves commit-date snapshots and is the commit-faithful build — its failure
-                     * describes the commit's true state, while later attempts fail against increasingly anachronistic
-                     * dependency picks. headline the first failure; the full ladder lives in the detail.
+                     * the first attempt is the commit-faithful build, so its failure describes the commit's true
+                     * state; later attempts fail against increasingly anachronistic picks. Headline the first, and
+                     * keep the full ladder in the detail.
                      */
                     return new BuildOutcome.Skipped(firstSkipped.getReason(), firstSkipped.getCategory(), attemptHistoryDetail(attemptFailures));
                 }
@@ -344,92 +321,18 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
         return "time-machine attempts:" + ATTEMPT_SEPARATOR + StringUtils.join(attemptFailures, ATTEMPT_SEPARATOR);
     }
     /**
-     * in first-parent mode the merge node is the only mainline record of a merge-commit PR, so its
-     * parent[0] delta is analyzable when the side branch has a sole author to credit. in all-commits
-     * mode the side-branch commits are indexed individually and analyzing the merge would double-count
-     */
-    static Optional<String> mergeSkipReason(RunArgs args) throws IOException {
-        if (args.isFirstParentOnly()) {
-            ObjectId objectId = args.getGit().resolve(args.getCommitId());
-            try (RevWalk walk = new RevWalk(args.getGit())) {
-                RevCommit merge = walk.parseCommit(objectId);
-
-                /**
-                 * identical trees mean the merge landed nothing on the mainline (side changes already
-                 * integrated, or an ours-strategy merge that discarded them) — a guaranteed zero score,
-                 * so skip before the expensive clone/build/LLM pipeline
-                 */
-                RevCommit parent0 = walk.parseCommit(merge.getParent(0));
-                if (merge.getTree().getId().equals(parent0.getTree().getId())) {
-                    return Optional.of("merge introduces no mainline changes");
-                }
-
-                if (merge.getParentCount() > 2) {
-                    return Optional.of(String.format("octopus merge (%d parents)", merge.getParentCount()));
-                }
-                if (JGit.mergeSideCommits(args.getGit(), merge).isEmpty()) {
-                    return Optional.of("merge introduces no side-branch commits");
-                }
-                /**
-                 * a multi-author side branch used to be excluded here, terminally, on the grounds that nobody
-                 * could be credited. That lost the work outright — it appeared nowhere, not even in org totals —
-                 * so the merge is now analysed and credited to whoever dominates the side branch instead.
-                 */
-                return Optional.empty();
-            }
-        }
-        return Optional.of("merge commit (multiple parents)");
-    }
-    /**
-     * The index applies the same rule in {@link io.codiqo.submit.CommitIndexer}, and the two must agree: a commit the
-     * index keeps but the analysis excludes would be re-reported as missing on every run and rebuilt each time.
-     */
-    private static boolean isAuthorAdmitted(RunArgs args) throws IOException {
-        ObjectId objectId = args.getGit().resolve(args.getCommitId());
-        try (RevWalk walk = new RevWalk(args.getGit())) {
-            RevCommit commit = walk.parseCommit(objectId);
-            PersonIdent credited = commit.getAuthorIdent();
-            if (JGit.isMerge(commit)) {
-                credited = JGit.mergeSideCreditedAuthor(args.getGit(), commit).orElse(credited);
-            }
-            return JGit.isAuthorAdmitted(args.getGit(), commit, credited,
-                    email -> BooleanUtils.negate(args.isExcludedAuthor(email)));
-        }
-    }
-    private static String resolveAuthorEmail(RunArgs args) throws IOException {
-        ObjectId objectId = args.getGit().resolve(args.getCommitId());
-        try (RevWalk walk = new RevWalk(args.getGit())) {
-            RevCommit commit = walk.parseCommit(objectId);
-            if (JGit.isMerge(commit)) {
-                Optional<PersonIdent> sideAuthor = JGit.mergeSideCreditedAuthor(args.getGit(), commit);
-                if (sideAuthor.isPresent()) {
-                    return sideAuthor.get().getEmailAddress();
-                }
-            }
-            return commit.getAuthorIdent().getEmailAddress();
-        }
-    }
-    /**
      * Drops build resource directories that resolve outside their own module from the POMs of the CLONE, so the
-     * language server can import the project.
+     * language server can import the project. m2e cannot map such a directory into a workspace project — the whole
+     * module then fails to configure, and a module with no workspace project answers every call-hierarchy query with
+     * nothing, so blast radius silently reads zero
+     * (<a href="https://github.com/eclipse-m2e/m2e-core/issues/1790">m2e-core#1790</a>).
      *
-     * <p>m2e cannot map such a directory into a workspace project: it relativizes the path against the project, gets
-     * {@code ..}, and Eclipse rejects the resulting {@code /} outright — the whole module then fails to configure, and
-     * a module with no workspace project answers every call-hierarchy query with nothing, so blast radius silently
-     * reads zero. This is <a href="https://github.com/eclipse-m2e/m2e-core/issues/1790">m2e-core#1790</a>, open since
-     * July 2024 and still present in m2e 2.10.0; it is reported against guava, Apache RAT, Apache FOP and Dubbo. The
-     * fix proposed upstream skips the offending directory, which is exactly what removing it here achieves.
+     * <p>Only applied to the throwaway clone and only to {@code <build>} resources, which contribute no source roots,
+     * dependencies or classpath entries — so nothing the analysis measures changes.
      *
-     * <p>Only ever applied to the throwaway clone, and only to {@code <build>} resources — a plugin execution's own
-     * {@code <configuration><resources>} is left alone, because m2e does not read it; where the same path is
-     * configured in both, neither is touched and the path is reported. Resources contribute no source
-     * roots, dependencies or classpath entries, so nothing the analysis measures changes.
-     *
-     * <p>Runs after every build attempt, never before one: a directory that escapes its module can still be one the
-     * build needs — a {@code testResource} under {@code ../shared} feeds tests, and tests are where coverage comes
-     * from — so rewriting it up front failed those tests and degraded a commit whose own build is green. The import
-     * this exists for happens later still, when the language server loads in {@code doAnalyze}, so the build reads
-     * the POMs exactly as committed and the jar it packages is complete.
+     * <p>Runs after every build attempt, never before one: an escaping {@code testResource} can still be one the
+     * build needs, and tests are where coverage comes from. The import this exists for happens later still, when the
+     * language server loads.
      */
     void relaxOutOfModuleResourceDirs(File workTree) throws IOException {
         Path root = workTree.toPath().normalize().toAbsolutePath();
@@ -440,15 +343,11 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
         }
     }
     /**
-     * Repoints every escaping directory at a path inside the module instead of deleting the element. m2e only needs
-     * {@code getFolder} to yield a legal in-project path; the directory does not have to exist, and maven skips a
-     * resource directory that is absent. Editing one text value keeps every other byte of the POM as it was — a
-     * DOM round-trip does not: re-serializing guava's root POM moved its namespace declaration onto {@code <scm>}
-     * and maven then rejected the file outright.
-     *
-     * <p>Which values to edit comes from the DOM, so formatting cannot change the outcome — the earlier line-oriented
-     * scan needed {@code <resources>} alone on its own line and silently rewrote nothing for a POM that put it
-     * anywhere else.
+     * Repoints every escaping directory at a path inside the module instead of deleting the element: m2e only needs
+     * a legal in-project path, and maven skips a resource directory that is absent. Editing one text value keeps
+     * every other byte of the POM as it was, where a DOM round-trip does not — re-serializing guava's root POM moved
+     * its namespace declaration onto {@code <scm>} and maven then rejected the file. Which values to edit still
+     * comes from the DOM, so formatting cannot change the outcome.
      */
     private void stripEscapingResourceDirs(Path workTree, Path pom) throws IOException {
         Path moduleDir = pom.getParent().normalize().toAbsolutePath();
@@ -481,8 +380,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     /**
      * Read-only inspection: which {@code <build>} resource directory values of this POM resolve outside the module,
      * and in which charset the file has to be rewritten. A value that also appears outside a {@code <build>} resource
-     * is reported and left alone — the two occurrences are indistinguishable in the text, and repointing a plugin's
-     * own {@code <configuration>} would hand it a directory that is not there.
+     * is reported and left alone: the two occurrences are indistinguishable in the text.
      */
     private ResourceDirScan scanResourceDirs(Path pom, Path moduleDir) {
         Set<String> escaping = new LinkedHashSet<>();
@@ -492,10 +390,9 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             Document document = secureDocumentBuilderFactory().newDocumentBuilder().parse(pom.toFile());
 
             /**
-             * the prolog decides how the bytes were read, so it has to decide how they are written back too —
-             * assuming UTF-8 either fails outright on an ISO-8859-1 POM or silently re-encodes it under a
-             * declaration that now lies. the declared encoding comes first because getInputEncoding reports the
-             * parser's initial auto-detection (UTF-8) rather than the declaration it went on to honour.
+             * the prolog decides how the bytes were read, so it decides how they are written back: assuming UTF-8
+             * either fails on an ISO-8859-1 POM or re-encodes it under a declaration that now lies. The declared
+             * encoding comes first because getInputEncoding reports the parser's auto-detection, not the declaration.
              */
             charset = Optional.ofNullable(document.getXmlEncoding())
                     .or(() -> Optional.ofNullable(document.getInputEncoding()))
@@ -516,8 +413,8 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             }
         } catch (ParserConfigurationException | SAXException | IOException err) {
             /**
-             * a POM this cannot parse is one maven itself would reject, so leave it exactly as it is and let the build
-             * report the real problem rather than turning it into an XML error from here
+             * a POM this cannot parse is one maven itself would reject, so leave it as it is and let the build report
+             * the real problem rather than turning it into an XML error from here
              */
             getLog().warn(String.format("could not inspect %s for out-of-module resource directories: %s", pom, err.getMessage()));
         }

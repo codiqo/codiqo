@@ -7,7 +7,6 @@ import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 
-
 import net.sourceforge.pmd.lang.Language;
 import net.sourceforge.pmd.lang.LanguageProcessorRegistry;
 import net.sourceforge.pmd.lang.LanguagePropertyBundle;
@@ -322,6 +321,34 @@ class JavaLineCountAnalyzerTest {
         assertEquals(1, counts.getCodeLines());
         assertEquals(1, counts.getDeclarationCodeLines());
         assertEquals(1, counts.getBodyCodeLines());
+    }
+    @Test
+    void javadocButtedAgainstAnAnnotationStillMeasuresTheWholeMethod() throws Exception {
+        /**
+         * PMD cannot traverse this node: with no whitespace between the Javadoc's closing delimiter and the
+         * annotation, the token chain from getFirstToken() runs off the end without reaching getLastToken(), and
+         * node.tokens() stops at the comment for the same reason. Walking it threw an NPE that took down an entire
+         * 17,712-file index. Shape taken from hibernate-orm's AbstractSharedSessionContract, the only file in that
+         * repository shaped this way.
+         *
+         * Five code lines: the two annotation lines and the three of the method itself, with the blank line between
+         * them excluded. The Javadoc above them is not part of the declaration.
+         */
+        String source = String.join(StringUtils.LF,
+                "class C {",
+                "    /**",
+                "     * doc",
+                "     */@Deprecated",
+                "",
+                "    @Override",
+                "    public void m() {",
+                "        int x = 1;",
+                "    }",
+                "}");
+
+        JavaLineCountAnalyzer.LineCounts counts = analyzeFirstMethod(source);
+
+        assertEquals(5, counts.getCodeLines(), "annotations belong to the declaration and the Javadoc does not");
     }
     private static JavaLineCountAnalyzer.LineCounts analyzeFirstMethod(String source) throws Exception {
         ASTExecutableDeclaration node = parse(source).descendants(ASTMethodDeclaration.class).first();

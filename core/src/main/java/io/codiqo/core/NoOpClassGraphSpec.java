@@ -1,4 +1,4 @@
-package io.codiqo.maven;
+package io.codiqo.core;
 
 import java.net.URL;
 import java.util.List;
@@ -9,10 +9,9 @@ import io.github.classgraph.ClassInfo;
 import io.github.classgraph.ClassInfoList;
 
 /**
- * An empty {@link ClassGraphSpec} for the source-only degraded path: no compiled classpath is
- * resolved when a build fails, so class lookups return nothing. PMD invocation enrichment
- * (PmdJInvocationBlock.accept) tolerates a null {@link ClassInfo}, so blocks still carry their
- * syntactic metrics (lines/ncss/invocation counts) — all the volume scorer needs.
+ * An empty {@link ClassGraphSpec} for the source-only degraded path: a failed build resolves no compiled classpath,
+ * so class lookups return nothing. PMD invocation enrichment tolerates a null {@link ClassInfo}, so blocks still
+ * carry the syntactic metrics the volume scorer needs.
  */
 public class NoOpClassGraphSpec implements ClassGraphSpec {
     @Override

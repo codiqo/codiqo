@@ -1,16 +1,15 @@
 package io.codiqo.core.java;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.ArrayList;
 
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
-
 
 import lombok.Value;
 import lombok.experimental.UtilityClass;
-import net.sourceforge.pmd.lang.ast.impl.javacc.JavaccToken;
 import net.sourceforge.pmd.lang.document.FileLocation;
 import net.sourceforge.pmd.lang.document.TextDocument;
 import net.sourceforge.pmd.lang.document.TextRegion;
@@ -24,8 +23,7 @@ public class JavaLineCountAnalyzer {
     public static LineCounts analyze(ASTExecutableDeclaration node) {
         ASTCompilationUnit root = node.getRoot();
         TextDocument doc = root.getTextDocument();
-        JavaccToken firstNonComment = skipLeadingComments(node.getFirstToken(), node.getLastToken());
-        FileLocation startLoc = firstNonComment.getReportLocation();
+        FileLocation startLoc = declarationStart(node);
         FileLocation endLoc = node.getLastToken().getReportLocation();
         int nodeBeginLine = startLoc.getStartLine();
         int nodeBeginCol = startLoc.getStartColumn();
@@ -145,7 +143,8 @@ public class JavaLineCountAnalyzer {
         int fromIdx = clampedStart - 1;
         int toIdx = Math.min(clampedEnd - 1, lineLen);
         for (int i = fromIdx; i < toIdx; i++) {
-            if (!isCommentChar[i] && !Character.isWhitespace(lineText.charAt(i))) {
+            boolean ignorable = BooleanUtils.or(new boolean[]{isCommentChar[i], Character.isWhitespace(lineText.charAt(i))});
+            if (BooleanUtils.negate(ignorable)) {
                 hasCode = true;
                 break;
             }
@@ -161,12 +160,14 @@ public class JavaLineCountAnalyzer {
         TextRegion safe = TextRegion.fromBothOffsets(start, end);
         return StringUtils.chomp(doc.sliceTranslatedText(safe).toString());
     }
-    private static JavaccToken skipLeadingComments(JavaccToken first, JavaccToken last) {
-        JavaccToken current = first;
-        while (current != last && JavaComment.isComment(current)) {
-            current = current.getNext();
-        }
-        return current;
+    /**
+     * Where the declaration starts: the first modifier or annotation, with the preceding Javadoc excluded. Taken from
+     * the node's own modifier list rather than by walking tokens forward — when a Javadoc's closing delimiter is
+     * butted straight against an annotation ({@code &#42;/@Nonnull}), the {@code getNext()} chain runs off the end
+     * without reaching the node's last token, which threw an NPE that took down a 17,712-file index.
+     */
+    private static FileLocation declarationStart(ASTExecutableDeclaration node) {
+        return node.getModifiers().getReportLocation();
     }
     private static int compare(int lineA, int colA, int lineB, int colB) {
         if (lineA != lineB) {
@@ -174,7 +175,6 @@ public class JavaLineCountAnalyzer {
         }
         return Integer.compare(colA, colB);
     }
-
     @Value
     public static class LineCounts {
         int codeLines;
@@ -185,7 +185,6 @@ public class JavaLineCountAnalyzer {
         int bodyCodeLines;
         int bodyCommentLines;
     }
-
     @Value
     private static class CommentSpan {
         int startLine;
@@ -193,13 +192,11 @@ public class JavaLineCountAnalyzer {
         int endLine;
         int endCol;
     }
-
     @Value
     private static class LineClassification {
         boolean hasCode;
         boolean hasComment;
     }
-
     @Value
     private static class BodyRange {
         int startLine;

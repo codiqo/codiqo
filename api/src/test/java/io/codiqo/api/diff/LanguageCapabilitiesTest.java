@@ -13,6 +13,9 @@ class LanguageCapabilitiesTest {
         assertTrue(LanguageCapabilities.whitespaceInsensitive("Foo.scala"));
         assertTrue(LanguageCapabilities.whitespaceInsensitive("app/widget.tsx"));
         assertTrue(LanguageCapabilities.whitespaceInsensitive("main.go"));
+        assertTrue(LanguageCapabilities.whitespaceInsensitive("build.gradle"),
+                "a Groovy build script is as brace-delimited as its Kotlin twin");
+        assertTrue(LanguageCapabilities.whitespaceInsensitive("build.gradle.kts"));
     }
     @Test
     void layoutSignificantAndUnknownAreWhitespaceSensitive() {

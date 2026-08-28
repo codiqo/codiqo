@@ -28,17 +28,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.ListUtils;
 import org.apache.commons.collections4.MultiValuedMap;
 import org.apache.commons.collections4.multimap.HashSetValuedHashMap;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
-import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.commons.lang3.time.StopWatch;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.lib.Repository;
+import org.slf4j.event.Level;
 
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.IndexingSummary.IndexingSummaryBuilder;
@@ -73,6 +74,13 @@ import net.sourceforge.pmd.lang.LanguageProcessorRegistry.LanguageTerminationExc
 import net.sourceforge.pmd.lang.LanguageRegistry;
 
 public class DefaultLanguageProcessors implements LanguageProcessors {
+    /**
+     * the CPD retry batch, never the first attempt. Sized under the smallest set observed to poison PMD's shared
+     * lexer (micronaut-core's 5033 files crashed; 2000 passed), with headroom: the threshold is a property of the
+     * file sequence, not of a count.
+     */
+    private static final int CPD_RETRY_BATCH_SIZE = 1000;
+
     private final Log log;
     private final RunArgs args;
     private final List<LanguageSpec> processors;
@@ -92,17 +100,6 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         measure("diagnostics", this::captureViolations, summary, analysis);
         measure("incoming calls", this::captureIncomingCalls, summary, analysis);
         measure("complexity", this::captureComplexity, summary, analysis);
-        for (FileAnalysis fileAnalysis : analysis) {
-            for (AffectedSymbolInfo affectedSymbolInfo : fileAnalysis.getPotentiallyAffectedSymbols()) {
-                affectedSymbolInfo.block().ifPresent(block -> {
-                    if (block instanceof JavaCodeBlockInfo java) {
-                        java.getInvocations().forEach(outbound -> {
-
-                        });
-                    }
-                });
-            }
-        }
     }
     @Override
     public Collection<String> extensions() {
@@ -197,7 +194,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                                         prj.setLatestModified(date);
                                     }
 
-                                    if (Boolean.FALSE.equals(prj.isTestResource(file))) {
+                                    if (BooleanUtils.negate(prj.isTestResource(file))) {
                                         Optional<Date> srcOpt = prj.latestSourceModified();
                                         if (srcOpt.isEmpty() || srcOpt.get().before(date)) {
                                             prj.setLatestSourceModified(date);
@@ -370,83 +367,125 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
 
         MemoryReport.retained(summary, analysis).ifPresent(size -> log.info("memory (%s) retained(index+analysis)=%s", stage, size));
     }
+    /**
+     * the index a build-failed commit is scored from: a pure source (PMD) pass with no {@code load()}, so the JDT
+     * language server is never started for a commit whose build produced no classes. Shared by both plugins so a
+     * copy cannot quietly reintroduce the {@code load()} this path exists to avoid.
+     */
+    public static IndexingSummary sourceOnlyIndex(RunArgs args, CommitAnalysis analysis, LogFactory logFactory) throws IOException {
+        try (Fetch fetch = new Fetch(args); LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, args, fetch)) {
+            IndexingSummary index = registry.index(analysis);
+            registry.identifyAffectedSymbols(index, analysis);
+            return index;
+        }
+    }
     @Override
     public void captureCopyPaste(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
-        for (LanguageSpec processor : processors) {
-            if (Boolean.FALSE.equals(args.isIgnoreCpd())) {
-                SortedSet<DuplicationMatch> matches = new TreeSet<>();
-                MutableBoolean toApply = new MutableBoolean();
-
-                CPDConfiguration cfg = new CPDConfiguration(LanguageRegistry.singleton(processor.lang()));
-                cfg.setReporter(log);
-                cfg.setDefaultLanguageVersion(processor.lang().getDefaultVersion());
-                cfg.setFailOnViolation(false);
-                cfg.setFailOnError(true);
-                cfg.setIgnoreLiterals(true);
-                cfg.setIgnoreIdentifiers(true);
-                cfg.setMinimumTileSize(args.getCpdMinimumTileSize());
-                cfg.setSourceEncoding(StandardCharsets.UTF_8);
-
-                try (CpdAnalysis cpd = CpdAnalysis.create(cfg)) {
-                    /**
-                     * add all relevant files to CPD by extension
-                     */
-                    summary.getTotalFiles().forEach(path -> {
-                        if (FilenameUtils.isExtension(path.toFile().getName(), processor.lang().getExtensions())) {
-                            if (cpd.files().addFile(path)) {
-                                toApply.setTrue();
-                            }
-                        }
-                    });
-
-                    /**
-                     * could be so that CPD is not supported for this language
-                     */
-                    if (toApply.isTrue()) {
-                        toApply.setValue(processor.supportsCpd());
-                    }
-
-                    if (toApply.isTrue()) {
-                        cpd.performAnalysis(report -> {
-                            for (Match match : report.getMatches()) {
-                                matches.add(PmdDuplicationMatch.builder()
-                                        .match(match)
-                                        .tokenCount(match.getTokenCount())
-                                        .lineCount(match.getLineCount())
-                                        .marks(match.getMarkSet().stream().map(mark -> PmdDuplicationMark.builder()
-                                                .mark(mark)
-                                                .file(Paths.get(mark.getLocation().getFileId().getAbsolutePath()).toFile())
-                                                .sourceCodeSlice(report.getSourceCodeSlice(mark).toString())
-                                                .location(SourceLocation.builder()
-                                                        .startLine(mark.getLocation().getStartLine())
-                                                        .endLine(mark.getLocation().getEndLine())
-                                                        .startColumn(mark.getLocation().getStartColumn())
-                                                        .endColumn(mark.getLocation().getEndColumn())
-                                                        .build())
-                                                .build()).collect(Collectors.toUnmodifiableList()))
-                                        .build());
-                            }
-
-                            PMDCopyPasteDetectionSummary toAccept = new PMDCopyPasteDetectionSummary(
-                                    report.getNumberOfTokensPerFile()
-                                            .entrySet()
-                                            .stream()
-                                            .collect(Collectors.toMap(it -> Paths.get(it.getKey().getAbsolutePath()).toFile(), it -> it.getValue())),
-                                    matches,
-                                    summary,
-                                    analysis);
-                            analysis.cpd().add(toAccept);
-                            toAccept.copyPasteFrom().forEach((block, sources) -> log.info("CPD from existing code: %s copied from %s", block, sources));
-                            toAccept.copyPasteNew().forEach(group -> log.info("CPD within same commit: %s", group));
-                        });
+        if (BooleanUtils.negate(args.isIgnoreCpd())) {
+            for (LanguageSpec processor : processors) {
+                if (processor.supportsCpd()) {
+                    List<Path> files = summary.getTotalFiles().stream()
+                            .filter(path -> FilenameUtils.isExtension(path.toFile().getName(), processor.lang().getExtensions()))
+                            .toList();
+                    if (CollectionUtils.isNotEmpty(files)) {
+                        detectCopyPaste(processor, files, summary, analysis);
                     }
                 }
             }
         }
     }
+    /**
+     * PMD reuses one {@code CpdLexer} per analysis and {@code JavaCpdLexer}'s {@code ConstructorDetector} accumulates
+     * state across file boundaries, so a large enough set dies with an NPE that names no culprit file and that
+     * {@code setFailOnError(false)} cannot contain. Observed on micronaut-core (5033 files) and spring-framework.
+     *
+     * <p>Batching is only the retry: CPD finds clones within one analysis, so batching unconditionally would silently
+     * drop every cross-batch duplicate on every project.
+     */
+    void detectCopyPaste(LanguageSpec processor, List<Path> files, IndexingSummary summary, CommitAnalysis analysis) throws IOException {
+        try {
+            tokenizeAndCollect(processor, files, summary, analysis);
+            return;
+        } catch (RuntimeException err) {
+            log.logEx(Level.WARN, "CPD failed over all %d %s file(s); retrying in batches of %d, which loses clones spanning two batches",
+                    new Object[] { files.size(), processor.lang().getName(), CPD_RETRY_BATCH_SIZE }, err);
+        }
+
+        for (List<Path> batch : ListUtils.partition(files, CPD_RETRY_BATCH_SIZE)) {
+            try {
+                tokenizeAndCollect(processor, batch, summary, analysis);
+            } catch (RuntimeException err) {
+                log.logEx(Level.WARN, "CPD batch of %d %s file(s) failed; its duplication data is omitted",
+                        new Object[] { batch.size(), processor.lang().getName() }, err);
+            }
+        }
+    }
+    /**
+     * package-private so CpdBatchRetryTest can substitute the PMD call: the real crash needs thousands of files and
+     * cannot be committed as a fixture.
+     */
+    void tokenizeAndCollect(LanguageSpec processor, List<Path> files, IndexingSummary summary, CommitAnalysis analysis) throws IOException {
+        SortedSet<DuplicationMatch> matches = new TreeSet<>();
+        boolean anyFileAdded = false;
+
+        CPDConfiguration cfg = new CPDConfiguration(LanguageRegistry.singleton(processor.lang()));
+        cfg.setReporter(log);
+        cfg.setDefaultLanguageVersion(processor.lang().getDefaultVersion());
+        cfg.setFailOnViolation(false);
+        cfg.setFailOnError(true);
+        cfg.setIgnoreLiterals(true);
+        cfg.setIgnoreIdentifiers(true);
+        cfg.setMinimumTileSize(args.getCpdMinimumTileSize());
+        cfg.setSourceEncoding(StandardCharsets.UTF_8);
+
+        try (CpdAnalysis cpd = CpdAnalysis.create(cfg)) {
+            for (Path path : files) {
+                anyFileAdded |= cpd.files().addFile(path);
+            }
+
+            if (anyFileAdded) {
+                cpd.performAnalysis(report -> {
+                    for (Match match : report.getMatches()) {
+                        matches.add(PmdDuplicationMatch.builder()
+                                .match(match)
+                                .tokenCount(match.getTokenCount())
+                                .lineCount(match.getLineCount())
+                                .marks(match.getMarkSet().stream().map(mark -> PmdDuplicationMark.builder()
+                                        .mark(mark)
+                                        .file(Paths.get(mark.getLocation().getFileId().getAbsolutePath()).toFile())
+                                        .sourceCodeSlice(report.getSourceCodeSlice(mark).toString())
+                                        .location(SourceLocation.builder()
+                                                .startLine(mark.getLocation().getStartLine())
+                                                .endLine(mark.getLocation().getEndLine())
+                                                .startColumn(mark.getLocation().getStartColumn())
+                                                .endColumn(mark.getLocation().getEndColumn())
+                                                .build())
+                                        .build()).collect(Collectors.toUnmodifiableList()))
+                                .build());
+                    }
+
+                    PMDCopyPasteDetectionSummary toAccept = new PMDCopyPasteDetectionSummary(
+                            report.getNumberOfTokensPerFile()
+                                    .entrySet()
+                                    .stream()
+                                    .collect(Collectors.toMap(it -> Paths.get(it.getKey().getAbsolutePath()).toFile(), it -> it.getValue())),
+                            matches,
+                            summary,
+                            analysis);
+                    /**
+                     * registered last, after everything that could still throw: a failure here falls into the batched
+                     * retry, and a summary already published would be counted again by its own batches
+                     */
+                    toAccept.copyPasteFrom().forEach((block, sources) -> log.info("CPD from existing code: %s copied from %s", block, sources));
+                    toAccept.copyPasteNew().forEach(group -> log.info("CPD within same commit: %s", group));
+                    analysis.cpd().add(toAccept);
+                });
+            }
+        }
+    }
     @Override
     public void captureViolations(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
-        if (Boolean.FALSE.equals(args.isIgnoreDiagnostics())) {
+        if (BooleanUtils.negate(args.isIgnoreDiagnostics())) {
             for (LanguageSpec processor : processors) {
                 processor.captureViolations(summary, analysis);
                 for (FileAnalysis fileAnalysis : analysis) {
@@ -467,7 +506,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     }
     @Override
     public void captureCoverage(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
-        if (Boolean.FALSE.equals(args.isIgnoreCoverage())) {
+        if (BooleanUtils.negate(args.isIgnoreCoverage())) {
             for (LanguageSpec processor : processors) {
                 processor.captureCoverage(summary, analysis);
                 for (FileAnalysis fileAnalysis : analysis) {
@@ -486,7 +525,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     }
     @Override
     public void captureComplexity(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
-        if (Boolean.FALSE.equals(args.isIgnoreComplexity())) {
+        if (BooleanUtils.negate(args.isIgnoreComplexity())) {
             for (FileAnalysis fileAnalysis : analysis) {
                 for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
                     symbol.block().ifPresent(block -> log.info("capturing complexity of %s : %s", block, block.metrics()));

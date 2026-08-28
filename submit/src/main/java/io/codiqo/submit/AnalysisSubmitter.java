@@ -1,4 +1,4 @@
-package io.codiqo.maven;
+package io.codiqo.submit;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -8,8 +8,8 @@ import java.util.Set;
 import java.util.UUID;
 
 import org.apache.commons.lang3.Strings;
-import org.apache.maven.plugin.logging.Log;
 
+import io.codiqo.api.logging.Log;
 import io.codiqo.client.ApiClient;
 import io.codiqo.client.ApiException;
 import io.codiqo.client.api.AnalysisApi;
@@ -81,14 +81,11 @@ public class AnalysisSubmitter {
     }
     /**
      * Polls the analysis until it reaches a terminal status or the deadline passes, and returns the last state seen.
+     * Scoring is asynchronous, so a submission alone says nothing about the outcome, and a scorer that never finishes
+     * must not wedge the build.
      *
-     * <p>Scoring is asynchronous, so a submission alone tells the caller nothing about the outcome. An uncommitted run
-     * is interactive — someone is waiting on it — so this reports progress rather than sitting silent, and gives up on
-     * the deadline instead of blocking forever: a scorer that never finishes must not wedge the build.
-     *
-     * <p>Each request is bounded by the same read timeout as every other API call. The overall wait is the caller's
-     * to choose and is deliberately not the build timeout: that one is sized for a forked CI build, so borrowing it
-     * would leave an interactive terminal blocked for the better part of an hour whenever the scorer wedged.
+     * <p>The overall wait is the caller's to choose and is deliberately not the build timeout: that one is sized for
+     * a forked CI build, so borrowing it would block an interactive terminal for the better part of an hour.
      */
     public static AnalysisResultModel awaitCompletion(
             String apiUrl,

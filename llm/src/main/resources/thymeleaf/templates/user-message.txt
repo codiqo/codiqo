@@ -65,7 +65,7 @@ Every effective `-` / `+` line in `fileChanges[*].diff` is annotated `-<old-file
 [# th:each="fc : ${request.fileChanges}"][# th:if="${fc.linesJustificationRequired}"]| [(${fc.path})] | [(${fc.linesAdded})] | [(${fc.linesDeleted})] |
 [/][/]
 
-Counts are informational (effective lines after server-side filtering). Build/config descriptors scored on line count (`pom.xml`, `.proto`) ARE eligible and appear in the table above. Files in `fileChanges` with `linesJustificationRequired: false` (generic YAML/JSON/properties config, generated artefacts) MUST NOT appear in `perFile`. Do NOT emit `inPlaceModifyPairs` / `trueModifyPairs` / `pureAdd` / `pureDelete` and leave the counter fields at `0` — the server derives all of them.
+Counts are informational (effective lines after server-side filtering). Build/config descriptors scored on line count (`pom.xml`, `.proto`, Gradle build scripts, `gradle.properties`, version catalogs) ARE eligible and appear in the table above. Files in `fileChanges` with `linesJustificationRequired: false` (generic YAML/JSON/properties config, generated artefacts) MUST NOT appear in `perFile`. The flag decides, never the extension. Do NOT emit `inPlaceModifyPairs` / `trueModifyPairs` / `pureAdd` / `pureDelete` and leave the counter fields at `0` — the server derives all of them.
 
 [# th:if="${not #lists.isEmpty(moveCandidates)}"]
 ### Moved-line candidates (confirm or reject)

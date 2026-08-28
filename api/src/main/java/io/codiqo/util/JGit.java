@@ -256,17 +256,24 @@ public class JGit {
         }
 
         String branch = repo.getBranch();
-        if (StringUtils.isBlank(branch) || DETACHED_HEAD_SHA.matcher(branch).matches()) {
+        if (isDetachedHead(branch)) {
             return Optional.empty();
         }
         return Optional.of(branch);
     }
     public static String currentBranchOrDefault(Repository repo) throws IOException {
         String branch = repo.getBranch();
-        if (StringUtils.isBlank(branch) || DETACHED_HEAD_SHA.matcher(branch).matches()) {
+        if (isDetachedHead(branch)) {
             return detectDefaultBranch(repo).orElse(branch);
         }
         return branch;
+    }
+    /**
+     * whether {@code Repository.getBranch()} answered with a raw SHA rather than a branch name, which is what a
+     * detached HEAD (a CI checkout of one commit, for one) reports.
+     */
+    public static boolean isDetachedHead(String branch) {
+        return StringUtils.isBlank(branch) || DETACHED_HEAD_SHA.matcher(branch).matches();
     }
     public static Optional<String> detectRemoteUrl(Repository repo) {
         return detectRemoteUrls(repo).stream().findFirst();
@@ -295,7 +302,7 @@ public class JGit {
                     walk.markStart(walk.parseCommit(ref.getObjectId()));
                     for (RevCommit commit : walk) {
                         List<String> branches = toReturn.computeIfAbsent(commit.getName(), k -> new ArrayList<>());
-                        if (!branches.contains(branchName)) {
+                        if (BooleanUtils.negate(branches.contains(branchName))) {
                             branches.add(branchName);
                         }
                     }

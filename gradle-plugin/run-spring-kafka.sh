@@ -4,7 +4,7 @@
 # Mirrors the Maven per-commit dump loop, adapted to Gradle:
 #   - the plugin analyzes the CURRENT checkout, so we git-checkout each commit first
 #   - spring-kafka ships no jacoco -> the init script force-applies it
-#   - spring-kafka's daemon heap (1536M) is too small for the in-process engine -> bumped to 6g
+#   - the analysis forks its own JVM (codiqo.analysisMaxHeap), so spring-kafka's own daemon heap is left alone
 #   - the root task resolves subproject configs -> Gradle 9 requires --no-parallel
 #
 # Prereqs: `mvn install` in the codiqo repo (publishes io.codiqo:* to ~/.m2), JDK 25 installed.
@@ -42,10 +42,7 @@ cd "$SK"
 
 for sha in "${COMMITS[@]}"; do
   echo "==================== $sha ($MODE) ===================="
-  # force: prior iterations leave gradle.properties dirty (heap bump below), which aborts a plain checkout
   git checkout -f -q "$sha" || { echo "checkout failed for $sha"; continue; }
-  # per-commit: bump daemon heap (each checkout resets gradle.properties); restored by final checkout
-  perl -i -pe 's/-Xmx1536M/-Xmx6g/' gradle.properties
   # force fresh classes for the checked-out sources — git checkout can leave same-content classes
   # with older mtimes, which trips the engine's staleness guard
   rm -rf spring-kafka*/build/classes spring-kafka*/build/jacoco
@@ -61,7 +58,7 @@ for sha in "${COMMITS[@]}"; do
       -Pcodiqo.outputDirectory="$OUT" \
       --console=plain || echo "!! build failed for $sha (continuing)"
   else
-    ./gradlew --init-script "$INIT" \
+    ./gradlew --init-script "$INIT" --continue \
       testClasses \
       codiqoDumpAnalysis \
       -Pcodiqo.commitId="$sha" \

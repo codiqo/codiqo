@@ -7,6 +7,7 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Objects;
 import java.util.Optional;
 
 import org.eclipse.jgit.api.Git;
@@ -21,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.submit.CommitExclusions;
 
 class AnalyzeCommitMojoMergeGateTest {
     @TempDir
@@ -36,10 +38,10 @@ class AnalyzeCommitMojoMergeGateTest {
     }
     @AfterEach
     void closeRepo() {
-        if (git != null) {
+        if (Objects.nonNull(git)) {
             git.close();
         }
-        if (repository != null) {
+        if (Objects.nonNull(repository)) {
             repository.close();
         }
     }
@@ -47,7 +49,7 @@ class AnalyzeCommitMojoMergeGateTest {
     void soleAuthorPrMergeIsAnalyzableInFirstParentMode() throws Exception {
         String mergeSha = prMerge("Dev", "dev@corp.com", "Dev", "dev@corp.com");
 
-        assertTrue(AnalyzeCommitMojo.mergeSkipReason(runArgs(mergeSha, true)).isEmpty(),
+        assertTrue(CommitExclusions.mergeSkipReason(runArgs(mergeSha, true)).isEmpty(),
                 "a two-parent PR merge with a sole side-branch author proceeds to analysis");
     }
     /**
@@ -59,7 +61,7 @@ class AnalyzeCommitMojoMergeGateTest {
     void mixedAuthorPrMergeIsAnalyzedRatherThanExcluded() throws Exception {
         String mergeSha = prMerge("Dev", "dev@corp.com", "Other", "other@corp.com");
 
-        assertTrue(AnalyzeCommitMojo.mergeSkipReason(runArgs(mergeSha, true)).isEmpty(),
+        assertTrue(CommitExclusions.mergeSkipReason(runArgs(mergeSha, true)).isEmpty(),
                 "losing a two-author PR entirely is worse than crediting it imperfectly");
     }
     @Test
@@ -74,7 +76,7 @@ class AnalyzeCommitMojoMergeGateTest {
                 .setStrategy(MergeStrategy.OURS)
                 .setCommit(true).setMessage("Merge branch 'feature' (discarded)").call().getNewHead();
 
-        Optional<String> reason = AnalyzeCommitMojo.mergeSkipReason(runArgs(newHead.getName(), true));
+        Optional<String> reason = CommitExclusions.mergeSkipReason(runArgs(newHead.getName(), true));
         assertEquals("merge introduces no mainline changes", reason.orElseThrow(),
                 "an ours-strategy merge keeps parent[0]'s tree — nothing landed, guaranteed zero score");
     }
@@ -82,7 +84,7 @@ class AnalyzeCommitMojoMergeGateTest {
     void allCommitsModeKeepsUnconditionalMergeExclusion() throws Exception {
         String mergeSha = prMerge("Dev", "dev@corp.com", "Dev", "dev@corp.com");
 
-        Optional<String> reason = AnalyzeCommitMojo.mergeSkipReason(runArgs(mergeSha, false));
+        Optional<String> reason = CommitExclusions.mergeSkipReason(runArgs(mergeSha, false));
         assertEquals("merge commit (multiple parents)", reason.orElseThrow(),
                 "in all-commits mode the side-branch commits are indexed individually — analyzing the merge would double-count");
     }

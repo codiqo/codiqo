@@ -888,9 +888,10 @@ public class RunArgs {
     private double testCodePenaltyWeight = 0.3;
 
     /**
-     * Discount on config-file effort. Files with no code blocks to drive ({@code pom.xml}, {@code .proto}) are
-     * scored from line count alone, and a 200-line dependency bump is real work but cheaper per line than 200 lines
-     * of hand-written logic. Their synthetic blocks carry a zero cap baseline, so they never inflate the cap budget.
+     * Discount on config-file effort. Files with no code blocks to drive ({@code pom.xml}, {@code .proto}, Gradle
+     * build scripts and version catalogs) are scored from line count alone, and a 200-line dependency bump is real
+     * work but cheaper per line than 200 lines of hand-written logic. Their synthetic blocks carry a zero cap
+     * baseline, so they never inflate the cap budget.
      */
     @Nullable
     private double configFileScoreMultiplier = 0.3;
