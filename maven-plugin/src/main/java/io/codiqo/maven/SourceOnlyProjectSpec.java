@@ -5,11 +5,13 @@ import java.io.File;
 import org.apache.commons.lang3.Strings;
 import org.apache.maven.project.MavenProject;
 
+import io.codiqo.core.NoOpClassGraphSpec;
+
 /**
- * A whole-worktree {@link MavenProjectWrapper} used only by the source-only degraded path, where a
- * failed build leaves no resolved reactor. It owns every file under the work tree so the PMD index
- * can attribute and parse the whole project (feeding the driver-score statistics), classifies test
- * sources by the standard {@code src/test/} layout, and exposes an empty class graph.
+ * A whole-worktree {@link MavenProjectWrapper} for the source-only degraded path, where a failed build leaves no
+ * resolved reactor. It owns every file under the work tree so the PMD index can attribute and parse the whole project
+ * for the driver-score statistics, classifies test sources by the {@code src/test/} layout, and exposes an empty
+ * class graph.
  */
 public class SourceOnlyProjectSpec extends MavenProjectWrapper {
     private static final String TEST_PATH_SEGMENT = File.separator + "src" + File.separator + "test" + File.separator;

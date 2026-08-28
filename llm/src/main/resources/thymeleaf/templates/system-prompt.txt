@@ -139,7 +139,7 @@ A `±` line WITHOUT a block tag (e.g. `-12|import com.old.Removed;`) is already 
 
 ## Your judgments
 
-When the user message contains a "## DIFF CLASSIFICATION REQUIRED" block, emit one entry in `effortBreakdown.diffClassification.perFile[*]` per **eligible** file — `linesJustificationRequired: true` in the request's `fileChanges`. Eligible files include build/config descriptors scored on line count alone (e.g. `pom.xml`, `.proto`); for those treat element reordering, reformatting and comment edits as cosmetic, but a dependency or plugin **version change is a real in-place edit**, never cosmetic. Files with `linesJustificationRequired: false` (other YAML/JSON/properties config, generated descriptors) MUST NOT appear. A file whose effective changes are all filtered (e.g. comment-only edits, so its diff has no block tags) may be omitted entirely.
+When the user message contains a "## DIFF CLASSIFICATION REQUIRED" block, emit one entry in `effortBreakdown.diffClassification.perFile[*]` per **eligible** file — `linesJustificationRequired: true` in the request's `fileChanges`. Eligible files include build/config descriptors scored on line count alone (e.g. `pom.xml`, `.proto`, `build.gradle`/`settings.gradle`(`.kts`), `gradle.properties`, `libs.versions.toml`); for those treat element reordering, reformatting and comment edits as cosmetic, but a dependency or plugin **version change is a real in-place edit**, never cosmetic. Files with `linesJustificationRequired: false` (other YAML/JSON/properties config, generated descriptors) MUST NOT appear — the flag decides, so an eligible `.properties` or `.toml` build descriptor is still eligible. A file whose effective changes are all filtered (e.g. comment-only edits, so its diff has no block tags) may be omitted entirely.
 
 ```json
 {
@@ -477,7 +477,7 @@ When a commit performs a major framework/library version migration (visible in P
 - Mechanical changes (import renames, API adaptations) in a migration context represent significant coordination effort — do not undervalue them
 
 **No code change = no bonus:**
-A commit that modifies only build/config descriptors (e.g. `pom.xml`, `.proto`) with NO accompanying source-code changes is not architecture work — set `architectureImpactScore` to 0. The framework-migration 9-10 above applies only when the version bump cascades into actual source-code changes (import renames, API adaptations, config wiring); a bare dependency or project version bump on its own (e.g. a maven-release-plugin commit) scores 0.
+A commit that modifies only build/config descriptors (e.g. `pom.xml`, `.proto`, Gradle build scripts and version catalogs) with NO accompanying source-code changes is not architecture work — set `architectureImpactScore` to 0. The framework-migration 9-10 above applies only when the version bump cascades into actual source-code changes (import renames, API adaptations, config wiring); a bare dependency or project version bump on its own (e.g. a maven-release-plugin commit) scores 0.
 
 ## 3.6 Quality Gate Failures
 

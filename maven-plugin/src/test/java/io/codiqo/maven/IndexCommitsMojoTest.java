@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Date;
 import java.util.List;
+import java.util.Objects;
 
 import org.apache.commons.lang3.StringUtils;
 import org.eclipse.jgit.api.Git;
@@ -27,6 +28,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.CommitModel;
+import io.codiqo.submit.CommitIndexPublisher.MissingAnalysesSelection;
+import io.codiqo.submit.CommitIndexPublisher;
 import io.codiqo.submit.CommitIndexer;
 import io.codiqo.util.RepositoryUrls;
 
@@ -51,10 +54,10 @@ class IndexCommitsMojoTest {
     }
     @AfterEach
     void closeRepo() {
-        if (git != null) {
+        if (Objects.nonNull(git)) {
             git.close();
         }
-        if (repository != null) {
+        if (Objects.nonNull(repository)) {
             repository.close();
         }
     }
@@ -67,7 +70,7 @@ class IndexCommitsMojoTest {
         List<CommitModel> commits = extract(new RunArgs(), "HEAD", EPOCH, "main");
 
         assertEquals(3, commits.size());
-        assertEquals(third.getName(), commits.get(0).getSha());
+        assertEquals(third.getName(), commits.iterator().next().getSha());
         assertEquals(second.getName(), commits.get(1).getSha());
         assertEquals(first.getName(), commits.get(2).getSha());
     }
@@ -95,7 +98,7 @@ class IndexCommitsMojoTest {
         List<CommitModel> commits = extract(filter, "HEAD", EPOCH, "main");
 
         assertEquals(1, commits.size());
-        assertEquals(kept.getName(), commits.get(0).getSha());
+        assertEquals(kept.getName(), commits.iterator().next().getSha());
         assertFalse(commits.stream().anyMatch(c -> dropped.getName().equals(c.getSha())));
     }
     @Test
@@ -108,7 +111,7 @@ class IndexCommitsMojoTest {
         List<CommitModel> commits = extract(filter, "HEAD", EPOCH, "main");
 
         assertEquals(1, commits.size());
-        assertEquals(kept.getName(), commits.get(0).getSha());
+        assertEquals(kept.getName(), commits.iterator().next().getSha());
         assertFalse(commits.stream().anyMatch(c -> dropped.getName().equals(c.getSha())));
     }
     @Test
@@ -149,7 +152,7 @@ class IndexCommitsMojoTest {
                 .setMessage("merge feature")
                 .call();
 
-        IndexCommitsMojo.MissingAnalysesSelection selection = IndexCommitsMojo.selectAnalyzableMissingAnalyses(
+        MissingAnalysesSelection selection = CommitIndexPublisher.selectAnalyzable(
                 repository,
                 List.of(root.getName(), linear.getName(), merge.getNewHead().getName()));
 
@@ -162,7 +165,7 @@ class IndexCommitsMojoTest {
     void missingAnalysisSelectionCountsMissingCommitShas() throws Exception {
         RevCommit kept = commit("a.txt", "v1", "initial");
 
-        IndexCommitsMojo.MissingAnalysesSelection selection = IndexCommitsMojo.selectAnalyzableMissingAnalyses(
+        MissingAnalysesSelection selection = CommitIndexPublisher.selectAnalyzable(
                 repository,
                 List.of("missing-sha", kept.getName()));
 
@@ -175,7 +178,7 @@ class IndexCommitsMojoTest {
         RevCommit kept = commit("a.txt", "v1", "initial");
         String absentFullSha = StringUtils.repeat('b', 40);
 
-        IndexCommitsMojo.MissingAnalysesSelection selection = IndexCommitsMojo.selectAnalyzableMissingAnalyses(
+        MissingAnalysesSelection selection = CommitIndexPublisher.selectAnalyzable(
                 repository,
                 List.of(absentFullSha, kept.getName()));
 
@@ -192,7 +195,7 @@ class IndexCommitsMojoTest {
         deleteLooseObject(parent);
 
         try (Repository truncated = reopenRepository()) {
-            IndexCommitsMojo.MissingAnalysesSelection selection = IndexCommitsMojo.selectAnalyzableMissingAnalyses(
+            MissingAnalysesSelection selection = CommitIndexPublisher.selectAnalyzable(
                     truncated,
                     List.of(child.getName()));
 
@@ -211,7 +214,7 @@ class IndexCommitsMojoTest {
         deleteLooseObject(parent);
 
         try (Repository truncated = reopenRepository()) {
-            IndexCommitsMojo.MissingAnalysesSelection selection = IndexCommitsMojo.selectAnalyzableMissingAnalyses(
+            MissingAnalysesSelection selection = CommitIndexPublisher.selectAnalyzable(
                     truncated,
                     List.of(absentFullSha, child.getName(), standalone.getName()));
 

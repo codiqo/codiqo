@@ -12,6 +12,8 @@ import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.maven.auth.BrowserLogin;
+import io.codiqo.maven.logging.MavenMessageReporter;
+import io.codiqo.submit.AnalysisSubmitter;
 import io.codiqo.submit.SubmissionContext;
 
 @Mojo(name = "submit-commit-analysis",
@@ -38,7 +40,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
                 connectTimeoutSeconds,
                 readTimeoutSeconds,
                 ctx.getSubmissionModel(),
-                getLog());
+                new MavenMessageReporter(getLog()));
         getLog().info(String.format("accepted analysis id: %s status: %s", response.getAnalysisId(), response.getStatus()));
     }
     @Override
@@ -56,6 +58,6 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
                 detail,
                 files,
                 projectMetrics,
-                getLog());
+                new MavenMessageReporter(getLog()));
     }
 }

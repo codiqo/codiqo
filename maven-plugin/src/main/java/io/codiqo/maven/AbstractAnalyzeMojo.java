@@ -78,6 +78,7 @@ import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.collection.CollectRequest;
+import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.repository.LocalRepositoryManager;
 import org.eclipse.aether.repository.RemoteRepository;
 import org.eclipse.aether.resolution.ArtifactResult;
@@ -141,6 +142,7 @@ import io.codiqo.util.Split;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.Value;
 
@@ -426,7 +428,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 }
 
                 CollectRequest collect = new CollectRequest();
-                collect.setRoot(new org.eclipse.aether.graph.Dependency(artifact, null));
+                collect.setRoot(new Dependency(artifact, null));
                 collect.setRepositories(List.copyOf(repositories.values()));
                 DependencyRequest req = new DependencyRequest(collect, null);
                 DependencyResult result = repositorySystem.resolveDependencies(mavenSession.getRepositorySession(), req);
@@ -435,7 +437,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                         .stream()
                         .map(ArtifactResult::getArtifact)
                         .map(Artifact::getFile)
-                        .collect(java.util.stream.Collectors.toUnmodifiableList());
+                        .toList();
             } catch (Exception err) {
                 ExceptionUtils.wrapAndThrow(err);
             }
@@ -554,11 +556,13 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                  */
                 try {
                     coverageInjectorJars = apply(new DefaultArtifact(CODIQO_GROUP_ID, COVERAGE_INJECTOR_ARTIFACT_ID, JAR_EXTENSION, versions.get("codiqo.version").toString()));
-                    jacocoAgentJar = apply(new DefaultArtifact(JACOCO_GROUP_ID, JACOCO_AGENT_ARTIFACT_ID, JACOCO_AGENT_CLASSIFIER, JAR_EXTENSION, versions.get("jacoco.version").toString()))
+                    apply(new DefaultArtifact(JACOCO_GROUP_ID, JACOCO_AGENT_ARTIFACT_ID, JACOCO_AGENT_CLASSIFIER, JAR_EXTENSION, versions.get("jacoco.version").toString()))
                             .stream()
-                            .filter(jar -> BooleanUtils.and(new boolean[] { jar.getName().startsWith(JACOCO_AGENT_ARTIFACT_ID + "-"), jar.getName().endsWith("-" + JACOCO_AGENT_CLASSIFIER + ".jar") }))
+                            .filter(jar -> BooleanUtils.and(new boolean[]{
+                                    jar.getName().startsWith(JACOCO_AGENT_ARTIFACT_ID + "-"),
+                                    jar.getName().endsWith("-" + JACOCO_AGENT_CLASSIFIER + FilenameUtils.EXTENSION_SEPARATOR_STR + JAR_EXTENSION)}))
                             .findFirst()
-                            .orElse(null);
+                            .ifPresent(jar -> jacocoAgentJar = jar);
                 } catch (Exception err) {
                     getLog().warn("coverage auto-injection artifact resolution failed", err);
                 }
@@ -1089,7 +1093,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 String reason = "fork build timed out after " + args.getBuildTimeout();
                 if (args.isSkipOnBuildFailure()) {
                     getLog().warn(reason + ", skipping with category " + AnalysisExcludeCategory.BUILD_FAILURE);
-                    return new BuildOutcome.Skipped(reason, AnalysisExcludeCategory.BUILD_FAILURE, buildFailureDetail(args, sysout, syserr), true);
+                    return skipped(args, reason, AnalysisExcludeCategory.BUILD_FAILURE, true, sysout, syserr);
                 }
                 /**
                  * proceeding here would score a reactor whose `clean` already wiped target/ for every module the
@@ -1098,26 +1102,35 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                  */
                 throw new MojoExecutionException(reason, result.getExecutionException());
             } else if (args.isSkipOnBuildFailure()) {
-                String reason = Optional.ofNullable(sysout.firstErrorLine())
-                        .or(() -> Optional.ofNullable(syserr.firstErrorLine()))
+                String reason = sysout.firstErrorLine()
+                        .or(syserr::firstErrorLine)
                         .orElse("fork build failed (exit code " + result.getExitCode() + ")");
                 List<String> helpLines = new ArrayList<>();
                 helpLines.addAll(sysout.helpUrlLines());
                 helpLines.addAll(syserr.helpUrlLines());
                 AnalysisExcludeCategory category = Maven.classifyForkFailure(helpLines);
                 getLog().warn(String.format("fork build failed (exit code %d), skipping with category %s: %s", result.getExitCode(), category, reason));
-                return new BuildOutcome.Skipped(reason, category, buildFailureDetail(args, sysout, syserr));
+                return skipped(args, reason, category, false, sysout, syserr);
             } else {
                 throw new MojoExecutionException("maven build failed in fork", result.getExecutionException());
             }
         }
         return new BuildOutcome.Proceeded(TimeMachineSupport.withHostPinning(args, getLog(), () -> projectBuilder.build(rootPom, buildingRequest)));
     }
-    private String buildFailureDetail(RunArgs args, CapturingOutputHandler sysout, CapturingOutputHandler syserr) {
+    private Optional<String> buildFailureDetail(RunArgs args, CapturingOutputHandler sysout, CapturingOutputHandler syserr) {
         return readBuildFailureReport(args)
                 .or(sysout::capturedDetail)
-                .or(syserr::capturedDetail)
-                .orElse(null);
+                .or(syserr::capturedDetail);
+    }
+    private BuildOutcome.Skipped skipped(RunArgs args, String reason, AnalysisExcludeCategory category, boolean timedOut,
+            CapturingOutputHandler sysout, CapturingOutputHandler syserr) {
+        BuildOutcome.Skipped.SkippedBuilder toReturn = BuildOutcome.Skipped.builder()
+                .reason(reason)
+                .category(category)
+                .timedOut(timedOut);
+
+        buildFailureDetail(args, sysout, syserr).ifPresent(toReturn::detail);
+        return toReturn.build();
     }
     private Optional<String> readBuildFailureReport(RunArgs args) {
         File reportFile = args.getBuildFailureReportFile();
@@ -1483,7 +1496,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         }
 
         CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
-        IndexingSummary index = buildSourceOnlyIndex(args, analysis, logFactory);
+        IndexingSummary index = DefaultLanguageProcessors.sourceOnlyIndex(args, analysis, logFactory);
 
         ClientInfoModel clientInfo = new ClientInfoModel();
         clientInfo.setBuildTool(ClientInfoModel.BuildToolEnum.MAVEN);
@@ -1596,27 +1609,21 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     private static BuildOutcome.Skipped classifyProjectBuildingException(ProjectBuildingException pbe) throws MojoExecutionException {
         List<String> unresolved = Maven.unresolvedDependencyCoords(pbe);
         if (CollectionUtils.isNotEmpty(unresolved)) {
-            return new BuildOutcome.Skipped("host model building: unresolved dependencies: " + StringUtils.join(unresolved, ", "), AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, null);
+            return BuildOutcome.Skipped.builder()
+                    .reason("host model building: unresolved dependencies: " + StringUtils.join(unresolved, ", "))
+                    .category(AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE)
+                    .build();
         }
 
         Optional<String> structural = Maven.severeProblem(pbe.getResults().stream().flatMap(r -> r.getProblems().stream()));
         if (structural.isPresent()) {
-            return new BuildOutcome.Skipped("host model building: " + structural.get(), AnalysisExcludeCategory.BUILD_FAILURE, null);
+            return BuildOutcome.Skipped.builder()
+                    .reason("host model building: " + structural.get())
+                    .category(AnalysisExcludeCategory.BUILD_FAILURE)
+                    .build();
         }
 
         throw new MojoExecutionException("project build failed: " + Objects.toString(pbe.getMessage(), pbe.getClass().getSimpleName()), pbe);
-    }
-    private static IndexingSummary buildSourceOnlyIndex(RunArgs args, CommitAnalysis analysis, LogFactory logFactory) throws IOException {
-        try (Fetch fetch = new Fetch(args);
-                LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, args, fetch)) {
-            /**
-             * no registry.load(): index() and identifyAffectedSymbols() are pure source (PMD) passes, so
-             * the JDT language server is never downloaded or started for a build-failed commit
-             */
-            IndexingSummary index = registry.index(analysis);
-            registry.identifyAffectedSymbols(index, analysis);
-            return index;
-        }
     }
     private void applyBuildFailure(SubmissionContext ctx, RunArgs args, String reason, AnalysisExcludeCategory category, String detail) throws IOException {
         AnalysisBuildFailureModel buildFailure = new AnalysisBuildFailureModel();
@@ -1637,13 +1644,13 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         ctx.getSubmissionModel().setAgentInstructions(
                 StringUtils.trimToNull(ConventionGuidance.read(args, new MavenMessageReporter(getLog()))));
     }
-
     protected sealed interface BuildOutcome {
         /**
          * timedOut separates a fork the deadline killed from a fork that genuinely failed: only the latter is worth
          * another time-machine rung, because a timeout carries no evidence about which snapshots were picked.
          */
         @Value
+        @Builder
         @AllArgsConstructor
         final class Skipped implements BuildOutcome {
             String reason;
@@ -1660,7 +1667,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             ProjectBuildingResult result;
         }
     }
-
     @RequiredArgsConstructor
     private static final class CapturingOutputHandler implements InvocationOutputHandler {
         private static final Pattern HELP_LINE = Pattern.compile("\\[ERROR\\]\\s+\\[Help\\s+\\d+\\]\\s+");
@@ -1689,8 +1695,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 helpUrlLines.add(line);
             }
         }
-        public String firstErrorLine() {
-            return firstErrorLine;
+        public Optional<String> firstErrorLine() {
+            return Optional.ofNullable(firstErrorLine);
         }
         public List<String> helpUrlLines() {
             return helpUrlLines;

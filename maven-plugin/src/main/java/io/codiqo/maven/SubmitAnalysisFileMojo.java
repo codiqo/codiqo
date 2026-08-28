@@ -23,6 +23,8 @@ import io.codiqo.client.ApiException;
 import io.codiqo.client.model.AnalysisAcceptedModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.maven.auth.BrowserLogin;
+import io.codiqo.maven.logging.MavenMessageReporter;
+import io.codiqo.submit.AnalysisSubmitter;
 
 @Mojo(name = "submit-analysis-file",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
@@ -67,7 +69,7 @@ public class SubmitAnalysisFileMojo extends AbstractMojo {
                     connectTimeoutSeconds,
                     readTimeoutSeconds,
                     submission,
-                    getLog());
+                    new MavenMessageReporter(getLog()));
             getLog().info(String.format("accepted analysis id: %s status: %s", response.getAnalysisId(), response.getStatus()));
         } catch (ApiException err) {
             throw new MojoExecutionException(err);

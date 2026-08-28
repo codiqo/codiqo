@@ -2,23 +2,25 @@ package io.codiqo.gradle;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.LinkedHashSet;
 
-import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.BooleanUtils;
-import org.apache.commons.lang3.mutable.MutableBoolean;
-import org.eclipse.jgit.lib.ObjectId;
+import org.apache.commons.lang3.StringUtils;
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Repository;
 import org.jacoco.core.tools.ExecFileLoader;
-
 
 import io.codiqo.api.BuildTool;
 import io.codiqo.api.ClassGraphSpec;
@@ -29,14 +31,22 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
+import io.codiqo.client.ApiException;
+import io.codiqo.client.model.AnalysisAcceptedModel;
+import io.codiqo.client.model.AnalysisBuildFailureModel;
+import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.ClientInfoModel;
 import io.codiqo.client.model.ClientInfoModel.BuildToolEnum;
+import io.codiqo.client.model.FileChangeModel;
+import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.core.ClassGraphWrapper;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.gradle.model.AnalysisRequest;
 import io.codiqo.gradle.model.ModuleData;
-import io.codiqo.lang.config.ConfigFiles;
+import io.codiqo.submit.AnalysisSubmitter;
+import io.codiqo.submit.CommitExclusions;
+import io.codiqo.submit.CommitExclusions.Exclusion;
 import io.codiqo.submit.CommitModelPopulator;
 import io.codiqo.submit.DuplicationReportPopulator;
 import io.codiqo.submit.EffectiveChangePopulator;
@@ -54,11 +64,18 @@ import io.github.classgraph.ScanResult;
 import lombok.experimental.UtilityClass;
 
 /**
- * Runs the shared analysis engine against a collected {@link AnalysisRequest}. Operates only on
- * plain data (no Gradle types), so it runs inside the isolated analysis worker.
+ * Runs the shared analysis engine against a collected {@link AnalysisRequest}. Operates only on plain data (no Gradle
+ * types), so it runs inside the isolated analysis worker.
  */
 @UtilityClass
 public class AnalysisEngine {
+    /**
+     * declared on the worker side, not on the Gradle-typed helper that also uses it: the worker runs on a bare
+     * classpath with no gradle-api, so it must not reference a class that imports Gradle types. Reading the constant
+     * from {@code GradleBuildSupport} only appeared to work because javac folds a compile-time String constant.
+     */
+    public static final String EXEC_PART_PREFIX = "codiqo-";
+
     public void run(AnalysisRequest request, LogFactory logFactory) throws Exception {
         RunArgs args = new RunArgs();
         args.setDumpAnalysis(true);
@@ -67,6 +84,13 @@ public class AnalysisEngine {
         args.setExcludeProjects(request.getExcludeProjects());
         args.setExcludePaths(request.getExcludePaths());
         args.setBuildTool(BuildTool.GRADLE);
+        args.setSkipOnBuildFailure(request.isSkipOnBuildFailure());
+        args.setScoreOnBuildFailure(request.isScoreOnBuildFailure());
+        args.setFirstParentOnly(request.isFirstParentOnly());
+        args.setExcludeRevertedCommits(request.isExcludeRevertedCommits());
+        Optional.ofNullable(request.getIncludeBranches()).ifPresent(args::setIncludeBranches);
+        Optional.ofNullable(request.getIncludeAuthorEmails()).ifPresent(args::setIncludeAuthorEmails);
+        Optional.ofNullable(request.getExcludeAuthorEmails()).ifPresent(args::setExcludeAuthorEmails);
         args.setIgnoreDiagnostics(request.isIgnoreDiagnostics());
         args.setIgnoreComplexity(request.isIgnoreComplexity());
         args.setFailOnJdtlsError(request.isFailOnJdtlsError());
@@ -83,22 +107,41 @@ public class AnalysisEngine {
 
         args.validate();
 
-        if (BooleanUtils.negate(request.isIgnoreCoverage())) {
-            Log mergeLog = logFactory.getLogger(AnalysisEngine.class);
-            for (ModuleData module : request.getModules()) {
-                mergeCoverageParts(module, mergeLog);
+        Log log = logFactory.getLogger(AnalysisEngine.class);
+        try (Repository git = JGit.openRepository(new File(request.getRootDir()))) {
+            args.setGit(git);
+            args.setDefaultBranch(JGit.currentBranchOrDefault(git));
+            args.setCommitId(resolveCommitId(request, git));
+
+            // gate before the ClassGraph scan and the JDT import: an excluded commit costs a git walk, not an analysis
+            Optional<Exclusion> excluded = CommitExclusions.beforeAnalysis(args);
+            if (excluded.isPresent()) {
+                reportExclusion(request, args, args.getCommitId(), excluded.get(), List.of(), log);
+                return;
             }
-        }
 
-        try (ClassGraphSpec scan = buildProjects(request, args, logFactory.getLogger(AnalysisEngine.class))) {
-            try (Repository git = JGit.openRepository(new File(request.getRootDir()))) {
-                args.setGit(git);
-                args.setDefaultBranch(JGit.currentBranchOrDefault(git));
-                args.setCommitId(resolveCommitId(request, git));
+            /**
+             * a failed build leaves no trustworthy class output, so the normal pipeline cannot run: no ClassGraph
+             * scan, no JDT import, no coverage. The same fork in the road the Maven side takes.
+             */
+            if (StringUtils.isNotBlank(request.getBuildFailureDetail())) {
+                runDegraded(request, args, logFactory, log);
+                return;
+            }
 
+            /**
+             * after the gate: merging is pointless work for an excluded commit, and its staleness stamp can fail the
+             * run outright
+             */
+            if (BooleanUtils.negate(request.isIgnoreCoverage())) {
+                for (ModuleData module : request.getModules()) {
+                    mergeCoverageParts(module, log);
+                }
+            }
+
+            try (ClassGraphSpec scan = buildProjects(request, args, log)) {
                 runEngine(request, args, logFactory);
             } finally {
-                Log log = logFactory.getLogger(AnalysisEngine.class);
                 args.getProjects().forEach(spec -> {
                     try {
                         spec.close();
@@ -110,45 +153,196 @@ public class AnalysisEngine {
         }
     }
     /**
-     * fold every Test task's exec part into the single per-module file the analysis reads. Gradle deletes a Test task's
-     * jacoco destination file before the task runs, so the parts cannot share one path (see
-     * {@link GradleBuildSupport#jacocoExecPart}); merging here keeps the one-exec-per-module contract the Maven side
-     * gets for free from surefire's sequential executions.
+     * an excluded commit is reported to the backend rather than scored, so its files are still recorded and it is not
+     * re-offered as missing on the next run. A dump-only caller has nowhere to put an exclusion, so the reason is
+     * logged and the run ends.
+     */
+    private static void reportExclusion(AnalysisRequest request, RunArgs args, String commitSha, Exclusion exclusion, List<FileChangeModel> files, Log log) throws Exception {
+        reportExclusion(request, args, commitSha, exclusion, files, log, null, null);
+    }
+    private static void reportExclusion(AnalysisRequest request, RunArgs args, String commitSha, Exclusion exclusion, List<FileChangeModel> files, Log log, String detail, ProjectMetricsModel projectMetrics) throws Exception {
+        log.warn("commit %s skipped: %s", commitSha, exclusion.getReason());
+        if (request.isSubmit()) {
+            AnalysisSubmitter.exclude(
+                    request.getApiUrl(),
+                    request.getApiKey(),
+                    request.getConnectTimeoutSeconds(),
+                    request.getReadTimeoutSeconds(),
+                    commitSha,
+                    exclusion.getReason(),
+                    exclusion.getCategory(),
+                    detail,
+                    files,
+                    projectMetrics,
+                    log);
+        }
+    }
+    /**
+     * fold every Test task's exec part into the single per-module file the analysis reads. Gradle deletes a Test
+     * task's jacoco destination file before the task runs, so the parts cannot share one path (see
+     * {@link GradleBuildSupport#jacocoExecPart}).
      */
     static void mergeCoverageParts(ModuleData module, Log log) throws IOException {
         File merged = new File(module.getCoveragePath());
-        File[] parts = merged.getParentFile().listFiles(file -> file.getName().startsWith(GradleBuildSupport.EXEC_PART_PREFIX));
-        if (ArrayUtils.isEmpty(parts)) {
+        File[] parts = merged.getParentFile().listFiles(file -> file.getName().startsWith(EXEC_PART_PREFIX));
+        if (ArrayUtils.isNotEmpty(parts)) {
+            ExecFileLoader loader = new ExecFileLoader();
+            long oldestPart = Long.MAX_VALUE;
+            for (File part : parts) {
+                loader.load(part);
+                oldestPart = Math.min(oldestPart, part.lastModified());
+            }
+            loader.save(merged, false);
+
+            /**
+             * the merged file carries the OLDEST contributing part's timestamp, not the merge's own. A part left
+             * behind by a PREVIOUS checkout is stale and only its age can say so, while a part whose Test task was
+             * up-to-date this build is still valid. A fresh timestamp would hand
+             * JavaLanguageSpec.captureJacocoCoverage a file that always looks newer than the sources, permanently
+             * disarming its staleness guard and letting one commit be scored with another commit's coverage.
+             */
+            if (BooleanUtils.negate(merged.setLastModified(oldestPart))) {
+                throw new IOException(String.format(
+                        "could not stamp %s with the oldest contributing exec part's time (%d); refusing to continue because the coverage staleness guard would be bypassed",
+                        merged.getAbsolutePath(), oldestPart));
+            }
+
+            log.info("merged %d jacoco exec part(s) for %s into %s (stamped %s from the oldest part)",
+                    parts.length,
+                    module.getArtifactId(),
+                    merged.getAbsolutePath(),
+                    Instant.ofEpochMilli(oldestPart));
+        }
+    }
+    /**
+     * The build-failed commit. By default it is reported excluded with the failure detail attached; with
+     * codiqo.scoreOnBuildFailure it is scored instead, from a source-only index that runs PMD over the work tree but
+     * never starts the language server — genuine code volume, rather than a score derived from config lines alone.
+     */
+    private static void runDegraded(AnalysisRequest request, RunArgs args, LogFactory logFactory, Log log) throws Exception {
+        String reason = "build failed";
+
+        /**
+         * skipOnBuildFailure=false asks for a hard error instead of an exclusion. Throwing here fails the worker, so
+         * javaexec fails the task and a pipeline that opted out of tolerating build failures does not go green on
+         * one. A Gradle exception type cannot be used: the worker runs on a bare classpath with no gradle-api.
+         */
+        if (BooleanUtils.negate(args.isSkipOnBuildFailure())) {
+            throw new IllegalStateException(String.format("commit %s: %s, and codiqo.skipOnBuildFailure is false%n%s",
+                    args.getCommitId(), reason, request.getBuildFailureDetail()));
+        }
+
+        args.getProjects().add(GradleSourceOnlyProjectSpec.forWorkTree(args.getGit().getWorkTree(), request));
+        SubmissionContext ctx = degradedSubmission(request, args, logFactory, log);
+
+        AnalysisBuildFailureModel buildFailure = new AnalysisBuildFailureModel();
+        buildFailure.setReason(reason);
+        buildFailure.setCategory(AnalysisExcludeCategory.BUILD_FAILURE);
+        buildFailure.setDetail(request.getBuildFailureDetail());
+        ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
+        ctx.getSubmissionModel().setBuildFailure(buildFailure);
+
+        List<FileChangeModel> files = ctx.getSubmissionModel().getFiles();
+        if (BooleanUtils.and(new boolean[] { args.isScoreOnBuildFailure(), CollectionUtils.isNotEmpty(files) })) {
+            if (ctx.getAnalysis().isRevertCommit()) {
+                reportRevert(request, args, ctx, log);
+                return;
+            }
+            log.warn("commit %s: build failed — running degraded analysis", args.getCommitId());
+            new OutputSerializer(true, logFactory.getLogger(OutputSerializer.class)).accept(ctx);
+            if (request.isSubmit()) {
+                AnalysisAcceptedModel accepted = AnalysisSubmitter.submit(
+                        request.getApiUrl(), request.getApiKey(), request.getConnectTimeoutSeconds(),
+                        request.getReadTimeoutSeconds(), ctx.getSubmissionModel(), log);
+                log.info("accepted degraded analysis id: %s status: %s", accepted.getAnalysisId(), accepted.getStatus());
+            }
             return;
         }
 
-        ExecFileLoader loader = new ExecFileLoader();
-        long oldestPart = Long.MAX_VALUE;
-        for (File part : parts) {
-            loader.load(part);
-            oldestPart = Math.min(oldestPart, part.lastModified());
+        reportExclusion(request, args, args.getCommitId(),
+                new Exclusion(reason, AnalysisExcludeCategory.BUILD_FAILURE), files, log,
+                request.getBuildFailureDetail(), ctx.getSubmissionModel().getProjectMetrics());
+    }
+    /**
+     * The best-effort source index over an unbuilt work tree, falling back to the raw diff when it cannot be read.
+     * PMD parsing a tree whose build just failed is exactly where an I/O failure is expected, and the Maven side
+     * degrades the same way rather than losing the commit: without the fallback the exception escapes the worker, no
+     * exclusion is ever submitted, and the sha is re-offered as missing on every subsequent run.
+     */
+    private static SubmissionContext degradedSubmission(AnalysisRequest request, RunArgs args, LogFactory logFactory, Log log) throws Exception {
+        try {
+            return sourceOnlySubmission(request, args, logFactory);
+        } catch (IOException err) {
+            log.warn("commit %s: source-only degraded index failed (%s) — falling back to diff-only scoring",
+                    args.getCommitId(), err.getMessage());
+            return diffOnlySubmission(request, args, logFactory);
         }
-        loader.save(merged, false);
+    }
+    private static SubmissionContext sourceOnlySubmission(AnalysisRequest request, RunArgs args, LogFactory logFactory) throws Exception {
+        Path workTree = args.getGit().getWorkTree().toPath().normalize();
+        CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
+        IndexingSummary index = DefaultLanguageProcessors.sourceOnlyIndex(args, analysis, logFactory);
+
+        SubmissionContext toReturn = SubmissionContext.create(
+                args, index, analysis, workTree, logFactory, request.getRootCode(), request.getRootName(), clientInfo(request));
+
+        new GradleProjectModelPopulator(logFactory.getLogger(GradleProjectModelPopulator.class)).accept(toReturn);
+        new CommitModelPopulator().accept(toReturn);
+        new ModuleLevelMetricsPopulator().accept(toReturn);
+        new FileAnalysisPopulator().accept(toReturn);
+        new EffectiveChangePopulator().accept(toReturn);
 
         /**
-         * the merged file carries the OLDEST contributing part's timestamp, not the merge's own. parts are deliberately
-         * kept even when their Test task did not run this build — an up-to-date task's part is still valid for unchanged
-         * inputs, so pruning it would under-report coverage — but a part left behind by a PREVIOUS checkout is not, and
-         * the only thing that can tell those apart is age. writing a fresh timestamp here would hand
-         * JavaLanguageSpec.captureJacocoCoverage a file that always looks newer than the sources and permanently disarm
-         * its exec-vs-latestModified staleness guard, letting one commit be scored with another commit's coverage.
+         * only the driver-score statistics are populated: no coverage, diagnostics or CPD is captured for a failed
+         * build, so those aggregates stay absent rather than being fabricated as zeros
          */
-        if (BooleanUtils.negate(merged.setLastModified(oldestPart))) {
-            throw new IOException(String.format(
-                    "could not stamp %s with the oldest contributing exec part's time (%d); refusing to continue because the coverage staleness guard would be bypassed",
-                    merged.getAbsolutePath(), oldestPart));
-        }
+        MetricsAggregator.populateDriverMetrics(toReturn);
+        return toReturn;
+    }
+    /**
+     * git diff and commit metadata only: no code units, no metrics. The degraded score is derived from the diff alone.
+     */
+    private static SubmissionContext diffOnlySubmission(AnalysisRequest request, RunArgs args, LogFactory logFactory) throws Exception {
+        Path workTree = args.getGit().getWorkTree().toPath().normalize();
+        CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
 
-        log.info("merged %d jacoco exec part(s) for %s into %s (stamped %s from the oldest part)",
-                parts.length,
-                module.getArtifactId(),
-                merged.getAbsolutePath(),
-                Instant.ofEpochMilli(oldestPart));
+        SubmissionContext toReturn = SubmissionContext.create(
+                args, null, analysis, workTree, logFactory, request.getRootCode(), request.getRootName(), clientInfo(request));
+
+        new CommitModelPopulator().accept(toReturn);
+        new FileAnalysisPopulator().accept(toReturn);
+        return toReturn;
+    }
+    private static ClientInfoModel clientInfo(AnalysisRequest request) {
+        ClientInfoModel toReturn = new ClientInfoModel();
+        toReturn.setBuildTool(BuildToolEnum.GRADLE);
+        toReturn.setVersion(request.getGradleVersion());
+        toReturn.setName("codiqo-gradle-plugin");
+        return toReturn;
+    }
+    /**
+     * the revert itself is excluded unconditionally, and with excludeRevertedCommits the original is retroactively
+     * excluded too, so reverted work stops counting. 404 means the original predates the indexing window.
+     */
+    private static void reportRevert(AnalysisRequest request, RunArgs args, SubmissionContext ctx, Log log) throws Exception {
+        reportExclusion(request, args, args.getCommitId(),
+                new Exclusion("revert commit (no LLM scoring performed)", AnalysisExcludeCategory.REVERT_COMMIT),
+                ctx.getSubmissionModel().getFiles(), log);
+
+        if (args.isExcludeRevertedCommits()) {
+            String revertedSha = ctx.getAnalysis().getRevertedCommitId();
+            try {
+                reportExclusion(request, args, revertedSha,
+                        new Exclusion(String.format("reverted by commit %s", JGit.shortSha(args.getCommitId())), AnalysisExcludeCategory.REVERTED),
+                        List.of(), log);
+            } catch (ApiException err) {
+                if (err.getCode() == HttpURLConnection.HTTP_NOT_FOUND) {
+                    log.warn("reverted commit %s not known to backend (outside indexing window?) — skipping its exclusion", revertedSha);
+                } else {
+                    throw err;
+                }
+            }
+        }
     }
     private static ClassGraphSpec buildProjects(AnalysisRequest request, RunArgs args, Log log) {
         Set<URI> jars = new LinkedHashSet<>();
@@ -231,8 +425,7 @@ public class AnalysisEngine {
         if (Objects.nonNull(request.getCommitId())) {
             return request.getCommitId();
         }
-        ObjectId head = git.resolve("HEAD");
-        return head.name();
+        return git.resolve(Constants.HEAD).name();
     }
     private static void runEngine(AnalysisRequest request, RunArgs args, LogFactory logFactory) throws Exception {
         Log log = logFactory.getLogger(AnalysisEngine.class);
@@ -244,31 +437,27 @@ public class AnalysisEngine {
                 DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, args);
                 CommitAnalysis analysis = analyzer.analyze();
 
-                MutableBoolean toApply = new MutableBoolean();
-                analysis.forEach(diff -> {
-                    String name = diff.getFile().getName();
-                    if (BooleanUtils.or(new boolean[] {
-                            FilenameUtils.isExtension(name, registry.extensions()),
-                            ConfigFiles.isConfigFile(name)
-                    })) {
-                        toApply.setTrue();
-                    }
-                });
-                if (toApply.isFalse()) {
-                    log.log(org.slf4j.event.Level.WARN, "commit %s: no diff files match registered languages %s — nothing to dump",
-                            args.getCommitId(),
-                            registry.extensions());
+                List<String> changedFiles = new ArrayList<>();
+                analysis.forEach(diff -> changedFiles.add(diff.getFile().getName()));
+
+                ClientInfoModel clientInfo = clientInfo(request);
+
+                Optional<Exclusion> excluded = CommitExclusions.afterDelta(args, analysis, registry.extensions(), changedFiles);
+                if (excluded.isPresent()) {
+                    /**
+                     * an excluded commit still carries the raw git diff so the backend persists per-file changes;
+                     * indexing has not run, so the populator emits diff-only file models with no code units
+                     */
+                    SubmissionContext excludeCtx = SubmissionContext.create(
+                            args, null, analysis, workTree, logFactory, request.getRootCode(), request.getRootName(), clientInfo);
+                    new FileAnalysisPopulator().accept(excludeCtx);
+                    reportExclusion(request, args, args.getCommitId(), excluded.get(), excludeCtx.getSubmissionModel().getFiles(), log);
                     return;
                 }
 
                 IndexingSummary index = registry.index(analysis);
                 registry.identifyAffectedSymbols(index, analysis);
                 registry.collectAndCapture(index, analysis);
-
-                ClientInfoModel clientInfo = new ClientInfoModel();
-                clientInfo.setBuildTool(BuildToolEnum.GRADLE);
-                clientInfo.setVersion(request.getGradleVersion());
-                clientInfo.setName("codiqo-gradle-plugin");
 
                 SubmissionContext ctx = SubmissionContext.create(
                         args,
@@ -292,6 +481,23 @@ public class AnalysisEngine {
 
                 ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
                 new OutputSerializer(true, logFactory.getLogger(OutputSerializer.class)).accept(ctx);
+
+                // the dump is written first, so a submission the backend rejects still leaves the YAML to inspect
+                if (analysis.isRevertCommit()) {
+                    reportRevert(request, args, ctx, log);
+                    return;
+                }
+
+                if (request.isSubmit()) {
+                    AnalysisAcceptedModel accepted = AnalysisSubmitter.submit(
+                            request.getApiUrl(),
+                            request.getApiKey(),
+                            request.getConnectTimeoutSeconds(),
+                            request.getReadTimeoutSeconds(),
+                            ctx.getSubmissionModel(),
+                            log);
+                    log.info("accepted analysis id: %s status: %s", accepted.getAnalysisId(), accepted.getStatus());
+                }
             }
         }
     }

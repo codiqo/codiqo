@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
 
@@ -19,25 +20,28 @@ import io.codiqo.gradle.model.ModuleData;
 /**
  * The merged exec file must inherit the OLDEST contributing part's timestamp. JavaLanguageSpec.captureJacocoCoverage
  * aborts when the coverage file predates the project's latest modification, and that guard is the only thing standing
- * between a leftover part from a previous checkout and one commit being scored with another commit's coverage. Stamping
- * the merge with its own (always current) time would disarm the guard permanently and silently.
+ * between a leftover part from a previous checkout and one commit being scored with another commit's coverage.
  */
 class CoverageMergeStalenessTest {
+    private static final String JACOCO_DIR = "jacoco";
+    private static final String MERGED_EXEC = "codiqo.exec";
+    private static final int PART_AGE_DAYS = 3;
+
     @TempDir
     Path tempDir;
 
     @Test
     void mergedFileInheritsTheOldestPartTimestamp() throws Exception {
-        File jacocoDir = tempDir.resolve("jacoco").toFile();
+        File jacocoDir = tempDir.resolve(JACOCO_DIR).toFile();
         assertTrue(jacocoDir.mkdirs());
 
-        long old = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(3);
+        long old = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(PART_AGE_DAYS);
         long recent = System.currentTimeMillis();
 
-        writeEmptyExec(new File(jacocoDir, GradleBuildSupport.EXEC_PART_PREFIX + "test.exec"), old);
-        writeEmptyExec(new File(jacocoDir, GradleBuildSupport.EXEC_PART_PREFIX + "integrationTest.exec"), recent);
+        writeEmptyExec(new File(jacocoDir, AnalysisEngine.EXEC_PART_PREFIX + "test.exec"), old);
+        writeEmptyExec(new File(jacocoDir, AnalysisEngine.EXEC_PART_PREFIX + "integrationTest.exec"), recent);
 
-        File merged = new File(jacocoDir, "codiqo.exec");
+        File merged = new File(jacocoDir, MERGED_EXEC);
         AnalysisEngine.mergeCoverageParts(moduleAt(merged), NoopLog.INSTANCE);
 
         assertTrue(merged.isFile(), "merge did not produce " + merged);
@@ -46,10 +50,10 @@ class CoverageMergeStalenessTest {
     }
     @Test
     void mergeIsSkippedWhenNoPartsExist() throws Exception {
-        File jacocoDir = tempDir.resolve("jacoco").toFile();
+        File jacocoDir = tempDir.resolve(JACOCO_DIR).toFile();
         assertTrue(jacocoDir.mkdirs());
 
-        File merged = new File(jacocoDir, "codiqo.exec");
+        File merged = new File(jacocoDir, MERGED_EXEC);
         AnalysisEngine.mergeCoverageParts(moduleAt(merged), NoopLog.INSTANCE);
 
         assertFalse(merged.exists(), "a module whose tests never ran must not get an empty exec file");
@@ -61,7 +65,7 @@ class CoverageMergeStalenessTest {
         return toReturn;
     }
     private static void writeEmptyExec(File file, long lastModified) throws Exception {
-        try (java.io.FileOutputStream out = new java.io.FileOutputStream(file)) {
+        try (FileOutputStream out = new FileOutputStream(file)) {
             new ExecutionDataWriter(out);
         }
         assertTrue(file.setLastModified(lastModified));

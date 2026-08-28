@@ -41,11 +41,6 @@
             <artifactId>codiqo-openapi</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>codiqo-lang-config</artifactId>
-            <version>${project.version}</version>
-        </dependency>
 
         <!-- engine libs referenced directly by the plugin glue -->
         <dependency>
@@ -68,9 +63,14 @@
             <groupId>commons-io</groupId>
             <artifactId>commons-io</artifactId>
         </dependency>
+        <!-- the collected model is piped to the analysis worker as JSON -->
         <dependency>
-            <groupId>net.sourceforge.pmd</groupId>
-            <artifactId>pmd-core</artifactId>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
         </dependency>
         <!--
             JaCoCo.VERSION pins the agent the analysis build instruments with to the one it parses the exec file with.
@@ -95,6 +95,18 @@
             <groupId>${project.groupId}</groupId>
             <artifactId>codiqo-llm</artifactId>
             <version>${project.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!--
+            the analysis worker is a bare JVM, so it needs an SLF4J binding for SlfLogFactory to reach a console at all;
+            the daemon never uses it, because there slf4j-api is loaded by Gradle's own classloader and its provider
+            lookup cannot see this child classloader. slf4j-simple rather than logback because the worker configures
+            levels and layout with -D flags at the fork site, so no logback.xml has to be shipped inside the plugin jar.
+        -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
             <scope>runtime</scope>
         </dependency>
 

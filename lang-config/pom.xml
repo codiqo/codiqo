@@ -9,7 +9,7 @@
     </parent>
     <artifactId>codiqo-lang-config</artifactId>
     <name>Codiqo Config Language Support</name>
-    <description>Config-file analysis support (pom.xml, .proto): path detection and line-filtering profiles.</description>
+    <description>Config-file analysis support (pom.xml, .proto, Gradle build scripts and version catalogs): path detection and line-filtering profiles.</description>
     <dependencies>
         <dependency>
             <groupId>commons-io</groupId>
@@ -18,6 +18,10 @@
         <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-collections4</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
         </dependency>
         <dependency>
             <groupId>${project.groupId}</groupId>

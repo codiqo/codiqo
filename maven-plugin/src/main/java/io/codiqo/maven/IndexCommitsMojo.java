@@ -3,27 +3,19 @@ package io.codiqo.maven;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.Period;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Date;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.collections4.ListUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.Strings;
 import org.apache.maven.model.Scm;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -32,26 +24,20 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
-import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jgit.revwalk.RevCommit;
-import org.eclipse.jgit.revwalk.RevWalk;
 
 import io.codiqo.api.RunArgs;
-import io.codiqo.client.ApiClient;
+import io.codiqo.api.logging.Log;
 import io.codiqo.client.ApiException;
 import io.codiqo.client.api.CommitIndexApi;
-import io.codiqo.client.model.CommitIndexBatchModel;
-import io.codiqo.client.model.CommitIndexBatchResultModel;
 import io.codiqo.client.model.CommitModel;
-import io.codiqo.client.model.MissingAnalysesModel;
 import io.codiqo.client.model.ProjectModel;
 import io.codiqo.maven.auth.BrowserLogin;
+import io.codiqo.maven.logging.MavenMessageReporter;
+import io.codiqo.submit.CommitIndexPublisher;
+import io.codiqo.submit.CommitIndexPublisher.MissingAnalysesSelection;
 import io.codiqo.submit.CommitIndexer;
 import io.codiqo.util.JGit;
-import io.codiqo.util.RepositoryUrls;
-import lombok.Value;
 
 @Mojo(name = "index-commits",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
@@ -59,9 +45,6 @@ import lombok.Value;
         aggregator = true,
         requiresProject = true)
 public class IndexCommitsMojo extends AbstractMojo {
-    private static final String API_KEY_HEADER = "X-API-Key";
-    private static final int UNKNOWN_PARENTS_SAMPLE_LIMIT = 10;
-
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
     private MavenProject project;
 
@@ -126,35 +109,41 @@ public class IndexCommitsMojo extends AbstractMojo {
             Optional.ofNullable(excludeAuthorEmails).ifPresent(args::setExcludeAuthorEmails);
             args.setFirstParentOnly(firstParentOnly);
 
-            Period window = Period.parse(commitWindow);
-            Date cutoff = Date.from(LocalDate.now(ZoneOffset.UTC).minus(window).atStartOfDay(ZoneOffset.UTC).toInstant());
+            Date cutoff = Date.from(LocalDate.now(ZoneOffset.UTC).minus(Period.parse(commitWindow)).atStartOfDay(ZoneOffset.UTC).toInstant());
             List<CommitModel> commits = CommitIndexer.extractCommits(repo, args, indexRef, cutoff, resolvedBranch);
-            getLog().info("extracted " + commits.size() + " commits since " + cutoff + " (window=" + commitWindow + ", selection=" + (firstParentOnly ? "first-parent/mainline" : "all-commits") + ")");
+            getLog().info("extracted " + commits.size() + " commits since " + cutoff + " (window=" + commitWindow
+                    + ", selection=" + (firstParentOnly ? "first-parent/mainline" : "all-commits") + ")");
 
-            ProjectModel projectMetadata = buildProjectMetadata(projectId, repo);
-
-            CommitIndexApi client = buildClient(resolvedApiKey);
+            CommitIndexApi client = CommitIndexPublisher.buildClient(apiUrl, resolvedApiKey, connectTimeoutSeconds, readTimeoutSeconds);
             getLog().info("connecting to " + apiUrl);
 
-            indexBatches(client, projectId, projectMetadata, commits);
-            writeMissingAnalyses(client, repo, projectId, resolvedBranch);
+            Log log = new MavenMessageReporter(getLog());
+            CommitIndexPublisher.indexBatches(log, client, apiUrl, projectId, buildProjectMetadata(projectId, repo), commits, batchSize);
+            writeMissingAnalyses(log, client, repo, projectId, resolvedBranch);
         } catch (MojoExecutionException | MojoFailureException err) {
             throw err;
         } catch (Exception err) {
             throw new MojoFailureException(err.getMessage(), err);
         }
     }
+    /**
+     * the git remotes first; the POM's own SCM entries are the fallback for a clone that has none, which is what a
+     * Jenkins detached checkout of a mirror looks like.
+     */
     private ProjectModel buildProjectMetadata(String projectId, Repository repo) {
         ProjectModel toReturn = new ProjectModel();
         toReturn.setCode(projectId);
         toReturn.setName(Optional.ofNullable(project.getName()).filter(StringUtils::isNotBlank).orElse(project.getArtifactId()));
 
-        List<URI> repoUrls = new ArrayList<>();
-        JGit.detectRemoteUrls(repo).forEach(rawUrl -> addRepositoryUri(repoUrls, rawUrl, "git remote"));
+        Log log = new MavenMessageReporter(getLog());
+        List<URI> repoUrls = CommitIndexPublisher.repositoryUrls(log, repo);
         if (CollectionUtils.isEmpty(repoUrls)) {
-            Optional.ofNullable(project.getScm()).map(Scm::getDeveloperConnection).filter(StringUtils::isNotBlank).ifPresent(rawUrl -> addRepositoryUri(repoUrls, rawUrl, "project.scm.developerConnection"));
-            Optional.ofNullable(project.getScm()).map(Scm::getConnection).filter(StringUtils::isNotBlank).ifPresent(rawUrl -> addRepositoryUri(repoUrls, rawUrl, "project.scm.connection"));
-            Optional.ofNullable(project.getScm()).map(Scm::getUrl).filter(StringUtils::isNotBlank).ifPresent(rawUrl -> addRepositoryUri(repoUrls, rawUrl, "project.scm.url"));
+            Scm scm = project.getScm();
+            if (Objects.nonNull(scm)) {
+                addScmUri(log, repoUrls, scm.getDeveloperConnection(), "project.scm.developerConnection");
+                addScmUri(log, repoUrls, scm.getConnection(), "project.scm.connection");
+                addScmUri(log, repoUrls, scm.getUrl(), "project.scm.url");
+            }
         }
         if (CollectionUtils.isNotEmpty(repoUrls)) {
             toReturn.setRepositoryUrls(repoUrls);
@@ -165,63 +154,21 @@ public class IndexCommitsMojo extends AbstractMojo {
         } catch (Exception err) {
             getLog().warn("failed to detect default branch: " + err.getMessage());
         }
-
         return toReturn;
     }
-    private CommitIndexApi buildClient(String key) {
-        ApiClient apiClient = new ApiClient();
-        apiClient.updateBaseUri(Strings.CS.removeEnd(apiUrl, "/"));
-        apiClient.setConnectTimeout(Duration.ofSeconds(connectTimeoutSeconds));
-        apiClient.setReadTimeout(Duration.ofSeconds(readTimeoutSeconds));
-        apiClient.setRequestInterceptor(builder -> builder.header(API_KEY_HEADER, key));
-        return new CommitIndexApi(apiClient);
-    }
-    private void indexBatches(
-            CommitIndexApi client,
-            String projectId,
-            ProjectModel projectMetadata,
-            List<CommitModel> commits) throws ApiException {
-        int totalAccepted = 0;
-        Set<String> unknownParents = new LinkedHashSet<>();
-
-        for (List<CommitModel> chunk : ListUtils.partition(commits, batchSize)) {
-            CommitIndexBatchModel batch = new CommitIndexBatchModel().commits(chunk).project(projectMetadata);
-            CommitIndexBatchResultModel result = ApiRetry.call(
-                    getLog(),
-                    "indexCommits",
-                    apiUrl,
-                    () -> client.indexCommits(projectId, batch));
-            totalAccepted += Optional.ofNullable(result.getAccepted()).orElse(0);
-            if (CollectionUtils.isNotEmpty(result.getUnknownParents())) {
-                unknownParents.addAll(result.getUnknownParents());
-            }
-        }
-        getLog().info("indexed " + totalAccepted + "/" + commits.size() + " commits");
-
-        if (CollectionUtils.isNotEmpty(unknownParents)) {
-            String sample = StringUtils.join(unknownParents.stream().limit(UNKNOWN_PARENTS_SAMPLE_LIMIT).toList(), ", ");
-            String suffix = unknownParents.size() > UNKNOWN_PARENTS_SAMPLE_LIMIT ? " ..." : StringUtils.EMPTY;
-            getLog().warn("server reported " + unknownParents.size() + " unknown parent SHAs (re-run with a wider codiqo.commitWindow): " + sample + suffix);
-        }
-    }
-    private void writeMissingAnalyses(CommitIndexApi client, Repository repo, String projectId, String resolvedBranch) throws IOException, ApiException {
-        MissingAnalysesModel response = ApiRetry.call(
-                getLog(),
-                "listMissingAnalyses",
-                apiUrl,
-                () -> client.listMissingAnalyses(projectId, resolvedBranch, missingAnalysesLimit));
-        List<String> shas = Optional.ofNullable(response.getCommitShas()).orElse(Collections.emptyList());
-        MissingAnalysesSelection selection = selectAnalyzableMissingAnalyses(repo, shas);
+    private void writeMissingAnalyses(Log log, CommitIndexApi client, Repository repo, String projectId, String resolvedBranch) throws IOException, ApiException {
+        MissingAnalysesSelection selection = CommitIndexPublisher.selectAnalyzable(repo,
+                CommitIndexPublisher.listMissingAnalyses(log, client, apiUrl, projectId, resolvedBranch, missingAnalysesLimit));
 
         FileUtils.forceMkdir(missingAnalysesOutputFile.getParentFile());
         FileUtils.writeLines(missingAnalysesOutputFile, StandardCharsets.UTF_8.name(), selection.getAnalyzableShas());
         getLog().info("wrote " + selection.getAnalyzableShas().size() + " missing-analysis SHAs to " + missingAnalysesOutputFile.getAbsolutePath());
 
-        if (BooleanUtils.or(new boolean[] {
+        if (BooleanUtils.or(new boolean[]{
                 selection.getSkippedMissingCommitCount() > 0,
-                selection.getSkippedMissingParentCount() > 0
-        })) {
-            getLog().warn("skipped " + selection.getSkippedMissingCommitCount() + " commits not present locally and " + selection.getSkippedMissingParentCount() + " commits whose first parent is not present locally (deepen the Jenkins clone if you want these analyzed)");
+                selection.getSkippedMissingParentCount() > 0})) {
+            getLog().warn("skipped " + selection.getSkippedMissingCommitCount() + " commits not present locally and "
+                    + selection.getSkippedMissingParentCount() + " commits whose first parent is not present locally (deepen the Jenkins clone if you want these analyzed)");
         }
     }
     private String resolveBranch(Repository repo) throws IOException, MojoExecutionException {
@@ -229,52 +176,15 @@ public class IndexCommitsMojo extends AbstractMojo {
             return branch.trim();
         }
         String current = repo.getBranch();
-        if (StringUtils.isNotBlank(current) && !current.matches("^[a-f0-9]{40}$")) {
-            return current;
+        if (JGit.isDetachedHead(current)) {
+            return JGit.detectDefaultBranch(repo).orElseThrow(() -> new MojoExecutionException(
+                    "cannot resolve branch: HEAD is detached and no default branch is available; set -Dcodiqo.branch explicitly"));
         }
-        return JGit.detectDefaultBranch(repo)
-                .orElseThrow(() -> new MojoExecutionException(
-                        "cannot resolve branch: HEAD is detached and no default branch is available; set -Dcodiqo.branch explicitly"));
+        return current;
     }
-    static MissingAnalysesSelection selectAnalyzableMissingAnalyses(Repository repo, List<String> shas) throws IOException {
-        List<String> analyzable = new ArrayList<>(shas.size());
-        int skippedMissingCommit = 0;
-        int skippedMissingParent = 0;
-
-        try (RevWalk walk = new RevWalk(repo)) {
-            ObjectReader reader = walk.getObjectReader();
-            for (String sha : shas) {
-                ObjectId commitId = repo.resolve(sha);
-                if (Objects.isNull(commitId) || !reader.has(commitId)) {
-                    skippedMissingCommit++;
-                    continue;
-                }
-                RevCommit commit = walk.parseCommit(commitId);
-                if (commit.getParentCount() > 0 && !reader.has(commit.getParent(0))) {
-                    skippedMissingParent++;
-                    continue;
-                }
-                analyzable.add(sha);
-            }
-        }
-
-        return new MissingAnalysesSelection(analyzable, skippedMissingCommit, skippedMissingParent);
-    }
-    @Value
-    static class MissingAnalysesSelection {
-        List<String> analyzableShas;
-        int skippedMissingCommitCount;
-        int skippedMissingParentCount;
-    }
-
-    private void addRepositoryUri(List<URI> repoUrls, String rawUrl, String source) {
-        try {
-            URI repositoryUri = RepositoryUrls.toUri(rawUrl);
-            if (!repoUrls.contains(repositoryUri)) {
-                repoUrls.add(repositoryUri);
-            }
-        } catch (URISyntaxException err) {
-            getLog().warn("failed to parse repository URL from " + source + ": " + rawUrl + " (" + err.getMessage() + ")");
+    private static void addScmUri(Log log, List<URI> repoUrls, String rawUrl, String source) {
+        if (StringUtils.isNotBlank(rawUrl)) {
+            CommitIndexPublisher.addRepositoryUri(log, repoUrls, rawUrl, source);
         }
     }
 }

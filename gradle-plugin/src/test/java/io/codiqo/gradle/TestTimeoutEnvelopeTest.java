@@ -15,10 +15,7 @@ import io.codiqo.api.RunArgs;
 class TestTimeoutEnvelopeTest {
     @Test
     void unsetPerTestTimeoutIsDerivedFromTheTaskTimeout() {
-        CodiqoExtension ext = new CodiqoExtension();
-        ext.setTestTimeoutMinutes(10);
-
-        RunArgs timeouts = CodiqoGradlePlugin.resolveTimeouts(ext);
+        RunArgs timeouts = CodiqoGradlePlugin.resolveTimeouts(10, null);
 
         assertEquals(Duration.ofMinutes(10), timeouts.getTestTimeout());
         assertEquals(Duration.ofMinutes(5), timeouts.getPerTestTimeout());
@@ -29,13 +26,13 @@ class TestTimeoutEnvelopeTest {
         ext.setTestTimeoutMinutes(30);
         ext.setPerTestTimeoutMinutes(2L);
 
-        assertEquals(Duration.ofMinutes(2), CodiqoGradlePlugin.resolveTimeouts(ext).getPerTestTimeout());
+        assertEquals(Duration.ofMinutes(2), CodiqoGradlePlugin.resolveTimeouts(ext.getTestTimeoutMinutes(), ext.getPerTestTimeoutMinutes()).getPerTestTimeout());
     }
     @Test
     void perTestTimeoutIsCappedAtTheRunArgsCeiling() {
         CodiqoExtension ext = new CodiqoExtension();
         ext.setTestTimeoutMinutes(120);
 
-        assertEquals(RunArgs.PER_TEST_TIMEOUT_MAX, CodiqoGradlePlugin.resolveTimeouts(ext).getPerTestTimeout());
+        assertEquals(RunArgs.PER_TEST_TIMEOUT_MAX, CodiqoGradlePlugin.resolveTimeouts(ext.getTestTimeoutMinutes(), ext.getPerTestTimeoutMinutes()).getPerTestTimeout());
     }
 }

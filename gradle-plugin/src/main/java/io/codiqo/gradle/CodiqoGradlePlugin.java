@@ -5,24 +5,33 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
+import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.gradle.api.GradleException;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
+import org.gradle.api.Task;
 import org.gradle.api.tasks.testing.Test;
 import org.gradle.testing.jacoco.plugins.JacocoPluginExtension;
 import org.gradle.testing.jacoco.plugins.JacocoTaskExtension;
 import org.jacoco.core.JaCoCo;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.gradle.model.AnalysisRequest;
 
 public class CodiqoGradlePlugin implements Plugin<Project> {
     private static final String EXTENSION_NAME = "codiqo";
     private static final String TASK_GROUP = "codiqo";
     private static final String DUMP_TASK = "codiqoDumpAnalysis";
+    private static final String SUBMIT_TASK = "codiqoSubmitAnalysis";
+    private static final String INDEX_TASK = "codiqoIndexCommits";
+    private static final Set<String> ANALYSIS_TASKS = Set.of(DUMP_TASK, SUBMIT_TASK);
     private static final String JACOCO_PLUGIN_ID = "jacoco";
 
     private static final String TIMEOUT_DEFAULT_KEY = "junit.jupiter.execution.timeout.default";
@@ -34,59 +43,83 @@ public class CodiqoGradlePlugin implements Plugin<Project> {
     @Override
     public void apply(Project project) {
         CodiqoExtension ext = project.getExtensions().create(EXTENSION_NAME, CodiqoExtension.class);
-        project.getTasks().register(DUMP_TASK, CodiqoDumpAnalysisTask.class, task -> {
-            task.setGroup(TASK_GROUP);
-            task.setDescription("Analyze the current checkout and dump the Codiqo analysis submission as YAML");
 
-            /**
-             * When tests run in the same build, the dump merges each Test task's build/jacoco/codiqo-<task>.exec part
-             * into the module's codiqo.exec, so it must run after every Test task has written its part — otherwise the
-             * dump's fast JDT import finishes first under parallel execution and coverage comes out empty. Lazy
-             * Callable: the subproject test tasks are registered later (the init script applies jacoco), so they are
-             * enumerated only when Gradle resolves the execution graph.
-             */
-            task.mustRunAfter((Callable<List<Test>>) () -> allTestTasks(project));
-        });
-        project.getTasks().register("codiqoIndexCommits", CodiqoIndexCommitsTask.class, task -> {
+        /**
+         * the two analysis tasks differ only in whether the worker posts the result, mirroring the Maven side where
+         * submit-commit-analysis is analyze-commit plus the POST. Run one or the other, never both.
+         */
+        registerAnalysisTask(project, DUMP_TASK, false,
+                "Analyze the current checkout and dump the Codiqo analysis submission as YAML");
+        registerAnalysisTask(project, SUBMIT_TASK, true,
+                "Analyze the current checkout and submit the Codiqo analysis to the backend");
+        project.getTasks().register(INDEX_TASK, CodiqoIndexCommitsTask.class, task -> {
             task.setGroup(TASK_GROUP);
-            task.setDescription("Walk git history over the commit window and write analyzable commit SHAs to a file");
+            task.setDescription("Index the commit window with the backend and write the commits still needing analysis to a file");
         });
 
         /**
          * Snapshot the Gradle model off the task-execution path so subproject classpaths are resolved at configuration
-         * time (works under parallel execution, no --no-parallel).
+         * time, which works under parallel execution. The scheduled tasks are captured here, where the graph exists,
+         * and their TaskState is read at execution time — state is set as each task completes, so by the time the
+         * analysis runs (ordered after all of them) it sees every failure without depending on event delivery.
          */
         project.getGradle().getTaskGraph().whenReady(graph -> {
-            CodiqoDumpAnalysisTask task = (CodiqoDumpAnalysisTask) project.getTasks().findByName(DUMP_TASK);
-            if (Objects.nonNull(task) && graph.hasTask(task)) {
-                task.setRequest(GradleModelCollector.collect(project.getRootProject(), ext));
+            List<CodiqoDumpAnalysisTask> scheduled = Stream.of(DUMP_TASK, SUBMIT_TASK)
+                    .map(name -> (CodiqoDumpAnalysisTask) project.getTasks().findByName(name))
+                    .filter(Objects::nonNull)
+                    .filter(graph::hasTask)
+                    .toList();
+            if (CollectionUtils.isNotEmpty(scheduled)) {
+                AnalysisRequest request = GradleModelCollector.collect(project.getRootProject(), ext);
+                List<Task> graphTasks = List.copyOf(graph.getAllTasks());
+                scheduled.forEach(task -> {
+                    task.setRequest(request);
+                    task.setScheduledTasks(graphTasks);
+                });
             }
         });
 
-        /**
-         * codiqo owns coverage and test execution in the analysis build (mirrors the Maven coverage-injector and
-         * surefire-injector, which the Maven side loads on the forked build's maven.ext.class.path): every Test task's
-         * jacoco extension is normalized to the uniform per-module exec file the analysis reads, and every Test task
-         * gets the same timeout envelope the Maven fork imposes through -Dsurefire.timeout and the JUnit per-test
-         * default. runs at task-graph-ready — after all project configuration — so a project's own jacoco or test
-         * settings never win the race; both the jacoco agent argument and the test JVM's system properties are
-         * resolved from these objects only at process fork.
-         */
         project.getRootProject().getAllprojects().forEach(module -> module.getPluginManager()
                 .withPlugin(JACOCO_PLUGIN_ID, applied -> module.afterEvaluate(CodiqoGradlePlugin::pinJacocoToolVersion)));
 
+        /**
+         * codiqo owns coverage and test execution in the analysis build, mirroring the Maven coverage- and
+         * surefire-injectors: every Test task's jacoco extension is normalized to the uniform per-module exec file the
+         * analysis reads, and every Test task gets the timeout envelope the Maven fork imposes. Runs at
+         * task-graph-ready — after all project configuration — so a project's own jacoco or test settings never win
+         * the race.
+         */
         project.getGradle().getTaskGraph().whenReady(graph -> {
-            RunArgs timeouts = resolveTimeouts(ext);
+            RunArgs timeouts = resolveTimeouts(
+                    longProp(project, "codiqo.testTimeoutMinutes", ext.getTestTimeoutMinutes()),
+                    perTestTimeoutMinutes(project, ext));
             graph.getAllTasks().stream()
                     .filter(Test.class::isInstance)
                     .map(Test.class::cast)
                     .forEach(test -> {
                         ownJacoco(test);
-                        ownTestExecution(test, timeouts, ext.isIgnoreTestFailures());
+                        ownTestExecution(test, timeouts, boolProp(project, "codiqo.ignoreTestFailures", ext.isIgnoreTestFailures()));
                     });
         });
     }
+    private static void registerAnalysisTask(Project project, String name, boolean submit, String description) {
+        project.getTasks().register(name, CodiqoDumpAnalysisTask.class, task -> {
+            task.setGroup(TASK_GROUP);
+            task.setDescription(description);
+            task.setSubmit(submit);
 
+            /**
+             * The analysis runs after every other task in the build. Ordering only against Test tasks was not enough:
+             * a build invoked with `testClasses` has no Test task in the graph at all, so the ordering was vacuous and
+             * the analysis raced compilation — reading a half-written class directory, and missing the compile failure
+             * it is supposed to report. Both are silent wrong answers, not errors.
+             *
+             * <p>Lazy Callable, so the tasks are enumerated only when Gradle resolves the execution graph: the
+             * subproject tasks do not all exist at apply() time, since the init script applies jacoco later.
+             */
+            task.mustRunAfter((Callable<List<Task>>) () -> tasksToFollow(project));
+        });
+    }
     private static void ownJacoco(Test test) {
         // absent only when the jacoco plugin is not applied to the task's project (non-java projects)
         JacocoTaskExtension jacoco = test.getExtensions().findByType(JacocoTaskExtension.class);
@@ -98,31 +131,27 @@ public class CodiqoGradlePlugin implements Plugin<Project> {
              * the project's instrumentation filters are dropped rather than merged: the Maven side attaches a bare
              * agent whose only arguments are the destfile and append, so a project that narrows jacoco to a subset of
              * its packages would otherwise report changed code as uncovered on Gradle and covered on Maven for the
-             * very same commit. excludeClassLoaders and includeNoLocationClasses are deliberately left alone — their
-             * Gradle defaults already equal the bare agent's.
+             * very same commit.
              */
             jacoco.setIncludes(List.of());
             jacoco.setExcludes(List.of());
 
             /**
-             * the exec file is what the analysis reads, so the two settings that decide whether it is written at all
-             * are pinned too: a project that switched output to TCP_SERVER or turned off the exit dump produces a
-             * green build and empty coverage.
+             * the exec file is what the analysis reads, so the two settings deciding whether it is written at all are
+             * pinned too: a project that switched output to TCP_SERVER or turned off the exit dump produces a green
+             * build and empty coverage.
              */
             jacoco.setDumpOnExit(true);
             jacoco.setOutput(JacocoTaskExtension.Output.FILE);
         }
     }
     /**
-     * pin the agent to the same JaCoCo codiqo parses the exec file with. an older toolVersion cannot instrument classes
-     * compiled by a newer JDK — it raises "Unsupported class file major version", the agent skips the class, and the
-     * build still goes green with coverage silently missing. mirrors the Maven injector, which supplies its own resolved
-     * agent jar instead of the project's.
+     * pin the agent to the same JaCoCo codiqo parses the exec file with. An older toolVersion cannot instrument
+     * classes compiled by a newer JDK — it raises "Unsupported class file major version", the agent skips the class,
+     * and the build still goes green with coverage silently missing.
      *
-     * this runs at afterEvaluate rather than with the per-task normalization at taskGraph.whenReady: by the time the
-     * graph is ready the extension's toolVersion is already finalized, so a late set is silently dropped and the agent
-     * stays on Gradle's bundled default (0.8.14 on Gradle 9.4) while the analysis parses the exec with a different
-     * version. afterEvaluate is still late enough to beat a project that sets its own toolVersion in its build script.
+     * <p>Runs at afterEvaluate rather than with the per-task normalization at taskGraph.whenReady: by the time the
+     * graph is ready the extension's toolVersion is already finalized, so a late set is silently dropped.
      */
     private static void pinJacocoToolVersion(Project project) {
         JacocoPluginExtension jacoco = project.getExtensions().findByType(JacocoPluginExtension.class);
@@ -131,10 +160,10 @@ public class CodiqoGradlePlugin implements Plugin<Project> {
         }
     }
     /**
-     * {@link JaCoCo#VERSION} carries the OSGi build qualifier (0.8.15.202606040825); the Maven coordinate the
-     * jacocoAgent configuration resolves is the bare 0.8.15, so the qualifier has to come off or the agent artifact
-     * does not exist. failing loudly beats falling back to Gradle's bundled default, which is the silent
-     * instrument-with-one-version/parse-with-another divergence this pin exists to prevent.
+     * {@link JaCoCo#VERSION} carries the OSGi build qualifier (0.8.15.202606040825) while the Maven coordinate is the
+     * bare 0.8.15, so the qualifier has to come off or the agent artifact does not exist. Failing loudly beats falling
+     * back to Gradle's bundled default, which is the instrument-with-one-version/parse-with-another divergence this
+     * pin exists to prevent.
      */
     static String agentArtifactVersion() {
         Matcher matcher = AGENT_ARTIFACT_VERSION.matcher(JaCoCo.VERSION);
@@ -153,17 +182,16 @@ public class CodiqoGradlePlugin implements Plugin<Project> {
 
         /**
          * mirrors -Dmaven.test.failure.ignore=true: the analysis is the deliverable, so a red test must not abort the
-         * build before codiqoDumpAnalysis runs. a task that hits the timeout above still fails, and only --continue
+         * build before codiqoDumpAnalysis runs. A task that hits the timeout above still fails, and only --continue
          * carries the build past that — hence the documented invocation.
          */
         test.setIgnoreFailures(ignoreTestFailures);
 
         /**
          * mirrors the Maven surefire injector: JUnit reads configuration parameters from JVM system properties, and
-         * SEPARATE_THREAD makes a hung test (I/O, a lock, a sleep, an un-timed HTTP call) preemptively interrupted and
-         * reported as a failure, which the ignoreFailures above tolerates so the build proceeds. JUnit 4 and TestNG
-         * have no equivalent global default and ignore the unknown properties; a pure CPU spin is only reaped by the
-         * task timeout.
+         * SEPARATE_THREAD makes a hung test preemptively interrupted and reported as a failure, which the
+         * ignoreFailures above tolerates. JUnit 4 and TestNG have no equivalent global default and ignore the unknown
+         * properties; a pure CPU spin is only reaped by the task timeout.
          */
         if (timeouts.getPerTestTimeout().compareTo(Duration.ZERO) > 0) {
             test.systemProperty(TIMEOUT_DEFAULT_KEY, timeouts.getPerTestTimeout().getSeconds());
@@ -173,8 +201,7 @@ public class CodiqoGradlePlugin implements Plugin<Project> {
         /**
          * the JUnit XML is the analysis's only evidence that this task forked and ran something — it is what
          * JavaLanguageSpec.expectsCoverage reads to tell a module whose tests produced no coverage from a module that
-         * legitimately has no tests. pinned for the same reason the exec file's own switches are: a project that turned
-         * the report off would make every module look test-less and codiqo.failOnUninstrumentedModule could never fire.
+         * legitimately has none. A project that turned the report off would make every module look test-less.
          */
         test.getReports().getJunitXml().getRequired().set(true);
     }
@@ -182,18 +209,43 @@ public class CodiqoGradlePlugin implements Plugin<Project> {
      * RunArgs owns the derivation (an unset per-test timeout becomes testTimeout/2, capped) so the Gradle daemon and
      * the analysis worker cannot disagree about the envelope they are enforcing.
      */
-    static RunArgs resolveTimeouts(CodiqoExtension ext) {
+    static RunArgs resolveTimeouts(long testTimeoutMinutes, Long perTestTimeoutMinutes) {
         RunArgs toReturn = new RunArgs();
-        toReturn.setTestTimeout(Duration.ofMinutes(ext.getTestTimeoutMinutes()));
-        Optional.ofNullable(ext.getPerTestTimeoutMinutes()).ifPresent(minutes -> toReturn.setPerTestTimeout(Duration.ofMinutes(minutes)));
+        toReturn.setTestTimeout(Duration.ofMinutes(testTimeoutMinutes));
+        Optional.ofNullable(perTestTimeoutMinutes).ifPresent(minutes -> toReturn.setPerTestTimeout(Duration.ofMinutes(minutes)));
         toReturn.validate();
         return toReturn;
     }
-    private static List<Test> allTestTasks(Project project) {
-        List<Test> toReturn = new ArrayList<>();
-        for (Project p : project.getRootProject().getAllprojects()) {
-            toReturn.addAll(p.getTasks().withType(Test.class));
+    /**
+     * every task in the build except the codiqo analysis tasks — naming itself would be a cycle, and naming its
+     * sibling would serialise a dump and a submit that are never meant to run together anyway.
+     */
+    private static List<Task> tasksToFollow(Project project) {
+        List<Task> toReturn = new ArrayList<>();
+        for (Project module : project.getRootProject().getAllprojects()) {
+            for (Task task : module.getTasks()) {
+                if (BooleanUtils.negate(ANALYSIS_TASKS.contains(task.getName()))) {
+                    toReturn.add(task);
+                }
+            }
         }
         return toReturn;
+    }
+    /**
+     * -P overrides are read here as well as in GradleModelCollector, because the timeouts are applied to the Test
+     * tasks in the daemon rather than travelling to the worker in the request. Reading only the extension made every
+     * documented -Pcodiqo.testTimeoutMinutes silently inert, including the ones codiqo-action passes.
+     */
+    private static Long perTestTimeoutMinutes(Project project, CodiqoExtension ext) {
+        return Optional.ofNullable(project.findProperty("codiqo.perTestTimeoutMinutes"))
+                .map(Object::toString)
+                .map(Long::parseLong)
+                .orElse(ext.getPerTestTimeoutMinutes());
+    }
+    private static long longProp(Project project, String name, long fallback) {
+        return Optional.ofNullable(project.findProperty(name)).map(Object::toString).map(Long::parseLong).orElse(fallback);
+    }
+    private static boolean boolProp(Project project, String name, boolean fallback) {
+        return Optional.ofNullable(project.findProperty(name)).map(Object::toString).map(Boolean::parseBoolean).orElse(fallback);
     }
 }
