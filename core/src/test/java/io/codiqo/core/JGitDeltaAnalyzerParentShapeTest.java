@@ -88,10 +88,14 @@ class JGitDeltaAnalyzerParentShapeTest {
         RevCommit root = commit("README.md", "# project\n", "bootstrap");
         args.setCommitId(root.getName());
 
+        CommitAnalysis analysis = analyzer.analyze();
+
         assertEquals(
                 Set.of("ADD README.md", "ADD src/main/java/Root.java", "ADD src/test/java/RootTest.java"),
-                changes(analyzer.analyze()),
+                changes(analysis),
                 "a root commit's whole tree is its delta, at every depth");
+        assertFalse(analysis.isHistoryIncomplete(),
+                "a true root reports the same zero parents as a graft, so the flag keys off the shallow set");
     }
     /**
      * The empty-tree baseline can only ever produce ADD entries, and that is what keeps the absent parent from being
@@ -253,6 +257,8 @@ class JGitDeltaAnalyzerParentShapeTest {
         assertTrue(((GitCommitAnalysis) analysis).getFiles().isEmpty(),
                 "a grafted commit's true delta is unknowable, so it stays file-less rather than being"
                         + " billed for every pre-existing file in the tree");
+        assertTrue(analysis.isHistoryIncomplete(),
+                "the empty file list carries its cause, or the caller reports it as no-analyzable-diff");
     }
     private RevCommit unrelatedRoot() throws Exception {
         try (ObjectInserter inserter = repository.newObjectInserter()) {

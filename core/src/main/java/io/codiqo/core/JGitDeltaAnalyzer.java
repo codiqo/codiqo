@@ -214,6 +214,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
                         oldTree = parentTree;
                     } else if (reader.getShallowCommits().contains(commit.getId())) {
                         log.log(Level.WARN, "commit " + commit.getName() + " sits on the shallow-clone boundary, so its parent is not available locally and its delta cannot be computed — re-run with full history (fetch-depth: 0) to analyze it");
+                        toReturn.setHistoryIncomplete(true);
                         return toReturn;
                     }
 
