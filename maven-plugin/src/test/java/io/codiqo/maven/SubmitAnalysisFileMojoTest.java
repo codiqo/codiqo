@@ -16,11 +16,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.util.StdDateFormat;
-import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.SerializationFeature;
+import tools.jackson.databind.util.StdDateFormat;
+import tools.jackson.dataformat.yaml.YAMLMapper;
 
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CommitModel;
@@ -30,14 +29,12 @@ class SubmitAnalysisFileMojoTest {
     @TempDir
     Path tempDir;
 
-    ObjectMapper mapper = new YAMLMapper();
+    ObjectMapper mapper = YAMLMapper.builder()
+            .changeDefaultPropertyInclusion(incl -> incl.withValueInclusion(Include.NON_NULL))
+            .defaultDateFormat(new StdDateFormat().withColonInTimeZone(true))
+            .enable(SerializationFeature.INDENT_OUTPUT)
+            .build();
 
-    public SubmitAnalysisFileMojoTest() {
-        mapper.setDefaultPropertyInclusion(Include.NON_NULL);
-        mapper.setDateFormat(new StdDateFormat().withColonInTimeZone(true));
-        mapper.enable(SerializationFeature.INDENT_OUTPUT);
-        mapper.registerModule(new JavaTimeModule());
-    }
     @Test
     void readSubmissionRoundTripsYamlIntoModel() throws Exception {
         AnalysisSubmissionModel original = sampleSubmission();
@@ -54,7 +51,7 @@ class SubmitAnalysisFileMojoTest {
     @Test
     void readSubmissionFailsWithClearMessageWhenFileMissing() {
         File missing = tempDir.resolve("does-not-exist.yaml").toFile();
-        assertThrows(IOException.class, () -> mapper.readValue(missing, AnalysisSubmissionModel.class));
+        assertThrows(Exception.class, () -> mapper.readValue(missing, AnalysisSubmissionModel.class));
     }
     private File writeYaml(AnalysisSubmissionModel submission, Path path) throws IOException {
         Files.writeString(path, mapper.writeValueAsString(submission), StandardCharsets.UTF_8);

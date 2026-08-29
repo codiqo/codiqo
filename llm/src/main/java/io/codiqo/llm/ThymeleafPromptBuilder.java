@@ -2,7 +2,6 @@ package io.codiqo.llm;
 
 import static java.util.function.Predicate.not;
 
-import java.io.IOException;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -16,15 +15,14 @@ import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.thymeleaf.context.Context;
 
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.util.StdDateFormat;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.SerializationFeature;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.util.StdDateFormat;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
@@ -42,16 +40,13 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private static final String TEMPLATE_PRE_COMPUTED_SCORES = "pre-computed-scores";
     private static final String TEMPLATE_VALIDATION_FEEDBACK = "validation-feedback";
 
-    private static final ObjectMapper MAPPER;
-    static {
-        MAPPER = new ObjectMapper();
-        MAPPER.setDateFormat(new StdDateFormat().withColonInTimeZone(true));
-        MAPPER.setDefaultPropertyInclusion(Include.NON_NULL);
-        MAPPER.disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
-        MAPPER.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
-        MAPPER.enable(SerializationFeature.INDENT_OUTPUT);
-        MAPPER.registerModule(new JavaTimeModule());
-    }
+    private static final ObjectMapper MAPPER = JsonMapper.builder()
+            .defaultDateFormat(new StdDateFormat().withColonInTimeZone(true))
+            .changeDefaultPropertyInclusion(incl -> incl.withValueInclusion(Include.NON_NULL))
+            .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .enable(SerializationFeature.INDENT_OUTPUT)
+            .build();
 
     private final Log log;
     private final VolumeScoreCalculator volumeCalculator;
@@ -110,35 +105,26 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         return new UserMessageResult(message, preComputedScores);
     }
     private void logPromptMetrics(String model, LlmScoringRequest request, PreComputedScores scores, String requestJson, int requestTokens) {
-        for (;;) {
-            try {
-                LlmScoringRequest.ChangeSummary cs = request.getChangeSummary();
-                log.info("prompt: files=%d, methods=%d, lines=%d (effectiveStmts=%d) | json=%d chars (~%d tokens)",
-                        cs.getTotalFilesChanged(),
-                        cs.getCodeBlocksModified() + cs.getCodeBlocksAdded(),
-                        cs.getTotalLinesChanged(),
-                        scores.getTotalEffectiveStatements(),
-                        requestJson.length(),
-                        requestTokens);
+        LlmScoringRequest.ChangeSummary cs = request.getChangeSummary();
+        log.info("prompt: files=%d, methods=%d, lines=%d (effectiveStmts=%d) | json=%d chars (~%d tokens)",
+                cs.getTotalFilesChanged(),
+                cs.getCodeBlocksModified() + cs.getCodeBlocksAdded(),
+                cs.getTotalLinesChanged(),
+                scores.getTotalEffectiveStatements(),
+                requestJson.length(),
+                requestTokens);
 
-                if (CollectionUtils.isEmpty(request.getFileChanges())) {
-                    return;
-                }
+        if (CollectionUtils.isNotEmpty(request.getFileChanges())) {
+            List<FileTokens> perFile = new ArrayList<>();
+            for (LlmScoringRequest.FileChange file : request.getFileChanges()) {
+                int tokens = estimateTokens(model, MAPPER.writeValueAsString(file));
+                perFile.add(FileTokens.builder().path(file.getPath()).tokens(tokens).linesChanged(file.getLinesAdded() + file.getLinesDeleted()).build());
+            }
+            perFile.sort(Comparator.comparingInt(FileTokens::getTokens).reversed());
 
-                List<FileTokens> perFile = new ArrayList<>();
-                for (LlmScoringRequest.FileChange file : request.getFileChanges()) {
-                    int tokens = estimateTokens(model, MAPPER.writeValueAsString(file));
-                    perFile.add(FileTokens.builder().path(file.getPath()).tokens(tokens).linesChanged(file.getLinesAdded() + file.getLinesDeleted()).build());
-                }
-                perFile.sort(Comparator.comparingInt(FileTokens::getTokens).reversed());
-
-                log.info("token breakdown by file (largest first):");
-                for (FileTokens entry : perFile) {
-                    log.info("  %s: ~%d tokens (%d lines changed)", entry.getPath(), entry.getTokens(), entry.getLinesChanged());
-                }
-                return;
-            } catch (IOException err) {
-                ExceptionUtils.wrapAndThrow(err);
+            log.info("token breakdown by file (largest first):");
+            for (FileTokens entry : perFile) {
+                log.info("  %s: ~%d tokens (%d lines changed)", entry.getPath(), entry.getTokens(), entry.getLinesChanged());
             }
         }
     }
@@ -179,7 +165,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private static void restoreSourceSlices(Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> saved) {
         saved.forEach(LlmScoringRequest.DuplicationInfo.CloneLocation::setSourceSlice);
     }
-    private BudgetedRequest enforceCallerBudget(RunArgs args, LlmScoringRequest request, int reservedTokens) throws IOException {
+    private BudgetedRequest enforceCallerBudget(RunArgs args, LlmScoringRequest request, int reservedTokens) {
         Map<LlmScoringRequest.CodeBlockChange, List<LlmScoringRequest.CallerInfo>> originals = snapshotCallerLists(request);
         int ceiling = args.getLlmMaxCallersPerBlock();
         applyCallerCap(request, ceiling, originals);

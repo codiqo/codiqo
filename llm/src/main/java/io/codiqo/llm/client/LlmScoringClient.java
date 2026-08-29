@@ -22,11 +22,12 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.MapperFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyNamingStrategies;
-import com.fasterxml.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.MapperFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.PropertyNamingStrategies;
+import tools.jackson.databind.cfg.EnumFeature;
+import tools.jackson.databind.json.JsonMapper;
 import org.apache.commons.lang3.Validate;
 import com.openai.client.OpenAIClient;
 import com.openai.core.JsonValue;
@@ -130,7 +131,7 @@ public class LlmScoringClient implements ScoringClient {
         this.objectMapper = JsonMapper.builder()
                 .propertyNamingStrategy(PropertyNamingStrategies.LOWER_CAMEL_CASE)
                 .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-                .enable(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_AS_NULL)
+                .enable(EnumFeature.READ_UNKNOWN_ENUM_VALUES_AS_NULL)
                 .enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_ENUMS)
                 .build();
     }
@@ -364,7 +365,7 @@ public class LlmScoringClient implements ScoringClient {
 
         try {
             return objectMapper.readValue(stripMarkdownFences(rawContent), LlmScoringResponse.class);
-        } catch (IOException err) {
+        } catch (Exception err) {
             log.warn("failed to parse LLM response: " + err.getMessage());
             throw err;
         }
