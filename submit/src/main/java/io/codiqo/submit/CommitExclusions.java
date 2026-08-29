@@ -44,11 +44,19 @@ public class CommitExclusions {
         return Optional.empty();
     }
     /**
-     * gates that need the computed delta: whether anything in the diff is analysable, and whether the commit survives
-     * the include-rules. The caller still submits diff-only file models for an excluded commit, so the backend records
-     * what changed even though nothing was scored.
+     * gates that need the computed delta: whether the delta could be computed at all, whether anything in the diff is
+     * analysable, and whether the commit survives the include-rules. The caller still submits diff-only file models
+     * for an excluded commit, so the backend records what changed even though nothing was scored.
      */
     public static Optional<Exclusion> afterDelta(RunArgs args, CommitAnalysis analysis, Collection<String> extensions, Collection<String> changedFiles) {
+        // first: the delta could not be computed at all, so a later gate would blame the language registry for the empty file list
+        if (analysis.isHistoryIncomplete()) {
+            return Optional.of(new Exclusion(
+                    String.format("commit %s sits on a shallow-clone boundary, so its parent is not present locally and its delta cannot be computed"
+                            + " — re-run with full history (fetch-depth: 0)", analysis.getCommitId()),
+                    AnalysisExcludeCategory.INCOMPLETE_HISTORY));
+        }
+
         boolean branchMatches = args.matchesByBranch(analysis.getBranches());
         boolean authorMatches = args.matchesByAuthor(analysis.getAuthorEmail());
         if (BooleanUtils.or(new boolean[] { BooleanUtils.negate(branchMatches), BooleanUtils.negate(authorMatches) })) {

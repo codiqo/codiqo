@@ -19,6 +19,8 @@ public interface CommitAnalysis extends Iterable<FileAnalysis> {
     String getCommitterEmail();
     Date getCommitTimestamp();
     List<String> getParentIds();
+    /** the commit sits on a shallow-clone boundary, so its parent is absent locally and the delta is unknowable. */
+    boolean isHistoryIncomplete();
     List<String> getBranches();
     boolean isMergeCommit();
     boolean isRevertCommit();

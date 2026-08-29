@@ -1273,7 +1273,13 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 });
                 String skipReason = null;
                 AnalysisExcludeCategory skipCategory = null;
-                if (toApply.isFalse()) {
+                // ahead of the extension check: both leave an empty file list, but only one of them is a language problem
+                if (analysis.isHistoryIncomplete()) {
+                    skipReason = String.format("commit %s sits on a shallow-clone boundary, so its parent is not present locally and its delta cannot be computed"
+                            + " — re-run with full history (fetch-depth: 0)", args.getCommitId());
+                    skipCategory = AnalysisExcludeCategory.INCOMPLETE_HISTORY;
+                    getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), skipReason));
+                } else if (toApply.isFalse()) {
                     skipReason = String.format("no diff files match registered languages %s or supported config files (pom.xml, .proto) — changed files: %s", registry.extensions(), changedFiles);
                     skipCategory = AnalysisExcludeCategory.NO_ANALYZABLE_DIFF;
                     getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), skipReason));

@@ -31,6 +31,7 @@ public class GitCommitAnalysis implements CommitAnalysis {
     private String committerEmail;
     private Date commitTimestamp;
     private List<String> parentIds = new ArrayList<>();
+    private boolean historyIncomplete;
     private List<String> branches = new ArrayList<>();
     private boolean mergeCommit;
     private boolean revertCommit;
