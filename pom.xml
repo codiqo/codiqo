@@ -68,7 +68,7 @@
         <jackson.version>3.2.2</jackson.version>
         <jackson2.version>2.22.2</jackson2.version>
         <scribejava.version>8.3.3</scribejava.version>
-        <snakeyaml.engine.version>3.0.1</snakeyaml.engine.version>
+        <snakeyaml.engine.version>3.1.1</snakeyaml.engine.version>
         <okio.version>3.18.1</okio.version>
         <okhttp.version>5.5.0</okhttp.version>
         <guava.version>33.7.1-jre</guava.version>
@@ -83,7 +83,7 @@
         <lsp4j.version>1.0.0</lsp4j.version>
         <openrewrite.version>8.90.4</openrewrite.version>
         <openrewrite.recipe.version>2.41.1</openrewrite.recipe.version>
-        <pmd.version>7.26.0</pmd.version>
+        <pmd.version>7.27.0</pmd.version>
         <spotbugs.version>4.10.4</spotbugs.version>
         <findbugs.sec.version>1.14.0</findbugs.sec.version>
         <findbugs.contrib.version>7.7.4</findbugs.contrib.version>
@@ -91,7 +91,7 @@
         <classgraph.version>4.8.194</classgraph.version>
         <oshi.version>7.6.0</oshi.version>
         <jol.version>0.17</jol.version>
-        <openapi.version>4.52.0</openapi.version>
+        <openapi.version>4.54.0</openapi.version>
         <djl.tokenizers.version>0.36.0</djl.tokenizers.version>
         <jtokkit.version>1.1.0</jtokkit.version>
         <gradle.api.version>8.11.1</gradle.api.version>
