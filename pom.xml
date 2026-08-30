@@ -69,6 +69,7 @@
         <jackson2.version>2.22.2</jackson2.version>
         <scribejava.version>8.3.3</scribejava.version>
         <snakeyaml.engine.version>3.1.1</snakeyaml.engine.version>
+        <snakeyaml.version>2.6</snakeyaml.version>
         <okio.version>3.18.1</okio.version>
         <okhttp.version>5.5.0</okhttp.version>
         <guava.version>33.7.1-jre</guava.version>
@@ -462,6 +463,12 @@
                 <groupId>org.snakeyaml</groupId>
                 <artifactId>snakeyaml-engine</artifactId>
                 <version>${snakeyaml.engine.version}</version>
+            </dependency>
+            <!-- YAML 1.1, reached only through OpenRewrite; pinned so a recipe bump cannot move it silently -->
+            <dependency>
+                <groupId>org.yaml</groupId>
+                <artifactId>snakeyaml</artifactId>
+                <version>${snakeyaml.version}</version>
             </dependency>
             <dependency>
                 <groupId>javax.inject</groupId>
