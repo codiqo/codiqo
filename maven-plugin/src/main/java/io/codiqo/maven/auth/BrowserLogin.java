@@ -104,7 +104,7 @@ public class BrowserLogin {
      */
     private Credentials mintApiKey(OAuth20Service service, String sessionToken) throws Exception {
         JsonNode session = call(service, Verb.GET, "/api/auth/get-session", null, sessionToken);
-        String organizationId = session.path("session").path("activeOrganizationId").asText("");
+        String organizationId = session.path("session").path("activeOrganizationId").asString("");
         if (StringUtils.isBlank(organizationId)) {
             throw new IOException("no active organization on the approved session — pick one on the approval page and run the login again");
         }
@@ -115,15 +115,15 @@ public class BrowserLogin {
                 "metadata", Map.of("organizationId", organizationId, "cli", Boolean.TRUE)));
 
         JsonNode created = call(service, Verb.POST, "/api/auth/api-key/create", body, sessionToken);
-        String key = created.path("key").asText("");
+        String key = created.path("key").asString("");
         if (StringUtils.isBlank(key)) {
             throw new IOException("the api key mint returned no key: " + created);
         }
         log.info("  authorized — key stored for organization " + organizationId);
 
         String expiresAt = StringUtils.EMPTY;
-        if (created.path("expiresAt").isTextual()) {
-            expiresAt = created.path("expiresAt").asText();
+        if (created.path("expiresAt").isString()) {
+            expiresAt = created.path("expiresAt").asString();
         }
         return new Credentials(key, organizationId, expiresAt);
     }
