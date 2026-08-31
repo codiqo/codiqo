@@ -25,12 +25,11 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.util.StdDateFormat;
-import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.SerializationFeature;
+import tools.jackson.databind.util.StdDateFormat;
+import tools.jackson.dataformat.yaml.YAMLMapper;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisResultModel;
@@ -196,9 +195,9 @@ public class ScoreFromFileMojo extends AbstractMojo {
         }
     }
     private AnalysisSubmissionModel loadSubmission() throws IOException {
-        ObjectMapper yamlMapper = new YAMLMapper();
-        yamlMapper.registerModule(new JavaTimeModule());
-        yamlMapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+        ObjectMapper yamlMapper = YAMLMapper.builder()
+                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                .build();
         return yamlMapper.readValue(inputFile, AnalysisSubmissionModel.class);
     }
     private RunArgs buildRunArgs() {
@@ -278,11 +277,11 @@ public class ScoreFromFileMojo extends AbstractMojo {
         mapper.mapToAnalysisResult(result.getResponse(), analysisResult);
         analysisResult.setLlmAnalysis(LlmResponseMapper.mapLlmAnalysis(result, Duration.ofMillis(stopWatch.getTime()), args.getLlmModel()));
 
-        ObjectMapper yamlMapper = new YAMLMapper();
-        yamlMapper.setDefaultPropertyInclusion(Include.NON_NULL);
-        yamlMapper.setDateFormat(new StdDateFormat().withColonInTimeZone(true));
-        yamlMapper.enable(SerializationFeature.INDENT_OUTPUT);
-        yamlMapper.registerModule(new JavaTimeModule());
+        ObjectMapper yamlMapper = YAMLMapper.builder()
+                .changeDefaultPropertyInclusion(incl -> incl.withValueInclusion(Include.NON_NULL))
+                .defaultDateFormat(new StdDateFormat().withColonInTimeZone(true))
+                .enable(SerializationFeature.INDENT_OUTPUT)
+                .build();
 
         String commitSha = submission.getCommit().getSha();
         File file = new File(outputDirectory, "codiqo-analysis-" + commitSha + ".yaml");

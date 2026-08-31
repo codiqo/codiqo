@@ -265,9 +265,10 @@ public class JavaLanguageSpec implements LanguageSpec {
         try (TextFile file = TextFile.forPath(destination.toPath().normalize(), StandardCharsets.UTF_8, language.getDefaultVersion())) {
             try (TextDocument doc = TextDocument.create(file)) {
                 /**
-                 * PMD's type inference can crash on valid code it fails to disambiguate
-                 * (e.g. diamond anonymous classes like "new TypeToken<>() {}", pmd/pmd#4436) —
-                 * degrade to zero code units for the offending file instead of failing the run
+                 * PMD's type inference can crash on valid code it fails to disambiguate —
+                 * degrade to zero code units for the offending file instead of failing the run.
+                 * The known instance (diamond anonymous classes, pmd/pmd#4436) is fixed as of
+                 * PMD 7.27.0, but the failure mode is not specific to it
                  */
                 try {
                     ASTCompilationUnit tree = (ASTCompilationUnit) pmd.parse(new ParserTask(doc, errorReporter, processingRegistry));

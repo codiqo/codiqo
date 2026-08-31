@@ -1,6 +1,6 @@
 package io.codiqo.gradle;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 
 import io.codiqo.core.logging.SlfLogFactory;
 import io.codiqo.gradle.model.AnalysisRequest;

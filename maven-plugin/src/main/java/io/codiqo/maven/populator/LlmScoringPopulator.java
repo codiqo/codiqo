@@ -23,11 +23,10 @@ import org.apache.commons.lang3.time.StopWatch;
 import org.apache.maven.plugin.logging.Log;
 
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.util.StdDateFormat;
-import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.SerializationFeature;
+import tools.jackson.databind.util.StdDateFormat;
+import tools.jackson.dataformat.yaml.YAMLMapper;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisResultModel;
@@ -169,11 +168,11 @@ public class LlmScoringPopulator implements SubmissionPopulator {
         mapper.mapToAnalysisResult(result.getResponse(), analysisResult);
         analysisResult.setLlmAnalysis(LlmResponseMapper.mapLlmAnalysis(result, duration, args.getLlmModel()));
 
-        ObjectMapper yamlMapper = new YAMLMapper();
-        yamlMapper.setDefaultPropertyInclusion(Include.NON_NULL);
-        yamlMapper.setDateFormat(new StdDateFormat().withColonInTimeZone(true));
-        yamlMapper.enable(SerializationFeature.INDENT_OUTPUT);
-        yamlMapper.registerModule(new JavaTimeModule());
+        ObjectMapper yamlMapper = YAMLMapper.builder()
+                .changeDefaultPropertyInclusion(incl -> incl.withValueInclusion(Include.NON_NULL))
+                .defaultDateFormat(new StdDateFormat().withColonInTimeZone(true))
+                .enable(SerializationFeature.INDENT_OUTPUT)
+                .build();
 
         String commitSha = submission.getCommit().getSha();
         File outputDir = args.getOutputDirectory();

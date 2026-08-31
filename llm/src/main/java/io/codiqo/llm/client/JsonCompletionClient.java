@@ -8,11 +8,12 @@ import java.util.concurrent.ExecutorService;
 
 import org.apache.commons.collections4.MapUtils;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.MapperFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyNamingStrategies;
-import com.fasterxml.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.MapperFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.PropertyNamingStrategies;
+import tools.jackson.databind.cfg.EnumFeature;
+import tools.jackson.databind.json.JsonMapper;
 import com.openai.client.OpenAIClient;
 import com.openai.core.JsonValue;
 import com.openai.models.ResponseFormatJsonObject;
@@ -76,7 +77,7 @@ public class JsonCompletionClient implements LlmClient {
         this.objectMapper = JsonMapper.builder()
                 .propertyNamingStrategy(PropertyNamingStrategies.LOWER_CAMEL_CASE)
                 .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-                .enable(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_AS_NULL)
+                .enable(EnumFeature.READ_UNKNOWN_ENUM_VALUES_AS_NULL)
                 .enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_ENUMS)
                 .build();
     }

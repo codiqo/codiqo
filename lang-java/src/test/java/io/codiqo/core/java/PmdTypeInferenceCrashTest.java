@@ -1,7 +1,6 @@
 package io.codiqo.core.java;
 
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 import java.util.Map;
 
@@ -22,11 +21,12 @@ import net.sourceforge.pmd.lang.java.internal.JavaLanguageProperties;
 import net.sourceforge.pmd.util.log.PmdReporter;
 
 /**
- * Pins pmd/pmd#4436: PMD's type inference violates an internal invariant on a diamond
- * anonymous class whose type argument must be inferred from the enclosing generic
- * invocation. JavaLanguageSpec#parse guards against this whole class of PMD crashes
- * with a per-file catch that degrades to zero code units. If this test starts failing
- * after a PMD upgrade, the upstream bug is fixed — the guard stays either way.
+ * Pins pmd/pmd#4436, fixed upstream in PMD 7.27.0: PMD's type inference used to violate an
+ * internal invariant on a diamond anonymous class whose type argument must be inferred from
+ * the enclosing generic invocation. The snippet now parses, and this test fails if a PMD
+ * upgrade ever reintroduces the crash. JavaLanguageSpec#parse keeps its per-file catch
+ * regardless — it degrades to zero code units for the whole class of PMD crashes, not just
+ * this one.
  */
 class PmdTypeInferenceCrashTest {
     private static final JavaLanguageModule LANG = new JavaLanguageModule();
@@ -54,9 +54,8 @@ class PmdTypeInferenceCrashTest {
             """;
 
     @Test
-    void diamondAnonymousClassStillCrashesPmd() {
-        RuntimeException err = assertThrows(RuntimeException.class, () -> parse(DIAMOND_ANONYMOUS_SNIPPET));
-        assertTrue(err.getMessage().contains("Disambiguation pass should resolve everything except qualified ctor calls"));
+    void diamondAnonymousClassParsesSincePmd727() {
+        assertDoesNotThrow(() -> parse(DIAMOND_ANONYMOUS_SNIPPET));
     }
     private static void parse(String source) throws Exception {
         LanguagePropertyBundle bundle = LANG.newPropertyBundle();

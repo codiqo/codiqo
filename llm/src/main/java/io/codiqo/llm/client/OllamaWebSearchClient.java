@@ -8,7 +8,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.ArrayList;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.PromptBuilder;

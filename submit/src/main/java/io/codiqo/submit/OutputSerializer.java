@@ -14,11 +14,12 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 import io.codiqo.api.logging.Log;
 
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.util.StdDateFormat;
-import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.SerializationFeature;
+import tools.jackson.databind.cfg.MapperBuilder;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.util.StdDateFormat;
+import tools.jackson.dataformat.yaml.YAMLMapper;
 
 import lombok.RequiredArgsConstructor;
 
@@ -31,11 +32,12 @@ public class OutputSerializer implements SubmissionPopulator {
     public void accept(SubmissionContext ctx) {
         if (ctx.getArgs().isDumpAnalysis()) {
             try {
-                ObjectMapper mapper = preferYaml ? new YAMLMapper() : new ObjectMapper();
-                mapper.setDefaultPropertyInclusion(Include.NON_NULL);
-                mapper.setDateFormat(new StdDateFormat().withColonInTimeZone(true));
-                mapper.enable(SerializationFeature.INDENT_OUTPUT);
-                mapper.registerModule(new JavaTimeModule());
+                MapperBuilder<?, ?> builder = preferYaml ? YAMLMapper.builder() : JsonMapper.builder();
+                ObjectMapper mapper = builder
+                        .changeDefaultPropertyInclusion(incl -> incl.withValueInclusion(Include.NON_NULL))
+                        .defaultDateFormat(new StdDateFormat().withColonInTimeZone(true))
+                        .enable(SerializationFeature.INDENT_OUTPUT)
+                        .build();
 
                 String extension = preferYaml ? "yaml" : "json";
                 String commitId = ctx.getAnalysis().getCommitId();
