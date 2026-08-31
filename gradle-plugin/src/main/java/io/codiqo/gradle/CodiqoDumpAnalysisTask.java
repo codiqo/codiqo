@@ -22,9 +22,8 @@ import org.gradle.api.model.ObjectFactory;
 import org.gradle.api.tasks.TaskAction;
 import org.gradle.process.ExecOperations;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 import io.codiqo.gradle.model.AnalysisRequest;
 
@@ -60,7 +59,7 @@ public abstract class CodiqoDumpAnalysisTask extends DefaultTask {
         this.scheduledTasks = scheduledTasks;
     }
     @TaskAction
-    public void dump() throws JsonProcessingException, URISyntaxException {
+    public void dump() throws URISyntaxException {
         if (Objects.isNull(request)) {
             throw new IllegalStateException(
                     "Codiqo model was not collected — apply the plugin to the root project (via the codiqo init script) so it can snapshot the build.");

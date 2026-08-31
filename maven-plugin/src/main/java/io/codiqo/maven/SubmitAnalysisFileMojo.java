@@ -1,7 +1,6 @@
 package io.codiqo.maven;
 
 import java.io.File;
-import java.io.IOException;
 
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -9,14 +8,13 @@ import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
-import org.yaml.snakeyaml.LoaderOptions;
+import org.snakeyaml.engine.v2.api.LoadSettings;
 
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.util.StdDateFormat;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.util.StdDateFormat;
+import tools.jackson.dataformat.yaml.YAMLFactory;
+import tools.jackson.dataformat.yaml.YAMLMapper;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.ApiException;
@@ -57,7 +55,7 @@ public class SubmitAnalysisFileMojo extends AbstractMojo {
         AnalysisSubmissionModel submission;
         try {
             submission = yamlMapper().readValue(inputFile, AnalysisSubmissionModel.class);
-        } catch (IOException err) {
+        } catch (Exception err) {
             throw new MojoExecutionException("failed to read submission file: " + inputFile.getAbsolutePath(), err);
         }
         getLog().info("read submission from " + inputFile.getAbsolutePath());
@@ -76,15 +74,13 @@ public class SubmitAnalysisFileMojo extends AbstractMojo {
         }
     }
     private static ObjectMapper yamlMapper() {
-        LoaderOptions loaderOptions = new LoaderOptions();
-        loaderOptions.setCodePointLimit(Integer.MAX_VALUE);
+        LoadSettings loadSettings = LoadSettings.builder().setCodePointLimit(Integer.MAX_VALUE).build();
 
-        YAMLFactory yamlFactory = YAMLFactory.builder().loaderOptions(loaderOptions).build();
+        YAMLFactory yamlFactory = YAMLFactory.builder().loadSettings(loadSettings).build();
 
-        ObjectMapper mapper = new YAMLMapper(yamlFactory);
-        mapper.setDefaultPropertyInclusion(Include.NON_NULL);
-        mapper.setDateFormat(new StdDateFormat().withColonInTimeZone(true));
-        mapper.registerModule(new JavaTimeModule());
-        return mapper;
+        return YAMLMapper.builder(yamlFactory)
+                .changeDefaultPropertyInclusion(incl -> incl.withValueInclusion(Include.NON_NULL))
+                .defaultDateFormat(new StdDateFormat().withColonInTimeZone(true))
+                .build();
     }
 }
