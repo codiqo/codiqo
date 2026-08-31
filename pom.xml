@@ -92,7 +92,7 @@
         <classgraph.version>4.8.194</classgraph.version>
         <oshi.version>7.6.0</oshi.version>
         <jol.version>0.17</jol.version>
-        <openapi.version>4.54.0</openapi.version>
+        <openai.version>4.54.0</openai.version>
         <djl.tokenizers.version>0.36.0</djl.tokenizers.version>
         <jtokkit.version>1.1.0</jtokkit.version>
         <gradle.api.version>8.11.1</gradle.api.version>
@@ -538,17 +538,17 @@
             <dependency>
                 <groupId>com.openai</groupId>
                 <artifactId>openai-java</artifactId>
-                <version>${openapi.version}</version>
+                <version>${openai.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.openai</groupId>
                 <artifactId>openai-java-client-okhttp</artifactId>
-                <version>${openapi.version}</version>
+                <version>${openai.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.openai</groupId>
                 <artifactId>openai-java-core</artifactId>
-                <version>${openapi.version}</version>
+                <version>${openai.version}</version>
             </dependency>
             <dependency>
                 <groupId>ai.djl.huggingface</groupId>
