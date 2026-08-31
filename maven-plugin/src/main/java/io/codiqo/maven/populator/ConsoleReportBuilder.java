@@ -12,6 +12,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.math3.util.Precision;
 import org.thymeleaf.TemplateEngine;
@@ -309,7 +310,7 @@ public class ConsoleReportBuilder implements ReportBuilder {
     private static int countBlocks(LlmScoringRequest request, String path) {
         int toReturn = 0;
         for (CodeBlockChange block : CollectionUtils.emptyIfNull(request.getCodeBlockChanges())) {
-            if (StringUtils.equals(path, block.getFile())) {
+            if (Strings.CS.equals(path, block.getFile())) {
                 toReturn++;
             }
         }

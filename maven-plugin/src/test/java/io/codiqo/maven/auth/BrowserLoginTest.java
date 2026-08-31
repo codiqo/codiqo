@@ -13,7 +13,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.io.IOUtils;
-import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.maven.plugin.logging.SystemStreamLog;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -84,9 +84,9 @@ class BrowserLoginTest {
         assertEquals(2, tokenRequests.size(), "authorization_pending must be retried rather than raised");
 
         JsonNode body = MAPPER.readTree(tokenRequests.iterator().next());
-        assertEquals("dev-code", body.path("device_code").asText());
-        assertEquals(BrowserLogin.CLIENT_ID, body.path("client_id").asText());
-        assertEquals("urn:ietf:params:oauth:grant-type:device_code", body.path("grant_type").asText());
+        assertEquals("dev-code", body.path("device_code").asString());
+        assertEquals(BrowserLogin.CLIENT_ID, body.path("client_id").asString());
+        assertEquals("urn:ietf:params:oauth:grant-type:device_code", body.path("grant_type").asString());
 
         // the developer is sent to the URL the server chose, and without the code in it — the code is typed
         assertEquals(List.of(authUrl + "/cli"), opened);
@@ -96,7 +96,7 @@ class BrowserLoginTest {
          * that on its own — so the name has to stay inside the limit while still naming the machine to revoke
          */
         JsonNode created = MAPPER.readTree(keyRequests.iterator().next());
-        String name = created.path("name").asText();
+        String name = created.path("name").asString();
         assertTrue(name.length() <= 32, name);
         assertTrue(name.startsWith("codiqo-cli@"), name);
 
@@ -186,7 +186,7 @@ class BrowserLoginTest {
      */
     private static boolean isJson(HttpExchange exchange) {
         if (Verb.POST.name().equals(exchange.getRequestMethod())) {
-            return StringUtils.startsWith(exchange.getRequestHeaders().getFirst("Content-Type"), "application/json");
+            return Strings.CS.startsWith(exchange.getRequestHeaders().getFirst("Content-Type"), "application/json");
         }
         return true;
     }
