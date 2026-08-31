@@ -267,8 +267,9 @@ public class JavaLanguageSpec implements LanguageSpec {
                 /**
                  * PMD's type inference can crash on valid code it fails to disambiguate —
                  * degrade to zero code units for the offending file instead of failing the run.
-                 * The known instance (diamond anonymous classes, pmd/pmd#4436) is fixed as of
-                 * PMD 7.27.0, but the failure mode is not specific to it
+                 * PMD 7.27.0 fixed the diamond-anonymous-class trigger (pmd/pmd#4436), but the
+                 * invariant still fires on other input: AbstractAnalyzeMojo in this repository
+                 * trips it on every self-analysis, so the guard is load-bearing, not historical
                  */
                 try {
                     ASTCompilationUnit tree = (ASTCompilationUnit) pmd.parse(new ParserTask(doc, errorReporter, processingRegistry));
