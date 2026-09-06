@@ -272,16 +272,6 @@ public class LlmScoringRequest {
         private boolean isTestCaller;
 
         /**
-         * Java ASM binary format signature (e.g., "com/example/MyClass.myMethod(Ljava/lang/String;I)V").
-         * Format: package/ClassName.methodName(parameterDescriptors)returnDescriptor
-         * - L...;  = object type
-         * - I/J/D  = int/long/double primitives
-         * - [      = array prefix
-         * - V      = void return
-         */
-        private String signature;
-
-        /**
          * Symbol kind (method, constructor, lambda, etc.)
          */
         private String kind;
@@ -298,12 +288,6 @@ public class LlmScoringRequest {
          * Multiple calls from same caller indicate tighter coupling.
          */
         private int callSiteCount;
-
-        /**
-         * Source code body of the calling method/constructor.
-         * Provides context for how the affected code block is used.
-         */
-        private String callerBody;
     }
 
     @Data

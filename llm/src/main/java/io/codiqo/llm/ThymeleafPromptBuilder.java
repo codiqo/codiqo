@@ -80,9 +80,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
 
         Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> savedSlices = stripSourceSlices(request);
         Map<LlmScoringRequest.FileChange, String> savedDiffs = annotateDiffs(request);
-        Map<LlmScoringRequest.CallerInfo, String> savedCallerBodies = stripCallerBodies(request);
         BudgetedRequest budgeted = enforceCallerBudget(context.getArgs(), request, guidanceTokens);
-        restoreCallerBodies(savedCallerBodies);
         restoreDiffs(savedDiffs);
         restoreSourceSlices(savedSlices);
 
@@ -228,25 +226,6 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         Collections.reverse(caps);
         caps.add(0);
         return caps;
-    }
-    private static Map<LlmScoringRequest.CallerInfo, String> stripCallerBodies(LlmScoringRequest request) {
-        Map<LlmScoringRequest.CallerInfo, String> saved = new IdentityHashMap<>();
-        if (CollectionUtils.isNotEmpty(request.getCodeBlockChanges())) {
-            for (LlmScoringRequest.CodeBlockChange block : request.getCodeBlockChanges()) {
-                if (CollectionUtils.isNotEmpty(block.getCallers())) {
-                    for (LlmScoringRequest.CallerInfo caller : block.getCallers()) {
-                        if (Objects.nonNull(caller.getCallerBody())) {
-                            saved.put(caller, caller.getCallerBody());
-                            caller.setCallerBody(null);
-                        }
-                    }
-                }
-            }
-        }
-        return saved;
-    }
-    private static void restoreCallerBodies(Map<LlmScoringRequest.CallerInfo, String> saved) {
-        saved.forEach(LlmScoringRequest.CallerInfo::setCallerBody);
     }
     private static Map<LlmScoringRequest.CodeBlockChange, List<LlmScoringRequest.CallerInfo>> snapshotCallerLists(LlmScoringRequest request) {
         Map<LlmScoringRequest.CodeBlockChange, List<LlmScoringRequest.CallerInfo>> saved = new IdentityHashMap<>();

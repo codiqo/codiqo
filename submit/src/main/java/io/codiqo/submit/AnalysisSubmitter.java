@@ -7,6 +7,9 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.output.CountingOutputStream;
+import org.apache.commons.io.output.NullOutputStream;
 import org.apache.commons.lang3.Strings;
 
 import io.codiqo.api.logging.Log;
@@ -35,8 +38,9 @@ public class AnalysisSubmitter {
             long readTimeoutSeconds,
             AnalysisSubmissionModel submission,
             Log log) throws ApiException {
-        AnalysisApi client = buildClient(apiUrl, apiKey, connectTimeoutSeconds, readTimeoutSeconds);
-        log.info("submitting analysis to " + apiUrl);
+        ApiClient apiClient = newApiClient(apiUrl, apiKey, connectTimeoutSeconds, readTimeoutSeconds);
+        AnalysisApi client = new AnalysisApi(apiClient);
+        log.info("submitting analysis to " + apiUrl + " (" + describePayloadSize(apiClient, submission) + ")");
 
         return ApiRetry.call(log, "submitAnalysis", apiUrl, () -> client.submitAnalysis(submission));
     }
@@ -47,8 +51,9 @@ public class AnalysisSubmitter {
             long readTimeoutSeconds,
             AnalysisSubmissionModel submission,
             Log log) throws ApiException {
-        AnalysisApi client = buildClient(apiUrl, apiKey, connectTimeoutSeconds, readTimeoutSeconds);
-        log.info("submitting uncommitted changes to " + apiUrl);
+        ApiClient apiClient = newApiClient(apiUrl, apiKey, connectTimeoutSeconds, readTimeoutSeconds);
+        AnalysisApi client = new AnalysisApi(apiClient);
+        log.info("submitting uncommitted changes to " + apiUrl + " (" + describePayloadSize(apiClient, submission) + ")");
 
         return ApiRetry.call(log, "submitUncommittedAnalysis", apiUrl, () -> client.submitUncommittedAnalysis(submission));
     }
@@ -126,11 +131,28 @@ public class AnalysisSubmitter {
         }
     }
     public static AnalysisApi buildClient(String apiUrl, String apiKey, long connectTimeoutSeconds, long readTimeoutSeconds) {
-        ApiClient apiClient = new ApiClient();
-        apiClient.updateBaseUri(Strings.CS.removeEnd(apiUrl, "/"));
-        apiClient.setConnectTimeout(Duration.ofSeconds(connectTimeoutSeconds));
-        apiClient.setReadTimeout(Duration.ofSeconds(readTimeoutSeconds));
-        apiClient.setRequestInterceptor(builder -> builder.header(API_KEY_HEADER, apiKey));
-        return new AnalysisApi(apiClient);
+        return new AnalysisApi(newApiClient(apiUrl, apiKey, connectTimeoutSeconds, readTimeoutSeconds));
+    }
+    private static ApiClient newApiClient(String apiUrl, String apiKey, long connectTimeoutSeconds, long readTimeoutSeconds) {
+        ApiClient toReturn = new ApiClient();
+        toReturn.updateBaseUri(Strings.CS.removeEnd(apiUrl, "/"));
+        toReturn.setConnectTimeout(Duration.ofSeconds(connectTimeoutSeconds));
+        toReturn.setReadTimeout(Duration.ofSeconds(readTimeoutSeconds));
+        toReturn.setRequestInterceptor(builder -> builder.header(API_KEY_HEADER, apiKey));
+        return toReturn;
+    }
+    /**
+     * The server enforces a request ceiling and rejects an oversized submission with a bare 413 carrying no body --
+     * it is refused by the HTTP layer before any application filter runs, so without this neither side records how
+     * big the payload actually was. Counted through a null sink rather than {@code writeValueAsBytes}: the payloads
+     * worth measuring are the ones already large enough to be rejected, and buffering one into a byte[] purely to
+     * read its length would be the largest allocation on that path.
+     */
+    private static String describePayloadSize(ApiClient apiClient, AnalysisSubmissionModel submission) {
+        CountingOutputStream counter = new CountingOutputStream(NullOutputStream.INSTANCE);
+        apiClient.getObjectMapper().writeValue(counter, submission);
+
+        long bytes = counter.getByteCount();
+        return FileUtils.byteCountToDisplaySize(bytes) + ", " + bytes + " bytes";
     }
 }

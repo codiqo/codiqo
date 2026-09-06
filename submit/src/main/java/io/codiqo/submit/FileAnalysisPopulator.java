@@ -4,10 +4,8 @@ import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -19,7 +17,6 @@ import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
-import org.apache.commons.lang3.CharUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.eclipse.lsp4j.CallHierarchyIncomingCall;
@@ -89,7 +86,6 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
     @Override
     public void accept(SubmissionContext ctx) {
         Path workTreeRealPath = resolveRealPath(ctx.getWorkTree());
-        Map<String, String> fileContentCache = new HashMap<>();
 
         for (FileAnalysis fileAnalysis : ctx.getAnalysis()) {
             FileChangeModel fileChangeModel = new FileChangeModel();
@@ -117,8 +113,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
 
                 affectedSymbol.block().ifPresent(block -> {
                     if (block instanceof JavaCodeBlockInfo javaBlock) {
-                        CodeUnitModel codeUnitModel = createCodeUnitModel(ctx, fileAnalysis, affectedSymbol, javaBlock, locationModel, workTreeRealPath,
-                                fileContentCache);
+                        CodeUnitModel codeUnitModel = createCodeUnitModel(ctx, fileAnalysis, affectedSymbol, javaBlock, locationModel, workTreeRealPath);
                         fileChangeModel.getCodeUnits().add(codeUnitModel);
                     }
                 });
@@ -149,8 +144,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             AffectedSymbolInfo affectedSymbol,
             JavaCodeBlockInfo javaBlock,
             LocationModel locationModel,
-            Path workTreeRealPath,
-            Map<String, String> fileContentCache) {
+            Path workTreeRealPath) {
         JavaInfoModel infoModel = new JavaInfoModel();
         infoModel.setIsAnonymous(javaBlock.getType() instanceof ASTAnonymousClassDeclaration);
         infoModel.setIsAbstract(javaBlock.isAbstract());
@@ -179,7 +173,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             case MODIFY, RENAME -> CodeUnitModel.OperationEnum.MODIFY;
         });
 
-        populateSymbolInfo(ctx, affectedSymbol, codeUnitModel, infoModel, workTreeRealPath, fileAnalysis, fileContentCache);
+        populateSymbolInfo(ctx, affectedSymbol, codeUnitModel, infoModel, workTreeRealPath);
 
         populateCoverage(javaBlock, codeUnitModel);
         populateMethodCalls(javaBlock, infoModel);
@@ -195,9 +189,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             AffectedSymbolInfo lsp4jSymbol,
             CodeUnitModel codeUnitModel,
             JavaInfoModel infoModel,
-            Path workTreeRealPath,
-            FileAnalysis fileAnalysis,
-            Map<String, String> fileContentCache) {
+            Path workTreeRealPath) {
         codeUnitModel.setKind(resolveSymbolKind(lsp4jSymbol.getKind()));
         List<SymbolTag> symbolTags = lsp4jSymbol.getTags();
         if (CollectionUtils.isNotEmpty(symbolTags)) {
@@ -208,10 +200,11 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             }
         }
 
-        if (Objects.nonNull(fileAnalysis.getContentAfter())) {
-            fileContentCache.putIfAbsent(fileAnalysis.getFile().getAbsolutePath(), fileAnalysis.getContentAfter());
-        }
-
+        /**
+         * deliberately no source body per caller: nothing downstream reads one, and on a high fan-in commit the
+         * bodies outweighed every other part of the submission. Blast radius is grounded by counting these rows,
+         * so the rows themselves must stay complete.
+         */
         for (CallHierarchyIncomingCall incomingCall : lsp4jSymbol.getIncomingCalls()) {
             CallHierarchyItem from = incomingCall.getFrom();
             if (Objects.isNull(from)) {
@@ -232,16 +225,6 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
                         });
                     }
                     callerModel.setPath(workTreeRealPath.relativize(callerPath.toRealPath()).toString());
-
-                    if (Objects.nonNull(from.getRange())) {
-                        String callerFilePath = callerPath.toAbsolutePath().toString();
-                        String fileContent = fileContentCache.get(callerFilePath);
-                        if (Objects.isNull(fileContent)) {
-                            fileContent = Files.readString(callerPath);
-                            fileContentCache.put(callerFilePath, fileContent);
-                        }
-                        extractCallerLines(fileContent, from.getRange()).ifPresent(callerModel::setCallerBody);
-                    }
                 } catch (URISyntaxException | IOException err) {
                     ExceptionUtils.wrapAndThrow(err);
                 }
@@ -579,19 +562,5 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
                 ExceptionUtils.wrapAndThrow(err);
             }
         }
-    }
-    private static Optional<String> extractCallerLines(String content, Range range) {
-        String[] lines = content.split(StringUtils.LF, -1);
-        int startLine = range.getStart().getLine();
-        if (startLine >= lines.length) {
-            return Optional.empty();
-        }
-        int endLine = Math.min(range.getEnd().getLine(), lines.length - 1);
-        String body = StringUtils.join(Arrays.copyOfRange(lines, startLine, endLine + 1), CharUtils.LF);
-
-        /**
-         * JDT LS includes java-doc in CallHierarchyItem.range; strip it so only the body is stored
-         */
-        return Optional.of(body.replaceFirst("(?s)^\\s*/\\*\\*.*?\\*/\\s*", ""));
     }
 }
