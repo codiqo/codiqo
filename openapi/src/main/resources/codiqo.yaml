@@ -1996,8 +1996,6 @@ components:
       type: object
       required: [name, kind]
       properties:
-        signature:
-          type: string
         name:
           type: string
         kind:
@@ -2018,8 +2016,6 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/LocationModel'
-        callerBody:
-          type: string
 
     # ==========================================================================
     # Metrics

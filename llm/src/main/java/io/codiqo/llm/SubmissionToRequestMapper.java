@@ -567,12 +567,10 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .file(caller.getPath())
                 .line(caller.getLocation().getStartLine())
                 .isTestCaller(Boolean.TRUE.equals(caller.getIsTest()))
-                .signature(caller.getSignature())
                 .kind(Objects.nonNull(caller.getKind()) ? caller.getKind().getValue() : null)
                 .symbol(caller.getSymbol())
                 .isDeprecated(Boolean.TRUE.equals(caller.getIsDeprecated()))
                 .callSiteCount(CollectionUtils.size(caller.getCallSites()))
-                .callerBody(caller.getCallerBody())
                 .build();
     }
     private static ChangeSummary mapChangeSummary(List<FileChangeModel> files, List<CodeBlockChange> codeBlocks) {

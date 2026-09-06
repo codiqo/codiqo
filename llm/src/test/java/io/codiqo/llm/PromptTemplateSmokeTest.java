@@ -81,18 +81,18 @@ class PromptTemplateSmokeTest {
         assertFalse(rendered.contains("| src/main/resources/application.yaml | 3 | 1 |"), "ineligible file leaked into the table");
     }
     @Test
-    void userPromptDropsCallerBodiesButPreservesMetadataAndCounts() {
+    void userPromptPreservesCallerMetadataAndCounts() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
 
         CallerInfo prod = CallerInfo.builder().callerMethod("callerA").file("A.java").line(10)
-                .isTestCaller(false).signature("SIG_MARKER_A").kind("function").symbol("com.x.A.callerA")
-                .callSiteCount(2).callerBody("BODY_MARKER_A { doWork(); }").build();
+                .isTestCaller(false).kind("function").symbol("com.x.A.callerA")
+                .callSiteCount(2).build();
         CallerInfo prod2 = CallerInfo.builder().callerMethod("callerB").file("B.java").line(20)
-                .isTestCaller(false).signature("SIG_MARKER_B").kind("function").symbol("com.x.B.callerB")
-                .callSiteCount(1).callerBody("BODY_MARKER_B { more(); }").build();
+                .isTestCaller(false).kind("function").symbol("com.x.B.callerB")
+                .callSiteCount(1).build();
         CallerInfo testCaller = CallerInfo.builder().callerMethod("testC").file("CTest.java").line(30)
-                .isTestCaller(true).signature("SIG_MARKER_C").kind("function").symbol("com.x.CTest.testC")
-                .callSiteCount(1).callerBody("BODY_MARKER_C { assertThat(); }").build();
+                .isTestCaller(true).kind("function").symbol("com.x.CTest.testC")
+                .callSiteCount(1).build();
 
         CodeBlockChange block = CodeBlockChange.builder()
                 .name("target").operation(Operation.MODIFY).file("Target.java")
@@ -110,11 +110,9 @@ class PromptTemplateSmokeTest {
         String rendered = builder.buildUserMessageWithScores(request, PromptContext.builder().args(new RunArgs()).build()).getMessage();
         String compact = rendered.replaceAll("\\s", "");
 
-        assertFalse(rendered.contains("BODY_MARKER"), "caller source body must not leak into the prompt");
-        assertTrue(rendered.contains("SIG_MARKER_A"), "caller metadata (signature) must be retained");
+        assertTrue(rendered.contains("com.x.A.callerA"), "caller metadata (symbol) must be retained");
         assertTrue(compact.contains("\"callerCount\":3"), "total caller count must be preserved");
         assertTrue(compact.contains("\"productionCallerCount\":2"), "production caller count must be preserved");
-        assertEquals("BODY_MARKER_A { doWork(); }", prod.getCallerBody(), "caller body must be restored on the request after prompt building");
     }
     @Test
     void userPromptCapsCallersPerBlockAndStatesOmittedCount() {
@@ -127,12 +125,10 @@ class PromptTemplateSmokeTest {
                     .file("pkg/File" + i + ".java")
                     .line(i)
                     .isTestCaller(i % 4 == 0)
-                    .signature("Lcom/example/deeply/nested/pkg" + i + "/GenericType" + i + "$Inner" + i
-                            + ";.methodWithLongName" + i + "(Ljava/lang/String;Ljava/util/Map;I)Ljava/util/List; SIG_MARKER")
                     .kind("function")
-                    .symbol("com.example.deeply.nested.pkg.GenericType" + i + ".methodWithLongName" + i)
+                    .symbol("com.example.deeply.nested.pkg.GenericType" + i + "$Inner" + i + ".methodWithLongName" + i
+                            + "(java.lang.String, java.util.Map, int) : java.util.List SIG_MARKER")
                     .callSiteCount(1)
-                    .callerBody("body of caller " + i)
                     .build());
         }
         CodeBlockChange block = CodeBlockChange.builder()
@@ -251,9 +247,8 @@ class PromptTemplateSmokeTest {
                 .file(file)
                 .line(1)
                 .isTestCaller(isTestCaller)
-                .signature("Lcom/example/" + name + ";.method()V " + marker)
                 .kind("function")
-                .symbol("com.example." + name)
+                .symbol("com.example." + name + ".method() : void " + marker)
                 .callSiteCount(1)
                 .build();
     }
@@ -285,12 +280,10 @@ class PromptTemplateSmokeTest {
                     .file("pkg/File" + i + ".java")
                     .line(i)
                     .isTestCaller(false)
-                    .signature("Lcom/example/deeply/nested/pkg" + i + "/GenericType" + i + "$Inner" + i
-                            + ";.methodWithLongName" + i + "(Ljava/lang/String;Ljava/util/Map;I)Ljava/util/List; SIG_MARKER")
                     .kind("function")
-                    .symbol("com.example.deeply.nested.pkg.GenericType" + i + ".methodWithLongName" + i)
+                    .symbol("com.example.deeply.nested.pkg.GenericType" + i + "$Inner" + i + ".methodWithLongName" + i
+                            + "(java.lang.String, java.util.Map, int) : java.util.List SIG_MARKER")
                     .callSiteCount(1)
-                    .callerBody("body of caller " + i)
                     .build());
         }
         CodeBlockChange block = CodeBlockChange.builder()
@@ -325,12 +318,10 @@ class PromptTemplateSmokeTest {
                     .file("pkg/File" + i + ".java")
                     .line(i)
                     .isTestCaller(false)
-                    .signature("Lcom/example/deeply/nested/pkg" + i + "/GenericType" + i + "$Inner" + i
-                            + ";.methodWithLongName" + i + "(Ljava/lang/String;Ljava/util/Map;I)Ljava/util/List; SIG_MARKER")
                     .kind("function")
-                    .symbol("com.example.deeply.nested.pkg.GenericType" + i + ".methodWithLongName" + i)
+                    .symbol("com.example.deeply.nested.pkg.GenericType" + i + "$Inner" + i + ".methodWithLongName" + i
+                            + "(java.lang.String, java.util.Map, int) : java.util.List SIG_MARKER")
                     .callSiteCount(1)
-                    .callerBody("body of caller " + i)
                     .build());
         }
         CodeBlockChange block = CodeBlockChange.builder()
@@ -383,11 +374,9 @@ class PromptTemplateSmokeTest {
                     .file("pkg/File" + i + ".java")
                     .line(i)
                     .isTestCaller(false)
-                    .signature("Lcom/example/pkg" + i + "/Type" + i + ";.method" + i + "()V SIG_MARKER")
                     .kind("function")
-                    .symbol("com.example.pkg.Type" + i + ".method" + i)
+                    .symbol("com.example.pkg.Type" + i + ".method" + i + "() : void SIG_MARKER")
                     .callSiteCount(1)
-                    .callerBody("body of caller " + i)
                     .build());
         }
         CodeBlockChange block = CodeBlockChange.builder()
