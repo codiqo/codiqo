@@ -1,6 +1,7 @@
 package io.codiqo.submit;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Collections;
 import java.util.Date;
@@ -35,6 +36,12 @@ import lombok.experimental.UtilityClass;
  */
 @UtilityClass
 public class CommitIndexer {
+    /**
+     * JGit holds commit time as an int of epoch seconds, so this is the highest bound the time
+     * filter can express: an open upper end that still admits clock-skewed future-dated commits.
+     */
+    private static final Instant NO_UPPER_BOUND = Instant.ofEpochSecond(Integer.MAX_VALUE);
+
     public List<CommitModel> extractCommits(Repository repo, RunArgs filterArgs, String indexRef, Date cutoff, String branch) throws Exception {
         List<CommitModel> toReturn = new ArrayList<>();
 
@@ -48,7 +55,13 @@ public class CommitIndexer {
 
         try (RevWalk walk = new RevWalk(repo)) {
             walk.sort(RevSort.TOPO);
-            walk.setRevFilter(CommitTimeRevFilter.after(cutoff.toInstant()));
+            /**
+             * between(), never after(): after() ends the window by throwing StopWalkException, and
+             * since JGit 7.8.0 the topological sort evaluates the filter inside TopoExplorePhase,
+             * which does not catch that sentinel. Under RevSort.TOPO it therefore escapes as a real
+             * failure the moment the walk reaches a commit older than the cutoff.
+             */
+            walk.setRevFilter(CommitTimeRevFilter.between(cutoff.toInstant(), NO_UPPER_BOUND));
             walk.setFirstParent(filterArgs.isFirstParentOnly());
             walk.markStart(walk.parseCommit(startId));
 
