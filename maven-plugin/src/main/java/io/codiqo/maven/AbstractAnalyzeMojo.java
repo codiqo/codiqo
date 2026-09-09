@@ -20,6 +20,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
@@ -86,7 +87,6 @@ import org.eclipse.aether.resolution.DependencyRequest;
 import org.eclipse.aether.resolution.DependencyResult;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.Constants;
-import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.transport.HttpTransport;
@@ -112,27 +112,17 @@ import io.codiqo.core.ClassGraphWrapper;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.lang.config.ConfigFiles;
-import io.codiqo.llm.ConventionGuidance;
-import io.codiqo.llm.client.DaemonExecutors;
+import io.codiqo.util.DaemonExecutors;
 import io.codiqo.maven.coverage.CoverageInjectorConfig;
 import io.codiqo.maven.eventspy.BuildFailureConfig;
 import io.codiqo.maven.logging.MavenLogFactory;
-import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.maven.populator.LlmScoringPopulator;
 import io.codiqo.maven.populator.ProjectModelPopulator;
 import io.codiqo.maven.populator.SubmissionSummaryPrinter;
 import io.codiqo.maven.surefire.SurefireInjectorConfig;
 import io.codiqo.maven.timemachine.TimeMachineConfig;
-import io.codiqo.submit.CommitModelPopulator;
-import io.codiqo.submit.DuplicationReportPopulator;
-import io.codiqo.submit.EffectiveChangePopulator;
-import io.codiqo.submit.ExcludedCoverageClassPopulator;
-import io.codiqo.submit.FileAnalysisPopulator;
-import io.codiqo.submit.IndexModelPopulator;
-import io.codiqo.submit.MetricsAggregator;
-import io.codiqo.submit.ModuleLevelMetricsPopulator;
 import io.codiqo.submit.OutputSerializer;
-import io.codiqo.submit.ScoringConfigs;
+import io.codiqo.submit.SubmissionAssembly;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.util.Env;
 import io.codiqo.util.Fetch;
@@ -171,7 +161,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     private static final String JACOCO_EXEC_FILE = "jacoco.exec";
 
     private static final String MAVEN_EXT_CLASS_PATH = "maven.ext.class.path";
-    private static final String SOURCES_JAR_SUFFIX = "-sources.jar";
+    private static final String SOURCES_CLASSIFIER = "sources";
+    private static final String SOURCES_JAR_SUFFIX = "-" + SOURCES_CLASSIFIER + FilenameUtils.EXTENSION_SEPARATOR_STR + JAR_EXTENSION;
     /**
      * protocols the language server's resolver can actually transport, read off the two transporters Maven ships:
      * FileTransporter accepts "file", HttpTransporter accepts "http" and "https", both by equalsIgnoreCase on
@@ -263,7 +254,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.diffContextLines", defaultValue = "10")
     protected int diffContextLines;
 
-    @Parameter(property = "codiqo.jdtlsVersion", defaultValue = "1.60.0")
+    @Parameter(property = "codiqo.jdtlsVersion", defaultValue = "1.61.0")
     protected String jdtlsVersion;
 
     @Parameter(property = "codiqo.jdtlsUseSnapshot", defaultValue = "false")
@@ -529,12 +520,10 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             }
             Properties versions = new Properties();
             versions.load(stream);
-            for (DefaultArtifact agent : new DefaultArtifact[] {
-                    new DefaultArtifact(LOMBOK_GROUP_ID, LOMBOK_ARTIFACT_ID, JAR_EXTENSION, versions.get("lombok.version").toString())
-            }) {
-                args.getAgents().addAll(apply(agent));
-            }
-            timeMachineExtensionJars = apply(new DefaultArtifact(CODIQO_GROUP_ID, TIME_MACHINE_ARTIFACT_ID, JAR_EXTENSION, versions.get("codiqo.version").toString()));
+            String codiqoVersion = requiredVersion(versions, "codiqo.version");
+
+            args.getAgents().addAll(apply(new DefaultArtifact(LOMBOK_GROUP_ID, LOMBOK_ARTIFACT_ID, JAR_EXTENSION, requiredVersion(versions, "lombok.version"))));
+            timeMachineExtensionJars = apply(new DefaultArtifact(CODIQO_GROUP_ID, TIME_MACHINE_ARTIFACT_ID, JAR_EXTENSION, codiqoVersion));
 
             /**
              * best-effort: the build-failure EventSpy is a purely diagnostic extension injected on every fork. if it
@@ -542,7 +531,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
              * then falls back to scraping the console log instead of aborting the whole analysis.
              */
             try {
-                buildEventSpyJars = apply(new DefaultArtifact(CODIQO_GROUP_ID, BUILD_EVENTSPY_ARTIFACT_ID, JAR_EXTENSION, versions.get("codiqo.version").toString()));
+                buildEventSpyJars = apply(new DefaultArtifact(CODIQO_GROUP_ID, BUILD_EVENTSPY_ARTIFACT_ID, JAR_EXTENSION, codiqoVersion));
             } catch (Exception err) {
                 getLog().debug("build-failure eventspy resolution failed", err);
             }
@@ -555,8 +544,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                  * before the agent so a non-null agent jar always implies the injector jars are present too.
                  */
                 try {
-                    coverageInjectorJars = apply(new DefaultArtifact(CODIQO_GROUP_ID, COVERAGE_INJECTOR_ARTIFACT_ID, JAR_EXTENSION, versions.get("codiqo.version").toString()));
-                    apply(new DefaultArtifact(JACOCO_GROUP_ID, JACOCO_AGENT_ARTIFACT_ID, JACOCO_AGENT_CLASSIFIER, JAR_EXTENSION, versions.get("jacoco.version").toString()))
+                    coverageInjectorJars = apply(new DefaultArtifact(CODIQO_GROUP_ID, COVERAGE_INJECTOR_ARTIFACT_ID, JAR_EXTENSION, codiqoVersion));
+                    apply(new DefaultArtifact(JACOCO_GROUP_ID, JACOCO_AGENT_ARTIFACT_ID, JACOCO_AGENT_CLASSIFIER, JAR_EXTENSION, requiredVersion(versions, "jacoco.version")))
                             .stream()
                             .filter(jar -> BooleanUtils.and(new boolean[]{
                                     jar.getName().startsWith(JACOCO_AGENT_ARTIFACT_ID + "-"),
@@ -578,7 +567,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 Duration perTestTimeout = args.getPerTestTimeout();
                 if (Objects.nonNull(perTestTimeout) && perTestTimeout.compareTo(Duration.ZERO) > 0) {
                     try {
-                        surefireInjectorJars = apply(new DefaultArtifact(CODIQO_GROUP_ID, SUREFIRE_INJECTOR_ARTIFACT_ID, JAR_EXTENSION, versions.get("codiqo.version").toString()));
+                        surefireInjectorJars = apply(new DefaultArtifact(CODIQO_GROUP_ID, SUREFIRE_INJECTOR_ARTIFACT_ID, JAR_EXTENSION, codiqoVersion));
                     } catch (Exception err) {
                         getLog().warn("per-test timeout injector artifact resolution failed", err);
                     }
@@ -702,18 +691,17 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
         ClassGraphSpec graphSpec = new ClassGraphWrapper(scan);
         args.getProjects().forEach(spec -> {
-            if (spec instanceof MavenProjectWrapper) {
-                ((MavenProjectWrapper) spec).setScan(graphSpec);
+            if (spec instanceof MavenProjectWrapper wrapper) {
+                wrapper.setScan(graphSpec);
             }
         });
 
         stopWatch.stop();
-        getLog().info(String.format("configured maven projects in %s, classgraph classes: %d", stopWatch, graphSpec.getAllClasses().size()));
+        getLog().info(String.format(Locale.ROOT, "configured maven projects in %s, classgraph classes: %d", stopWatch, graphSpec.getAllClasses().size()));
         return graphSpec;
     }
-    protected void resolveCommit(RunArgs args, String commitId) throws Exception {
-        ObjectId objectId = args.getGit().resolve(commitId);
-        if (Objects.isNull(objectId)) {
+    protected void requireResolvableCommit(RunArgs args, String commitId) throws Exception {
+        if (Objects.isNull(args.getGit().resolve(commitId))) {
             try (Git git = Git.wrap(args.getGit())) {
                 git.fetch()
                         .setRemote(Constants.DEFAULT_REMOTE_NAME)
@@ -725,8 +713,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                                 http.setTimeout((int) args.getReadTimeout().getSeconds());
                             }
                         }).call();
-                objectId = args.getGit().resolve(commitId);
-                if (Objects.isNull(objectId)) {
+                if (Objects.isNull(args.getGit().resolve(commitId))) {
                     throw new MojoFailureException("failed to resolve commit ID: " + commitId);
                 }
             }
@@ -876,7 +863,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
                 long perTestSeconds = args.getPerTestTimeout().getSeconds();
                 props.setProperty(SurefireInjectorConfig.PROP_PER_TEST_TIMEOUT_SECONDS, String.valueOf(perTestSeconds));
-                getLog().info(String.format("per-test timeout injection enabled: %ds per JUnit 5 test method (SEPARATE_THREAD)", perTestSeconds));
+                getLog().info(String.format(Locale.ROOT, "per-test timeout injection enabled: %ds per JUnit 5 test method (SEPARATE_THREAD)", perTestSeconds));
             } else {
                 getLog().warn("per-test timeout requested but codiqo-maven-surefire-injector could not be resolved — per-test timeout not applied");
             }
@@ -887,6 +874,10 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             request.setProperties(props);
         }
         return request;
+    }
+    /** Aether normalises a null version to the empty string, so a missing entry resolves to nothing with no signal why */
+    static String requiredVersion(Properties versions, String key) {
+        return Objects.requireNonNull(versions.getProperty(key), key + " missing from codiqo.versions on the plugin classpath");
     }
     private static List<String> extensionJarPaths(Collection<File> jars) {
         return jars.stream().map(File::getAbsolutePath).toList();
@@ -923,7 +914,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 return FileVisitResult.CONTINUE;
             }
         });
-        getLog().info(String.format("cleared %d snapshot versions from %s", cleared.get(), localRepository.getAbsolutePath()));
+        getLog().info(String.format(Locale.ROOT, "cleared %d snapshot versions from %s", cleared.get(), localRepository.getAbsolutePath()));
     }
     /**
      * Hard-link every release artifact from the host's local repository into this attempt's private one. A release
@@ -990,16 +981,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         });
     }
     /**
-     * Maven exposes no API that classifies an arbitrary repository path, so the resolution bookkeeping is matched
-     * by name — these are the four artifacts the local repository layout writes alongside a downloaded file.
-     */
-    /**
-     * source JARs are excluded on top of the resolution bookkeeping: the language server is configured with
-     * downloadSources=false so it never needs them, and purgeNonJavaSourceJars deletes Kotlin/Scala ones from the
-     * HOST repository to stop JDT hanging during call-hierarchy resolution — a hard link here would survive that
-     * delete and hand the language server the very file the purge exists to remove.
-     */
-    /**
      * Aether parses the protocol with a regex that also understands compound schemes such as dav:http, so the
      * repository is built and asked rather than the URL being split on "://" — a naive split misreads those and
      * returns the whole string for a URL with no scheme at all.
@@ -1008,6 +989,11 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         String protocol = new RemoteRepository.Builder("probe", "default", url).build().getProtocol();
         return BooleanUtils.negate(M2E_TRANSPORTABLE_PROTOCOLS.contains(StringUtils.lowerCase(protocol)));
     }
+    /**
+     * the four resolution-bookkeeping artifacts the local repository layout writes alongside a downloaded file,
+     * matched by name because Maven exposes no API that classifies a repository path. Source JARs go too: a hard
+     * link would survive purgeNonJavaSourceJars and hand the language server the very file that purge removes.
+     */
     private static boolean isSeedable(String fileName) {
         return BooleanUtils.negate(BooleanUtils.or(new boolean[] {
                 Strings.CS.startsWith(fileName, "maven-metadata"),
@@ -1055,11 +1041,19 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             new SettingsXpp3Writer().write(writer, settings);
         }
         /**
-         * the clone carries the host's server credentials, so the file is readable only by this user — the
-         * analysis leaves it behind for the language server to read while the fork runs
+         * the clone carries the host's server credentials, so the file is restricted to this user. The owner grant
+         * is attempted whatever the deny returned: leaving the file unreadable by its owner too would stop the
+         * language server reading its own settings. Warned rather than thrown because Windows and FAT/CIFS mounts
+         * cannot deny read at all; on POSIX createTempFile has already created it owner-only.
          */
-        settingsFile.setReadable(false, false);
-        settingsFile.setReadable(true, true);
+        boolean deniedForAll = settingsFile.setReadable(false, false);
+        if (BooleanUtils.negate(settingsFile.setReadable(true, true))) {
+            getLog().warn("could not grant owner read on " + settingsFile.getAbsolutePath()
+                    + ", which the language server has to read — its permissions are whatever the filesystem left");
+        } else if (BooleanUtils.negate(deniedForAll)) {
+            getLog().warn("could not restrict permissions on " + settingsFile.getAbsolutePath()
+                    + ", which carries the host's server credentials — the filesystem does not support it");
+        }
         return settingsFile;
     }
     protected void warnIfHostTimeMachineMissing() {
@@ -1109,7 +1103,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 helpLines.addAll(sysout.helpUrlLines());
                 helpLines.addAll(syserr.helpUrlLines());
                 AnalysisExcludeCategory category = Maven.classifyForkFailure(helpLines);
-                getLog().warn(String.format("fork build failed (exit code %d), skipping with category %s: %s", result.getExitCode(), category, reason));
+                getLog().warn(String.format(Locale.ROOT, "fork build failed (exit code %d), skipping with category %s: %s", result.getExitCode(), category, reason));
                 return skipped(args, reason, category, false, sysout, syserr);
             } else {
                 throw new MojoExecutionException("maven build failed in fork", result.getExecutionException());
@@ -1280,7 +1274,10 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     skipCategory = AnalysisExcludeCategory.INCOMPLETE_HISTORY;
                     getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), skipReason));
                 } else if (toApply.isFalse()) {
-                    skipReason = String.format("no diff files match registered languages %s or supported config files (pom.xml, .proto) — changed files: %s", registry.extensions(), changedFiles);
+                    skipReason = String.format("no diff files match registered languages %s or supported config files (%s) — changed files: %s",
+                            registry.extensions(),
+                            ConfigFiles.describeSupported(),
+                            changedFiles);
                     skipCategory = AnalysisExcludeCategory.NO_ANALYZABLE_DIFF;
                     getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), skipReason));
                 }
@@ -1321,7 +1318,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                             project.getGroupId() + ":" + project.getArtifactId(),
                             project.getName(),
                             clientInfo);
-                    new FileAnalysisPopulator().accept(excludeCtx);
+                    SubmissionAssembly.excluded(excludeCtx);
                     doExcludeAnalysis(args.getCommitId(), skipReason, skipCategory, null, excludeCtx.getSubmissionModel().getFiles());
                 }
                 if (toApply.isTrue()) {
@@ -1358,18 +1355,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                             project.getName(),
                             clientInfo);
                     new ProjectModelPopulator(getLog()).accept(ctx);
-                    new CommitModelPopulator().accept(ctx);
-                    new ModuleLevelMetricsPopulator().accept(ctx);
-                    new FileAnalysisPopulator().accept(ctx);
-                    new EffectiveChangePopulator().accept(ctx);
-                    new IndexModelPopulator().accept(ctx);
-                    new DuplicationReportPopulator().accept(ctx);
-                    new MetricsAggregator().accept(ctx);
-                    new ExcludedCoverageClassPopulator().accept(ctx);
-                    new SubmissionSummaryPrinter(getLog()).accept(ctx);
-                    // set before the dump so codiqo-submission-<sha> replays carry the effective config
-                    ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
-                    applyAgentInstructions(ctx, args);
+                    // the summary prints between the populators and the instruction read, which can fail over budget
+                    SubmissionAssembly.full(ctx, new SubmissionSummaryPrinter(getLog()));
+
                     new OutputSerializer(preferYaml, logFactory.getLogger(OutputSerializer.class)).accept(ctx);
                     return Optional.of(ctx);
                 }
@@ -1380,7 +1368,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     protected void doLlmScoring(SubmissionContext ctx) throws Exception {
         ExecutorService executor = DaemonExecutors.newCachedDaemonPool("codiqo-openai");
         try {
-            new LlmScoringPopulator(getLog(), executor).accept(ctx);
+            new LlmScoringPopulator(getLog(), executor, preferYaml).accept(ctx);
         } finally {
             executor.shutdown();
         }
@@ -1519,19 +1507,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 project.getName(),
                 clientInfo);
         new ProjectModelPopulator(getLog()).accept(ctx);
-        new CommitModelPopulator().accept(ctx);
-        new ModuleLevelMetricsPopulator().accept(ctx);
-        new FileAnalysisPopulator().accept(ctx);
-        new EffectiveChangePopulator().accept(ctx);
+        SubmissionAssembly.degraded(ctx);
 
-        /**
-         * only the driver-score statistics (project totals + scalers) are populated — no coverage, PMD,
-         * or CPD is captured for a failed build, so the quality and coverage aggregates are left absent
-         * (rendered n/a) rather than fabricated as zeros
-         */
-        MetricsAggregator.populateDriverMetrics(ctx);
-
-        applyBuildFailure(ctx, args, reason, category, detail);
+        applyBuildFailure(ctx, reason, category, detail);
         return ctx;
     }
     /**
@@ -1559,10 +1537,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 project.getName(),
                 clientInfo);
         new ProjectModelPopulator(getLog()).accept(ctx);
-        new CommitModelPopulator().accept(ctx);
-        new FileAnalysisPopulator().accept(ctx);
+        SubmissionAssembly.diffOnly(ctx);
 
-        applyBuildFailure(ctx, args, reason, category, detail);
+        applyBuildFailure(ctx, reason, category, detail);
         return ctx;
     }
     @SuppressWarnings("deprecation")
@@ -1577,24 +1554,30 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     mvn.getArtifacts().keySet().forEach(artifact -> {
                         boolean matches = exclusions.stream().anyMatch(prefix -> artifact.getGroupId().startsWith(prefix));
                         if (matches) {
-                            try {
-                                DefaultArtifact sources = new DefaultArtifact(
-                                        artifact.getGroupId(),
-                                        artifact.getArtifactId(),
-                                        "sources",
-                                        "jar",
-                                        artifact.getVersion());
-                                File sourceJar = new File(
-                                        localRepoManager.getRepository().getBasedir(),
-                                        localRepoManager.getPathForLocalArtifact(sources));
-                                if (sourceJar.exists()) {
-                                    getLog().info("purging source JAR: " + sourceJar.getAbsolutePath());
-                                    if (sourceJar.delete()) {
-                                        purged.incrementAndGet();
+                            for (;;) {
+                                try {
+                                    DefaultArtifact sources = new DefaultArtifact(
+                                            artifact.getGroupId(),
+                                            artifact.getArtifactId(),
+                                            SOURCES_CLASSIFIER,
+                                            JAR_EXTENSION,
+                                            artifact.getVersion());
+                                    File sourceJar = new File(
+                                            localRepoManager.getRepository().getBasedir(),
+                                            localRepoManager.getPathForLocalArtifact(sources));
+                                    if (sourceJar.exists()) {
+                                        getLog().info("purging source JAR: " + sourceJar.getAbsolutePath());
+                                        if (sourceJar.delete()) {
+                                            purged.incrementAndGet();
+                                        } else {
+                                            getLog().warn("could not delete source JAR " + sourceJar.getAbsolutePath()
+                                                    + " — the language server may hang resolving it");
+                                        }
                                     }
+                                    return;
+                                } catch (Exception err) {
+                                    ExceptionUtils.wrapAndThrow(err);
                                 }
-                            } catch (Exception err) {
-                                ExceptionUtils.wrapAndThrow(err);
                             }
                         }
                     });
@@ -1631,24 +1614,13 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
         throw new MojoExecutionException("project build failed: " + Objects.toString(pbe.getMessage(), pbe.getClass().getSimpleName()), pbe);
     }
-    private void applyBuildFailure(SubmissionContext ctx, RunArgs args, String reason, AnalysisExcludeCategory category, String detail) throws IOException {
+    private static void applyBuildFailure(SubmissionContext ctx, String reason, AnalysisExcludeCategory category, String detail) {
         AnalysisBuildFailureModel buildFailure = new AnalysisBuildFailureModel();
         buildFailure.setReason(reason);
         buildFailure.setCategory(category);
         buildFailure.setDetail(detail);
 
-        ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
         ctx.getSubmissionModel().setBuildFailure(buildFailure);
-        applyAgentInstructions(ctx, args);
-    }
-    /**
-     * Scoring runs server-side against the submitted payload, so the instruction text is collected here —
-     * this is the last point that still has a work tree — and travels with the submission. Setting it before
-     * the dump also makes a score-from-file replay reproduce the prompt the server saw.
-     */
-    private void applyAgentInstructions(SubmissionContext ctx, RunArgs args) throws IOException {
-        ctx.getSubmissionModel().setAgentInstructions(
-                StringUtils.trimToNull(ConventionGuidance.read(args, new MavenMessageReporter(getLog()))));
     }
     protected sealed interface BuildOutcome {
         /**

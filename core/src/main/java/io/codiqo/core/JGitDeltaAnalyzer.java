@@ -2,7 +2,6 @@ package io.codiqo.core;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -47,7 +46,7 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.api.diff.FileRevisionInfo;
-import io.codiqo.api.diff.LanguageCapabilities;
+import io.codiqo.api.diff.DiffWhitespacePolicy;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.core.diff.GitCommitAnalysis;
@@ -58,6 +57,11 @@ import io.codiqo.core.diff.GitStructuredDiff;
 import io.codiqo.util.JGit;
 
 public class JGitDeltaAnalyzer implements DeltaAnalyzer {
+    /** the only tree a single-tree TreeWalk holds */
+    private static final int FIRST_TREE = 0;
+    /** the main line: a merge node's delta against parent[0] is what the merged-in branch contributed */
+    private static final int FIRST_PARENT = 0;
+
     private final Log log;
     private final RunArgs args;
 
@@ -126,7 +130,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
     public Optional<String> fileContentFromCommit(RevCommit commit, String filePath) throws Exception {
         try (TreeWalk treeWalk = TreeWalk.forPath(args.getGit(), filePath, commit.getTree())) {
             if (Objects.nonNull(treeWalk)) {
-                ObjectId blobId = treeWalk.getObjectId(BigInteger.ZERO.intValue());
+                ObjectId blobId = treeWalk.getObjectId(FIRST_TREE);
                 ObjectLoader loader = args.getGit().open(blobId);
                 byte[] bytes = loader.getBytes();
                 return Optional.of(new String(bytes, StandardCharsets.UTF_8));
@@ -145,7 +149,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         return Optional.empty();
     }
     private static void applyWhitespacePolicy(DiffFormatter formatter, String path) {
-        formatter.setDiffComparator(LanguageCapabilities.whitespaceInsensitive(path)
+        formatter.setDiffComparator(DiffWhitespacePolicy.whitespaceInsensitive(path)
                 ? RawTextComparator.WS_IGNORE_LEADING
                 : RawTextComparator.DEFAULT);
     }
@@ -163,11 +167,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         /**
          * a merge node's parent[0] delta is the merged-in branch's net change, so credit goes to the developer
          * whose PR landed — its sole side-branch author, or whoever dominates a multi-author one — not whoever
-         * clicked merge. the merge's own timestamp is kept: attribution changes who, not when.
-         *
-         * this is the value the submission stores, so it has to resolve the same way as the index and the
-         * exclusion gate; reading only the sole author here left every multi-author merge credited to the
-         * integration identity while the log claimed otherwise
+         * clicked merge. the merge's own timestamp is kept: attribution changes who, not when
          */
         PersonIdent effectiveAuthor = commit.getAuthorIdent();
         if (JGit.isMerge(commit)) {
@@ -194,19 +194,15 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
                     formatter.setDetectRenames(true);
 
                     /**
-                     * a root commit has no parent tree, so the empty tree is its baseline and every
-                     * entry comes back as ADD — the initial commit is a real contribution and must
-                     * not be dropped. a shallow graft is indistinguishable through getParentCount():
-                     * JGit reports zero parents for every commit listed in .git/shallow, and giving
-                     * one of those the empty-tree baseline would bill the whole repository to a
-                     * single commit. so only a commit that is genuinely parent-less gets that
-                     * baseline; on the shallow boundary the true delta is unknowable and the commit
-                     * is left file-less for the caller to skip, as the action documents
+                     * a root commit has no parent tree, so the empty tree is its baseline. getParentCount()
+                     * cannot tell one from a shallow graft — JGit reports zero parents for every commit in
+                     * .git/shallow — and giving a graft that baseline would bill the whole repository to one
+                     * commit, so only a genuinely parent-less commit gets it and the boundary is left file-less
                      */
                     Optional<RevCommit> parent = Optional.empty();
                     AbstractTreeIterator oldTree = new EmptyTreeIterator();
                     if (commit.getParentCount() > 0) {
-                        RevCommit fullParent = walk.parseCommit(commit.getParent(BigInteger.ZERO.intValue()).getId());
+                        RevCommit fullParent = walk.parseCommit(commit.getParent(FIRST_PARENT).getId());
                         parent = Optional.of(fullParent);
 
                         CanonicalTreeParser parentTree = new CanonicalTreeParser();

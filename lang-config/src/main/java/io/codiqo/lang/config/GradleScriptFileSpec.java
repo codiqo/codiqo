@@ -11,11 +11,8 @@ import io.codiqo.api.diff.IneffectiveLineFilter;
 
 /**
  * Gradle build scripts — the counterpart of {@link PomFileSpec}. Matched by extension rather than by name, because a
- * build splits across as many scripts as it likes and every one of them is a build descriptor.
- *
- * <p>A bare {@code .kts} is deliberately NOT matched: that is an ordinary Kotlin script, and scoring real code by
- * line count would be wrong. Groovy and Kotlin share the C-style comment grammar, so one filter covers both, and a
- * script's imports are ordinary code rather than the ineffective lines a {@code .proto}'s are.
+ * build splits across as many scripts as it likes. A bare {@code .kts} is deliberately NOT matched: that is an
+ * ordinary Kotlin script, and scoring real code by line count would be wrong.
  */
 public class GradleScriptFileSpec implements ConfigFileSpec {
     private static final String GROOVY_SCRIPT_EXTENSION = "gradle";
@@ -28,6 +25,10 @@ public class GradleScriptFileSpec implements ConfigFileSpec {
         return BooleanUtils.or(new boolean[]{
                 GROOVY_SCRIPT_EXTENSION.equals(FilenameUtils.getExtension(name)),
                 name.endsWith(KOTLIN_SCRIPT_SUFFIX)});
+    }
+    @Override
+    public String describe() {
+        return "*." + GROOVY_SCRIPT_EXTENSION + ", *" + KOTLIN_SCRIPT_SUFFIX;
     }
     @Override
     public IneffectiveLineFilter lineFilter() {

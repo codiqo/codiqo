@@ -63,16 +63,19 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
     @Override
     public void load() {
         StopWatch stopWatch = StopWatch.createStarted();
-        try {
-            start();
+        for (;;) {
+            try {
+                start();
 
-            JdtLspClient c = getClient();
-            c.initialize();
-            c.ready().get(args.getImportTimeout().getSeconds(), TimeUnit.SECONDS);
-            stopWatch.stop();
-            log.info("JDT loaded project: %s in: %s ", args.getGit().getWorkTree(), stopWatch);
-        } catch (Throwable err) {
-            ExceptionUtils.wrapAndThrow(err);
+                JdtLspClient c = getClient();
+                c.initialize();
+                c.ready().get(args.getImportTimeout().getSeconds(), TimeUnit.SECONDS);
+                stopWatch.stop();
+                log.info("JDT loaded project: %s in: %s ", args.getGit().getWorkTree(), stopWatch);
+                return;
+            } catch (Throwable err) {
+                ExceptionUtils.wrapAndThrow(err);
+            }
         }
     }
     private void start() throws IOException {

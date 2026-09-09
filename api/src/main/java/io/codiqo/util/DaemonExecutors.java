@@ -1,6 +1,5 @@
-package io.codiqo.llm.client;
+package io.codiqo.util;
 
-import java.math.BigDecimal;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadFactory;
@@ -12,6 +11,8 @@ import lombok.experimental.UtilityClass;
 
 @UtilityClass
 public class DaemonExecutors {
+    private static final int KEEP_ALIVE_MINUTES = 1;
+
     public ExecutorService newCachedDaemonPool(String namePrefix) {
         AtomicInteger counter = new AtomicInteger(1);
         ThreadFactory threadFactory = runnable -> {
@@ -19,6 +20,6 @@ public class DaemonExecutors {
             thread.setDaemon(true);
             return thread;
         };
-        return new ThreadPoolExecutor(0, Integer.MAX_VALUE, BigDecimal.ONE.intValue(), TimeUnit.MINUTES, new SynchronousQueue<>(), threadFactory);
+        return new ThreadPoolExecutor(0, Integer.MAX_VALUE, KEEP_ALIVE_MINUTES, TimeUnit.MINUTES, new SynchronousQueue<>(), threadFactory);
     }
 }

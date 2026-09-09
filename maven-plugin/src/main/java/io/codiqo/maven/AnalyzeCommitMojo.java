@@ -107,7 +107,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
 
         args.setCommitId(commitId);
         args.setFirstParentOnly(firstParentOnly);
-        resolveCommit(args, commitId);
+        requireResolvableCommit(args, commitId);
     }
     @Override
     protected void doExecute(RunArgs args) throws Exception {

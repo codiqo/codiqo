@@ -145,7 +145,7 @@ class RunArgsCliTest {
     void jdtlsBaseUrlDefaultsToVersionedMilestones() {
         RunArgs args = new RunArgs();
 
-        assertEquals("https://download.eclipse.org/jdtls/milestones/1.60.0", args.jdtlsBaseUrl().build().toString());
+        assertEquals("https://download.eclipse.org/jdtls/milestones/1.61.0", args.jdtlsBaseUrl().build().toString());
     }
     @Test
     void jdtlsBaseUrlUsesFlatSnapshotsWhenSnapshotsEnabled() {
@@ -166,7 +166,7 @@ class RunArgsCliTest {
         RunArgs args = new RunArgs();
         args.setJdtlsArchiveName("unexpected-name.tar.gz");
 
-        assertEquals("1.60.0", args.effectiveJdtlsVersion());
+        assertEquals("1.61.0", args.effectiveJdtlsVersion());
     }
     @Test
     void isExcludedAuthorIsFalseWhenListUnset() {

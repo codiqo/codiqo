@@ -52,14 +52,12 @@ import io.codiqo.llm.schema.LlmScoringResponse.Tags;
 import io.codiqo.llm.schema.LlmScoringResponse.VolumeScore;
 
 class LlmResponseMapperTest {
-    private final LlmResponseMapper mapper = new LlmResponseMapper();
-
     @Test
     void emptyResponseMapsToDefaultsWithoutNullProduction() {
         LlmScoringResponse response = new LlmScoringResponse();
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertEquals(AnalysisResultModel.ChangeClassificationEnum.MEDIUM, result.getChangeClassification(),
                 "missing classification must default to MEDIUM");
@@ -89,7 +87,7 @@ class LlmResponseMapperTest {
                         .build())));
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         ModifyImpactEstimateModel mapped = result.getModifyImpactEstimates().get(0);
         assertEquals("com.example.Foo.bar()", mapped.getSignature());
@@ -109,7 +107,7 @@ class LlmResponseMapperTest {
                 LlmScoringResponse.ModifyImpactEstimate.builder().signature("com.example.Foo.bar()").build())));
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         ModifyImpactEstimateModel mapped = result.getModifyImpactEstimates().get(0);
         assertEquals(ModifyImpactEstimateModel.CoverageDirectionEnum.UNKNOWN, mapped.getCoverageDirection());
@@ -125,7 +123,7 @@ class LlmResponseMapperTest {
         response.setRiskAssessment(RiskAssessment.builder().riskScore(7).build());
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertEquals(7, result.getRiskAssessment().getRiskScore());
         assertEquals(RiskAssessmentModel.RiskLevelEnum.LOW, result.getRiskAssessment().getRiskLevel(),
@@ -140,7 +138,7 @@ class LlmResponseMapperTest {
                 .build());
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         BugModel mapped = result.getBugs().getBlocking().get(0);
         assertEquals(BugModel.TypeEnum.OTHER, mapped.getType());
@@ -157,7 +155,7 @@ class LlmResponseMapperTest {
         response.setBugs(new Bugs());
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertFalse(result.getBugs().getHasBlockingBugs());
     }
@@ -171,7 +169,7 @@ class LlmResponseMapperTest {
         response.setTags(tags);
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertTrue(result.getTags().getTechnical().isEmpty());
         assertTrue(result.getTags().getFunctional().isEmpty());
@@ -186,7 +184,7 @@ class LlmResponseMapperTest {
         response.setRequiresSeniorReview(3);
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertEquals(42.5, result.getScore());
         assertEquals("0.5 * base", result.getScoreCalculation());
@@ -210,7 +208,7 @@ class LlmResponseMapperTest {
                 .build());
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertEquals(12.75, result.getAssessment().getEffortBreakdown().getBaseEffortScore());
         assertEquals(100, result.getAssessment().getEffortBreakdown().getVolumeScore().getLinesChanged());
@@ -225,7 +223,7 @@ class LlmResponseMapperTest {
         response.setQualityMultiplier(QualityMultiplier.builder().finalMultiplier(0.8).build());
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertEquals(0.8, result.getAssessment().getQualityMultiplier().getFinalMultiplier());
         assertNull(result.getAssessment().getQualityMultiplier().getCpdAnalysis());
@@ -244,7 +242,7 @@ class LlmResponseMapperTest {
                 .build());
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertEquals(4, result.getAssessment().getRiskDimensions().getArchitectureImpact().getScore());
         assertEquals("solid", result.getAssessment().getRiskDimensions().getArchitectureImpact().getRationale());
@@ -267,7 +265,7 @@ class LlmResponseMapperTest {
         response.setStaticAnalysisReview(review);
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertTrue(result.getAssessment().getStaticAnalysisReview().getPmdInChangedLines().isEmpty());
         assertTrue(result.getAssessment().getStaticAnalysisReview().getPmdPreExisting().isEmpty());
@@ -286,7 +284,7 @@ class LlmResponseMapperTest {
         response.setStaticAnalysisReview(review);
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         StaticAnalysisFindingModel finding = result.getAssessment().getStaticAnalysisReview().getPmdInChangedLines().get(0);
         assertEquals("R1", finding.getRule());
@@ -305,7 +303,7 @@ class LlmResponseMapperTest {
         response.setStaticAnalysisReview(review);
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         StaticAnalysisFindingModel finding = result.getAssessment().getStaticAnalysisReview().getPmdInChangedLines().iterator().next();
         assertEquals(StaticAnalysisFindingModel.SeverityEnum.INFO, finding.getSeverity());
@@ -322,7 +320,7 @@ class LlmResponseMapperTest {
         response.setStaticAnalysisReview(review);
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         StaticAnalysisFindingModel finding = result.getAssessment().getStaticAnalysisReview().getPmdInChangedLines().iterator().next();
         assertEquals(StaticAnalysisFindingModel.SeverityEnum.WARNING, finding.getSeverity(),
@@ -339,7 +337,7 @@ class LlmResponseMapperTest {
         response.setStaticAnalysisReview(review);
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         StaticAnalysisFindingModel finding = result.getAssessment().getStaticAnalysisReview().getPmdInChangedLines().iterator().next();
         assertEquals(StaticAnalysisFindingModel.SeverityEnum.ERROR, finding.getSeverity());
@@ -358,7 +356,7 @@ class LlmResponseMapperTest {
                 .build());
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertEquals(4, result.getAssessment().getArchitectureEffortBonus().getArchitectureImpactScore());
         assertEquals(0.9, result.getAssessment().getArchitectureEffortBonus().getQualityFactor());
@@ -378,7 +376,7 @@ class LlmResponseMapperTest {
                 .build());
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertEquals(BlastRadiusAnalysisModel.RiskLevelEnum.HIGH, result.getAssessment().getBlastRadiusAnalysis().getRiskLevel(),
                 "VERY_HIGH collapses into HIGH for the public blast-radius enum");
@@ -391,7 +389,7 @@ class LlmResponseMapperTest {
         response.setBlastRadiusAnalysis(BlastRadiusAnalysis.builder().riskLevel(level).build());
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertNotNull(result.getAssessment().getBlastRadiusAnalysis().getRiskLevel(),
                 "every input RiskLevel must map to some output enum");
@@ -404,7 +402,7 @@ class LlmResponseMapperTest {
         response.setChangeClassification(input);
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertEquals(input.name(), result.getChangeClassification().name());
     }
@@ -418,7 +416,7 @@ class LlmResponseMapperTest {
                 .build());
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertEquals(input.name(), result.getBugs().getBlocking().get(0).getType().name());
     }
@@ -432,7 +430,7 @@ class LlmResponseMapperTest {
                 .build());
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertEquals(input.name(), result.getBugs().getBlocking().get(0).getConfidence().name());
     }
@@ -446,7 +444,7 @@ class LlmResponseMapperTest {
                 .build());
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertEquals(input.name(), result.getBugs().getBlocking().get(0).getSource().name());
     }
@@ -461,7 +459,7 @@ class LlmResponseMapperTest {
         response.setStaticAnalysisReview(review);
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertEquals(input.name(),
                 result.getAssessment().getStaticAnalysisReview().getPmdInChangedLines().get(0).getSeverity().name());
@@ -474,7 +472,7 @@ class LlmResponseMapperTest {
         response.setBlastRadiusAnalysis(BlastRadiusAnalysis.builder().moduleType(input).build());
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertEquals(input.name(), result.getAssessment().getBlastRadiusAnalysis().getModuleType().name());
     }
@@ -486,7 +484,7 @@ class LlmResponseMapperTest {
         response.setBlastRadiusAnalysis(BlastRadiusAnalysis.builder().externalImpactEstimate(input).build());
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertEquals(input.name(),
                 result.getAssessment().getBlastRadiusAnalysis().getExternalImpactEstimate().name());
@@ -504,7 +502,7 @@ class LlmResponseMapperTest {
                 .build());
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         SignatureChangesModel mapped = result.getAssessment().getBlastRadiusAnalysis().getSignatureChanges();
         assertTrue(mapped.getHasBreakingChanges());
@@ -519,7 +517,7 @@ class LlmResponseMapperTest {
         response.setBlastRadiusAnalysis(blast);
         AnalysisResultModel result = new AnalysisResultModel();
 
-        mapper.mapToAnalysisResult(response, result);
+        LlmResponseMapper.mapToAnalysisResult(response, result);
 
         assertTrue(result.getAssessment().getBlastRadiusAnalysis().getCriticalCallers().isEmpty());
         assertEquals(RiskAssessmentModel.RiskLevelEnum.LOW.name(),

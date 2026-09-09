@@ -44,8 +44,9 @@
         <!-- -->
         <!-- JDK requirements -->
         <!-- -->
-        <maven.compiler.target>17</maven.compiler.target>
-        <maven.compiler.source>17</maven.compiler.source>
+        <!-- release, not source/target: source/target links against the building JDK's class library, so a
+             newer JDK's API compiles clean locally and only breaks on the CI build -->
+        <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <!-- -->
@@ -74,13 +75,13 @@
         <okhttp.version>5.5.0</okhttp.version>
         <guava.version>33.7.1-jre</guava.version>
         <vavr.version>1.0.0</vavr.version>
-        <jgit.version>7.7.1.202607240634-r</jgit.version>
+        <jgit.version>7.8.0.202609011348-r</jgit.version>
         <ztzip.version>1.18.2</ztzip.version>
         <ztkill.version>1.12.0</ztkill.version>
         <ztexec.version>1.13.0</ztexec.version>
         <dorkbox.desktop.version>1.1</dorkbox.desktop.version>
         <jarchivelib.version>1.2.0</jarchivelib.version>
-        <ecj.version>3.46.0</ecj.version>
+        <ecj.version>3.46.100</ecj.version>
         <lsp4j.version>1.0.0</lsp4j.version>
         <openrewrite.version>8.90.4</openrewrite.version>
         <openrewrite.recipe.version>2.41.1</openrewrite.recipe.version>
@@ -89,11 +90,11 @@
         <findbugs.sec.version>1.14.0</findbugs.sec.version>
         <findbugs.contrib.version>7.7.4</findbugs.contrib.version>
         <jacoco.version>0.8.15</jacoco.version>
-        <classgraph.version>4.8.194</classgraph.version>
+        <classgraph.version>4.8.195</classgraph.version>
         <oshi.version>7.6.1</oshi.version>
         <jol.version>0.17</jol.version>
         <openai.version>4.58.0</openai.version>
-        <djl.tokenizers.version>0.36.0</djl.tokenizers.version>
+        <djl.tokenizers.version>0.37.0</djl.tokenizers.version>
         <jtokkit.version>1.1.0</jtokkit.version>
         <gradle.api.version>8.11.1</gradle.api.version>
         <micrometer.version>1.17.1</micrometer.version>
@@ -942,6 +943,12 @@
                             <version>${asm.version}</version>
                         </dependency>
                     </dependencies>
+                    <configuration>
+                        <!-- stated rather than derived: the descriptor scan reads the runtime-scoped
+                             rewrite-java-25 (class-file 69) and would otherwise declare Java 25, which
+                             OpenRewrite does not require — it selects the parser matching the running JDK -->
+                        <requiredJavaVersion>${maven.compiler.release}</requiredJavaVersion>
+                    </configuration>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
@@ -1156,8 +1163,7 @@
                         </dependency>
                     </dependencies>
                     <configuration>
-                        <source>${maven.compiler.source}</source>
-                        <target>${maven.compiler.target}</target>
+                        <release>${maven.compiler.release}</release>
                         <parameters>true</parameters>
                         <showDeprecation>true</showDeprecation>
                         <showWarnings>true</showWarnings>
@@ -1350,6 +1356,21 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-enforcer-plugin</artifactId>
                 <executions>
+                    <execution>
+                        <id>require-jdk</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[${maven.compiler.release},)</version>
+                                    <message>codiqo builds against Java ${maven.compiler.release} and up; point JAVA_HOME at a newer JDK.</message>
+                                </requireJavaVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
                     <execution>
                         <id>ban-guava</id>
                         <phase>validate</phase>

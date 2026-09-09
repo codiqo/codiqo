@@ -1,34 +1,19 @@
 package io.codiqo.llm.client;
 
-import java.io.File;
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.stream.Collectors;
-import java.util.LinkedHashMap;
-import java.util.ArrayList;
 
-import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.collections4.MapUtils;
-import org.apache.commons.lang3.BooleanUtils;
-import org.apache.commons.io.FileUtils;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.exception.ExceptionUtils;
-
-import tools.jackson.databind.DeserializationFeature;
-import tools.jackson.databind.MapperFeature;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.PropertyNamingStrategies;
-import tools.jackson.databind.cfg.EnumFeature;
-import tools.jackson.databind.json.JsonMapper;
-import org.apache.commons.lang3.Validate;
 import com.openai.client.OpenAIClient;
 import com.openai.core.JsonValue;
 import com.openai.errors.OpenAIServiceException;
@@ -39,21 +24,33 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionMessageFunctionToolCall;
 import com.openai.models.chat.completions.ChatCompletionStreamOptions;
 import com.openai.models.chat.completions.ChatCompletionToolMessageParam;
+import jakarta.ws.rs.core.Response.Status.Family;
+import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.MapUtils;
+import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Validate;
+import org.apache.commons.lang3.exception.ExceptionUtils;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.MapperFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.PropertyNamingStrategies;
+import tools.jackson.databind.cfg.EnumFeature;
+import tools.jackson.databind.json.JsonMapper;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
-import io.codiqo.llm.FinalScoreCalculator;
 import io.codiqo.llm.DefaultLlmTokenizers;
-import io.codiqo.llm.PromptBuilder;
+import io.codiqo.llm.FinalScoreCalculator;
 import io.codiqo.llm.PromptBuilder.PromptContext;
 import io.codiqo.llm.PromptBuilder.UserMessageResult;
+import io.codiqo.llm.PromptBuilder;
 import io.codiqo.llm.ThymeleafPromptBuilder;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
 import io.codiqo.llm.client.OpenAIClientWrapper.AccumulatedToolCall;
 import io.codiqo.llm.client.OpenAIClientWrapper.StreamingResult;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringResponse;
-import jakarta.ws.rs.core.Response.Status.Family;
 
 public class LlmScoringClient implements ScoringClient {
     private static final int MAX_TOOL_CALLS = Byte.MAX_VALUE;
@@ -116,7 +113,7 @@ public class LlmScoringClient implements ScoringClient {
 
         Validate.isTrue(maxRetries >= BigDecimal.ONE.intValue(), "llmMaxRetries must be >= 1 (was %s)", maxRetries);
 
-        log.info(String.format(
+        log.info(String.format(Locale.ROOT,
                 "LLM config model: %s temperature: %s topP: %s maxCompletionTokens: %s numCtx: %s seed: %s maxRetries: %d validationMaxRetries: %d webSearch: %b",
                 model,
                 temperature,
@@ -148,7 +145,7 @@ public class LlmScoringClient implements ScoringClient {
         int promptLength = systemPrompt.length() + userMessage.length();
         int systemTokens = promptBuilder.estimateTokens(model, systemPrompt);
         int userTokens = promptBuilder.estimateTokens(model, userMessage);
-        log.info(String.format("prompt system: %d chars (~%d tokens) user: %d chars (~%d tokens) total: %d chars (~%d tokens)",
+        log.info(String.format(Locale.ROOT, "prompt system: %d chars (~%d tokens) user: %d chars (~%d tokens) total: %d chars (~%d tokens)",
                 systemPrompt.length(),
                 systemTokens,
                 userMessage.length(),
@@ -272,7 +269,7 @@ public class LlmScoringClient implements ScoringClient {
                      */
                     boolean emptyResponse = StringUtils.isBlank(rawContent);
                     long backoffMs = Math.min(RESPONSE_RETRY_BACKOFF_MAX_MS, RESPONSE_RETRY_BACKOFF_BASE_MS << responseAttempt - 1);
-                    log.warn(String.format("retrying due to %s LLM response (%d/%d), backing off %dms",
+                    log.warn(String.format(Locale.ROOT, "retrying due to %s LLM response (%d/%d), backing off %dms",
                             emptyResponse ? "empty (likely provider throttling/overload)" : "malformed",
                             responseAttempt,
                             maxRetries,
@@ -285,16 +282,16 @@ public class LlmScoringClient implements ScoringClient {
             }
 
             if (Objects.isNull(scoringResponse)) {
-                log.error(String.format("LLM response unusable after %d attempt(s): %s", maxRetries, lastError.getMessage()));
+                log.error(String.format(Locale.ROOT, "LLM response unusable after %d attempt(s): %s", maxRetries, lastError.getMessage()));
                 throw lastError;
             }
 
             for (int validationAttempt = 0; validationAttempt < validationMaxRetries; validationAttempt++) {
                 FinalScoreCalculator.ValidationReport report = finalScoreCalculator.validate(scoringResponse, request);
-                if (!report.hasFailures()) {
+                if (BooleanUtils.negate(report.hasFailures())) {
                     break;
                 }
-                log.warn(String.format("diffClassification validation failed (%d unrecoverable file(s)); validation retry %d/%d",
+                log.warn(String.format(Locale.ROOT, "diffClassification validation failed (%d unrecoverable file(s)); validation retry %d/%d",
                         report.getFailures().size(),
                         validationAttempt + 1,
                         validationMaxRetries));
@@ -306,7 +303,7 @@ public class LlmScoringClient implements ScoringClient {
                 StreamingResult retryStream = streamWithRetry(paramsBuilder.build(), bridgeHandler);
                 totalUsage = totalUsage.plus(LlmUsage.of(retryStream));
 
-                if (!FINISH_REASON_STOP.equals(retryStream.getFinishReason())) {
+                if (BooleanUtils.negate(FINISH_REASON_STOP.equals(retryStream.getFinishReason()))) {
                     log.warn("validation retry produced non-stop finish: " + retryStream.getFinishReason() + "; keeping prior response");
                     break;
                 }
@@ -358,11 +355,6 @@ public class LlmScoringClient implements ScoringClient {
         }
     }
     private LlmScoringResponse deserializeResponse(String rawContent) throws Exception {
-        // TEMP: always dump the raw response to inspect off-vocab enum values (revert after root-cause)
-        File dumpFile = File.createTempFile("codiqo-llm-response-", ".json");
-        FileUtils.write(dumpFile, rawContent, StandardCharsets.UTF_8);
-        log.warn("raw LLM response dumped to: " + dumpFile.getAbsolutePath());
-
         try {
             return objectMapper.readValue(stripMarkdownFences(rawContent), LlmScoringResponse.class);
         } catch (Exception err) {
@@ -402,13 +394,13 @@ public class LlmScoringClient implements ScoringClient {
             } catch (RuntimeException err) {
                 lastException = err;
                 if (err instanceof OpenAIServiceException ose && isNonRetryableClientError(ose)) {
-                    log.error(String.format("non-retryable %d from LLM: %s", ose.statusCode(), ose.getMessage()));
+                    log.error(String.format(Locale.ROOT, "non-retryable %d from LLM: %s", ose.statusCode(), ose.getMessage()));
                     break;
                 }
                 if (attempt < maxRetries) {
-                    log.warn(String.format("streaming attempt %d/%d failed: %s, retrying", attempt, maxRetries, err.getMessage()));
+                    log.warn(String.format(Locale.ROOT, "streaming attempt %d/%d failed: %s, retrying", attempt, maxRetries, err.getMessage()));
                 } else {
-                    log.error(String.format("streaming failed after %d attempt(s): %s", maxRetries, err.getMessage()));
+                    log.error(String.format(Locale.ROOT, "streaming failed after %d attempt(s): %s", maxRetries, err.getMessage()));
                 }
             }
         }
