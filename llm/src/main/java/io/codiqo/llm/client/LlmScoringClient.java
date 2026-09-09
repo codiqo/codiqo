@@ -252,7 +252,12 @@ public class LlmScoringClient implements ScoringClient {
                 if (FINISH_REASON_STOP.equals(streamResult.getFinishReason())) {
                     try {
                         scoringResponse = deserializeResponse(rawContent);
-                        break;
+                        if (Objects.nonNull(scoringResponse)) {
+                            break;
+                        }
+
+                        // jackson maps a literal null body to null rather than throwing, so treat it as unusable
+                        lastError = new IOException("LLM returned a null JSON body");
                     } catch (Exception err) {
                         lastError = err;
                     }
