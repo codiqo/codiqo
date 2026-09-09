@@ -71,7 +71,7 @@ public class GradleModelCollector {
         request.setExcludePaths(stringProp(root, "codiqo.excludePaths", ext.getExcludePaths()));
         request.setIgnoreDiagnostics(boolProp(root, "codiqo.ignoreDiagnostics", ext.isIgnoreDiagnostics()));
         request.setIgnoreComplexity(boolProp(root, "codiqo.ignoreComplexity", ext.isIgnoreComplexity()));
-        request.setFailOnJdtlsError(ext.isFailOnJdtlsError());
+        request.setFailOnJdtlsError(boolProp(root, "codiqo.failOnJdtlsError", ext.isFailOnJdtlsError()));
         request.setFailOnUninstrumentedModule(boolProp(root, "codiqo.failOnUninstrumentedModule", ext.isFailOnUninstrumentedModule()));
 
         request.setJdtlsVersion(stringProp(root, "codiqo.jdtlsVersion", ext.getJdtlsVersion()));

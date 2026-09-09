@@ -108,7 +108,9 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
         getLogger().lifecycle("codiqo: indexing " + commits.size() + " commits for " + projectId + " at " + apiUrl);
 
         Log log = new SlfLogFactory().getLogger(CodiqoIndexCommitsTask.class);
-        CommitIndexApi client = CommitIndexPublisher.buildClient(apiUrl, apiKey.get(), ext.getConnectTimeoutSeconds(), ext.getReadTimeoutSeconds());
+        CommitIndexApi client = CommitIndexPublisher.buildClient(apiUrl, apiKey.get(),
+                longProp("codiqo.connectTimeoutSeconds", ext.getConnectTimeoutSeconds()),
+                longProp("codiqo.readTimeoutSeconds", ext.getReadTimeoutSeconds()));
 
         ProjectModel metadata = new ProjectModel();
         metadata.setCode(projectId);
@@ -166,5 +168,8 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
     }
     private String prop(String name, String fallback) {
         return Optional.ofNullable(getProject().findProperty(name)).map(Object::toString).orElse(fallback);
+    }
+    private long longProp(String name, long fallback) {
+        return Optional.ofNullable(getProject().findProperty(name)).map(Object::toString).map(Long::parseLong).orElse(fallback);
     }
 }
