@@ -10,6 +10,9 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.Date;
 import java.util.List;
 import java.util.Objects;
@@ -18,6 +21,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.MergeResult;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
@@ -73,6 +77,21 @@ class IndexCommitsMojoTest {
         assertEquals(third.getName(), commits.iterator().next().getSha());
         assertEquals(second.getName(), commits.get(1).getSha());
         assertEquals(first.getName(), commits.get(2).getSha());
+    }
+    /**
+     * regression: JGit 7.8.0 moved rev-filter evaluation into the topological sort's explore
+     * phase, which does not catch CommitTimeRevFilter.after's StopWalkException sentinel. The
+     * walk must drop pre-cutoff commits, not abort on the first one it reaches.
+     */
+    @Test
+    void commitsOlderThanCutoffAreDroppedWithoutAbortingTheWalk() throws Exception {
+        Instant cutoff = Instant.now().minus(30, ChronoUnit.DAYS);
+        commitAt("a.txt", "1", "before the window", cutoff.minus(1, ChronoUnit.DAYS));
+        RevCommit inWindow = commit("a.txt", "2", "inside the window");
+
+        List<CommitModel> commits = extract(allCommits(), "HEAD", Date.from(cutoff), "main");
+
+        assertEquals(List.of(inWindow.getName()), shas(commits));
     }
     @Test
     void branchFilterExcludesOffBranchCommits() throws Exception {
@@ -496,6 +515,18 @@ class IndexCommitsMojoTest {
     }
     private RevCommit commit(String path, String content, String message) throws Exception {
         return commitAs(path, content, message, "Test Author", "test@example.com");
+    }
+    private RevCommit commitAt(String path, String content, String message, Instant when) throws Exception {
+        Path target = tempDir.resolve(path);
+        Files.writeString(target, content, StandardCharsets.UTF_8);
+
+        PersonIdent ident = new PersonIdent("Test Author", "test@example.com", when, ZoneOffset.UTC);
+        try {
+            git.add().addFilepattern(path).call();
+            return git.commit().setMessage(message).setAuthor(ident).setCommitter(ident).call();
+        } catch (GitAPIException err) {
+            throw new IllegalStateException(err);
+        }
     }
     private RevCommit commitAs(String path, String content, String message, String authorName, String authorEmail)
             throws Exception {
