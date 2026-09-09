@@ -1,19 +1,15 @@
 package io.codiqo.maven;
 
-import java.io.BufferedOutputStream;
 import java.io.File;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.time.Duration;
 import java.time.format.DateTimeFormatter;
 import java.util.Collections;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.CharUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -24,32 +20,29 @@ import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 
-import com.fasterxml.jackson.annotation.JsonInclude.Include;
-import tools.jackson.databind.DeserializationFeature;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.SerializationFeature;
-import tools.jackson.databind.util.StdDateFormat;
-import tools.jackson.dataformat.yaml.YAMLMapper;
-
 import io.codiqo.api.RunArgs;
-import io.codiqo.client.model.AnalysisResultModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CommitModel;
-import io.codiqo.llm.LlmResponseMapper;
 import io.codiqo.llm.PromptBuilder.PromptContext;
 import io.codiqo.llm.ReportBuilder.ReportContext;
 import io.codiqo.llm.SubmissionToRequestMapper;
 import io.codiqo.llm.VolumeScoreCalculator;
-import io.codiqo.llm.client.DaemonExecutors;
 import io.codiqo.llm.client.LlmScoringClient;
 import io.codiqo.llm.client.ScoringClient;
 import io.codiqo.llm.client.ScoringClient.ScoringResult;
 import io.codiqo.llm.schema.LlmScoringRequest;
+import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
 import io.codiqo.llm.schema.LlmScoringResponse;
+import io.codiqo.maven.logging.MavenLogFactory;
 import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.maven.populator.ConsoleReportBuilder;
 import io.codiqo.maven.populator.LlmScoringPopulator;
+import io.codiqo.submit.AnalysisResultDump;
+import io.codiqo.util.DaemonExecutors;
 import io.codiqo.util.Env;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.dataformat.yaml.YAMLMapper;
 
 @Mojo(name = "score-from-file", requiresProject = false)
 public class ScoreFromFileMojo extends AbstractMojo {
@@ -95,6 +88,9 @@ public class ScoreFromFileMojo extends AbstractMojo {
     @Parameter(property = "codiqo.dumpAnalysis", defaultValue = "true")
     private boolean dumpAnalysis;
 
+    @Parameter(property = "codiqo.preferYaml", defaultValue = "true")
+    private boolean preferYaml;
+
     @Parameter(property = "codiqo.includeBranches")
     private String includeBranches;
 
@@ -125,7 +121,7 @@ public class ScoreFromFileMojo extends AbstractMojo {
             getLog().info("base URL: " + llmBaseUrl);
             getLog().info("files in submission: " + submission.getFiles().size());
             getLog().info("code block changes: " + request.getCodeBlockChanges().size());
-            getLog().info("total callers: " + request.getCodeBlockChanges().stream().mapToInt(m -> m.getCallerCount()).sum());
+            getLog().info("total callers: " + request.getCodeBlockChanges().stream().mapToInt(CodeBlockChange::getCallerCount).sum());
 
             VolumeScoreCalculator volumeCalc = new VolumeScoreCalculator(args);
             VolumeScoreCalculator.CpdPreComputed cpdPre = volumeCalc.calculateCpdPenalty(request);
@@ -144,24 +140,12 @@ public class ScoreFromFileMojo extends AbstractMojo {
             StopWatch stopWatch = StopWatch.createStarted();
             ScoringResult result;
             ExecutorService executor = DaemonExecutors.newCachedDaemonPool("codiqo-openai");
-            try (LlmScoringClient client = new LlmScoringClient(args, executor, new MavenMessageReporter(getLog()))) {
+            MavenMessageReporter reporter = new MavenMessageReporter(getLog());
+            try (LlmScoringClient client = new LlmScoringClient(args, executor, reporter)) {
                 ScoringClient.Params params = ScoringClient.Params.builder()
                         .request(request)
                         .context(promptContext)
-                        .handler(new ScoringClient.StreamingHandler() {
-                            @Override
-                            public void onContent(String delta) {
-                                if (Objects.nonNull(delta)) {
-                                    if (delta.length() > 0) {
-                                        getLog().info("LLM responding... (" + delta.length() + " chars)");
-                                    }
-                                }
-                            }
-                            @Override
-                            public void onToolCall(String toolName) {
-                                getLog().info("tool call: " + toolName);
-                            }
-                        }).build();
+                        .handler(LlmScoringPopulator.progressHandler(getLog())).build();
                 result = client.score(params);
             } finally {
                 executor.shutdown();
@@ -185,19 +169,18 @@ public class ScoreFromFileMojo extends AbstractMojo {
                 getLog().info("bugs minor: " + CollectionUtils.size(response.getBugs().getMinor()));
             }
 
+            // the console report is the point of a score-from-file run; dumpAnalysis only governs writing to disk
+            printConsoleReport(args, submission, result, request, stopWatch);
             if (dumpAnalysis) {
-                FileUtils.forceMkdir(outputDirectory);
-                printConsoleReport(args, submission, result, request, stopWatch);
-                dumpResultYaml(submission, result, stopWatch, args);
+                new AnalysisResultDump(args, preferYaml, new MavenLogFactory(getLog()).getLogger(AnalysisResultDump.class))
+                        .accept(submission, result, Duration.ofMillis(stopWatch.getTime()));
             }
         } catch (Exception err) {
             throw new MojoFailureException(err);
         }
     }
-    private AnalysisSubmissionModel loadSubmission() throws IOException {
-        ObjectMapper yamlMapper = YAMLMapper.builder()
-                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-                .build();
+    private AnalysisSubmissionModel loadSubmission() {
+        ObjectMapper yamlMapper = YAMLMapper.builder().disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES).build();
         return yamlMapper.readValue(inputFile, AnalysisSubmissionModel.class);
     }
     private RunArgs buildRunArgs() {
@@ -253,43 +236,12 @@ public class ScoreFromFileMojo extends AbstractMojo {
                     .revertCommit(Boolean.TRUE.equals(commit.getIsRevert()))
                     .revertedCommitId(commit.getRevertedCommitId());
             if (Objects.nonNull(commit.getTimestamp())) {
-                contextBuilder.timestamp(commit.getTimestamp().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
+                contextBuilder.timestamp(commit.getTimestamp().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT)));
             }
         }
 
         for (String line : StringUtils.splitPreserveAllTokens(builder.buildReport(result, request, contextBuilder.build()), CharUtils.LF)) {
             getLog().info(line);
         }
-    }
-    private void dumpResultYaml(AnalysisSubmissionModel submission, ScoringResult result, StopWatch stopWatch, RunArgs args) throws IOException {
-        AnalysisResultModel analysisResult = new AnalysisResultModel();
-
-        analysisResult.setProject(submission.getProject());
-        analysisResult.setCommit(submission.getCommit());
-        analysisResult.setFiles(submission.getFiles());
-        analysisResult.setDependencies(submission.getDependencies());
-        analysisResult.setDuplication(submission.getDuplication());
-        analysisResult.setProjectMetrics(submission.getProjectMetrics());
-        analysisResult.setProjectQuality(submission.getProjectQuality());
-        analysisResult.setFullProjectCoverage(submission.getFullProjectCoverage());
-
-        LlmResponseMapper mapper = new LlmResponseMapper();
-        mapper.mapToAnalysisResult(result.getResponse(), analysisResult);
-        analysisResult.setLlmAnalysis(LlmResponseMapper.mapLlmAnalysis(result, Duration.ofMillis(stopWatch.getTime()), args.getLlmModel()));
-
-        ObjectMapper yamlMapper = YAMLMapper.builder()
-                .changeDefaultPropertyInclusion(incl -> incl.withValueInclusion(Include.NON_NULL))
-                .defaultDateFormat(new StdDateFormat().withColonInTimeZone(true))
-                .enable(SerializationFeature.INDENT_OUTPUT)
-                .build();
-
-        String commitSha = submission.getCommit().getSha();
-        File file = new File(outputDirectory, "codiqo-analysis-" + commitSha + ".yaml");
-        String output = yamlMapper.writeValueAsString(analysisResult);
-        try (BufferedOutputStream stream = new BufferedOutputStream(Files.newOutputStream(file.toPath()))) {
-            stream.write(output.getBytes(StandardCharsets.UTF_8));
-            stream.flush();
-        }
-        getLog().info("YAML analysis: " + file.getAbsolutePath());
     }
 }

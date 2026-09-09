@@ -1,19 +1,19 @@
 package io.codiqo.submit;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.OptionalDouble;
 import java.util.function.Function;
-import java.util.ArrayList;
 
+import lombok.Value;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.math3.stat.descriptive.rank.Percentile;
 
-
 import io.codiqo.api.cpd.CopyPasteDetectionSummary;
-import io.codiqo.api.metrics.DriverScaler;
 import io.codiqo.api.metrics.DriverScaler.DimensionStats;
+import io.codiqo.api.metrics.DriverScaler;
 import io.codiqo.api.metrics.DriverScore;
 import io.codiqo.client.model.DimensionStatsModel;
 import io.codiqo.client.model.DriverScalerModel;
@@ -52,76 +52,75 @@ public class MetricsAggregator implements SubmissionPopulator {
         int fullCoveredBranches = 0;
         int fullMissedBranches = 0;
 
-        for (ModuleModel moduleModel : ctx.getProjectModel().getModules()) {
-            ModuleQualityTracker tracker = ctx.getQualityTrackers().get(moduleModel.getId());
-            if (Objects.nonNull(tracker)) {
-                ModuleQualityModel qualityModel = new ModuleQualityModel();
+        for (TrackedModule tracked : trackedModules(ctx)) {
+            ModuleModel moduleModel = tracked.getModuleModel();
+            ModuleQualityTracker tracker = tracked.getTracker();
+            ModuleQualityModel qualityModel = new ModuleQualityModel();
 
-                qualityModel.setFilesChanged(tracker.affectedFilesChanged().intValue());
-                qualityModel.setCodeUnitsAffected(tracker.affectedCodeUnits().intValue());
-                qualityModel.setTotalStatements(tracker.affectedTotalStatements().intValue());
-                qualityModel.setTotalMethods(tracker.affectedCodeUnits().intValue());
-                qualityModel.setPmdViolations(tracker.affectedPmdViolations().intValue());
-                qualityModel.setSpotbugsIssues(tracker.affectedSpotbugsIssues().intValue());
+            qualityModel.setFilesChanged(tracker.affectedFilesChanged().intValue());
+            qualityModel.setCodeUnitsAffected(tracker.affectedCodeUnits().intValue());
+            qualityModel.setTotalStatements(tracker.affectedTotalStatements().intValue());
+            qualityModel.setTotalMethods(tracker.affectedCodeUnits().intValue());
+            qualityModel.setPmdViolations(tracker.affectedPmdViolations().intValue());
+            qualityModel.setSpotbugsIssues(tracker.affectedSpotbugsIssues().intValue());
 
-                // module-level violations (all code, not just changed)
-                qualityModel.setTotalPmdViolationsInModule(tracker.moduleTotalPmdViolations().intValue());
-                qualityModel.setTotalSpotbugsIssuesInModule(tracker.moduleTotalSpotbugsIssues().intValue());
-                qualityModel.setCriticalViolations(tracker.criticalViolations());
+            // module-level violations (all code, not just changed)
+            qualityModel.setTotalPmdViolationsInModule(tracker.moduleTotalPmdViolations().intValue());
+            qualityModel.setTotalSpotbugsIssuesInModule(tracker.moduleTotalSpotbugsIssues().intValue());
+            qualityModel.setCriticalViolations(tracker.criticalViolations());
 
-                qualityModel.setTotalMethodsInModule(tracker.moduleTotalMethods().intValue());
-                qualityModel.setTotalStatementsInModule(tracker.moduleTotalStatements().intValue());
+            qualityModel.setTotalMethodsInModule(tracker.moduleTotalMethods().intValue());
+            qualityModel.setTotalStatementsInModule(tracker.moduleTotalStatements().intValue());
 
-                if (tracker.affectedCoverageCount().intValue() > 0) {
-                    qualityModel.setAverageCoverage(tracker.affectedAverageCoverage());
-                }
-                if (tracker.affectedComplexityCount().intValue() > 0) {
-                    qualityModel.setAverageComplexity(tracker.affectedAverageComplexity());
-                }
-
-                ModuleFullCoverageModel moduleFullCoverage = new ModuleFullCoverageModel();
-                moduleFullCoverage.setModuleId(moduleModel.getId());
-                moduleFullCoverage.setTotalMethods(tracker.moduleTotalMethods().intValue());
-                moduleFullCoverage.setCoveredMethods(tracker.moduleCoveredMethods().intValue());
-                moduleFullCoverage.setUncoveredMethods(tracker.moduleUncoveredMethods());
-                moduleFullCoverage.setTotalExecutableLines(tracker.moduleTotalExecutableLines().intValue());
-                moduleFullCoverage.setCoveredLines(tracker.moduleCoveredLines().intValue());
-                moduleFullCoverage.setMissedLines(tracker.moduleMissedLines().intValue());
-                moduleFullCoverage.setTotalBranches(tracker.moduleTotalBranches().intValue());
-                moduleFullCoverage.setCoveredBranches(tracker.moduleCoveredBranches().intValue());
-                moduleFullCoverage.setMissedBranches(tracker.moduleMissedBranches().intValue());
-                moduleFullCoverage.setLinePercentage(tracker.moduleLineCoveragePercent());
-                moduleFullCoverage.setBranchPercentage(tracker.moduleBranchCoveragePercent());
-
-                qualityModel.setFullCoverage(moduleFullCoverage);
-                ctx.getModuleFullCoverages().put(moduleModel.getId(), moduleFullCoverage);
-
-                fullTotalMethods += tracker.moduleTotalMethods().intValue();
-                fullCoveredMethods += tracker.moduleCoveredMethods().intValue();
-                fullTotalExecutableLines += tracker.moduleTotalExecutableLines().intValue();
-                fullCoveredLines += tracker.moduleCoveredLines().intValue();
-                fullMissedLines += tracker.moduleMissedLines().intValue();
-                fullTotalBranches += tracker.moduleTotalBranches().intValue();
-                fullCoveredBranches += tracker.moduleCoveredBranches().intValue();
-                fullMissedBranches += tracker.moduleMissedBranches().intValue();
-
-                moduleModel.setQuality(qualityModel);
-
-                totalFilesChanged += tracker.affectedFilesChanged().intValue();
-                totalCodeUnitsAffected += tracker.affectedCodeUnits().intValue();
-                totalPmdViolations += tracker.affectedPmdViolations().intValue();
-                totalSpotbugsIssues += tracker.affectedSpotbugsIssues().intValue();
-                totalCoverage += tracker.affectedTotalCoverage().doubleValue();
-                totalComplexity += tracker.affectedTotalComplexity().doubleValue();
-                coverageCount += tracker.affectedCoverageCount().intValue();
-                complexityCount += tracker.affectedComplexityCount().intValue();
-                changedCoveredLines += tracker.changedCoveredLines().intValue();
-                changedExecutableLines += tracker.changedExecutableLines().intValue();
-                addedCoveredLines += tracker.addedCoveredLines().intValue();
-                addedExecutableLines += tracker.addedExecutableLines().intValue();
-                modifiedCoveredLines += tracker.modifiedCoveredLines().intValue();
-                modifiedExecutableLines += tracker.modifiedExecutableLines().intValue();
+            if (tracker.affectedCoverageCount().intValue() > 0) {
+                qualityModel.setAverageCoverage(tracker.affectedAverageCoverage());
             }
+            if (tracker.affectedComplexityCount().intValue() > 0) {
+                qualityModel.setAverageComplexity(tracker.affectedAverageComplexity());
+            }
+
+            ModuleFullCoverageModel moduleFullCoverage = new ModuleFullCoverageModel();
+            moduleFullCoverage.setModuleId(moduleModel.getId());
+            moduleFullCoverage.setTotalMethods(tracker.moduleTotalMethods().intValue());
+            moduleFullCoverage.setCoveredMethods(tracker.moduleCoveredMethods().intValue());
+            moduleFullCoverage.setUncoveredMethods(tracker.moduleUncoveredMethods());
+            moduleFullCoverage.setTotalExecutableLines(tracker.moduleTotalExecutableLines().intValue());
+            moduleFullCoverage.setCoveredLines(tracker.moduleCoveredLines().intValue());
+            moduleFullCoverage.setMissedLines(tracker.moduleMissedLines().intValue());
+            moduleFullCoverage.setTotalBranches(tracker.moduleTotalBranches().intValue());
+            moduleFullCoverage.setCoveredBranches(tracker.moduleCoveredBranches().intValue());
+            moduleFullCoverage.setMissedBranches(tracker.moduleMissedBranches().intValue());
+            moduleFullCoverage.setLinePercentage(tracker.moduleLineCoveragePercent());
+            moduleFullCoverage.setBranchPercentage(tracker.moduleBranchCoveragePercent());
+
+            qualityModel.setFullCoverage(moduleFullCoverage);
+            ctx.getModuleFullCoverages().put(moduleModel.getId(), moduleFullCoverage);
+
+            fullTotalMethods += tracker.moduleTotalMethods().intValue();
+            fullCoveredMethods += tracker.moduleCoveredMethods().intValue();
+            fullTotalExecutableLines += tracker.moduleTotalExecutableLines().intValue();
+            fullCoveredLines += tracker.moduleCoveredLines().intValue();
+            fullMissedLines += tracker.moduleMissedLines().intValue();
+            fullTotalBranches += tracker.moduleTotalBranches().intValue();
+            fullCoveredBranches += tracker.moduleCoveredBranches().intValue();
+            fullMissedBranches += tracker.moduleMissedBranches().intValue();
+
+            moduleModel.setQuality(qualityModel);
+
+            totalFilesChanged += tracker.affectedFilesChanged().intValue();
+            totalCodeUnitsAffected += tracker.affectedCodeUnits().intValue();
+            totalPmdViolations += tracker.affectedPmdViolations().intValue();
+            totalSpotbugsIssues += tracker.affectedSpotbugsIssues().intValue();
+            totalCoverage += tracker.affectedTotalCoverage().doubleValue();
+            totalComplexity += tracker.affectedTotalComplexity().doubleValue();
+            coverageCount += tracker.affectedCoverageCount().intValue();
+            complexityCount += tracker.affectedComplexityCount().intValue();
+            changedCoveredLines += tracker.changedCoveredLines().intValue();
+            changedExecutableLines += tracker.changedExecutableLines().intValue();
+            addedCoveredLines += tracker.addedCoveredLines().intValue();
+            addedExecutableLines += tracker.addedExecutableLines().intValue();
+            modifiedCoveredLines += tracker.modifiedCoveredLines().intValue();
+            modifiedExecutableLines += tracker.modifiedExecutableLines().intValue();
         }
 
         ProjectQualityModel projectQualityModel = new ProjectQualityModel();
@@ -185,6 +184,9 @@ public class MetricsAggregator implements SubmissionPopulator {
      * price code volume without emitting a fabricated 0% coverage or an all-zero quality summary.
      */
     public static void populateDriverMetrics(SubmissionContext ctx) {
+        // resolved once: every aggregation below reads it
+        List<TrackedModule> tracked = trackedModules(ctx);
+
         int fullTotalStatementsInProject = 0;
         int fullTotalClasses = 0;
         int fullTotalExecutableLines = 0;
@@ -192,17 +194,15 @@ public class MetricsAggregator implements SubmissionPopulator {
         double fullTotalComplexity = 0.0;
         int fullComplexityCount = 0;
 
-        for (ModuleModel moduleModel : ctx.getProjectModel().getModules()) {
-            ModuleQualityTracker tracker = ctx.getQualityTrackers().get(moduleModel.getId());
-            if (Objects.nonNull(tracker)) {
-                fullTotalStatementsInProject += tracker.moduleTotalStatements().intValue();
-                fullTotalClasses += tracker.moduleTotalClasses();
-                fullTotalExecutableLines += tracker.moduleTotalExecutableLines().intValue();
-                fullCoveredLines += tracker.moduleCoveredLines().intValue();
-                if (tracker.moduleComplexityCount().intValue() > 0) {
-                    fullTotalComplexity += tracker.moduleTotalComplexity().doubleValue();
-                    fullComplexityCount += tracker.moduleComplexityCount().intValue();
-                }
+        for (TrackedModule module : tracked) {
+            ModuleQualityTracker tracker = module.getTracker();
+            fullTotalStatementsInProject += tracker.moduleTotalStatements().intValue();
+            fullTotalClasses += tracker.moduleTotalClasses();
+            fullTotalExecutableLines += tracker.moduleTotalExecutableLines().intValue();
+            fullCoveredLines += tracker.moduleCoveredLines().intValue();
+            if (tracker.moduleComplexityCount().intValue() > 0) {
+                fullTotalComplexity += tracker.moduleTotalComplexity().doubleValue();
+                fullComplexityCount += tracker.moduleComplexityCount().intValue();
             }
         }
 
@@ -223,10 +223,10 @@ public class MetricsAggregator implements SubmissionPopulator {
         ctx.getProjectModel().setTotalStatements(fullTotalStatementsInProject);
         ctx.getSubmissionModel().setProjectMetrics(projectMetricsModel);
 
-        List<DriverScaler.Sample> methodProdSamples = collectSamples(ctx, ModuleQualityTracker::methodSamplesProd);
-        List<DriverScaler.Sample> methodTestSamples = collectSamples(ctx, ModuleQualityTracker::methodSamplesTest);
-        List<DriverScaler.Sample> constructorProdSamples = collectSamples(ctx, ModuleQualityTracker::constructorSamplesProd);
-        List<DriverScaler.Sample> constructorTestSamples = collectSamples(ctx, ModuleQualityTracker::constructorSamplesTest);
+        List<DriverScaler.Sample> methodProdSamples = collectSamples(tracked, ModuleQualityTracker::methodSamplesProd);
+        List<DriverScaler.Sample> methodTestSamples = collectSamples(tracked, ModuleQualityTracker::methodSamplesTest);
+        List<DriverScaler.Sample> constructorProdSamples = collectSamples(tracked, ModuleQualityTracker::constructorSamplesProd);
+        List<DriverScaler.Sample> constructorTestSamples = collectSamples(tracked, ModuleQualityTracker::constructorSamplesTest);
 
         DriverScaler methodScalerProd = DriverScaler.of(methodProdSamples);
         DriverScaler methodScalerTest = DriverScaler.of(methodTestSamples);
@@ -238,10 +238,10 @@ public class MetricsAggregator implements SubmissionPopulator {
         ctx.setConstructorScalerProd(constructorScalerProd);
         ctx.setConstructorScalerTest(constructorScalerTest);
 
-        ctx.setMethodMaxProd(mergeMaxTrackers(ctx, ModuleQualityTracker::methodMaxProd));
-        ctx.setMethodMaxTest(mergeMaxTrackers(ctx, ModuleQualityTracker::methodMaxTest));
-        ctx.setConstructorMaxProd(mergeMaxTrackers(ctx, ModuleQualityTracker::constructorMaxProd));
-        ctx.setConstructorMaxTest(mergeMaxTrackers(ctx, ModuleQualityTracker::constructorMaxTest));
+        ctx.setMethodMaxProd(mergeMaxTrackers(tracked, ModuleQualityTracker::methodMaxProd));
+        ctx.setMethodMaxTest(mergeMaxTrackers(tracked, ModuleQualityTracker::methodMaxTest));
+        ctx.setConstructorMaxProd(mergeMaxTrackers(tracked, ModuleQualityTracker::constructorMaxProd));
+        ctx.setConstructorMaxTest(mergeMaxTrackers(tracked, ModuleQualityTracker::constructorMaxTest));
 
         double quantileLevel = ctx.getArgs().getStatsQuantile() * 100.0;
         int methodCapQuantileProd = computeDriverQuantile(methodProdSamples, methodScalerProd, quantileLevel);
@@ -263,19 +263,15 @@ public class MetricsAggregator implements SubmissionPopulator {
         scalersModel.setMethodScalerTest(toModel(methodScalerTest));
         scalersModel.setConstructorScalerProd(toModel(constructorScalerProd));
         scalersModel.setConstructorScalerTest(toModel(constructorScalerTest));
-        populateTrivialCounts(ctx, scalersModel);
+        populateTrivialCounts(tracked, scalersModel);
         projectMetricsModel.setDriverScalers(scalersModel);
     }
     /**
      * share of everything the detector read that sits inside a clone: distinct duplicated lines over the lines of the
-     * files it scanned, both sides from the same run. Two earlier denominators were wrong in opposite directions — the
-     * commit's own statements moved the figure inversely with commit size (42 cloned lines in a five-file commit read
-     * as 59%), and the reactor's statements left a commit-scoped numerator over a project-scoped denominator.
+     * files it scanned, both sides from the same run.
      *
-     * empty only when CPD never ran — switched off via ignoreCpd, or unsupported for every indexed language — because
-     * that is genuinely unknown. A run that read code and found no clones is 0%, not unknown: guarding on the
-     * duplicated lines as well would leave null on every clean commit, which downstream cannot tell apart from "CPD
-     * never ran", and on a public page those read very differently.
+     * empty only when CPD never ran — switched off via ignoreCpd, or unsupported for every indexed language. A run
+     * that read code and found no clones is 0%, not unknown, which downstream has to be able to tell apart.
      */
     static OptionalDouble cpdDuplicationPercent(Collection<CopyPasteDetectionSummary> cpd) {
         if (CollectionUtils.isEmpty(cpd)) {
@@ -310,42 +306,48 @@ public class MetricsAggregator implements SubmissionPopulator {
         toReturn.setMax(stats.max());
         return toReturn;
     }
-    private static void populateTrivialCounts(SubmissionContext ctx, DriverScalersModel model) {
+    private static void populateTrivialCounts(List<TrackedModule> tracked, DriverScalersModel model) {
         int methodProd = 0;
         int methodTest = 0;
         int ctorProd = 0;
         int ctorTest = 0;
-        for (ModuleModel moduleModel : ctx.getProjectModel().getModules()) {
-            ModuleQualityTracker tracker = ctx.getQualityTrackers().get(moduleModel.getId());
-            if (Objects.nonNull(tracker)) {
-                methodProd += tracker.trivialMethodProd().intValue();
-                methodTest += tracker.trivialMethodTest().intValue();
-                ctorProd += tracker.trivialConstructorProd().intValue();
-                ctorTest += tracker.trivialConstructorTest().intValue();
-            }
+        for (TrackedModule module : tracked) {
+            ModuleQualityTracker tracker = module.getTracker();
+            methodProd += tracker.trivialMethodProd().intValue();
+            methodTest += tracker.trivialMethodTest().intValue();
+            ctorProd += tracker.trivialConstructorProd().intValue();
+            ctorTest += tracker.trivialConstructorTest().intValue();
         }
         model.setTrivialMethodsProdExcluded(methodProd);
         model.setTrivialMethodsTestExcluded(methodTest);
         model.setTrivialConstructorsProdExcluded(ctorProd);
         model.setTrivialConstructorsTestExcluded(ctorTest);
     }
-    private static List<DriverScaler.Sample> collectSamples(SubmissionContext ctx, Function<ModuleQualityTracker, List<DriverScaler.Sample>> extractor) {
-        List<DriverScaler.Sample> toReturn = new ArrayList<>();
+    /**
+     * every module that produced a quality tracker, paired with its model. A module can be present in the project
+     * model without a tracker — nothing indexed under it — and every aggregation here has to skip those
+     */
+    private static List<TrackedModule> trackedModules(SubmissionContext ctx) {
+        List<TrackedModule> toReturn = new ArrayList<>();
         for (ModuleModel moduleModel : ctx.getProjectModel().getModules()) {
             ModuleQualityTracker tracker = ctx.getQualityTrackers().get(moduleModel.getId());
             if (Objects.nonNull(tracker)) {
-                toReturn.addAll(extractor.apply(tracker));
+                toReturn.add(new TrackedModule(moduleModel, tracker));
             }
         }
         return toReturn;
     }
-    private static SampleMaxTracker mergeMaxTrackers(SubmissionContext ctx, Function<ModuleQualityTracker, SampleMaxTracker> extractor) {
+    private static List<DriverScaler.Sample> collectSamples(List<TrackedModule> tracked, Function<ModuleQualityTracker, List<DriverScaler.Sample>> extractor) {
+        List<DriverScaler.Sample> toReturn = new ArrayList<>();
+        for (TrackedModule module : tracked) {
+            toReturn.addAll(extractor.apply(module.getTracker()));
+        }
+        return toReturn;
+    }
+    private static SampleMaxTracker mergeMaxTrackers(List<TrackedModule> tracked, Function<ModuleQualityTracker, SampleMaxTracker> extractor) {
         SampleMaxTracker toReturn = new SampleMaxTracker();
-        for (ModuleModel moduleModel : ctx.getProjectModel().getModules()) {
-            ModuleQualityTracker tracker = ctx.getQualityTrackers().get(moduleModel.getId());
-            if (Objects.nonNull(tracker)) {
-                toReturn.mergeFrom(extractor.apply(tracker));
-            }
+        for (TrackedModule module : tracked) {
+            toReturn.mergeFrom(extractor.apply(module.getTracker()));
         }
         return toReturn;
     }
@@ -364,5 +366,11 @@ public class MetricsAggregator implements SubmissionPopulator {
             values[i++] = DriverScore.forNew(scaler, sample.lines(), sample.ncss(), sample.invocations());
         }
         return (int) new Percentile().evaluate(values, quantileLevel);
+    }
+
+    @Value
+    private static class TrackedModule {
+        ModuleModel moduleModel;
+        ModuleQualityTracker tracker;
     }
 }

@@ -5,21 +5,20 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.net.Socket;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
-import java.util.List;
-import java.util.HashMap;
 
+import org.apache.commons.lang3.StringUtils;
 import org.eclipse.lsp4j.CallHierarchyCapabilities;
 import org.eclipse.lsp4j.ClientCapabilities;
 import org.eclipse.lsp4j.CodeActionCapabilities;
@@ -96,17 +95,17 @@ import org.eclipse.lsp4j.services.LanguageClient;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.slf4j.event.Level;
 
-
 import io.codiqo.api.BuildTool;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.jdtls.ServiceStatus;
 import io.codiqo.api.jdtls.ServiceStatusAdapter;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
+import io.codiqo.util.DaemonExecutors;
 
 class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeable {
     private final CompletableFuture<StatusReport> ready = new CompletableFuture<>();
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final ExecutorService executor = DaemonExecutors.newCachedDaemonPool("codiqo-jdtls");
     private final Log log;
     private final RunArgs args;
     private final Launcher<LanguageServer> launcher;
@@ -190,7 +189,7 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
         ws.setDidChangeWatchedFiles(didChangeWatched);
         SymbolCapabilities sym = new SymbolCapabilities();
         sym.setDynamicRegistration(true);
-        sym.setSymbolKind(new SymbolKindCapabilities(IntStream.rangeClosed(1, 26).mapToObj(SymbolKind::forValue).collect(Collectors.toList())));
+        sym.setSymbolKind(new SymbolKindCapabilities(Arrays.asList(SymbolKind.values())));
         ws.setSymbol(sym);
         ws.setExecuteCommand(new ExecuteCommandCapabilities(true));
         ws.setSemanticTokens(new SemanticTokensWorkspaceCapabilities(true));
@@ -222,8 +221,8 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
         compItem.setResolveSupport(new CompletionItemResolveSupportCapabilities(List.of("documentation", "detail", "additionalTextEdits")));
         compItem.setLabelDetailsSupport(true);
         completion.setCompletionItem(compItem);
-        completion.setCompletionItemKind(
-                new CompletionItemKindCapabilities(IntStream.rangeClosed(1, 25).mapToObj(CompletionItemKind::forValue).collect(Collectors.toList())));
+        // the enum is the range: a hardcoded 1..n silently declines support for any kind lsp4j adds
+        completion.setCompletionItemKind(new CompletionItemKindCapabilities(Arrays.asList(CompletionItemKind.values())));
         textDocument.setCompletion(completion);
         textDocument.setHover(new HoverCapabilities(List.of(MarkupKind.MARKDOWN, MarkupKind.PLAINTEXT), true));
 
@@ -240,7 +239,7 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
         textDocument.setReferences(new ReferencesCapabilities(true));
 
         DocumentSymbolCapabilities documentSymbol = new DocumentSymbolCapabilities(true);
-        documentSymbol.setSymbolKind(new SymbolKindCapabilities(IntStream.rangeClosed(1, 26).mapToObj(SymbolKind::forValue).collect(Collectors.toList())));
+        documentSymbol.setSymbolKind(new SymbolKindCapabilities(Arrays.asList(SymbolKind.values())));
         documentSymbol.setHierarchicalDocumentSymbolSupport(true);
         documentSymbol.setLabelSupport(true);
         textDocument.setDocumentSymbol(documentSymbol);
@@ -493,7 +492,7 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
         java.put("showBuildStatusOnStart", Map.of("enabled", "notification"));
         java.put("help", Map.of("firstView", "auto", "showReleaseNotes", false, "collectErrorLog", true));
 
-        java.put("test", Map.of("defaultConfig", "", "config", Map.of()));
+        java.put("test", Map.of("defaultConfig", StringUtils.EMPTY, "config", Map.of()));
         java.put("dependency", Map.of("showMembers", false, "syncWithFolderExplorer", true, "autoRefresh", true, "packagePresentation", "flat"));
         java.put("refactoring", Map.of("extract", Map.of("interface", Map.of("replace", true))));
         java.put("edit", Map.of("smartSemicolonDetection", Map.of("enabled", false), "validateAllOpenBuffersOnChanges", true));
@@ -606,6 +605,7 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
             LanguageServer remoteProxy = launcher.getRemoteProxy();
             remoteProxy.shutdown().get(1, TimeUnit.MINUTES);
         } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
             throw new IOException(err);
         } catch (ExecutionException err) {
             throw new IOException(err.getCause());

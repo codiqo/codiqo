@@ -2,6 +2,7 @@ package io.codiqo.submit;
 
 import java.io.IOException;
 import java.util.Collection;
+import java.util.Locale;
 import java.util.Optional;
 
 import org.apache.commons.io.FilenameUtils;
@@ -67,8 +68,8 @@ public class CommitExclusions {
         }
         if (BooleanUtils.negate(hasAnalyzableFile(changedFiles, extensions))) {
             return Optional.of(new Exclusion(
-                    String.format("no diff files match registered languages %s or supported config files — changed files: %s",
-                            extensions, changedFiles),
+                    String.format("no diff files match registered languages %s or supported config files (%s) — changed files: %s",
+                            extensions, ConfigFiles.describeSupported(), changedFiles),
                     AnalysisExcludeCategory.NO_ANALYZABLE_DIFF));
         }
         return Optional.empty();
@@ -99,15 +100,12 @@ public class CommitExclusions {
                 }
 
                 if (merge.getParentCount() > 2) {
-                    return Optional.of(String.format("octopus merge (%d parents)", merge.getParentCount()));
+                    return Optional.of(String.format(Locale.ROOT, "octopus merge (%d parents)", merge.getParentCount()));
                 }
                 if (JGit.mergeSideCommits(args.getGit(), merge).isEmpty()) {
                     return Optional.of("merge introduces no side-branch commits");
                 }
-                /**
-                 * a multi-author side branch is analysed and credited to whoever dominates it. Excluding it
-                 * terminally, as this once did, lost the work outright — it appeared nowhere, not even in org totals.
-                 */
+                // a multi-author side branch is analysed and credited to whoever dominates it
                 return Optional.empty();
             }
         }

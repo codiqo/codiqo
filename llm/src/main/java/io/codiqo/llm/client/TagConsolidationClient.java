@@ -1,6 +1,7 @@
 package io.codiqo.llm.client;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
@@ -33,7 +34,7 @@ public class TagConsolidationClient implements LlmClient {
         ctx.setVariable("vocabulary_cap", vocabularyCap);
 
         String prompt = PromptTemplates.process(TEMPLATE_TAG_CONSOLIDATION, ctx);
-        log.info(String.format("tag consolidation prompt: %d chars (%d technical, %d functional, cap %d)",
+        log.info(String.format(Locale.ROOT, "tag consolidation prompt: %d chars (%d technical, %d functional, cap %d)",
                 prompt.length(),
                 technicalTags.size(),
                 functionalTags.size(),

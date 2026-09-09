@@ -15,6 +15,10 @@ public class ProtoFileSpec implements ConfigFileSpec {
         return PROTO_EXTENSION.equalsIgnoreCase(FilenameUtils.getExtension(path));
     }
     @Override
+    public String describe() {
+        return "*." + PROTO_EXTENSION;
+    }
+    @Override
     public IneffectiveLineFilter lineFilter() {
         return FILTER;
     }

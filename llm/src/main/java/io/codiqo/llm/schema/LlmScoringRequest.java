@@ -35,8 +35,10 @@ public class LlmScoringRequest {
     private String revertedCommitId;
 
     private ChangeSummary changeSummary;
-    private List<FileChange> fileChanges;
-    private List<CodeBlockChange> codeBlockChanges;
+    @Builder.Default
+    private List<FileChange> fileChanges = new ArrayList<>();
+    @Builder.Default
+    private List<CodeBlockChange> codeBlockChanges = new ArrayList<>();
     private CoverageInfo coverage;
     private ComplexityMetrics complexity;
     private DuplicationInfo duplication;
@@ -113,7 +115,8 @@ public class LlmScoringRequest {
         private int testClassesModified;
         private int testFilesChanged;
 
-        private List<String> packagesAffected;
+        @Builder.Default
+        private List<String> packagesAffected = new ArrayList<>();
         private ChangeType changeType;
     }
 
@@ -148,10 +151,7 @@ public class LlmScoringRequest {
         NEW, MODIFY, DELETE
     }
 
-    /**
-     * Code block change information - CRITICAL for scoring.
-     * Distinguishes NEW code blocks from MODIFIED code blocks.
-     */
+    /** distinguishes NEW code blocks from MODIFIED ones */
     @Data
     @Builder
     @NoArgsConstructor
@@ -164,9 +164,6 @@ public class LlmScoringRequest {
 
         private Operation operation;
 
-        /**
-         * location
-         */
         private String file;
         private int startLine;
         private int endLine;
@@ -174,9 +171,6 @@ public class LlmScoringRequest {
         private int bodyStartLine;
         private int bodyEndLine;
 
-        /**
-         * change metrics
-         */
         private int linesAdded;
         private int linesDeleted;
         private int totalLinesChanged;
@@ -189,9 +183,6 @@ public class LlmScoringRequest {
         // body-only physical code lines (`{` ... `}`, excluding comments/blanks). Used as L in driver score
         private int bodyCodeLines;
 
-        /**
-         * Complexity metrics (CRITICAL for scoring)
-         */
         private int nonCommentCodeStatements;
         private int directInvocationCount;
         private int effectiveInvocationsChanged;
@@ -202,16 +193,13 @@ public class LlmScoringRequest {
         private int fanOut;
         private long npath;
 
-        /**
-         * For MODIFY: the complexity BEFORE the change
-         */
+        /** for MODIFY: the complexity BEFORE the change */
         private Integer previousCyclomaticComplexity;
         private Integer previousCognitiveComplexity;
 
         private String visibility;
         private boolean isConstructor;
         private boolean isTest;
-        private List<String> annotations;
 
         @Builder.Default
         private List<CallerInfo> callers = new ArrayList<>();
@@ -220,10 +208,7 @@ public class LlmScoringRequest {
         private int omittedCallerCount;
         private int omittedProductionCallerCount;
 
-        /**
-         * PMD and SpotBugs diagnostics for this method.
-         * Used by LLM to assess code quality and identify issues.
-         */
+        /** PMD and SpotBugs diagnostics for this method */
         @Builder.Default
         private List<DiagnosticInfo> diagnostics = new ArrayList<>();
 
@@ -257,10 +242,7 @@ public class LlmScoringRequest {
         }
     }
 
-    /**
-     * Caller information from JDTLS for blast radius analysis.
-     * Provides rich context for LLM to assess impact of changes.
-     */
+    /** caller information from JDTLS, for blast radius analysis */
     @Data
     @Builder
     @NoArgsConstructor
@@ -270,23 +252,11 @@ public class LlmScoringRequest {
         private String file;
         private int line;
         private boolean isTestCaller;
-
-        /**
-         * Symbol kind (method, constructor, lambda, etc.)
-         */
         private String kind;
-
-        /**
-         * Fully qualified symbol identifier
-         */
         private String symbol;
-
         private boolean isDeprecated;
 
-        /**
-         * Number of call sites from this caller to the target method.
-         * Multiple calls from same caller indicate tighter coupling.
-         */
+        /** call sites from this caller to the target method; more than one indicates tighter coupling */
         private int callSiteCount;
     }
 

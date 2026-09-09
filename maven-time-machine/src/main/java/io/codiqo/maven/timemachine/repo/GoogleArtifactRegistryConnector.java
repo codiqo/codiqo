@@ -31,6 +31,7 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManagerFactory;
 
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.maven.artifact.repository.metadata.SnapshotVersion;
@@ -208,7 +209,7 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
             return Optional.empty();
         }
         Matcher matcher = filenamePattern.matcher(resourceName.substring(lastSlash + 1));
-        if (!matcher.matches()) {
+        if (BooleanUtils.negate(matcher.matches())) {
             return Optional.empty();
         }
         SnapshotVersion sv = new SnapshotVersion();
@@ -269,7 +270,7 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
         static GoogleArtifactRegistryLocation parse(RemoteRepository repo) {
             URI uri = URI.create(repo.getUrl());
             String host = uri.getHost();
-            if (Objects.isNull(host) || !host.endsWith(HOST_SUFFIX)) {
+            if (Objects.isNull(host) || BooleanUtils.negate(host.endsWith(HOST_SUFFIX))) {
                 throw new IllegalArgumentException(invalidUrlMessage(repo));
             }
             List<String> segments = Arrays.asList(StringUtils.split(Optional.ofNullable(uri.getPath()).orElse(StringUtils.EMPTY), RESOURCE_SEPARATOR));

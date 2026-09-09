@@ -1,35 +1,23 @@
 package io.codiqo.maven.populator;
 
-import java.io.BufferedOutputStream;
-import java.io.File;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.time.Duration;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.CharUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.maven.plugin.logging.Log;
 
-import com.fasterxml.jackson.annotation.JsonInclude.Include;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.SerializationFeature;
-import tools.jackson.databind.util.StdDateFormat;
-import tools.jackson.dataformat.yaml.YAMLMapper;
-
 import io.codiqo.api.RunArgs;
-import io.codiqo.client.model.AnalysisResultModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CommitModel;
 import io.codiqo.client.model.DiagnosticModel;
@@ -37,7 +25,6 @@ import io.codiqo.client.model.ModuleModel;
 import io.codiqo.client.model.ModuleQualityModel;
 import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.client.model.ProjectQualityModel;
-import io.codiqo.llm.LlmResponseMapper;
 import io.codiqo.llm.PromptBuilder.PromptContext;
 import io.codiqo.llm.ReportBuilder.ReportContext;
 import io.codiqo.llm.SubmissionToRequestMapper;
@@ -48,6 +35,7 @@ import io.codiqo.llm.client.ScoringClient.ScoringResult;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import io.codiqo.maven.logging.MavenMessageReporter;
+import io.codiqo.submit.AnalysisResultDump;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.submit.SubmissionPopulator;
 import lombok.RequiredArgsConstructor;
@@ -56,6 +44,7 @@ import lombok.RequiredArgsConstructor;
 public class LlmScoringPopulator implements SubmissionPopulator {
     private final Log log;
     private final ExecutorService executor;
+    private final boolean preferYaml;
 
     @Override
     public void accept(SubmissionContext ctx) {
@@ -64,61 +53,62 @@ public class LlmScoringPopulator implements SubmissionPopulator {
         StopWatch stopWatch = StopWatch.createStarted();
 
         MavenMessageReporter reporter = new MavenMessageReporter(log);
-        try (LlmScoringClient client = new LlmScoringClient(args, executor, reporter)) {
-            SubmissionToRequestMapper mapper = new SubmissionToRequestMapper(args);
-            LlmScoringRequest request = mapper.apply(submission);
-            PromptContext promptContext = buildPromptContext(submission, args);
+        for (;;) {
+            try (LlmScoringClient client = new LlmScoringClient(args, executor, reporter)) {
+                SubmissionToRequestMapper mapper = new SubmissionToRequestMapper(args);
+                LlmScoringRequest request = mapper.apply(submission);
+                PromptContext promptContext = buildPromptContext(submission, args);
 
-            Params params = ScoringClient.Params.builder()
-                    .request(request)
-                    .context(promptContext)
-                    .handler(new ScoringClient.StreamingHandler() {
-                        @Override
-                        public void onContent(String delta) {
-                            if (Objects.nonNull(delta)) {
-                                if (delta.length() > 0) {
-                                    log.info("LLM responding... (" + delta.length() + " chars)");
-                                }
-                            }
-                        }
-                        @Override
-                        public void onToolCall(String toolName) {
-                            log.info("Tool call: " + toolName);
-                        }
-                    }).build();
-            ScoringResult result = client.score(params);
+                Params params = ScoringClient.Params.builder()
+                        .request(request)
+                        .context(promptContext)
+                        .handler(progressHandler(log)).build();
+                ScoringResult result = client.score(params);
 
-            stopWatch.stop();
-            Duration duration = Duration.ofMillis(stopWatch.getTime());
+                stopWatch.stop();
+                Duration duration = Duration.ofMillis(stopWatch.getTime());
 
-            ctx.setLlmScoringResponse(result.getResponse());
-            ctx.setLlmScoringResult(result);
-            ctx.setLlmAnalysisDuration(duration);
-            ctx.setLlmModel(args.getLlmModel());
+                ctx.setLlmScoringResponse(result.getResponse());
+                ctx.setLlmScoringResult(result);
+                ctx.setLlmAnalysisDuration(duration);
+                ctx.setLlmModel(args.getLlmModel());
 
-            LlmScoringResponse response = result.getResponse();
-            log.info(String.format("LLM Score: %.0f (%s) | Review: %d/10 | %dms | %d tokens | %d bugs",
-                    response.getScore(),
-                    response.getChangeClassification(),
-                    response.getRequiresSeniorReview(),
-                    duration.toMillis(),
-                    result.getTotalTokens(),
-                    response.getTotalBugCount()));
+                LlmScoringResponse response = result.getResponse();
+                log.info(String.format(Locale.ROOT, "LLM Score: %.0f (%s) | Review: %d/10 | %dms | %d tokens | %d bugs",
+                        response.getScore(),
+                        response.getChangeClassification(),
+                        response.getRequiresSeniorReview(),
+                        duration.toMillis(),
+                        result.getTotalTokens(),
+                        response.getTotalBugCount()));
 
-            /**
-             * the console report is the point of a local scoring run, so it is not gated on
-             * dumpAnalysis — that flag governs writing the submission document to disk, which is a
-             * separate concern. This populator only runs on the local-LLM path; the CI goal
-             * overrides doLlmScoring and submits instead, where the check mojos already print.
-             */
-            printConsoleReport(ctx, result, request, duration);
+                // the console report is the point of a local scoring run; dumpAnalysis only governs writing to disk
+                printConsoleReport(ctx, result, request, duration);
 
-            if (args.isDumpAnalysis()) {
-                dumpResultYaml(submission, result, duration, args);
+                if (args.isDumpAnalysis()) {
+                    new AnalysisResultDump(args, preferYaml, ctx.getLogFactory().getLogger(AnalysisResultDump.class))
+                            .accept(submission, result, duration);
+                }
+                return;
+            } catch (Exception err) {
+                ExceptionUtils.wrapAndThrow(err);
             }
-        } catch (Exception err) {
-            ExceptionUtils.wrapAndThrow(err);
         }
+    }
+    /** streams the model's progress to the build log. Shared with ScoreFromFileMojo, which drives the same client */
+    public static ScoringClient.StreamingHandler progressHandler(Log log) {
+        return new ScoringClient.StreamingHandler() {
+            @Override
+            public void onContent(String delta) {
+                if (StringUtils.isNotEmpty(delta)) {
+                    log.info("LLM responding... (" + delta.length() + " chars)");
+                }
+            }
+            @Override
+            public void onToolCall(String toolName) {
+                log.info("Tool call: " + toolName);
+            }
+        };
     }
     private void printConsoleReport(SubmissionContext ctx, ScoringResult result, LlmScoringRequest request, Duration duration) {
         ConsoleReportBuilder builder = new ConsoleReportBuilder(ctx.getArgs());
@@ -129,7 +119,7 @@ public class LlmScoringPopulator implements SubmissionPopulator {
                 .commitId(commit.getSha())
                 .author(commit.getAuthor())
                 .authorEmail(commit.getAuthorEmail())
-                .timestamp(commit.getTimestamp().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")))
+                .timestamp(commit.getTimestamp().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT)))
                 .commitMessage(commit.getMessage())
                 .branches(commit.getBranches())
                 .mergeCommit(Boolean.TRUE.equals(commit.getIsMerge()))
@@ -150,45 +140,6 @@ public class LlmScoringPopulator implements SubmissionPopulator {
         for (String line : StringUtils.splitPreserveAllTokens(builder.buildReport(result, request, reportContext), CharUtils.LF)) {
             log.info(line);
         }
-    }
-    private void dumpResultYaml(AnalysisSubmissionModel submission, ScoringResult result, Duration duration, RunArgs args) throws IOException {
-        AnalysisResultModel analysisResult = new AnalysisResultModel();
-
-        analysisResult.setProject(submission.getProject());
-        analysisResult.setCommit(submission.getCommit());
-        analysisResult.setFiles(submission.getFiles());
-        analysisResult.setDependencies(submission.getDependencies());
-        analysisResult.setDuplication(submission.getDuplication());
-        analysisResult.setProjectMetrics(submission.getProjectMetrics());
-        analysisResult.setProjectQuality(submission.getProjectQuality());
-        analysisResult.setFullProjectCoverage(submission.getFullProjectCoverage());
-        analysisResult.setBuildFailure(submission.getBuildFailure());
-
-        LlmResponseMapper mapper = new LlmResponseMapper();
-        mapper.mapToAnalysisResult(result.getResponse(), analysisResult);
-        analysisResult.setLlmAnalysis(LlmResponseMapper.mapLlmAnalysis(result, duration, args.getLlmModel()));
-
-        ObjectMapper yamlMapper = YAMLMapper.builder()
-                .changeDefaultPropertyInclusion(incl -> incl.withValueInclusion(Include.NON_NULL))
-                .defaultDateFormat(new StdDateFormat().withColonInTimeZone(true))
-                .enable(SerializationFeature.INDENT_OUTPUT)
-                .build();
-
-        String commitSha = submission.getCommit().getSha();
-        File outputDir = args.getOutputDirectory();
-        File file;
-        if (Objects.nonNull(outputDir)) {
-            FileUtils.forceMkdir(outputDir);
-            file = new File(outputDir, "codiqo-analysis-" + commitSha + ".yaml");
-        } else {
-            file = Files.createTempFile("codiqo-analysis-", ".yaml").toFile();
-        }
-        String output = yamlMapper.writeValueAsString(analysisResult);
-        try (BufferedOutputStream stream = new BufferedOutputStream(Files.newOutputStream(file.toPath()))) {
-            stream.write(output.getBytes(StandardCharsets.UTF_8));
-            stream.flush();
-        }
-        log.info("YAML analysis: " + file.getAbsolutePath());
     }
     public static PromptContext buildPromptContext(AnalysisSubmissionModel submission, RunArgs args) {
         ProjectMetricsModel projectMetrics = submission.getProjectMetrics();

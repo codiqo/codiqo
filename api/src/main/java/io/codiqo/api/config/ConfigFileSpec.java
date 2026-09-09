@@ -10,4 +10,5 @@ import io.codiqo.api.diff.IneffectiveLineFilter;
 public interface ConfigFileSpec {
     boolean matches(String path);
     IneffectiveLineFilter lineFilter();
+    String describe();
 }

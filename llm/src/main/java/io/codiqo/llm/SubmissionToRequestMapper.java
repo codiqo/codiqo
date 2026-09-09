@@ -1,8 +1,12 @@
 package io.codiqo.llm;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.IdentityHashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -11,10 +15,11 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
-import java.util.HashSet;
-import java.util.HashMap;
-import java.util.ArrayList;
 
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
+import lombok.experimental.Accessors;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.io.FilenameUtils;
@@ -25,10 +30,9 @@ import org.apache.commons.math3.stat.descriptive.rank.Percentile;
 import org.eclipse.jgit.patch.FormatError;
 import org.eclipse.jgit.patch.Patch;
 
-
 import io.codiqo.api.RunArgs;
-import io.codiqo.api.diff.EffectiveLineParser;
 import io.codiqo.api.diff.EffectiveLineParser.LineKind;
+import io.codiqo.api.diff.EffectiveLineParser;
 import io.codiqo.api.diff.IneffectiveLineFilter;
 import io.codiqo.api.diff.NestedBlockRanges;
 import io.codiqo.api.metrics.DriverScaler;
@@ -37,8 +41,8 @@ import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CallerModel;
 import io.codiqo.client.model.CloneLocationModel;
 import io.codiqo.client.model.CloneModel;
-import io.codiqo.client.model.CodeUnitModel;
 import io.codiqo.client.model.CodeUnitModel.OperationEnum;
+import io.codiqo.client.model.CodeUnitModel;
 import io.codiqo.client.model.CoverageModel;
 import io.codiqo.client.model.DiagnosticModel;
 import io.codiqo.client.model.DimensionStatsModel;
@@ -54,7 +58,6 @@ import io.codiqo.client.model.MetricsModel;
 import io.codiqo.client.model.ProjectQualityModel;
 import io.codiqo.client.model.SymbolKindModel;
 import io.codiqo.llm.lang.LanguageCapabilities;
-import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringRequest.CallerInfo;
 import io.codiqo.llm.schema.LlmScoringRequest.ChangeSummary;
 import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
@@ -62,10 +65,7 @@ import io.codiqo.llm.schema.LlmScoringRequest.ComplexityMetrics;
 import io.codiqo.llm.schema.LlmScoringRequest.CoverageInfo;
 import io.codiqo.llm.schema.LlmScoringRequest.DiagnosticInfo;
 import io.codiqo.llm.schema.LlmScoringRequest.FileChange;
-import lombok.AccessLevel;
-import lombok.Getter;
-import lombok.RequiredArgsConstructor;
-import lombok.experimental.Accessors;
+import io.codiqo.llm.schema.LlmScoringRequest;
 
 @RequiredArgsConstructor
 public class SubmissionToRequestMapper implements Function<AnalysisSubmissionModel, LlmScoringRequest> {
@@ -123,8 +123,8 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .revertCommit(Boolean.TRUE.equals(submission.getCommit().getIsRevert()))
                 .revertedCommitId(submission.getCommit().getRevertedCommitId())
                 .repository(submission.getProject().getCode())
-                .changeSummary(mapChangeSummary(files, codeBlockChanges))
-                .fileChanges(mapFileChanges(files))
+                .changeSummary(mapChangeSummary(files, codeBlockChanges, fileContext))
+                .fileChanges(mapFileChanges(files, fileContext))
                 .codeBlockChanges(codeBlockChanges)
                 .coverage(hasCoverageSource ? mapCoverage(submission, files) : null)
                 .complexity(mapComplexityMetrics(files))
@@ -412,12 +412,12 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .complexityThreshold(args.getHighComplexityThreshold())
                 .build();
     }
-    private static List<FileChange> mapFileChanges(List<FileChangeModel> files) {
-        return files.stream().map(SubmissionToRequestMapper::mapFileChange).collect(Collectors.toList());
+    private static List<FileChange> mapFileChanges(List<FileChangeModel> files, FileContext fileContext) {
+        return files.stream().map(file -> mapFileChange(file, fileContext)).collect(Collectors.toList());
     }
-    private static FileChange mapFileChange(FileChangeModel file) {
+    private static FileChange mapFileChange(FileChangeModel file, FileContext fileContext) {
         IneffectiveLineFilter filter = LanguageCapabilities.filterFor(file);
-        DiffStats stats = DiffStats.fromPatch(file.getDiff(), filter);
+        DiffStats stats = fileContext.diffStatsFor(file);
         return FileChange.builder()
                 .path(resolveEffectivePath(file))
                 .changeType(mapFileChangeType(file.getChangeType()))
@@ -437,8 +437,8 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
             if (CollectionUtils.isEmpty(file.getCodeUnits())) {
                 continue;
             }
-            DiffStats stats = DiffStats.fromPatch(file.getDiff(), LanguageCapabilities.filterFor(file));
-            if (!stats.effectiveChanges()) {
+            DiffStats stats = fileContext.diffStatsFor(file);
+            if (BooleanUtils.negate(stats.effectiveChanges())) {
                 continue;
             }
             for (CodeUnitModel codeUnit : file.getCodeUnits()) {
@@ -463,7 +463,6 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         int bodyStartLine = Optional.ofNullable(codeUnit.getLocation().getBodyStartLine()).orElse(0);
         int bodyEndLine = Optional.ofNullable(codeUnit.getLocation().getBodyEndLine()).orElse(0);
         String filePath = file.getPath();
-        boolean requiresLineFiltering = LanguageCapabilities.requiresLineFiltering(file);
 
         CodeBlockChange.CodeBlockChangeBuilder builder = CodeBlockChange.builder()
                 .name(codeUnit.getName())
@@ -482,12 +481,12 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         mapMetrics(codeUnit.getMetrics(), builder);
         mapCallers(codeUnit.getCallers(), builder);
         mapDiagnostics(codeUnit.getDiagnostics(), filePath, fileContext, builder);
-        mapChangeMetrics(codeUnit, filePath, bodyStartLine, bodyEndLine, startLine, endLine, requiresLineFiltering, fileContext, builder);
+        mapChangeMetrics(codeUnit, filePath, bodyStartLine, bodyEndLine, startLine, endLine, fileContext, builder);
 
         return builder.build();
     }
     private static void mapChangeMetrics(CodeUnitModel codeUnit, String filePath, int bodyStartLine, int bodyEndLine,
-            int startLine, int endLine, boolean requiresLineFiltering, FileContext fileContext, CodeBlockChange.CodeBlockChangeBuilder builder) {
+            int startLine, int endLine, FileContext fileContext, CodeBlockChange.CodeBlockChangeBuilder builder) {
         MetricsModel metrics = codeUnit.getMetrics();
 
         int nonCommentCodeLines = Optional.ofNullable(metrics.getNonCommentCodeLines())
@@ -573,7 +572,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .callSiteCount(CollectionUtils.size(caller.getCallSites()))
                 .build();
     }
-    private static ChangeSummary mapChangeSummary(List<FileChangeModel> files, List<CodeBlockChange> codeBlocks) {
+    private static ChangeSummary mapChangeSummary(List<FileChangeModel> files, List<CodeBlockChange> codeBlocks, FileContext fileContext) {
         int linesAdded = 0;
         int linesDeleted = 0;
         int testLinesAdded = 0;
@@ -592,21 +591,17 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         Set<String> packagesAffected = new HashSet<>();
         for (FileChangeModel file : files) {
             boolean isTest = Boolean.TRUE.equals(file.getIsTest());
-            DiffStats stats = DiffStats.fromPatch(file.getDiff(), LanguageCapabilities.filterFor(file));
-            if (!stats.effectiveChanges()) {
+            DiffStats stats = fileContext.diffStatsFor(file);
+            if (BooleanUtils.negate(stats.effectiveChanges())) {
                 continue;
             }
 
-            /**
-             * files without code units (config, resources) always count their lines
-             */
+            // files without code units (config, resources) always count their lines
             if (CollectionUtils.isEmpty(file.getCodeUnits())) {
                 linesAdded += stats.effectiveAdded();
                 linesDeleted += stats.effectiveDeleted();
 
-                /**
-                 * line-count-scored files (pom.xml, proto) contribute scored effort, so they count as changed files
-                 */
+                // line-count-scored files (pom.xml, proto) contribute scored effort, so they count as changed files
                 boolean lineCountScored = LanguageCapabilities.isLineCountScored(file);
                 if (lineCountScored) {
                     filesWithChanges++;
@@ -698,6 +693,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     }
     private static FileContext buildFileContext(List<FileChangeModel> files) {
         Set<String> testFiles = new HashSet<>();
+        Map<FileChangeModel, DiffStats> diffStatsByFile = new IdentityHashMap<>();
         Map<String, Set<Integer>> addedByFile = new HashMap<>();
         Map<String, Set<Integer>> effectiveAddedByFile = new HashMap<>();
         Map<String, Map<Integer, Integer>> effectiveDeletionAnchorsByFile = new HashMap<>();
@@ -712,8 +708,12 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
             if (CollectionUtils.isNotEmpty(blockRanges)) {
                 blockRangesByFile.put(path, blockRanges);
             }
+
+            IneffectiveLineFilter filter = LanguageCapabilities.filterFor(file);
+            // computed outside the diff guard: a file with no diff has to throw rather than read as a clean zero-line change
+            diffStatsByFile.put(file, DiffStats.fromPatch(file.getDiff(), filter));
+
             if (Objects.nonNull(file.getDiff())) {
-                IneffectiveLineFilter filter = LanguageCapabilities.filterFor(file);
                 Predicate<String> addedIneffective = filter.commentFilter();
                 Predicate<String> deletedIneffective = filter.commentOrImportFilter();
 
@@ -733,7 +733,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 }
             }
         }
-        return new FileContext(testFiles, addedByFile, effectiveAddedByFile, effectiveDeletionAnchorsByFile, blockRangesByFile);
+        return new FileContext(testFiles, diffStatsByFile, addedByFile, effectiveAddedByFile, effectiveDeletionAnchorsByFile, blockRangesByFile);
     }
     private static List<int[]> collectBlockRanges(List<CodeUnitModel> codeUnits) {
         List<int[]> toReturn = new ArrayList<>();
@@ -753,7 +753,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     private static int countEffectiveAddedInRange(Set<Integer> effectiveAdded, int startLine, int endLine, List<int[]> nestedRanges) {
         int count = 0;
         for (int line = startLine; line <= endLine; line++) {
-            if (effectiveAdded.contains(line) && !NestedBlockRanges.coversLine(nestedRanges, line)) {
+            if (effectiveAdded.contains(line) && BooleanUtils.negate(NestedBlockRanges.coversLine(nestedRanges, line))) {
                 count++;
             }
         }
@@ -763,7 +763,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         int count = 0;
         for (Map.Entry<Integer, Integer> entry : anchors.entrySet()) {
             int anchor = entry.getKey();
-            if (anchor >= startLine && anchor <= endLine + 1 && !NestedBlockRanges.coversAnchor(nestedRanges, anchor)) {
+            if (anchor >= startLine && anchor <= endLine + 1 && BooleanUtils.negate(NestedBlockRanges.coversAnchor(nestedRanges, anchor))) {
                 count += entry.getValue();
             }
         }
@@ -931,9 +931,18 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
     private static final class FileContext {
         private final Set<String> testFiles;
+        /**
+         * keyed on the model instance, not on its path: a deleted file's path is "/dev/null", so two deletions in
+         * one commit would share a key and each would read the other's line counts
+         */
+        private final Map<FileChangeModel, DiffStats> diffStatsByFile;
         private final Map<String, Set<Integer>> addedLinesByFile;
         private final Map<String, Set<Integer>> effectiveAddedLinesByFile;
         private final Map<String, Map<Integer, Integer>> effectiveDeletionAnchorsByFile;
         private final Map<String, List<int[]>> blockRangesByFile;
+
+        DiffStats diffStatsFor(FileChangeModel file) {
+            return diffStatsByFile.get(file);
+        }
     }
 }

@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -47,15 +48,8 @@ import io.codiqo.gradle.model.ModuleData;
 import io.codiqo.submit.AnalysisSubmitter;
 import io.codiqo.submit.CommitExclusions;
 import io.codiqo.submit.CommitExclusions.Exclusion;
-import io.codiqo.submit.CommitModelPopulator;
-import io.codiqo.submit.DuplicationReportPopulator;
-import io.codiqo.submit.EffectiveChangePopulator;
-import io.codiqo.submit.FileAnalysisPopulator;
-import io.codiqo.submit.IndexModelPopulator;
-import io.codiqo.submit.MetricsAggregator;
-import io.codiqo.submit.ModuleLevelMetricsPopulator;
 import io.codiqo.submit.OutputSerializer;
-import io.codiqo.submit.ScoringConfigs;
+import io.codiqo.submit.SubmissionAssembly;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
@@ -202,7 +196,7 @@ public class AnalysisEngine {
              * disarming its staleness guard and letting one commit be scored with another commit's coverage.
              */
             if (BooleanUtils.negate(merged.setLastModified(oldestPart))) {
-                throw new IOException(String.format(
+                throw new IOException(String.format(Locale.ROOT,
                         "could not stamp %s with the oldest contributing exec part's time (%d); refusing to continue because the coverage staleness guard would be bypassed",
                         merged.getAbsolutePath(), oldestPart));
             }
@@ -239,7 +233,6 @@ public class AnalysisEngine {
         buildFailure.setReason(reason);
         buildFailure.setCategory(AnalysisExcludeCategory.BUILD_FAILURE);
         buildFailure.setDetail(request.getBuildFailureDetail());
-        ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
         ctx.getSubmissionModel().setBuildFailure(buildFailure);
 
         List<FileChangeModel> files = ctx.getSubmissionModel().getFiles();
@@ -287,16 +280,7 @@ public class AnalysisEngine {
                 args, index, analysis, workTree, logFactory, request.getRootCode(), request.getRootName(), clientInfo(request));
 
         new GradleProjectModelPopulator(logFactory.getLogger(GradleProjectModelPopulator.class)).accept(toReturn);
-        new CommitModelPopulator().accept(toReturn);
-        new ModuleLevelMetricsPopulator().accept(toReturn);
-        new FileAnalysisPopulator().accept(toReturn);
-        new EffectiveChangePopulator().accept(toReturn);
-
-        /**
-         * only the driver-score statistics are populated: no coverage, diagnostics or CPD is captured for a failed
-         * build, so those aggregates stay absent rather than being fabricated as zeros
-         */
-        MetricsAggregator.populateDriverMetrics(toReturn);
+        SubmissionAssembly.degraded(toReturn);
         return toReturn;
     }
     /**
@@ -309,8 +293,7 @@ public class AnalysisEngine {
         SubmissionContext toReturn = SubmissionContext.create(
                 args, null, analysis, workTree, logFactory, request.getRootCode(), request.getRootName(), clientInfo(request));
 
-        new CommitModelPopulator().accept(toReturn);
-        new FileAnalysisPopulator().accept(toReturn);
+        SubmissionAssembly.diffOnly(toReturn);
         return toReturn;
     }
     private static ClientInfoModel clientInfo(AnalysisRequest request) {
@@ -450,7 +433,7 @@ public class AnalysisEngine {
                      */
                     SubmissionContext excludeCtx = SubmissionContext.create(
                             args, null, analysis, workTree, logFactory, request.getRootCode(), request.getRootName(), clientInfo);
-                    new FileAnalysisPopulator().accept(excludeCtx);
+                    SubmissionAssembly.excluded(excludeCtx);
                     reportExclusion(request, args, args.getCommitId(), excluded.get(), excludeCtx.getSubmissionModel().getFiles(), log);
                     return;
                 }
@@ -470,16 +453,8 @@ public class AnalysisEngine {
                         clientInfo);
 
                 new GradleProjectModelPopulator(logFactory.getLogger(GradleProjectModelPopulator.class)).accept(ctx);
-                new CommitModelPopulator().accept(ctx);
-                new ModuleLevelMetricsPopulator().accept(ctx);
-                new FileAnalysisPopulator().accept(ctx);
-                new EffectiveChangePopulator().accept(ctx);
-                new IndexModelPopulator().accept(ctx);
+                SubmissionAssembly.full(ctx);
 
-                new DuplicationReportPopulator().accept(ctx);
-                new MetricsAggregator().accept(ctx);
-
-                ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
                 new OutputSerializer(true, logFactory.getLogger(OutputSerializer.class)).accept(ctx);
 
                 // the dump is written first, so a submission the backend rejects still leaves the YAML to inspect

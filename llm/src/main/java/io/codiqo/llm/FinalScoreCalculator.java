@@ -7,6 +7,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -77,18 +78,20 @@ public class FinalScoreCalculator {
         Map<String, FileDiffClassification> classificationByFile = buildClassificationByFile(response);
 
         double baseEffort = effective.getBaseEffort();
-        if (Objects.nonNull(response.getEffortBreakdown())) {
-            response.getEffortBreakdown().setBaseEffortScore(Precision.round(baseEffort, ROUNDING_PRECISION));
-            response.getEffortBreakdown().setVolumeScore(toVolumeScore(effective, adjustment));
-            response.getEffortBreakdown().setFileEfforts(
+        EffortBreakdown breakdown = response.getEffortBreakdown();
+        if (Objects.nonNull(breakdown)) {
+            breakdown.setBaseEffortScore(Precision.round(baseEffort, ROUNDING_PRECISION));
+            breakdown.setVolumeScore(toVolumeScore(effective, adjustment));
+            breakdown.setFileEfforts(
                     effective.getFileEfforts().stream()
                             .map(fe -> toFileEffortView(fe, classificationByFile))
                             .collect(Collectors.toList()));
         }
 
+        QualityMultiplier qualityMultiplier = response.getQualityMultiplier();
         double rawQualityMultiplier = 1.0;
-        if (Objects.nonNull(response.getQualityMultiplier())) {
-            rawQualityMultiplier = response.getQualityMultiplier().getFinalMultiplier();
+        if (Objects.nonNull(qualityMultiplier)) {
+            rawQualityMultiplier = qualityMultiplier.getFinalMultiplier();
         }
 
         /**
@@ -103,10 +106,10 @@ public class FinalScoreCalculator {
         double clampedQualityMultiplier = Math.max(
                 args.getQualityMultiplierMin(),
                 Math.min(qualityMultiplierMax, rawQualityMultiplier));
-        if (Objects.isNull(response.getQualityMultiplier())) {
+        if (Objects.isNull(qualityMultiplier)) {
             response.setQualityMultiplier(QualityMultiplier.builder().finalMultiplier(clampedQualityMultiplier).build());
         } else {
-            response.getQualityMultiplier().setFinalMultiplier(clampedQualityMultiplier);
+            qualityMultiplier.setFinalMultiplier(clampedQualityMultiplier);
         }
 
         /**
@@ -118,17 +121,17 @@ public class FinalScoreCalculator {
          */
         boolean hasCodeChanges = Objects.isNull(request) || CollectionUtils.isNotEmpty(request.getCodeBlockChanges());
 
+        ArchitectureEffortBonus bonus = response.getArchitectureEffortBonus();
         int architectureImpactScore = 0;
         double qualityFactor = 1.0;
-        if (hasCodeChanges && Objects.nonNull(response.getArchitectureEffortBonus())) {
-            architectureImpactScore = Math.max(0, Math.min(MAX_ARCHITECTURE_IMPACT, response.getArchitectureEffortBonus().getArchitectureImpactScore()));
-            qualityFactor = response.getArchitectureEffortBonus().getQualityFactor();
-            qualityFactor = Math.max(0.0, Math.min(1.0, qualityFactor));
+        if (hasCodeChanges && Objects.nonNull(bonus)) {
+            architectureImpactScore = Math.max(0, Math.min(MAX_ARCHITECTURE_IMPACT, bonus.getArchitectureImpactScore()));
+            qualityFactor = Math.max(0.0, Math.min(1.0, bonus.getQualityFactor()));
         }
 
         double architectureBonus = architectureImpactScore * baseEffort * args.getArchitectureBonusFactor() * qualityFactor;
         architectureBonus = Precision.round(architectureBonus, ROUNDING_PRECISION);
-        String bonusCalculation = String.format(
+        String bonusCalculation = String.format(Locale.ROOT,
                 "Impact Score (%d/10) × Base Effort (%.2f) × Bonus Factor (%.3f) × Quality Factor (%.2f) = +%.2f",
                 architectureImpactScore,
                 baseEffort,
@@ -136,7 +139,7 @@ public class FinalScoreCalculator {
                 qualityFactor,
                 architectureBonus);
 
-        if (Objects.isNull(response.getArchitectureEffortBonus())) {
+        if (Objects.isNull(bonus)) {
             response.setArchitectureEffortBonus(ArchitectureEffortBonus.builder()
                     .architectureImpactScore(architectureImpactScore)
                     .qualityFactor(qualityFactor)
@@ -145,7 +148,6 @@ public class FinalScoreCalculator {
                     .bonusPoints(architectureBonus)
                     .build());
         } else {
-            ArchitectureEffortBonus bonus = response.getArchitectureEffortBonus();
             bonus.setArchitectureImpactScore(architectureImpactScore);
             bonus.setQualityFactor(qualityFactor);
             bonus.setBaseEffort(Precision.round(baseEffort, ROUNDING_PRECISION));
@@ -155,7 +157,7 @@ public class FinalScoreCalculator {
 
         double finalScore = baseEffort * clampedQualityMultiplier + architectureBonus;
         finalScore = Math.round(finalScore);
-        String scoreCalculation = String.format("%.2f × %.2f + %.2f = %.2f ≈ %.0f",
+        String scoreCalculation = String.format(Locale.ROOT, "%.2f × %.2f + %.2f = %.2f ≈ %.0f",
                 baseEffort,
                 clampedQualityMultiplier,
                 architectureBonus,
@@ -207,13 +209,14 @@ public class FinalScoreCalculator {
         if (Objects.isNull(request) || CollectionUtils.isEmpty(request.getFileChanges()) || CollectionUtils.isEmpty(preComputed.getCodeBlockEfforts())) {
             return toReturn;
         }
-        if (diffClassification(response).isEmpty()) {
+        Optional<DiffClassification> classification = diffClassification(response);
+        if (classification.isEmpty()) {
             return toReturn;
         }
 
         Map<String, List<CodeBlockEffort>> blocksByFile = new HashMap<>();
         for (CodeBlockEffort cbe : preComputed.getCodeBlockEfforts()) {
-            if (!cbe.isConfig()) {
+            if (BooleanUtils.negate(cbe.isConfig())) {
                 blocksByFile.computeIfAbsent(cbe.getFile(), k -> new ArrayList<>()).add(cbe);
             }
         }
@@ -223,11 +226,11 @@ public class FinalScoreCalculator {
             fileChangesByPath.put(fc.getPath(), fc);
         }
 
-        for (FileDiffClassification entry : CollectionUtils.emptyIfNull(response.getEffortBreakdown().getDiffClassification().getPerFile())) {
+        for (FileDiffClassification entry : CollectionUtils.emptyIfNull(classification.get().getPerFile())) {
             List<CodeBlockEffort> blocks = blocksByFile.get(entry.getFile());
             FileChange fc = fileChangesByPath.get(entry.getFile());
             boolean hasMovedLines = CollectionUtils.isNotEmpty(entry.getMovedAdded()) || CollectionUtils.isNotEmpty(entry.getMovedDeleted());
-            if (CollectionUtils.isEmpty(blocks) || Objects.isNull(fc) || StringUtils.isBlank(fc.getDiff()) || !hasMovedLines) {
+            if (CollectionUtils.isEmpty(blocks) || Objects.isNull(fc) || StringUtils.isBlank(fc.getDiff()) || BooleanUtils.negate(hasMovedLines)) {
                 continue;
             }
 
@@ -273,28 +276,15 @@ public class FinalScoreCalculator {
      * Explicit LLM categories are authoritative; every other categorizable block falls back to the
      * MECHANICAL coefficient rather than the neutral 1.0.
      *
-     * <p>The fallback is <em>not</em> a reading of the model's silence. Omission tracks how many blocks
-     * the model was asked to label, not what any block contains: measured over 1,149 analyses, 3% of
-     * blocks are uncategorized on commits with ≤5 blocks and 68% on commits with 40+. The model returns
-     * `finishReason=stop` with output budget to spare — it simply emits a partial list on long
-     * enumerations. So an uncategorized block carries no signal at all, and the fallback has to be the
-     * empirical prior rather than a neutral guess: of the MODIFY blocks the model does label, 82% are
-     * MECHANICAL (mean coefficient 0.77); the NEW split is similar.
+     * <p>The fallback is <em>not</em> a reading of the model's silence: omission tracks how many blocks
+     * the model was asked to label, not what any block contains (3% uncategorized on commits with ≤5
+     * blocks, 68% on commits with 40+), so it carries no signal and the fallback has to be the empirical
+     * prior — 82% of the MODIFY blocks the model does label are MECHANICAL. Leaving them at 1.0 coupled
+     * the score to the model's verbosity.
      *
-     * <p>Leaving MODIFY at 1.0 coupled the score to the model's verbosity — the same commit scored 325
-     * with 176 blocks uncategorized and 381 with 263, on identical inputs and an identical quality
-     * multiplier, because uncategorized MODIFY work was billed at full price. Flooring both operations
-     * removes that coupling; it damps run-to-run variance as much as it corrects the bias.
-     *
-     * <p>The floor applies to degraded (build-failure) analyses too. It was once skipped there on the
-     * belief that such a prompt asks for no categories at all, but the prompt requests one per code unit
-     * in every mode and the model merely omits most of them under block-count pressure — 2.9% labelled
-     * on an 867-block commit. Skipping therefore left 97% of blocks at the neutral 1.0 where a built
-     * commit floors them to 0.7, so a broken build out-scored the same work built. The parsed/unparsed
-     * asymmetry that motivated the skip is closed instead by flooring the blank-signature synthetics
-     * alongside the parsed blocks: a file the index could not parse is the least understood work in the
-     * commit, so neutral was never right for it either. Config units keep the neutral default because
-     * they are not code; deletion blocks are handled separately below.
+     * <p>The floor applies in every mode, degraded included, and to the blank-signature synthetics as
+     * well: a file the index could not parse is the least understood work in the commit. Config units
+     * keep the neutral default because they are not code; deletion blocks are handled separately below.
      */
     private Map<String, Double> buildPerBlockCoeff(LlmScoringResponse response, PreComputedScores preComputed) {
         Set<String> knownBlocks = preComputed.getCodeBlockEfforts().stream()
@@ -366,13 +356,12 @@ public class FinalScoreCalculator {
         return toReturn;
     }
     /**
-     * Coverage is otherwise invisible — the label is not persisted per block, so a commit whose
-     * categories were mostly omitted is indistinguishable from one the model judged mechanical
-     * throughout. It degraded silently for a long time before anyone looked, hence the loud branch.
+     * coverage is otherwise invisible — the label is not persisted per block, so a commit whose
+     * categories were mostly omitted is indistinguishable from one the model judged mechanical throughout
      */
     private void logCategoryCoverage(int categorizable, int uncategorized) {
         if (categorizable > 0) {
-            String message = String.format("block categories: %d/%d labelled by the LLM, %d fell back to MECHANICAL",
+            String message = String.format(Locale.ROOT, "block categories: %d/%d labelled by the LLM, %d fell back to MECHANICAL",
                     categorizable - uncategorized, categorizable, uncategorized);
             if (uncategorized > categorizable * LOW_CATEGORY_COVERAGE_RATIO) {
                 log.warn(message + " — most of this commit's difficulty signal is a fallback, not a judgement");
@@ -391,14 +380,15 @@ public class FinalScoreCalculator {
         };
     }
     private PerFileResult computePerFileFactors(LlmScoringResponse response, LlmScoringRequest request) {
-        if (diffClassification(response).isEmpty()) {
+        Optional<DiffClassification> opt = diffClassification(response);
+        if (opt.isEmpty()) {
             return PerFileResult.empty();
         }
         if (Objects.isNull(request) || CollectionUtils.isEmpty(request.getFileChanges())) {
             return PerFileResult.empty();
         }
 
-        DiffClassification classification = response.getEffortBreakdown().getDiffClassification();
+        DiffClassification classification = opt.get();
         if (CollectionUtils.isEmpty(classification.getPerFile())) {
             return PerFileResult.empty();
         }
@@ -423,7 +413,7 @@ public class FinalScoreCalculator {
                 log.log(Level.DEBUG, "diffClassification.skipReason=unknownFile file='%s'", entry.getFile());
                 continue;
             }
-            if (!fc.isLinesJustificationRequired()) {
+            if (BooleanUtils.negate(fc.isLinesJustificationRequired())) {
                 log.log(Level.DEBUG, "diffClassification.skipReason=notEligible file='%s' language='%s'", entry.getFile(), fc.getLanguage());
                 continue;
             }
@@ -534,9 +524,8 @@ public class FinalScoreCalculator {
         classification.setMovedLines(classification.getPerFile().stream().mapToInt(FileDiffClassification::getMovedLines).sum());
     }
     /**
-     * The classification the whole diff-adjustment path reads, resolved in one place. Both hops are optional on the
-     * wire — a response may omit the breakdown entirely, or carry one with no classification — and five call sites
-     * need the same two-hop walk, so re-walking it inline made each of their guards longer than the work they guard.
+     * the classification the whole diff-adjustment path reads, resolved in one place. Both hops are optional on the
+     * wire: a response may omit the breakdown entirely, or carry one with no classification
      */
     private static Optional<DiffClassification> diffClassification(LlmScoringResponse response) {
         return Optional.ofNullable(response.getEffortBreakdown()).map(EffortBreakdown::getDiffClassification);
@@ -744,22 +733,24 @@ public class FinalScoreCalculator {
     public ValidationReport validate(LlmScoringResponse response, LlmScoringRequest request) {
         List<ValidationFailure> failures = new ArrayList<>();
 
-        if (diffClassification(response).isEmpty()) {
+        Optional<DiffClassification> opt = diffClassification(response);
+        if (opt.isEmpty()) {
             return new ValidationReport(failures);
         }
         if (CollectionUtils.isEmpty(request.getFileChanges())) {
             return new ValidationReport(failures);
         }
 
+        DiffClassification classification = opt.get();
         List<MoveCandidate> moveCandidates = movedLineDetector.detect(request);
-        validateConfirmedMoveIds(response.getEffortBreakdown().getDiffClassification(), moveCandidates, failures);
+        validateConfirmedMoveIds(classification, moveCandidates, failures);
         // when detection is disabled, apply() strips movedPairs — don't burn retries on them here
         if (args.isMoveDetectionEnabled()) {
-            validateMovedPairs(response.getEffortBreakdown().getDiffClassification(), request, moveCandidates, failures);
+            validateMovedPairs(classification, request, moveCandidates, failures);
         }
 
         // explicit "perFile": null from the LLM bypasses the @Builder.Default empty list
-        if (CollectionUtils.isEmpty(response.getEffortBreakdown().getDiffClassification().getPerFile())) {
+        if (CollectionUtils.isEmpty(classification.getPerFile())) {
             return new ValidationReport(failures);
         }
 
@@ -768,9 +759,9 @@ public class FinalScoreCalculator {
             fileChangesByPath.put(fc.getPath(), fc);
         }
 
-        for (FileDiffClassification entry : response.getEffortBreakdown().getDiffClassification().getPerFile()) {
+        for (FileDiffClassification entry : classification.getPerFile()) {
             FileChange fc = fileChangesByPath.get(entry.getFile());
-            if (Objects.isNull(fc) || !fc.isLinesJustificationRequired() || StringUtils.isBlank(fc.getDiff())) {
+            if (Objects.isNull(fc) || BooleanUtils.negate(fc.isLinesJustificationRequired()) || StringUtils.isBlank(fc.getDiff())) {
                 continue;
             }
 
@@ -783,7 +774,7 @@ public class FinalScoreCalculator {
             List<String> unknownBlocks = new ArrayList<>();
             if (MapUtils.isNotEmpty(entry.getBlockKinds())) {
                 for (String blockId : entry.getBlockKinds().keySet()) {
-                    if (!validBlockIds.contains(blockId)) {
+                    if (BooleanUtils.negate(validBlockIds.contains(blockId))) {
                         unknownBlocks.add(blockId);
                     }
                 }
@@ -818,7 +809,7 @@ public class FinalScoreCalculator {
 
             List<String> unknownIds = new ArrayList<>();
             for (String id : classification.getConfirmedMoveIds()) {
-                if (Objects.isNull(id) || !validSet.contains(id)) {
+                if (Objects.isNull(id) || BooleanUtils.negate(validSet.contains(id))) {
                     unknownIds.add(String.valueOf(id));
                 }
             }
@@ -866,13 +857,13 @@ public class FinalScoreCalculator {
                 MovedPair pair = parsed.get();
                 UnifiedDiffLines fromDiff = diffLinesByFile.get(pair.getFromFile());
                 UnifiedDiffLines toDiff = diffLinesByFile.get(pair.getToFile());
-                if (Objects.isNull(fromDiff) || !fromDiff.getCandidateDeletedLines().contains(pair.getFromLine())
-                        || Objects.isNull(toDiff) || !toDiff.getCandidateAddedLines().contains(pair.getToLine())) {
+                if (Objects.isNull(fromDiff) || BooleanUtils.negate(fromDiff.getCandidateDeletedLines().contains(pair.getFromLine()))
+                        || Objects.isNull(toDiff) || BooleanUtils.negate(toDiff.getCandidateAddedLines().contains(pair.getToLine()))) {
                     offending.add(raw);
                     continue;
                 }
-                if (!claimedDeleted.add(pair.getFromFile() + ":" + pair.getFromLine())
-                        || !claimedAdded.add(pair.getToFile() + ":" + pair.getToLine())) {
+                if (BooleanUtils.negate(claimedDeleted.add(pair.getFromFile() + ":" + pair.getFromLine()))
+                        || BooleanUtils.negate(claimedAdded.add(pair.getToFile() + ":" + pair.getToLine()))) {
                     offending.add(raw);
                 }
             }
@@ -884,7 +875,7 @@ public class FinalScoreCalculator {
     private static List<String> unknownLines(List<Integer> cited, Set<Integer> valid) {
         List<String> unknown = new ArrayList<>();
         for (Integer line : CollectionUtils.emptyIfNull(cited)) {
-            if (Objects.isNull(line) || !valid.contains(line)) {
+            if (Objects.isNull(line) || BooleanUtils.negate(valid.contains(line))) {
                 unknown.add(String.valueOf(line));
             }
         }

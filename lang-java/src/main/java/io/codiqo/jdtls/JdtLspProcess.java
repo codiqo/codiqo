@@ -4,26 +4,29 @@ import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
-import java.util.ArrayList;
 
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.SystemUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.rauschig.jarchivelib.Archiver;
 import org.rauschig.jarchivelib.ArchiverFactory;
 import org.rauschig.jarchivelib.FileType;
+import org.slf4j.event.Level;
 import org.zeroturnaround.process.JavaProcess;
 import org.zeroturnaround.process.Processes;
-
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
@@ -31,16 +34,24 @@ import io.codiqo.api.logging.LogFactory;
 import io.codiqo.util.Fetch;
 
 class JdtLspProcess implements Closeable {
-    private static final int MIN_JDK_ZGC = 15;
-    private static final int MIN_JDK_NATIVE_ACCESS = 16;
+    private static final int MIN_JDK_LANGUAGE_SERVER = 21;
+
+    /** the one threshold the fork can still miss: requireLanguageServerJdk admits 21 and 22 */
     private static final int MIN_JDK_SUN_MISC_UNSAFE_FLAG = 23;
+
+    private static final String JAR_EXTENSION = "jar";
+    private static final long GRACEFUL_SHUTDOWN_MINUTES = 1L;
+    private static final long FORCED_SHUTDOWN_SECONDS = 30L;
 
     private final CompletableFuture<Integer> exitFuture = new CompletableFuture<>();
     private final Log log;
     private final JavaProcess process;
+    private final File dataDir;
 
     public JdtLspProcess(LogFactory logFactory, RunArgs args, Fetch fetch, int port) throws IOException {
         this.log = logFactory.getLogger(getClass());
+
+        Runtime.Version spawnedJavaVersion = requireLanguageServerJdk(args);
 
         Properties lookup = new Properties();
         OSDetector detector = new OSDetector(logFactory);
@@ -58,12 +69,13 @@ class JdtLspProcess implements Closeable {
         Path launcherJar;
         Path config = tempDir.resolve(os);
         Path data = Files.createTempDirectory("data-" + args.effectiveJdtlsVersion());
-        data.toFile().deleteOnExit();
+        this.dataDir = data.toFile();
+        this.dataDir.deleteOnExit();
 
         try (Stream<Path> files = Files.list(tempDir.resolve("plugins"))) {
             launcherJar = files
                     .filter(p -> p.getFileName().toString().startsWith("org.eclipse.equinox.launcher_"))
-                    .filter(p -> p.toString().endsWith(".jar"))
+                    .filter(p -> JAR_EXTENSION.equals(FilenameUtils.getExtension(p.toString())))
                     .findFirst()
                     .orElseThrow(() -> new IllegalStateException("could not find 'equinox' launcher jar"));
         }
@@ -77,7 +89,7 @@ class JdtLspProcess implements Closeable {
         cmd.add(java);
         cmd.addAll(List.of("-server", "-Xlog:disable"));
         if (Objects.nonNull(args.getJdtDebugPort())) {
-            cmd.add("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=*:" + args.getJdtDebugPort());
+            cmd.add("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=localhost:" + args.getJdtDebugPort());
         }
         cmd.addAll(List.of("-XX:+UnlockExperimentalVMOptions", "-XX:+UnlockDiagnosticVMOptions", "-XX:+UseStringDeduplication"));
         cmd.addAll(
@@ -148,7 +160,7 @@ class JdtLspProcess implements Closeable {
         }
 
         if (args.isJdtUseSharedIndex()) {
-            cmd.add("-Djdt.core.sharedIndexLocation=" + RunArgs.JDT_SHARED_INDEX.resolve(args.effectiveJdtlsVersion()).toFile().getAbsolutePath());
+            cmd.add("-Djdt.core.sharedIndexLocation=" + args.sharedIndexDir().toFile().getAbsolutePath());
         }
 
         cmd.addAll(JvmOptionsFilter.keepMemory(System.getenv("MAVEN_OPTS")));
@@ -157,12 +169,8 @@ class JdtLspProcess implements Closeable {
         cmd.addAll(List.of("-configuration", config.toString()));
         cmd.addAll(List.of("-data", data.toString()));
 
-        // advanced JVM options are matched to the spawned JDK, not to the JVM running this code
-        Runtime.Version spawnedJavaVersion = detectSpawnedJavaVersion(args.getJavaHome());
-        cmd.add(spawnedJavaVersion.feature() >= MIN_JDK_ZGC ? "-XX:+UseZGC" : "-XX:+UseParallelGC");
-        if (spawnedJavaVersion.feature() >= MIN_JDK_NATIVE_ACCESS) {
-            cmd.add("--enable-native-access=ALL-UNNAMED");
-        }
+        cmd.add("-XX:+UseZGC");
+
         if (spawnedJavaVersion.feature() >= MIN_JDK_SUN_MISC_UNSAFE_FLAG) {
             cmd.add("--sun-misc-unsafe-memory-access=allow");
         }
@@ -190,22 +198,46 @@ class JdtLspProcess implements Closeable {
             log.info("gracefully shutting down JDT LSP server now ...");
             if (Objects.nonNull(process)) {
                 process.destroyGracefully();
-                boolean waitFor = process.waitFor(BigDecimal.ONE.intValue(), TimeUnit.MINUTES);
-                if (waitFor) {
-
+                if (process.waitFor(GRACEFUL_SHUTDOWN_MINUTES, TimeUnit.MINUTES)) {
+                    log.log(Level.DEBUG, "JDT LSP server exited gracefully");
                 } else {
+                    /**
+                     * destroyForcefully only signals, so the workspace delete below has to wait for the process to
+                     * be gone: a language server still writing into it leaves a directory the delete cannot empty
+                     */
                     process.destroyForcefully();
+                    if (BooleanUtils.negate(process.waitFor(FORCED_SHUTDOWN_SECONDS, TimeUnit.SECONDS))) {
+                        log.warn("JDT LSP server did not exit within %ds of being killed", FORCED_SHUTDOWN_SECONDS);
+                    }
                 }
             }
-        } catch (IOException err) {
-            throw err;
         } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
             throw new IOException(err.getMessage(), err);
         } finally {
-
+            if (dataDir.exists()) {
+                try {
+                    FileUtils.forceDelete(dataDir);
+                } catch (IOException err) {
+                    log.warn("could not delete the JDT LSP workspace %s: %s", dataDir.getAbsolutePath(), err.getMessage());
+                }
+            }
         }
     }
-    private static Runtime.Version detectSpawnedJavaVersion(File javaHome) throws IOException {
+    public static Runtime.Version requireLanguageServerJdk(RunArgs args) throws IOException {
+        Runtime.Version toReturn = detectSpawnedJavaVersion(args.getJavaHome());
+        if (toReturn.feature() < MIN_JDK_LANGUAGE_SERVER) {
+            throw new IOException(String.format(Locale.ROOT,
+                    "the Eclipse JDT language server needs Java %d or newer, but the analysis fork would run on Java %s (%s)"
+                            + " — point codiqo.javaHome at a Java %d+ JDK; the analysed project keeps its own release level",
+                    MIN_JDK_LANGUAGE_SERVER,
+                    toReturn,
+                    Objects.nonNull(args.getJavaHome()) ? args.getJavaHome().getAbsolutePath() : "the JDK running codiqo",
+                    MIN_JDK_LANGUAGE_SERVER));
+        }
+        return toReturn;
+    }
+    public static Runtime.Version detectSpawnedJavaVersion(File javaHome) throws IOException {
         if (Objects.nonNull(javaHome)) {
             File releaseFile = new File(javaHome, "release");
             if (releaseFile.isFile()) {

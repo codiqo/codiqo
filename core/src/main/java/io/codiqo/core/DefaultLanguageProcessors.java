@@ -1,5 +1,7 @@
 package io.codiqo.core;
 
+import static java.util.function.Predicate.not;
+
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -80,6 +82,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
      * file sequence, not of a count.
      */
     private static final int CPD_RETRY_BATCH_SIZE = 1000;
+    private static final int ORPHAN_SAMPLE_SIZE = 20;
 
     private final Log log;
     private final RunArgs args;
@@ -133,6 +136,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         List<Path> excludedFiles = new ArrayList<>();
         List<Path> excludedTrees = new ArrayList<>();
         List<Path> skippedFiles = new ArrayList<>();
+        List<Path> unreadableFiles = new ArrayList<>();
         AtomicInteger skippedTrivial = new AtomicInteger();
         AtomicInteger totalSymbols = new AtomicInteger();
 
@@ -140,9 +144,6 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         try (Repository repo = JGit.openRepository(projectRoot)) {
             toReturn.projectRoot(projectRoot);
 
-            /**
-             * gather all attached files in the repository
-             */
             Set<Path> indexed = new LinkedHashSet<>();
             DirCache dirCache = repo.readDirCache();
             int entryCount = dirCache.getEntryCount();
@@ -162,6 +163,51 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
 
             StopWatch stopWatch = StopWatch.createStarted();
             Files.walkFileTree(projectRoot.toPath(), new SimpleFileVisitor<>() {
+                /**
+                 * an unreadable path that could not have been indexed anyway is recorded and skipped, but a tracked
+                 * file of a registered language is load-bearing: skipping it would submit the commit as a complete
+                 * analysis with its code units, coverage and callers missing.
+                 */
+                @Override
+                public FileVisitResult visitFileFailed(Path path, IOException err) throws IOException {
+                    if (coversIndexedSource(path)) {
+                        throw new IOException(String.format(
+                                "could not read %s during indexing — it carries tracked source, and scoring this"
+                                        + " commit would silently omit its code units, coverage and callers",
+                                path), err);
+                    }
+                    log.warn("could not read %s while indexing, skipping it: %s", path, err.getMessage());
+                    unreadableFiles.add(path);
+                    return FileVisitResult.CONTINUE;
+                }
+                /**
+                 * decided from the path and the git index alone, because a failed visit has no attributes to read.
+                 * The subtree is tested because walkFileTree reports an unopenable directory stream against the
+                 * DIRECTORY, which can hide any number of tracked sources.
+                 */
+                private boolean coversIndexedSource(Path path) {
+                    return indexed.stream()
+                            .filter(candidate -> BooleanUtils.or(new boolean[] {
+                                    candidate.equals(path),
+                                    candidate.startsWith(path) }))
+                            .filter(candidate -> FilenameUtils.isExtension(candidate.getFileName().toString(), extensions))
+                            .anyMatch(not(this::isExcludedTree));
+                }
+                /**
+                 * the walk prunes an excluded directory in preVisitDirectory, so it never reaches the files below
+                 * it — a candidate only counts as indexable when neither it nor any directory above it up to the
+                 * project root is excluded. Testing the candidate alone is not enough: an exclusion pattern that
+                 * names a directory does not match the paths under it.
+                 */
+                private boolean isExcludedTree(Path candidate) {
+                    Path root = projectRoot.toPath().normalize();
+                    for (Path current = candidate; Objects.nonNull(current) && current.startsWith(root); current = current.getParent()) {
+                        if (isExcluded(current)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
                 /**
                  * a module dropped by codiqo.excludeProjects is excluded from the indexed file set too, not merely
                  * from the project list. CPD and the symbol index read this walk rather than the project list, so
@@ -258,7 +304,16 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                 }
             }));
             if (CollectionUtils.isNotEmpty(orphans)) {
-                log.error("could not determine owner for %d orphan files: %s", orphans.size(), orphans);
+                // error, not warn: an orphan means module ownership is broken, which drops those files from per-module metrics
+                log.error("could not determine owner for %d orphan files, first %d: %s",
+                        orphans.size(),
+                        Math.min(orphans.size(), ORPHAN_SAMPLE_SIZE),
+                        orphans.subList(0, Math.min(orphans.size(), ORPHAN_SAMPLE_SIZE)));
+            }
+            if (CollectionUtils.isNotEmpty(unreadableFiles)) {
+                log.error("%d file(s) could not be read during the index walk and contribute no symbols: %s",
+                        unreadableFiles.size(),
+                        unreadableFiles.subList(0, Math.min(unreadableFiles.size(), ORPHAN_SAMPLE_SIZE)));
             }
 
             stopWatch.stop();
@@ -302,9 +357,6 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                     if (it instanceof GitFileAnalysis gitAnalysis) {
                         gitAnalysis.setLanguage(processor.lang());
 
-                        /**
-                         * identify affected blocks by checking if any of the changed lines from the GIT difference fall within the symbol's location
-                         */
                         Set<Integer> lines = new HashSet<>();
                         if (Objects.nonNull(gitAnalysis.getStructuredDiff())) {
                             for (GitDiffHunk hunk : gitAnalysis.getStructuredDiff().getHunks()) {

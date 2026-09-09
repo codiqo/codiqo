@@ -2,6 +2,7 @@ package io.codiqo.llm.client;
 
 import java.io.IOException;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
@@ -26,13 +27,10 @@ import io.codiqo.llm.client.OpenAIClientWrapper.StreamingResult;
 import lombok.Value;
 
 /**
- * one prompt in, one JSON object out, with the sampling knobs and retry policy the module has settled on.
- *
- * this is the shape every secondary LLM call in codiqo takes — no tools, no multi-turn, no validation loop —
- * and it exists so those calls do not each re-derive the Ollama `options` pass through, the finishReason check
- * and the fence-stripping parse. {@link LlmScoringClient} deliberately does NOT sit on top of it: scoring runs
- * a tool-call loop, accumulates assistant/tool messages across turns and re-prompts on validation failure, so
- * folding it in here would mean an abstraction with a special case per caller
+ * one prompt in, one JSON object out, with the sampling knobs and retry policy the module has settled on: the
+ * shape every secondary LLM call in codiqo takes — no tools, no multi-turn, no validation loop.
+ * {@link LlmScoringClient} deliberately does NOT sit on top of it, since scoring runs a tool-call loop and
+ * re-prompts on validation failure.
  */
 public class JsonCompletionClient implements LlmClient {
     private static final String FINISH_REASON_STOP = "stop";
@@ -140,7 +138,7 @@ public class JsonCompletionClient implements LlmClient {
                 lastError = err;
             }
             if (attempt < maxRetries) {
-                log.warn(String.format("%s attempt %d/%d failed: %s, retrying", label, attempt, maxRetries, lastError.getMessage()));
+                log.warn(String.format(Locale.ROOT, "%s attempt %d/%d failed: %s, retrying", label, attempt, maxRetries, lastError.getMessage()));
             }
         }
         throw lastError;

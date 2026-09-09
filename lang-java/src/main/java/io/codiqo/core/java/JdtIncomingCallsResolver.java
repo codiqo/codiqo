@@ -3,6 +3,7 @@ package io.codiqo.core.java;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
@@ -117,7 +118,7 @@ class JdtIncomingCallsResolver implements IncomingCallsResolver {
                                 }
                             } catch (Exception err) {
                                 failed.incrementAndGet();
-                                log.error(String.format(
+                                log.error(String.format(Locale.ROOT,
                                         "failed to fetch incoming calls for symbol %s in file %s: %s | item[uri=%s, kind=%s, range=%d:%d-%d:%d, detail=%s]",
                                         pmdSymbol.getName(),
                                         block.getFile().getAbsolutePath(),

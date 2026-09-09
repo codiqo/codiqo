@@ -248,7 +248,7 @@ public class DiffClassificationDeriver {
             return false;
         }
 
-        String normalized = NON_LETTER_CHARS.matcher(kind.toLowerCase(Locale.ROOT)).replaceAll("");
+        String normalized = NON_LETTER_CHARS.matcher(kind.toLowerCase(Locale.ROOT)).replaceAll(StringUtils.EMPTY);
         if (IN_PLACE_KINDS.contains(normalized)) {
             return true;
         }

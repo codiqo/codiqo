@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -170,7 +171,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
         try {
             Path baseDir = project.getBasedir().toPath().toAbsolutePath().normalize();
             List<Recipe> recipeList = instantiateRecipes();
-            getLog().info(String.format("active recipes: %d", recipeList.size()));
+            getLog().info(String.format(Locale.ROOT, "active recipes: %d", recipeList.size()));
             recipeList.forEach(r -> getLog().info("  — " + r.getClass().getSimpleName()));
 
             try (Repository repo = JGit.openRepository(project.getBasedir())) {
@@ -185,20 +186,20 @@ public class NormalizeSourcesMojo extends AbstractMojo {
                 List<SourceFile> allSourceFiles = parseAllModules(baseDir, repo);
                 stopWatch.stop();
 
-                getLog().info(String.format("parsed %d source files in %s", allSourceFiles.size(), stopWatch));
+                getLog().info(String.format(Locale.ROOT, "parsed %d source files in %s", allSourceFiles.size(), stopWatch));
 
                 Map<Path, List<String>> fileRecipeMap = new LinkedHashMap<>();
 
                 stopWatch = StopWatch.createStarted();
                 List<Result> results = runRecipes(recipeList, allSourceFiles, fileRecipeMap);
                 stopWatch.stop();
-                getLog().info(String.format("recipes completed in %s — %d file(s) changed", stopWatch, results.size()));
+                getLog().info(String.format(Locale.ROOT, "recipes completed in %s — %d file(s) changed", stopWatch, results.size()));
 
                 logFileSummary(fileRecipeMap, baseDir);
 
                 writeResults(results, baseDir);
                 if (dryRun) {
-                    getLog().info(String.format("dry run complete — %d file(s) written, review with 'git diff' and reset with 'git checkout .'", results.size()));
+                    getLog().info(String.format(Locale.ROOT, "dry run complete — %d file(s) written, review with 'git diff' and reset with 'git checkout .'", results.size()));
                 } else {
                     commitChanges(repo, results, baseDir);
                 }
@@ -257,7 +258,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
             if (CollectionUtils.isNotEmpty(sourceFiles)) {
                 List<Path> classpath = resolveClasspath(reactor);
 
-                getLog().info(String.format("parsing module %s — %d files, %d classpath entries",
+                getLog().info(String.format(Locale.ROOT, "parsing module %s — %d files, %d classpath entries",
                         reactor.getArtifactId(),
                         sourceFiles.size(),
                         classpath.size()));
@@ -288,7 +289,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
 
             if (CollectionUtils.isNotEmpty(results)) {
                 String recipeName = recipe.getClass().getSimpleName();
-                getLog().info(String.format("  %s — %d change(s) in %s", recipeName, results.size(), stopWatch));
+                getLog().info(String.format(Locale.ROOT, "  %s — %d change(s) in %s", recipeName, results.size(), stopWatch));
 
                 for (Result result : results) {
                     Path path = result.getAfter().getSourcePath();

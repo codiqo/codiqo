@@ -193,7 +193,7 @@ public class ConventionGuidance {
         return TEXT_EXTENSIONS.contains(FilenameUtils.getExtension(file.toString()).toLowerCase(Locale.ROOT));
     }
     private static IllegalStateException overBudget(String measured, int cap) {
-        return new IllegalStateException(String.format(
+        return new IllegalStateException(String.format(Locale.ROOT,
                 "agent instructions are %s, over the %d char budget — raise codiqo.llm.conventionFilesMaxChars, "
                         + "narrow codiqo.llm.conventionFiles, or turn off codiqo.llm.autoDiscoveryAgentInstructions",
                 measured, cap));

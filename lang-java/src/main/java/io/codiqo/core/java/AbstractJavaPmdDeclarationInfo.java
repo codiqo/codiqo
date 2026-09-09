@@ -3,6 +3,7 @@ package io.codiqo.core.java;
 import java.io.File;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -147,7 +148,7 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
             }
             @Override
             public String toString() {
-                return String.format("lines: %d, body_lines: %d, cyclo: %d, cognitive: %d, ncss: %d, invocations: %d", lineCount(), bodyCodeLines(), cyclo(), cognitive(), ncss(), directInvocationCount());
+                return String.format(Locale.ROOT, "lines: %d, body_lines: %d, cyclo: %d, cognitive: %d, ncss: %d, invocations: %d", lineCount(), bodyCodeLines(), cyclo(), cognitive(), ncss(), directInvocationCount());
             }
         };
     });

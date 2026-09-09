@@ -31,37 +31,40 @@ public class OutputSerializer implements SubmissionPopulator {
     @Override
     public void accept(SubmissionContext ctx) {
         if (ctx.getArgs().isDumpAnalysis()) {
-            try {
-                MapperBuilder<?, ?> builder = preferYaml ? YAMLMapper.builder() : JsonMapper.builder();
-                ObjectMapper mapper = builder
-                        .changeDefaultPropertyInclusion(incl -> incl.withValueInclusion(Include.NON_NULL))
-                        .defaultDateFormat(new StdDateFormat().withColonInTimeZone(true))
-                        .enable(SerializationFeature.INDENT_OUTPUT)
-                        .build();
+            for (;;) {
+                try {
+                    MapperBuilder<?, ?> builder = preferYaml ? YAMLMapper.builder() : JsonMapper.builder();
+                    ObjectMapper mapper = builder
+                            .changeDefaultPropertyInclusion(incl -> incl.withValueInclusion(Include.NON_NULL))
+                            .defaultDateFormat(new StdDateFormat().withColonInTimeZone(true))
+                            .enable(SerializationFeature.INDENT_OUTPUT)
+                            .build();
 
-                String extension = preferYaml ? "yaml" : "json";
-                String commitId = ctx.getAnalysis().getCommitId();
-                String fileName = StringUtils.isNotBlank(commitId)
-                        ? "codiqo-submission-" + commitId + "." + extension
-                        : "codiqo-submission." + extension;
-                File outputDir = ctx.getArgs().getOutputDirectory();
-                File file;
-                if (Objects.nonNull(outputDir)) {
-                    FileUtils.forceMkdir(outputDir);
-                    file = new File(outputDir, fileName);
-                } else {
-                    file = Files.createTempFile("codiqo-submission-", "." + extension).toFile();
-                }
-                String output = mapper.writeValueAsString(ctx.getSubmissionModel());
-                try (OutputStream stream = Files.newOutputStream(file.toPath())) {
-                    try (BufferedOutputStream bufferedStream = new BufferedOutputStream(stream)) {
-                        bufferedStream.write(output.getBytes(StandardCharsets.UTF_8));
-                        bufferedStream.flush();
+                    String extension = preferYaml ? "yaml" : "json";
+                    String commitId = ctx.getAnalysis().getCommitId();
+                    String fileName = StringUtils.isNotBlank(commitId)
+                            ? "codiqo-submission-" + commitId + "." + extension
+                            : "codiqo-submission." + extension;
+                    File outputDir = ctx.getArgs().getOutputDirectory();
+                    File file;
+                    if (Objects.nonNull(outputDir)) {
+                        FileUtils.forceMkdir(outputDir);
+                        file = new File(outputDir, fileName);
+                    } else {
+                        file = Files.createTempFile("codiqo-submission-", "." + extension).toFile();
                     }
+                    String output = mapper.writeValueAsString(ctx.getSubmissionModel());
+                    try (OutputStream stream = Files.newOutputStream(file.toPath())) {
+                        try (BufferedOutputStream bufferedStream = new BufferedOutputStream(stream)) {
+                            bufferedStream.write(output.getBytes(StandardCharsets.UTF_8));
+                            bufferedStream.flush();
+                        }
+                    }
+                    log.info("analysis submission written to " + file.getAbsolutePath());
+                    return;
+                } catch (IOException err) {
+                    ExceptionUtils.wrapAndThrow(err);
                 }
-                log.info("analysis submission written to " + file.getAbsolutePath());
-            } catch (IOException err) {
-                ExceptionUtils.wrapAndThrow(err);
             }
         }
     }

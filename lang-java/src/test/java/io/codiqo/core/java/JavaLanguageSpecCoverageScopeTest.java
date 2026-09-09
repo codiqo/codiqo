@@ -1,7 +1,6 @@
 package io.codiqo.core.java;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -133,7 +132,7 @@ class JavaLanguageSpecCoverageScopeTest {
         assertTrue(excluded.isEmpty(), excluded.toString());
         assertEquals(1, coverages.size());
     }
-    private Optional<Date> exercisedAt(File outputDirectory, JavaLanguageSpec.LoadedExec... execs) throws Exception {
+    private static Optional<Date> exercisedAt(File outputDirectory, JavaLanguageSpec.LoadedExec... execs) throws Exception {
         return JavaLanguageSpec.newestExecContaining(List.of(execs), JavaLanguageSpec.compiledClassNames(outputDirectory));
     }
     private JavaLanguageSpec.LoadedExec exec(String name, long lastModified, String... classNames) throws Exception {

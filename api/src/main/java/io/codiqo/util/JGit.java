@@ -2,7 +2,6 @@ package io.codiqo.util;
 
 import java.io.File;
 import java.io.IOException;
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -43,6 +42,9 @@ public class JGit {
     private static final Pattern DETACHED_HEAD_SHA = Pattern.compile("^[a-f0-9]{40}$");
     private static final Set<String> NOISY_BRANCH_EXACT = Set.of(Constants.HEAD, "tmp", "tmp-skip");
     private static final Set<String> NOISY_BRANCH_PREFIXES = Set.of("bot/", "copilot/", "dependabot/", "renovate/");
+
+    /** an octopus merge has no single side branch to read, so merge-side attribution only applies to two parents */
+    private static final int MERGE_PARENT_COUNT = 2;
 
     public static String shortSha(String commitSha) {
         return ObjectId.fromString(commitSha).abbreviate(Constants.OBJECT_ID_ABBREV_STRING_LENGTH).name();
@@ -105,7 +107,7 @@ public class JGit {
         }
     }
     public static boolean isMerge(RevCommit commit) {
-        return commit.getParentCount() > BigDecimal.ONE.intValue();
+        return commit.getParentCount() > 1;
     }
     /**
      * the merged-in branch's own commits: reachable from the merge's second parent but not from the
@@ -129,12 +131,14 @@ public class JGit {
      * in) and mixed-author side branches (no sole owner of the net change)
      */
     public static Optional<PersonIdent> mergeSideSoleAuthor(Repository repo, RevCommit merge) throws IOException {
-        if (merge.getParentCount() != 2) {
+        if (merge.getParentCount() != MERGE_PARENT_COUNT) {
             return Optional.empty();
         }
-
+        return soleAuthorOf(mergeSideCommits(repo, merge));
+    }
+    private static Optional<PersonIdent> soleAuthorOf(List<RevCommit> side) {
         PersonIdent soleAuthor = null;
-        for (RevCommit commit : mergeSideCommits(repo, merge)) {
+        for (RevCommit commit : side) {
             PersonIdent author = commit.getAuthorIdent();
             if (Objects.isNull(soleAuthor)) {
                 soleAuthor = author;
@@ -160,7 +164,7 @@ public class JGit {
         if (admits.test(creditedAuthor.getEmailAddress())) {
             return true;
         }
-        if (commit.getParentCount() != 2) {
+        if (commit.getParentCount() != MERGE_PARENT_COUNT) {
             return false;
         }
         return mergeSideCommits(repo, commit).stream()
@@ -170,24 +174,15 @@ public class JGit {
      * who to credit for a merge node's parent[0] delta when the side branch has more than one author: the one who
      * wrote most of it. Commits decide it, lines break a tie, and a genuine tie resolves to empty so the caller
      * keeps the merge author rather than picking arbitrarily.
-     *
-     * <p>Exists because the alternative was worse. A multi-author PR has no sole author, and treating that as
-     * unattributable dropped the whole merge — terminally, so the work appeared nowhere, not even in org totals.
-     * Crediting the dominant author is imperfect and says so; losing the commit is not recoverable.
      */
-    public static Optional<PersonIdent> mergeSideDominantAuthor(Repository repo, RevCommit merge) throws IOException {
-        if (merge.getParentCount() != 2) {
-            return Optional.empty();
-        }
-
+    private static Optional<PersonIdent> dominantAuthorOf(Repository repo, List<RevCommit> side) throws IOException {
         Map<String, PersonIdent> byEmail = new HashMap<>();
         Map<String, Integer> commits = new HashMap<>();
-        List<RevCommit> side = mergeSideCommits(repo, merge);
         for (RevCommit commit : side) {
             PersonIdent author = commit.getAuthorIdent();
             String key = StringUtils.lowerCase(author.getEmailAddress());
             byEmail.putIfAbsent(key, author);
-            commits.merge(key, BigDecimal.ONE.intValue(), Integer::sum);
+            commits.merge(key, 1, Integer::sum);
         }
 
         Optional<String> byCommits = soleMaximum(commits);
@@ -202,10 +197,18 @@ public class JGit {
         }
         return soleMaximum(lines).map(byEmail::get);
     }
-    /** the credited author of a merge: its sole side author when there is one, otherwise whoever dominates it. */
+    /** the credited author of a merge: its sole side author when there is one, otherwise whoever dominates it */
     public static Optional<PersonIdent> mergeSideCreditedAuthor(Repository repo, RevCommit merge) throws IOException {
-        Optional<PersonIdent> sole = mergeSideSoleAuthor(repo, merge);
-        return sole.isPresent() ? sole : mergeSideDominantAuthor(repo, merge);
+        if (merge.getParentCount() != MERGE_PARENT_COUNT) {
+            return Optional.empty();
+        }
+
+        List<RevCommit> side = mergeSideCommits(repo, merge);
+        Optional<PersonIdent> sole = soleAuthorOf(side);
+        if (sole.isPresent()) {
+            return sole;
+        }
+        return dominantAuthorOf(repo, side);
     }
     /** the single largest value, or empty when nothing leads outright — a tie must not be resolved by map order. */
     private static Optional<String> soleMaximum(Map<String, Integer> counts) {

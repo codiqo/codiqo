@@ -45,10 +45,6 @@ import lombok.Value;
  * web analysis view: identity, score with its calculation, the headline metrics, then the quality
  * dimensions, changed files and findings as tables.
  *
- * <p>Replaces the former single-page HTML report, which nobody read: it was written to a file the
- * runner threw away, and only on the local-LLM path — the CI goal overrides {@code doLlmScoring} and
- * never reached it.
- *
  * <p>Tables are rendered to strings here rather than looped in the template, because column widths
  * have to be measured across all rows before the first one can be emitted.
  */
@@ -121,7 +117,7 @@ public class ConsoleReportBuilder implements ReportBuilder {
         ctx.setVariable("project", StringUtils.defaultString(reportContext.getRepositoryName()));
         ctx.setVariable("message", firstLine(reportContext.getCommitMessage()));
 
-        ctx.setVariable("score", String.format("%.0f", Optional.ofNullable(response.getScore()).orElse(0.0)));
+        ctx.setVariable("score", String.format(Locale.ROOT, "%.0f", Optional.ofNullable(response.getScore()).orElse(0.0)));
         ctx.setVariable("classification", label(response.getChangeClassification()));
         ctx.setVariable("scoreCalculation", StringUtils.defaultIfBlank(response.getScoreCalculation(), "-"));
         ctx.setVariable("seniorReview", Optional.ofNullable(response.getRequiresSeniorReview()).orElse(0));
@@ -190,12 +186,9 @@ public class ConsoleReportBuilder implements ReportBuilder {
         }
     }
     /**
-     * File counts come from request.getFileChanges() — the same list the table renders — not from
-     * ChangeSummary.totalFilesChanged, which counts only files whose diff has *effective* changes
-     * (DiffStats.effectiveChanges(), after blanks / imports / comment-only lines are filtered).
-     * Mixing the two made the page contradict itself on 5 of 10 real commits, and deriving the prod
-     * count by subtracting a payload-derived test count from the summary total rendered
-     * "prod: -1" on a deletion-heavy commit. Splitting one list three ways cannot go negative.
+     * file counts come from request.getFileChanges() — the same list the table renders — not from
+     * ChangeSummary.totalFilesChanged, which counts only files whose diff has effective changes, so
+     * mixing the two made the page contradict itself
      */
     private static void populateVolume(Context ctx, LlmScoringRequest request, LlmScoringResponse response) {
         ChangeSummary summary = request.getChangeSummary();
@@ -215,9 +208,9 @@ public class ConsoleReportBuilder implements ReportBuilder {
         ctx.setVariable("volumeScore", "0.00");
         EffortBreakdown breakdown = response.getEffortBreakdown();
         if (Objects.nonNull(breakdown)) {
-            ctx.setVariable("baseEffort", String.format("%.2f", breakdown.getBaseEffortScore()));
+            ctx.setVariable("baseEffort", String.format(Locale.ROOT, "%.2f", breakdown.getBaseEffortScore()));
             if (Objects.nonNull(breakdown.getVolumeScore())) {
-                ctx.setVariable("volumeScore", String.format("%.2f", breakdown.getVolumeScore().getTotalVolumeScore()));
+                ctx.setVariable("volumeScore", String.format(Locale.ROOT, "%.2f", breakdown.getVolumeScore().getTotalVolumeScore()));
             }
         }
     }
@@ -352,7 +345,7 @@ public class ConsoleReportBuilder implements ReportBuilder {
     }
     private static String overflow(int total, int shown) {
         if (total > shown) {
-            return String.format("  ... %d more (%d of %d shown)", total - shown, shown, total);
+            return String.format(Locale.ROOT, "  ... %d more (%d of %d shown)", total - shown, shown, total);
         }
         return StringUtils.EMPTY;
     }
@@ -370,11 +363,7 @@ public class ConsoleReportBuilder implements ReportBuilder {
         }
         return "..." + StringUtils.right(value, max - 3);
     }
-    /**
-     * word wrap, done here rather than with commons-text: that artifact is only in
-     * dependencyManagement and unused by any module, and lang3's WordUtils is deprecated — neither
-     * is worth taking on for one paragraph.
-     */
+    /** word wrap: commons-text is unused by any module and lang3's WordUtils is deprecated */
     private static String wrap(String text) {
         if (StringUtils.isBlank(text)) {
             return "  (none)";

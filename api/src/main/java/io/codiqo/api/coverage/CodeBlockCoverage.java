@@ -1,5 +1,6 @@
 package io.codiqo.api.coverage;
 
+import java.util.Locale;
 import java.util.Map;
 
 import org.apache.commons.collections4.MapUtils;
@@ -71,7 +72,7 @@ public class CodeBlockCoverage {
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format("%.1f%% lines (%d/%d, %d partial, %d missed)",
+        sb.append(String.format(Locale.ROOT, "%.1f%% lines (%d/%d, %d partial, %d missed)",
                 lineCoveragePercent(),
                 covered,
                 executable(),
@@ -79,7 +80,7 @@ public class CodeBlockCoverage {
                 missed));
 
         if (totalBranches() > 0) {
-            sb.append(String.format(", %.1f%% branches (%d/%d)",
+            sb.append(String.format(Locale.ROOT, ", %.1f%% branches (%d/%d)",
                     branchCoveragePercent(),
                     coveredBranches,
                     totalBranches()));

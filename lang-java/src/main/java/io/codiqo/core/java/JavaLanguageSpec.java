@@ -4,7 +4,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.math.BigDecimal;
 import java.net.JarURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -40,6 +39,7 @@ import org.apache.commons.io.filefilter.IOFileFilter;
 import org.apache.commons.io.filefilter.TrueFileFilter;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.eclipse.lsp4j.SymbolKind;
@@ -127,6 +127,9 @@ public class JavaLanguageSpec implements LanguageSpec {
 
     public static final String CLASS_EXTENSION = "class";
 
+    /** each group already runs on its own thread of the parallel stream, so PMD must not fan out again inside it */
+    private static final int PMD_THREADS = 1;
+
     private static final String XML_EXTENSION = "xml";
     private static final String JUNIT_REPORT_PREFIX = "TEST-";
 
@@ -195,7 +198,7 @@ public class JavaLanguageSpec implements LanguageSpec {
     }
     @Override
     public List<CodeBlockInfo> parse(ProjectSpec owner, Collection<File> files) throws IOException {
-        List<CodeBlockInfo> builder = new ArrayList<>();
+        List<CodeBlockInfo> toReturn = new ArrayList<>();
 
         LanguagePropertyBundle bundle = language.newPropertyBundle();
         bundle.setProperty(JavaLanguageProperties.FIRST_CLASS_LOMBOK, true);
@@ -204,7 +207,7 @@ public class JavaLanguageSpec implements LanguageSpec {
             Set<String> jars = new LinkedHashSet<>();
             jvm.getCompileClasspathElements().forEach(element -> jars.add(element.getAbsolutePath()));
             jvm.getTestClasspathElements().forEach(element -> jars.add(element.getAbsolutePath()));
-            bundle.setProperty(JvmLanguagePropertyBundle.AUX_CLASSPATH, String.join(File.pathSeparator, jars));
+            bundle.setProperty(JvmLanguagePropertyBundle.AUX_CLASSPATH, StringUtils.join(jars, File.pathSeparator));
         }
 
         LanguageRegistry languageRegistry = LanguageRegistry.singleton(language);
@@ -215,12 +218,12 @@ public class JavaLanguageSpec implements LanguageSpec {
 
             for (File destination : files) {
                 if (FilenameUtils.isExtension(destination.getName(), lang().getExtensions())) {
-                    builder.addAll(parseFile(owner, destination, pmd, errorReporter, processingRegistry));
+                    toReturn.addAll(parseFile(owner, destination, pmd, errorReporter, processingRegistry));
                 }
             }
         }
 
-        return List.copyOf(builder);
+        return List.copyOf(toReturn);
     }
     @Override
     public void captureViolations(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
@@ -275,9 +278,10 @@ public class JavaLanguageSpec implements LanguageSpec {
                     ASTCompilationUnit tree = (ASTCompilationUnit) pmd.parse(new ParserTask(doc, errorReporter, processingRegistry));
 
                     /**
-                     * crossFindBoundaries is required rather than cosmetic: every type declaration, anonymous class
-                     * and lambda is a find boundary in PMD's Java AST, so the default traversal stops before it
-                     * reaches a single method body
+                     * every type declaration, anonymous class and lambda is a find boundary in PMD's Java AST, so
+                     * without crossFindBoundaries the traversal stops before it reaches a single method body. KNOWN
+                     * GAP: ASTCompactConstructorDeclaration is not an ASTExecutableDeclaration (pmd-java 7.23.0), so
+                     * a record's compact constructor indexes as zero code units.
                      */
                     tree.descendants(ASTExecutableDeclaration.class)
                             .crossFindBoundaries()
@@ -413,7 +417,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         if (CollectionUtils.isNotEmpty(uninstrumentedModules)) {
             throw new IOException(String.format(
                     "coverage was required (codiqo.failOnUninstrumentedModule) but no coverage data was produced for module(s) with tests: %s — the JaCoCo agent did not attach or no tests executed",
-                    String.join(", ", uninstrumentedModules)));
+                    StringUtils.join(uninstrumentedModules, ", ")));
         }
 
         return toReturn;
@@ -677,7 +681,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         cfg.setFailOnError(true);
         cfg.setSourceEncoding(StandardCharsets.UTF_8);
         cfg.setMinimumPriority(args.pmdMinRulePriority());
-        cfg.setThreads(BigDecimal.ONE.intValue());
+        cfg.setThreads(PMD_THREADS);
 
         try (PmdAnalysis pmd = PmdAnalysis.create(cfg)) {
             pmd.addRuleSets(pmd.newRuleSetLoader().warnDeprecated(false).loadFromResources(args.getPmdRules()));
@@ -1021,10 +1025,17 @@ public class JavaLanguageSpec implements LanguageSpec {
      * analyzed; where the tests actually loaded a versioned copy its probes no longer match, and the existing
      * duplicate-name handling drops that name from coverage rather than trusting the wrong body.
      */
-    private static int analyzeClassRoots(Analyzer analyzer, File outputDir) throws IOException {
+    static int analyzeClassRoots(Analyzer analyzer, File outputDir) throws IOException {
         File[] roots = outputDir.listFiles(child -> BooleanUtils.negate(META_INF_DIR.equals(child.getName())));
-        if (ArrayUtils.isEmpty(roots)) {
+        /**
+         * null means listFiles itself failed, so fall back to the plain walk. An empty array is a different answer:
+         * the output holds nothing but META-INF, and walking it would feed JaCoCo the versioned copies.
+         */
+        if (Objects.isNull(roots)) {
             return analyzer.analyzeAll(outputDir);
+        }
+        if (ArrayUtils.isEmpty(roots)) {
+            return 0;
         }
 
         int toReturn = 0;

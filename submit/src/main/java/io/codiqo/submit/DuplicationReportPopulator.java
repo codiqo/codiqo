@@ -16,6 +16,7 @@ import java.util.HashMap;
 import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 
@@ -207,8 +208,12 @@ public class DuplicationReportPopulator implements SubmissionPopulator {
             }
         }
     }
-    private static String relativePath(Path workTreeRealPath, File file) {
-        return workTreeRealPath.relativize(resolveRealPath(file.toPath())).toString().replace(File.separatorChar, '/');
+    /**
+     * joins the relative path's own name elements rather than rewriting separators in its string form: a backslash
+     * is a legal filename character on POSIX, and separatorsToUnix would rewrite it out of the key
+     */
+    static String relativePath(Path workTreeRealPath, File file) {
+        return StringUtils.join(workTreeRealPath.relativize(resolveRealPath(file.toPath())).iterator(), '/');
     }
     private static Path resolveRealPath(Path path) {
         for (;;) {

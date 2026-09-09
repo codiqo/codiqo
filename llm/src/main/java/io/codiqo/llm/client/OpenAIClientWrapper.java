@@ -3,6 +3,7 @@ package io.codiqo.llm.client;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
@@ -96,7 +97,7 @@ public class OpenAIClientWrapper {
         }
         @Override
         public String toString() {
-            return String.format("StreamingResult{content=%d chars, tokens=%d, toolCalls=%d}", content.length(), totalTokens, toolCalls.size());
+            return String.format(Locale.ROOT, "StreamingResult{content=%d chars, tokens=%d, toolCalls=%d}", content.length(), totalTokens, toolCalls.size());
         }
     }
 }
