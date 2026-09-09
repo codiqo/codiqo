@@ -2,6 +2,7 @@ package io.codiqo.llm.client;
 
 import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -86,7 +87,7 @@ public class SkipRequestClient implements LlmClient {
          */
         String classified = PromptFences.stripBounded(commitMessage, MAX_COMMIT_MESSAGE_CHARS);
         if (classified.length() < commitMessage.length()) {
-            log.warn(String.format("%s: commit message reduced to %d of %d chars", LABEL, classified.length(), commitMessage.length()));
+            log.warn(String.format(Locale.ROOT, "%s: commit message reduced to %d of %d chars", LABEL, classified.length(), commitMessage.length()));
         }
 
         Context ctx = new Context();

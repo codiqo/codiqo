@@ -15,6 +15,10 @@ public class PomFileSpec implements ConfigFileSpec {
         return POM_FILE_NAME.equalsIgnoreCase(FilenameUtils.getName(path));
     }
     @Override
+    public String describe() {
+        return POM_FILE_NAME;
+    }
+    @Override
     public IneffectiveLineFilter lineFilter() {
         return FILTER;
     }

@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.time.Duration;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -91,11 +92,11 @@ public class BrowserLogin {
     }
     /** the code and the URL are printed as well: the browser may open behind the terminal, or on the wrong profile */
     private void prompt(DeviceAuthorization authorization) {
-        log.info("");
+        log.info(StringUtils.EMPTY);
         log.info("  To authorize this machine, visit:");
         log.info("    " + authorization.getVerificationUri());
         log.info("  and enter code:  " + authorization.getUserCode());
-        log.info("");
+        log.info(StringUtils.EMPTY);
         log.info("  Waiting for approval ...");
     }
     /**
@@ -104,7 +105,7 @@ public class BrowserLogin {
      */
     private Credentials mintApiKey(OAuth20Service service, String sessionToken) throws Exception {
         JsonNode session = call(service, Verb.GET, "/api/auth/get-session", null, sessionToken);
-        String organizationId = session.path("session").path("activeOrganizationId").asString("");
+        String organizationId = session.path("session").path("activeOrganizationId").asString(StringUtils.EMPTY);
         if (StringUtils.isBlank(organizationId)) {
             throw new IOException("no active organization on the approved session — pick one on the approval page and run the login again");
         }
@@ -115,9 +116,13 @@ public class BrowserLogin {
                 "metadata", Map.of("organizationId", organizationId, "cli", Boolean.TRUE)));
 
         JsonNode created = call(service, Verb.POST, "/api/auth/api-key/create", body, sessionToken);
-        String key = created.path("key").asString("");
+        String key = created.path("key").asString(StringUtils.EMPTY);
         if (StringUtils.isBlank(key)) {
-            throw new IOException("the api key mint returned no key: " + created);
+            // the field names only: this branch also fires on a shape change, where the node would carry the key itself
+            String shape = created.isObject()
+                    ? "fields: " + StringUtils.join(created.propertyNames(), ", ")
+                    : "a " + created.getClass().getSimpleName() + ", not an object";
+            throw new IOException("the api key mint returned no key; the response carried " + shape);
         }
         log.info("  authorized — key stored for organization " + organizationId);
 
@@ -139,7 +144,7 @@ public class BrowserLogin {
             if (response.isSuccessful()) {
                 return mapper.readTree(response.getBody());
             }
-            throw new IOException(String.format("%s returned HTTP %d: %s", path, response.getCode(), response.getBody()));
+            throw new IOException(String.format(Locale.ROOT, "%s returned HTTP %d: %s", path, response.getCode(), response.getBody()));
         }
     }
     /**

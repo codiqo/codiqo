@@ -41,6 +41,7 @@ import edu.umd.cs.findbugs.Priorities;
 import io.codiqo.util.JGit;
 import io.codiqo.util.Split;
 import lombok.Data;
+import lombok.ToString;
 import net.sourceforge.pmd.lang.rule.RulePriority;
 import okhttp3.HttpUrl;
 
@@ -72,9 +73,9 @@ import okhttp3.HttpUrl;
  *
  * <p><b>CLI generation.</b> {@link #options()} reflects over the non-transient, non-static fields and derives one
  * {@code --kebab-case} option per field; {@link #from(CommandLine)} parses them back and calls {@link #validate()}.
- * Two consequences: {@code @Nullable} is what marks an option <i>optional</i> — hence its presence even on
- * primitives, where dropping it would make the option required — and a {@code boolean} field becomes a valueless
- * flag, so a boolean that defaults to {@code true} cannot be switched off from the command line.
+ * Every option is optional — the field initialiser above is its default — and a {@code boolean} field becomes a
+ * valueless flag, so a boolean that defaults to {@code true} cannot be switched off from the command line. A field
+ * whose type {@code from} cannot parse is a hard error rather than a silently ignored flag.
  */
 @Data
 public class RunArgs {
@@ -98,13 +99,6 @@ public class RunArgs {
     public static final Path JDT_SHARED_INDEX = FileSystems.getDefault().getPath(System.getProperty("user.home"), ".cache", "jdtls");
     private static final Pattern JDTLS_ARCHIVE_VERSION = Pattern.compile("jdt-language-server-(\\d+\\.\\d+\\.\\d+)-");
     private static final Pattern CAMEL_HUMP = Pattern.compile("(?<=[a-z0-9])(?=[A-Z])");
-    static {
-        try {
-            Files.createDirectories(JDT_SHARED_INDEX);
-        } catch (IOException err) {
-            throw new ExceptionInInitializerError(err);
-        }
-    }
 
     /**
      * The commit under analysis, or blank for an uncommitted-changes run against the working tree. Blank disables
@@ -120,14 +114,13 @@ public class RunArgs {
      * {@link #effectiveJdtlsVersion()}, so moving this forces a full re-index of every dependency jar.
      */
     @Nullable
-    private String jdtlsVersion = "1.60.0";
+    private String jdtlsVersion = "1.61.0";
 
     /**
      * Resolve the language server from the {@code snapshots} channel instead of a pinned milestone. Snapshots move,
      * so {@link #jdtlsVersion} is then ignored and the concrete build is whatever {@code latest.txt} names at run
      * time — which also means the shared-index key changes underneath you as upstream publishes.
      */
-    @Nullable
     private boolean jdtlsUseSnapshot = false;
 
     /**
@@ -184,7 +177,6 @@ public class RunArgs {
      * Treat untracked working-tree files as additions. Only meaningful for an uncommitted-changes run — a commit
      * analysis reads its file set from the diff, where nothing is untracked by construction.
      */
-    @Nullable
     private boolean includeUntracked = true;
 
     /**
@@ -192,7 +184,6 @@ public class RunArgs {
      * data, which it answers from its own index, so a second JDT-driven compile on top of the forked build buys
      * nothing.
      */
-    @Nullable
     private boolean autoBuild = false;
 
     /**
@@ -200,7 +191,6 @@ public class RunArgs {
      * temp file otherwise. This is exactly the payload the backend would receive, so it is the artefact to diff when
      * a score changes unexpectedly between runs.
      */
-    @Nullable
     private boolean dumpAnalysis = true;
 
     /**
@@ -211,7 +201,6 @@ public class RunArgs {
      * payload, so the model has no coverage row to apply. Compare {@link #failOnUninstrumentedModule}, which exists
      * to stop coverage going missing by accident on a run that did want it.
      */
-    @Nullable
     private boolean ignoreCoverage = false;
 
     /**
@@ -219,25 +208,21 @@ public class RunArgs {
      * failure mode it catches is silent: an agent that never attached looks identical to a genuinely untested
      * commit, and the commit then scores as small and clean rather than as a broken measurement.
      */
-    @Nullable
     private boolean failOnUninstrumentedModule = true;
 
     /** Skip cyclomatic / cognitive complexity capture. Complexity is an input to the model's difficulty judgment, not a score term of its own. */
-    @Nullable
     private boolean ignoreComplexity = false;
 
     /**
      * Skip PMD CPD duplication detection. Also suppresses the {@link #cpdCleanBonus}: uncollected duplication data
      * is not evidence of clean code, so it must not earn the reward for having none.
      */
-    @Nullable
     private boolean ignoreCpd = false;
 
     /**
      * Skip PMD and SpotBugs entirely. Also suppresses {@link #staticAnalysisCleanBonus}, for the same reason
      * {@link #ignoreCpd} suppresses the CPD bonus.
      */
-    @Nullable
     private boolean ignoreDiagnostics = false;
 
     /**
@@ -246,7 +231,6 @@ public class RunArgs {
      * missing caller list is indistinguishable from a symbol that genuinely has no callers, and blast radius is
      * then under-reported rather than reported as unknown.
      */
-    @Nullable
     private boolean failOnJdtlsError = false;
 
     /**
@@ -258,7 +242,6 @@ public class RunArgs {
      * failure it is. Scoring a broken build is opt-in through {@link #scoreOnBuildFailure} instead, which switches
      * to diff-only inputs rather than trusting the wreckage.
      */
-    @Nullable
     private boolean skipOnBuildFailure = true;
 
     /**
@@ -268,7 +251,6 @@ public class RunArgs {
      * capped at {@code 1.0} regardless of {@link #qualityMultiplierMax}. Falls back to exclusion when the commit
      * has no analyzable diff files.
      */
-    @Nullable
     private boolean scoreOnBuildFailure = false;
 
     /**
@@ -276,7 +258,6 @@ public class RunArgs {
      * counting toward effort on both ends. A reverted original outside the indexing window is simply not known to
      * the backend and is left alone.
      */
-    @Nullable
     private boolean excludeRevertedCommits = true;
 
     /**
@@ -291,7 +272,6 @@ public class RunArgs {
      * and abbreviated stack traces. Bounds what a runaway build log can push into the failure detail that gets
      * persisted and, in degraded mode, prompted.
      */
-    @Nullable
     private int buildErrorCaptureLimit = 8 * 1024;
 
     /** JDK used for the forked build and for the language-server JVM. Unset means the JDK running codiqo. */
@@ -355,18 +335,15 @@ public class RunArgs {
     private Duration readTimeout = Duration.ofMinutes(1);
 
     /** OkHttp dispatcher ceiling on in-flight requests for codiqo's HTTP client. */
-    @Nullable
     private int maxRequests = 256;
 
     /** OkHttp dispatcher ceiling on in-flight requests per host — the one that actually binds, since a run talks to few hosts. */
-    @Nullable
     private int maxRequestsPerHost = 128;
 
     /**
      * Minimum duplicated token run CPD will report. Lowering it finds shorter clones and grows the clone set
      * quickly, which feeds both {@link #cpdIntroducedThreshold} and the prompt payload.
      */
-    @Nullable
     private int cpdMinimumTileSize = 64;
 
     /**
@@ -374,7 +351,6 @@ public class RunArgs {
      * changed line and to pair deletions with additions, and context is what lets it recognise a pair as one
      * in-place edit rather than a delete plus an unrelated add.
      */
-    @Nullable
     private int diffContextLines = 10;
 
     /**
@@ -382,7 +358,6 @@ public class RunArgs {
      * A clone is considered "introduced" only if this percentage of its lines overlap with added lines.
      * Default: 0.4 (40%) - just modifying 1 line of a pre-existing clone doesn't mean the duplication was introduced.
      */
-    @Nullable
     private double cpdIntroducedThreshold = 0.4;
 
     /** The reactor's modules, one {@link ProjectSpec} each. {@link #owner(File)} maps a changed path back to the module that owns it. */
@@ -408,7 +383,12 @@ public class RunArgs {
     @Nullable
     private transient Set<String> remoteUrls = new HashSet<>();
 
-    /** API key for the OpenAI-compatible LLM endpoint. Also authenticates the web-search tool when {@link #llmEnableWebSearchTool} is on. */
+    /**
+     * API key for the OpenAI-compatible LLM endpoint. Also authenticates the web-search tool when
+     * {@link #llmEnableWebSearchTool} is on. Excluded from the generated toString: {@code @Data} would otherwise
+     * publish the key into any log line that prints these args.
+     */
+    @ToString.Exclude
     @Nullable
     private String llmApiKey = System.getProperty("ollama.apiKey");
 
@@ -478,7 +458,6 @@ public class RunArgs {
      * survivors are ranked production-before-test, then by call-site coupling, then by class concentration. Blocks
      * report how many callers were dropped, so a trimmed list is visible to the model rather than silent.
      */
-    @Nullable
     private int llmMaxCallersPerBlock = DEFAULT_MAX_CALLERS_PER_BLOCK;
 
     /**
@@ -498,7 +477,6 @@ public class RunArgs {
      * that documents its idioms should not have them reported as defects. Costs prompt tokens only when
      * such a file exists, and the prompt bars the content from moving any score.
      */
-    @Nullable
     private boolean autoDiscoveryAgentInstructions = true;
 
     /**
@@ -506,7 +484,6 @@ public class RunArgs {
      * text: a truncated rule set silently changes which findings the model suppresses, so the ceiling is
      * raised deliberately. Zero disables instruction loading entirely.
      */
-    @Nullable
     private int llmConventionFilesMaxChars = DEFAULT_CONVENTION_FILES_MAX_CHARS;
 
     /** Sampling seed, sent with {@link #llmTemperature} for reproducibility. Fixed rather than random so two runs of the same commit differ as little as the provider allows. */
@@ -514,7 +491,6 @@ public class RunArgs {
     private Integer llmSeed = DEFAULT_SEED;
 
     /** Expose the web-search tool to the model, for checking an unfamiliar library or CVE while judging a change. Only the direct Ollama path can actually serve the call. */
-    @Nullable
     private boolean llmEnableWebSearchTool = true;
 
     /**
@@ -633,7 +609,6 @@ public class RunArgs {
      * Index only the first-parent (mainline) history, dropping commits that arrived as merged-in feature-branch
      * work. On by default so a PR is counted once, at the merge node, rather than once per intermediate commit.
      */
-    @Nullable
     private boolean firstParentOnly = true;
 
     /**
@@ -641,7 +616,6 @@ public class RunArgs {
      * drives both operation multipliers. Raising it flattens the size response of {@link #modifyMultiplierScale}
      * and {@link #addMultiplierScale} — it is the knob for "how quickly does a codebase count as large".
      */
-    @Nullable
     private double sizeFactorDivisor = 100.0;
 
     /**
@@ -649,15 +623,12 @@ public class RunArgs {
      * {@code s}. Because the base is a free parameter rather than pinned at {@code 1.0}, either operation can be
      * discounted outright, not only priced at a premium.
      */
-    @Nullable
     private double modifyMultiplierBase = 1.0;
 
     /** Growth term of the modify multiplier — modifying entangled existing code is priced up as the codebase grows. Saturates at {@code base + scale}; see {@link #modifyMultiplierBase}. */
-    @Nullable
     private double modifyMultiplierScale = 0.3;
 
     /** Safety clamp on the modify multiplier's growth term. The {@code s/(1+s)} form already saturates, so this only binds if {@link #modifyMultiplierScale} is set far above its default. */
-    @Nullable
     private double modifyMultiplierCap = 0.2;
 
     /**
@@ -670,11 +641,9 @@ public class RunArgs {
      * ships it becomes the single owner of the axis and this base returns to {@code 1.0}; until then, neither live
      * discount should be widened without re-checking their combined floor.
      */
-    @Nullable
     private double addMultiplierBase = 0.8;
 
     /** Decay term of the add multiplier, worth most on a small codebase and vanishing on a large one. See {@link #addMultiplierBase}. */
-    @Nullable
     private double addMultiplierScale = 0.1;
 
     /**
@@ -682,7 +651,6 @@ public class RunArgs {
      * same-size true_modify effort). only applies to surviving files whose change is purely deletion.
      * clamped to [0, 0.20] in validate() — a removal is worth at most ~20% of changing the same lines.
      */
-    @Nullable
     private double deleteRewardWeight = 0.2;
 
     /**
@@ -699,7 +667,6 @@ public class RunArgs {
      * effective ceiling — is 0.7x the numbers quoted above. The mechanism is unchanged; only the calibration
      * is now conservative, and re-measuring would be needed before treating +46 as the real worst case.
      */
-    @Nullable
     private double deleteRewardMaxQuantileUnits = 10.0;
 
     /**
@@ -707,7 +674,6 @@ public class RunArgs {
      * hard guards on the model's quality arithmetic: every per-issue penalty and bonus below it is advisory, so a
      * model that mis-adds its own table is bounded here and nowhere else.
      */
-    @Nullable
     private double qualityMultiplierMin = 0.5;
 
     /**
@@ -715,14 +681,12 @@ public class RunArgs {
      * analysis, where coverage, duplication and static analysis are unknown rather than clean and no bonus is
      * verifiable. See {@link #qualityMultiplierMin}.
      */
-    @Nullable
     private double qualityMultiplierMax = 1.2;
 
     /**
      * Cap on the total static-analysis penalty. Enforced server-side on the pre-computed impact <i>and</i>
      * interpolated into the prompt, so the model's reference table states the same bound that is actually applied.
      */
-    @Nullable
     private double staticAnalysisPenaltyCap = 0.2;
 
     /**
@@ -730,7 +694,6 @@ public class RunArgs {
      * model as the mandatory {@code RECOMMENDED IMPACT}, so it moves the score deterministically. Error rules
      * introduced only in test code are weighted down by {@link #testCodePenaltyWeight}.
      */
-    @Nullable
     private double staticAnalysisIntroducedPenalty = -0.05;
 
     /**
@@ -738,22 +701,18 @@ public class RunArgs {
      * changed code inherits some responsibility for what it sits in — but an order of magnitude below
      * {@link #staticAnalysisIntroducedPenalty}, because pre-existing violations are not the author's doing.
      */
-    @Nullable
     private double staticAnalysisPreExistingPenalty = -0.01;
 
     /**
      * Bonus when the commit introduces zero error-severity violations, mirroring {@link #cpdCleanBonus}. Withheld
      * when {@link #ignoreDiagnostics} is set: uncollected findings are not evidence of clean code.
      */
-    @Nullable
     private double staticAnalysisCleanBonus = 0.05;
 
     /** Prompt-only cap on the total architecture/SOLID penalty. Stated to the model in its penalty table; unlike {@link #staticAnalysisPenaltyCap} nothing re-checks the sum afterwards. */
-    @Nullable
     private double architecturePenaltyCap = 0.15;
 
     /** Prompt-only cap on the total quality-gate penalty. Also surfaced in the HTML report so a reader sees the bound the model was given. */
-    @Nullable
     private double qualityGatePenaltyCap = 0.1;
 
     /**
@@ -761,15 +720,12 @@ public class RunArgs {
      * large commit is worth less than the first lines of a small one. It owns commit size and nothing else — the
      * operation multipliers cannot shape size, and this cannot distinguish new lines from modified ones.
      */
-    @Nullable
     private double volumeExponent = 0.85;
 
     /** Per-doubling breadth bonus: {@code log2(filesChanged) · coefficient}, capped by {@link #filesScopeMaxBonus}. Prices the coordination cost of touching many files, not the code in them. */
-    @Nullable
     private double filesScopeLogCoefficient = 0.02;
 
     /** Ceiling on the breadth bonus, so a very wide commit gains at most ~10%. See {@link #filesScopeLogCoefficient}. */
-    @Nullable
     private double filesScopeMaxBonus = 0.10;
 
     /**
@@ -777,7 +733,6 @@ public class RunArgs {
      * is more permissive. Outlier protection deliberately lives here, on the sum, rather than per block: clipping
      * individual blocks would also strip the honest contributions of the well-sized blocks beside an outlier.
      */
-    @Nullable
     private double driverScoreCapMultiplier = 2.5;
 
     /**
@@ -789,7 +744,6 @@ public class RunArgs {
      * those stay raw so the project's real style survives. False positives are expected; raise it for a codebase
      * whose blocks legitimately diverge from their own median.
      */
-    @Nullable
     private double driverFactorMaxDeviation = 0.75;
 
     /**
@@ -798,7 +752,6 @@ public class RunArgs {
      * {@link #driverScoreCapMultiplier} against real traffic, and for replaying history under new abuse detection
      * without rewriting the scores it produced. Replay must honour the persisted flag verbatim or volume diverges.
      */
-    @Nullable
     private boolean driverScoreCapDryRun = false;
 
     /**
@@ -807,19 +760,15 @@ public class RunArgs {
      * clamping alone cannot, since NaN propagates through {@code min}/{@code max} and would poison every product
      * downstream all the way to the persisted score.
      */
-    @Nullable
     private double statsQuantile = 0.95;
 
     /** Line-coverage percentage below which a changed symbol is listed to the model as an uncovered path. Purely selects what the prompt highlights; it carries no penalty of its own. */
-    @Nullable
     private double coverageLowThreshold = 50.0;
 
     /** Line-coverage percentage below which a changed symbol is labelled {@code CRITICAL} risk in the request payload. */
-    @Nullable
     private double coverageCriticalThreshold = 10.0;
 
     /** Line-coverage percentage below which a changed symbol is labelled {@code HIGH} risk; at or above it the symbol is {@code MEDIUM}. See {@link #coverageCriticalThreshold}. */
-    @Nullable
     private double coverageHighThreshold = 30.0;
 
     /**
@@ -827,7 +776,6 @@ public class RunArgs {
      * summary, split by new versus modified. Also sent to the model as the threshold those counts were derived
      * from, so it can read them without guessing the cut-off.
      */
-    @Nullable
     private int highComplexityThreshold = 10;
 
     /**
@@ -836,19 +784,15 @@ public class RunArgs {
      * deterministically despite also appearing in the prompt's reference table. Withheld when {@link #ignoreCpd}
      * suppressed the measurement.
      */
-    @Nullable
     private double cpdCleanBonus = 0.05;
 
     /** Penalty for the moderate duplication band. See {@link #cpdCleanBonus} for how the impact reaches the score. */
-    @Nullable
     private double cpdModeratePenalty = -0.10;
 
     /** Penalty for the high duplication band. See {@link #cpdCleanBonus}. */
-    @Nullable
     private double cpdHighPenalty = -0.20;
 
     /** Penalty for the severe duplication band. See {@link #cpdCleanBonus}. */
-    @Nullable
     private double cpdSeverePenalty = -0.30;
 
     /**
@@ -856,19 +800,15 @@ public class RunArgs {
      * clones are excluded entirely and test-only clones are weighted by {@link #testCodePenaltyWeight}, so this
      * counts fractional units, not raw clone rows.
      */
-    @Nullable
     private double cpdCleanThreshold = 1.0;
 
     /** Upper bound of the acceptable band, which carries neither bonus nor penalty. See {@link #cpdCleanThreshold}. */
-    @Nullable
     private double cpdAcceptableThreshold = 3.0;
 
     /** Upper bound of the moderate band, charged {@link #cpdModeratePenalty}. See {@link #cpdCleanThreshold}. */
-    @Nullable
     private double cpdModerateThreshold = 6.0;
 
     /** Upper bound of the high band, charged {@link #cpdHighPenalty}; anything above is severe. See {@link #cpdCleanThreshold}. */
-    @Nullable
     private double cpdHighThreshold = 10.0;
 
     /**
@@ -876,7 +816,6 @@ public class RunArgs {
      * fair — test code is calibrated against test code — so this is a product decision about what test work is
      * worth, applied uniformly at the effort step.
      */
-    @Nullable
     private double testCodeScoreMultiplier = 0.4;
 
     /**
@@ -884,7 +823,6 @@ public class RunArgs {
      * error rules introduced only in test code. Separate from {@link #testCodeScoreMultiplier} because rewarding
      * test work and forgiving test defects are different decisions — test duplication is often legitimate.
      */
-    @Nullable
     private double testCodePenaltyWeight = 0.3;
 
     /**
@@ -893,7 +831,6 @@ public class RunArgs {
      * work but cheaper per line than 200 lines of hand-written logic. Their synthetic blocks carry a zero cap
      * baseline, so they never inflate the cap budget.
      */
-    @Nullable
     private double configFileScoreMultiplier = 0.3;
 
     /**
@@ -911,15 +848,12 @@ public class RunArgs {
      * line-count magnitude and difficulty rides a separate axis, so a 200-line mechanical migration and a 200-line
      * intricate rewrite carry the same volume and different effort.
      */
-    @Nullable
     private double categoryMechanicalCoeff = 0.7;
 
     /** Effort coefficient for {@code ROUTINE} — ordinary feature wiring, and the neutral anchor of the spread. See {@link #categoryMechanicalCoeff}. */
-    @Nullable
     private double categoryRoutineCoeff = 1.0;
 
     /** Effort coefficient for {@code SUBSTANTIVE} — genuine new logic, a real design choice, careful edge-case work. See {@link #categoryMechanicalCoeff}. */
-    @Nullable
     private double categorySubstantiveCoeff = 1.2;
 
     /**
@@ -928,7 +862,6 @@ public class RunArgs {
      * hosted model flips borderline blocks one tier between otherwise identical runs; a compressed spread bounds
      * how far one flip can move the final score. See {@link #categoryMechanicalCoeff}.
      */
-    @Nullable
     private double categoryIntricateCoeff = 1.4;
 
     /**
@@ -936,7 +869,6 @@ public class RunArgs {
      * {@link #movedLineCoefficient} instead of full weight. Relocating code is not writing it. Must match the
      * offline plugin's value on replay, since it changes per-block driver scores.
      */
-    @Nullable
     private boolean moveDetectionEnabled = true;
 
     /**
@@ -945,7 +877,6 @@ public class RunArgs {
      * {@link #timeMachineTargetOffset} outward along a back-off ladder before falling back to latest; disabled, only
      * the latest-snapshot build runs and no snapshot metadata is emitted.
      */
-    @Nullable
     private boolean timeMachineEnabled = true;
 
     /**
@@ -953,7 +884,6 @@ public class RunArgs {
      * Relocation typically only adds tokens (e.g. re-qualified receivers: props.X → channel.props.X),
      * so genuine moves score 1.0 under containment while symmetric metrics drop below 0.95
      */
-    @Nullable
     private double moveSimilarityThreshold = 0.95;
 
     /**
@@ -961,35 +891,27 @@ public class RunArgs {
      * exactly what an in-file one does. Applied as a per-block factor that scales the driver score as well as
      * effort, because moved lines are a volume correction rather than a difficulty judgment.
      */
-    @Nullable
     private double movedLineCoefficient = 0.25;
 
     /** Report presentation: final-score floor for the "huge" band in the HTML report. Cosmetic banding only — no scoring path reads it. */
-    @Nullable
     private int scoreThresholdHuge = 150;
 
     /** Report presentation: final-score floor for the "large" band. See {@link #scoreThresholdHuge}. */
-    @Nullable
     private int scoreThresholdLarge = 90;
 
     /** Report presentation: final-score floor for the "medium" band. See {@link #scoreThresholdHuge}. */
-    @Nullable
     private int scoreThresholdMedium = 50;
 
     /** Report presentation: final-score floor for the "small" band; below it the commit renders as trivial. See {@link #scoreThresholdHuge}. */
-    @Nullable
     private int scoreThresholdSmall = 20;
 
     /** Report presentation: quality-dimension score at which the report renders the dimension as critical. Independent of the per-dimension gate thresholds the model is given. */
-    @Nullable
     private int dimensionScoreCritical = 8;
 
     /** Report presentation: quality-dimension score rendered as major. See {@link #dimensionScoreCritical}. */
-    @Nullable
     private int dimensionScoreMajor = 6;
 
     /** Report presentation: quality-dimension score rendered as moderate. See {@link #dimensionScoreCritical}. */
-    @Nullable
     private int dimensionScoreModerate = 4;
 
     /**
@@ -997,23 +919,18 @@ public class RunArgs {
      * the model returned no blast-radius analysis at all. A fallback for a missing answer, not a second opinion on
      * one that arrived.
      */
-    @Nullable
     private int callerThresholdHigh = 10;
 
     /** Report presentation: caller count above which the same fallback yields {@code MODERATE}. See {@link #callerThresholdHigh}. */
-    @Nullable
     private int callerThresholdModerate = 5;
 
     /** Report presentation: how many clone groups the duplication table lists before truncating. */
-    @Nullable
     private int maxClonesToShow = 10;
 
     /** Carried through the config plumbing and exposed as an override, but currently read by no consumer — no prompt, score or report path uses it. */
-    @Nullable
     private int maxSourceLines = 30;
 
     /** Carried through the config plumbing and exposed as an override, but currently read by no consumer. See {@link #maxSourceLines}. */
-    @Nullable
     private int truncateSourceLines = 25;
 
     /**
@@ -1022,31 +939,24 @@ public class RunArgs {
      * to 0-10 — and suppressed entirely for a commit that changes only build descriptors, since a bare version bump
      * is not architecture work.
      */
-    @Nullable
     private double architectureBonusFactor = 0.015;
 
     /** Prompt-only: per-issue impact the model is told to apply to a PMD priority-1 (blocker) finding. Advisory — the applied static-analysis impact is the server's own pre-computed value. */
-    @Nullable
     private double pmdPriority1Penalty = -0.05;
 
     /** Prompt-only: per-issue impact for a PMD priority-2 (critical) finding. See {@link #pmdPriority1Penalty}. */
-    @Nullable
     private double pmdPriority2Penalty = -0.03;
 
     /** Prompt-only: per-issue impact for a PMD priority-3 (important) finding. See {@link #pmdPriority1Penalty}. */
-    @Nullable
     private double pmdPriority3Penalty = -0.01;
 
     /** Prompt-only: per-issue impact for a SpotBugs rank 1-4 (scariest) finding — the rank band that maps to {@code error} severity. See {@link #pmdPriority1Penalty}. */
-    @Nullable
     private double spotbugsScariestPenalty = -0.08;
 
     /** Prompt-only: per-issue impact for a SpotBugs rank 5-9 (scary) finding. See {@link #pmdPriority1Penalty}. */
-    @Nullable
     private double spotbugsScaryPenalty = -0.04;
 
     /** Prompt-only: per-issue impact for a SpotBugs rank 10-14 (troubling) finding. See {@link #pmdPriority1Penalty}. */
-    @Nullable
     private double spotbugsTroublingPenalty = -0.02;
 
     /**
@@ -1054,39 +964,30 @@ public class RunArgs {
      * band edges are {@link #coverageImpactExcellentMin} and friends; nothing verifies the model applied the row it
      * was given.
      */
-    @Nullable
     private double coverageExcellentBonus = 0.10;
 
     /** Prompt-only: impact for the good coverage band. See {@link #coverageExcellentBonus}. */
-    @Nullable
     private double coverageGoodBonus = 0.05;
 
     /** Prompt-only: impact for the low coverage band. See {@link #coverageExcellentBonus}. */
-    @Nullable
     private double coverageLowPenalty = -0.05;
 
     /** Prompt-only: impact for the poor coverage band. See {@link #coverageExcellentBonus}. */
-    @Nullable
     private double coveragePoorPenalty = -0.10;
 
     /** Prompt-only: impact below the poor band. See {@link #coverageExcellentBonus}. */
-    @Nullable
     private double coverageTerriblePenalty = -0.15;
 
     /** Prompt-only: per-issue impact for a minor style issue (magic number, deep nesting, over-long symbol), bounded in the prompt by {@link #architecturePenaltyCap}. */
-    @Nullable
     private double architectureMinorPenalty = -0.01;
 
     /** Prompt-only: per-issue impact for a SOLID violation or a leaky abstraction. See {@link #architectureMinorPenalty}. */
-    @Nullable
     private double architectureSolidPenalty = -0.03;
 
     /** Prompt-only: per-issue impact for a major architecture issue (god class, circular dependency). See {@link #architectureMinorPenalty}. */
-    @Nullable
     private double architectureMajorPenalty = -0.05;
 
     /** Prompt-only: impact per failed quality gate — a dimension scoring at or above its threshold whose gate criterion is not met. Bounded in the prompt by {@link #qualityGatePenaltyCap}. */
-    @Nullable
     private double qualityGateFailurePenalty = -0.03;
 
     /**
@@ -1094,11 +995,9 @@ public class RunArgs {
      * coverage-based — see {@link #architectureImpactCoverageRequired} — and the prompt says so explicitly, because
      * the model otherwise failed it on static-analysis findings it was told to ignore.
      */
-    @Nullable
     private int architectureImpactScoreThreshold = 7;
 
     /** Prompt-only: coverage of changed code that satisfies the architecture-impact gate. See {@link #architectureImpactScoreThreshold}. */
-    @Nullable
     private int architectureImpactCoverageRequired = 80;
 
     /**
@@ -1106,59 +1005,45 @@ public class RunArgs {
      * Set lowest of the ten because concurrency defects are the hardest to reproduce after the fact. Also feeds the
      * model's risk-score formula through {@link #riskHighDimensionThreshold}.
      */
-    @Nullable
     private int concurrencyRiskThreshold = 3;
 
     /** Prompt-only: dimension score at which the integration-surface gate (contract tests for genuinely new APIs) must be met. See {@link #concurrencyRiskThreshold}. */
-    @Nullable
     private int integrationSurfaceThreshold = 7;
 
     /** Prompt-only: dimension score at which the data-integrity gate (transactional tests) must be met. See {@link #concurrencyRiskThreshold}. */
-    @Nullable
     private int dataIntegrityThreshold = 7;
 
     /** Prompt-only: dimension score at which the security-sensitivity gate (security review) must be met. Set below the others because unreviewed auth and crypto work is worth flagging early. See {@link #concurrencyRiskThreshold}. */
-    @Nullable
     private int securitySensitivityThreshold = 5;
 
     /** Prompt-only: dimension score at which the scalability gate must be met — and only for newly written bottleneck code, never for a dependency upgrade. See {@link #concurrencyRiskThreshold}. */
-    @Nullable
     private int scalabilityImpactThreshold = 7;
 
     /** Prompt-only: dimension score at which the observability gate (operational review) must be met. See {@link #concurrencyRiskThreshold}. */
-    @Nullable
     private int observabilityThreshold = 7;
 
     /** Prompt-only: dimension score at which the resilience gate (failure-scenario tests) must be met. See {@link #concurrencyRiskThreshold}. */
-    @Nullable
     private int resilienceThreshold = 7;
 
     /** Prompt-only: dimension score at which the performance gate must be met — and only for newly written hot-path code. See {@link #concurrencyRiskThreshold}. */
-    @Nullable
     private int performanceThreshold = 7;
 
     /** Report presentation: senior-review score at which the report renders the recommendation as major. */
-    @Nullable
     private int seniorReviewThreshold = 7;
 
     /** Report presentation: senior-review score at which the recommendation renders as critical. See {@link #seniorReviewThreshold}. */
-    @Nullable
     private int seniorReviewCriticalThreshold = 8;
 
     /** Report presentation: cyclomatic complexity at which a method renders as high complexity. Separate from {@link #highComplexityThreshold}, which decides what the model is told. */
-    @Nullable
     private int complexityHighDisplayThreshold = 15;
 
     /** Report presentation: cyclomatic complexity at which a method renders as moderate. See {@link #complexityHighDisplayThreshold}. */
-    @Nullable
     private int complexityModerateDisplayThreshold = 10;
 
     /** Report presentation: clone similarity at which a duplication finding renders as critical. */
-    @Nullable
     private double similarityCriticalThreshold = 0.90;
 
     /** Report presentation: clone similarity at which a duplication finding renders as major. See {@link #similarityCriticalThreshold}. */
-    @Nullable
     private double similarityMajorThreshold = 0.75;
 
     /**
@@ -1166,43 +1051,33 @@ public class RunArgs {
      * {@code min(riskScoreMax, maxDimScore × riskBaseMultiplier + modifiers)} and the prompt marks it mandatory —
      * the model is told to compute rather than judge it — but the result is not recomputed server-side.
      */
-    @Nullable
     private int riskHighDimensionThreshold = 7;
 
     /** Prompt-only: multiplier on the highest non-null dimension score, forming the base risk. See {@link #riskHighDimensionThreshold}. */
-    @Nullable
     private int riskBaseMultiplier = 7;
 
     /** Prompt-only: risk added per high-scoring dimension beyond the first — breadth of exposure, not just its peak. See {@link #riskHighDimensionThreshold}. */
-    @Nullable
     private int riskHighDimensionPenalty = 5;
 
     /** Prompt-only: risk added when the changed module is a core library or shared utility, where a defect propagates to consumers. See {@link #riskHighDimensionThreshold}. */
-    @Nullable
     private int riskCoreLibraryPenalty = 10;
 
     /** Prompt-only: risk added when the commit carries breaking changes. See {@link #riskHighDimensionThreshold}. */
-    @Nullable
     private int riskBreakingChangesPenalty = 10;
 
     /** Prompt-only: ceiling on the risk score, and the top of the {@code CRITICAL} band. See {@link #riskHighDimensionThreshold}. */
-    @Nullable
     private int riskScoreMax = 100;
 
     /** Prompt-only: top of the {@code LOW} risk band. The model derives its risk level from these four cut-offs rather than judging it. */
-    @Nullable
     private int riskLevelLowMax = 25;
 
     /** Prompt-only: top of the {@code MODERATE} risk band. See {@link #riskLevelLowMax}. */
-    @Nullable
     private int riskLevelModerateMax = 50;
 
     /** Prompt-only: top of the {@code HIGH} risk band. See {@link #riskLevelLowMax}. */
-    @Nullable
     private int riskLevelHighMax = 75;
 
     /** Prompt-only: top of the {@code VERY_HIGH} risk band; above it is {@code CRITICAL} up to {@link #riskScoreMax}. See {@link #riskLevelLowMax}. */
-    @Nullable
     private int riskLevelVeryHighMax = 90;
 
     /**
@@ -1210,23 +1085,18 @@ public class RunArgs {
      * full architecture-bonus quality factor. These five minimums are the band edges for
      * {@link #coverageExcellentBonus} and friends, and are stated in percent of changed-code coverage.
      */
-    @Nullable
     private int coverageImpactExcellentMin = 90;
 
     /** Prompt-only: floor of the good coverage band. See {@link #coverageImpactExcellentMin}. */
-    @Nullable
     private int coverageImpactGoodMin = 80;
 
     /** Prompt-only: floor of the acceptable band, which carries neither bonus nor penalty. See {@link #coverageImpactExcellentMin}. */
-    @Nullable
     private int coverageImpactAcceptableMin = 70;
 
     /** Prompt-only: floor of the low band. See {@link #coverageImpactExcellentMin}. */
-    @Nullable
     private int coverageImpactLowMin = 60;
 
     /** Prompt-only: floor of the poor band; below it is the terrible band. See {@link #coverageImpactExcellentMin}. */
-    @Nullable
     private int coverageImpactPoorMin = 50;
 
     /**
@@ -1234,11 +1104,9 @@ public class RunArgs {
      * an input to that judgment and not the answer — a wide switch can be mechanical, a short lock-free helper
      * intricate.
      */
-    @Nullable
     private int fanOutHighThreshold = 10;
 
     /** Prompt-only: NPath complexity above which a block counts as complex in the same difficulty judgment. See {@link #fanOutHighThreshold}. */
-    @Nullable
     private int npathComplexThreshold = 16 * 1024;
 
     /**
@@ -1246,11 +1114,9 @@ public class RunArgs {
      * {@link #effectiveJdtlsVersion()}. The saving is large and the coupling is real: the index is keyed by
      * absolute jar path, which is why {@link #localRepositoryDir} is stable per project rather than per commit.
      */
-    @Nullable
     private boolean jdtUseSharedIndex = true;
 
     /** Let JDT decompile class files to answer reference queries for dependencies with no source jar. Off by default — decompiled callers are outside the analyzed project and cost import time. */
-    @Nullable
     private boolean jdtIncludeDecompiledSources = false;
 
     /** Debug port for the language-server JVM, attached with {@code suspend=y} so it waits for a debugger. Development only: set it and the analysis blocks until something connects. */
@@ -1276,6 +1142,14 @@ public class RunArgs {
                 ExceptionUtils.wrapAndThrow(err);
             }
         }
+    }
+    /**
+     * The shared-index directory for the resolved language-server version, created on demand. Creating it in a
+     * static initialiser failed the whole class on a read-only or absent home directory — including {@link
+     * #options()} for {@code --help} and every config-only path that never starts a language server.
+     */
+    public Path sharedIndexDir() throws IOException {
+        return Files.createDirectories(JDT_SHARED_INDEX.resolve(effectiveJdtlsVersion()));
     }
     public String effectiveJdtlsVersion() {
         Matcher matcher = JDTLS_ARCHIVE_VERSION.matcher(resolveJdtlsArchiveName());
@@ -1424,7 +1298,6 @@ public class RunArgs {
             } else {
                 builder = builder.hasArg();
             }
-            builder = builder.required(Objects.isNull(field.getAnnotation(Nullable.class)));
             toReturn.addOption(builder.get());
         }
         return toReturn;
@@ -1460,6 +1333,17 @@ public class RunArgs {
                     field.set(toReturn, JGit.openRepository(new File(value)));
                 } else if (field.getType().equals(List.class)) {
                     field.set(toReturn, Split.on(value, ','));
+                } else {
+                    /**
+                     * options() advertises a flag for every non-transient field, so a type this parser does not
+                     * know would be accepted on the command line and then dropped — the run continuing on the
+                     * default with no signal at all. Fail here instead: the mismatch is a defect in this method,
+                     * not in the user's invocation.
+                     */
+                    throw new IllegalArgumentException(String.format(
+                            "no CLI parser for --%s of type %s; add one to RunArgs.from or mark the field transient",
+                            kebab,
+                            field.getType().getName()));
                 }
             }
         }

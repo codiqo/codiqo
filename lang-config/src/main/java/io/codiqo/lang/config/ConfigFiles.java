@@ -3,6 +3,7 @@ package io.codiqo.lang.config;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
 
@@ -18,6 +19,9 @@ public class ConfigFiles {
             new GradleScriptFileSpec(),
             new GradleBuildConfigFileSpec());
 
+    public String describeSupported() {
+        return SPECS.stream().map(ConfigFileSpec::describe).collect(Collectors.joining(", "));
+    }
     public boolean isConfigFile(String path) {
         return SPECS.stream().anyMatch(spec -> spec.matches(path));
     }

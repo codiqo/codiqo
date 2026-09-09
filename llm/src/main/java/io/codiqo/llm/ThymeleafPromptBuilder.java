@@ -268,12 +268,9 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
      * leave those blocks looking uncalled. Each entry carries its own {@code isTestCaller} flag, so the
      * model can tell which kind it is reading.
      *
-     * <p>The class-concentration term keeps a truncated list legible — ranking on coupling alone leaves the
-     * survivors scattered one-per-class, which tells the model only that the changed code is used, where
-     * keeping whole classes together shows how a caller uses it. It sits BELOW callSiteCount deliberately:
-     * promoting it above cost the single most-coupled caller its slot whenever a class of weakly-coupled
-     * callers outnumbered it, which is the opposite of what the cap is for. Grouping is by file rather than
-     * by parsing the signature, so it carries to languages where a file is not one class.
+     * <p>The class-concentration term keeps a truncated list legible, and sits BELOW callSiteCount so the
+     * most-coupled caller cannot lose its slot to a class of weakly-coupled ones. Grouping is by file rather
+     * than by parsing the signature, so it carries to languages where a file is not one class.
      */
     private static Comparator<LlmScoringRequest.CallerInfo> callerPriority(List<LlmScoringRequest.CallerInfo> callers) {
         Map<String, Long> perClass = callers.stream()
@@ -324,28 +321,28 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         ctx.setVariable("volume_exponent", args.getVolumeExponent());
         ctx.setVariable("fanout_high_threshold", args.getFanOutHighThreshold());
         ctx.setVariable("npath_complex_threshold", args.getNpathComplexThreshold());
-        ctx.setVariable("cpd_clean_bonus", String.format("+%.2f", args.getCpdCleanBonus()));
-        ctx.setVariable("cpd_moderate_penalty", String.format("+%.2f", args.getCpdModeratePenalty()));
-        ctx.setVariable("cpd_high_penalty", String.format("+%.2f", args.getCpdHighPenalty()));
-        ctx.setVariable("cpd_severe_penalty", String.format("+%.2f", args.getCpdSeverePenalty()));
-        ctx.setVariable("test_code_penalty_weight", String.format("%.2f", args.getTestCodePenaltyWeight()));
+        ctx.setVariable("cpd_clean_bonus", String.format(Locale.ROOT, "+%.2f", args.getCpdCleanBonus()));
+        ctx.setVariable("cpd_moderate_penalty", String.format(Locale.ROOT, "+%.2f", args.getCpdModeratePenalty()));
+        ctx.setVariable("cpd_high_penalty", String.format(Locale.ROOT, "+%.2f", args.getCpdHighPenalty()));
+        ctx.setVariable("cpd_severe_penalty", String.format(Locale.ROOT, "+%.2f", args.getCpdSeverePenalty()));
+        ctx.setVariable("test_code_penalty_weight", String.format(Locale.ROOT, "%.2f", args.getTestCodePenaltyWeight()));
         ctx.setVariable("test_code_penalty_percent", Math.round(args.getTestCodePenaltyWeight() * 100));
-        ctx.setVariable("static_analysis_clean_bonus", String.format("+%.2f", args.getStaticAnalysisCleanBonus()));
-        ctx.setVariable("pmd_p1_penalty", String.format("+%.2f", args.getPmdPriority1Penalty()));
-        ctx.setVariable("pmd_p2_penalty", String.format("+%.2f", args.getPmdPriority2Penalty()));
-        ctx.setVariable("pmd_p3_penalty", String.format("+%.2f", args.getPmdPriority3Penalty()));
-        ctx.setVariable("spotbugs_scariest_penalty", String.format("+%.2f", args.getSpotbugsScariestPenalty()));
-        ctx.setVariable("spotbugs_scary_penalty", String.format("+%.2f", args.getSpotbugsScaryPenalty()));
-        ctx.setVariable("spotbugs_troubling_penalty", String.format("+%.2f", args.getSpotbugsTroublingPenalty()));
-        ctx.setVariable("coverage_excellent_bonus", String.format("+%.2f", args.getCoverageExcellentBonus()));
-        ctx.setVariable("coverage_good_bonus", String.format("+%.2f", args.getCoverageGoodBonus()));
-        ctx.setVariable("coverage_low_penalty", String.format("+%.2f", args.getCoverageLowPenalty()));
-        ctx.setVariable("coverage_poor_penalty", String.format("+%.2f", args.getCoveragePoorPenalty()));
-        ctx.setVariable("coverage_terrible_penalty", String.format("+%.2f", args.getCoverageTerriblePenalty()));
-        ctx.setVariable("arch_minor_penalty", String.format("+%.2f", args.getArchitectureMinorPenalty()));
-        ctx.setVariable("arch_solid_penalty", String.format("+%.2f", args.getArchitectureSolidPenalty()));
-        ctx.setVariable("arch_major_penalty", String.format("+%.2f", args.getArchitectureMajorPenalty()));
-        ctx.setVariable("quality_gate_failure_penalty", String.format("+%.2f", args.getQualityGateFailurePenalty()));
+        ctx.setVariable("static_analysis_clean_bonus", String.format(Locale.ROOT, "+%.2f", args.getStaticAnalysisCleanBonus()));
+        ctx.setVariable("pmd_p1_penalty", String.format(Locale.ROOT, "+%.2f", args.getPmdPriority1Penalty()));
+        ctx.setVariable("pmd_p2_penalty", String.format(Locale.ROOT, "+%.2f", args.getPmdPriority2Penalty()));
+        ctx.setVariable("pmd_p3_penalty", String.format(Locale.ROOT, "+%.2f", args.getPmdPriority3Penalty()));
+        ctx.setVariable("spotbugs_scariest_penalty", String.format(Locale.ROOT, "+%.2f", args.getSpotbugsScariestPenalty()));
+        ctx.setVariable("spotbugs_scary_penalty", String.format(Locale.ROOT, "+%.2f", args.getSpotbugsScaryPenalty()));
+        ctx.setVariable("spotbugs_troubling_penalty", String.format(Locale.ROOT, "+%.2f", args.getSpotbugsTroublingPenalty()));
+        ctx.setVariable("coverage_excellent_bonus", String.format(Locale.ROOT, "+%.2f", args.getCoverageExcellentBonus()));
+        ctx.setVariable("coverage_good_bonus", String.format(Locale.ROOT, "+%.2f", args.getCoverageGoodBonus()));
+        ctx.setVariable("coverage_low_penalty", String.format(Locale.ROOT, "+%.2f", args.getCoverageLowPenalty()));
+        ctx.setVariable("coverage_poor_penalty", String.format(Locale.ROOT, "+%.2f", args.getCoveragePoorPenalty()));
+        ctx.setVariable("coverage_terrible_penalty", String.format(Locale.ROOT, "+%.2f", args.getCoverageTerriblePenalty()));
+        ctx.setVariable("arch_minor_penalty", String.format(Locale.ROOT, "+%.2f", args.getArchitectureMinorPenalty()));
+        ctx.setVariable("arch_solid_penalty", String.format(Locale.ROOT, "+%.2f", args.getArchitectureSolidPenalty()));
+        ctx.setVariable("arch_major_penalty", String.format(Locale.ROOT, "+%.2f", args.getArchitectureMajorPenalty()));
+        ctx.setVariable("quality_gate_failure_penalty", String.format(Locale.ROOT, "+%.2f", args.getQualityGateFailurePenalty()));
         ctx.setVariable("arch_impact_score_threshold", args.getArchitectureImpactScoreThreshold());
         ctx.setVariable("arch_impact_coverage_required", args.getArchitectureImpactCoverageRequired());
         ctx.setVariable("concurrency_risk_threshold", args.getConcurrencyRiskThreshold());

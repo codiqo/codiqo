@@ -1,6 +1,7 @@
 package io.codiqo.maven.populator;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
@@ -8,8 +9,17 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
-import java.util.ArrayList;
 
+import com.github.freva.asciitable.AsciiTable;
+import com.github.freva.asciitable.Column;
+import com.github.freva.asciitable.ColumnData;
+import com.github.freva.asciitable.HorizontalAlign;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
+import lombok.Value;
+import lombok.experimental.Accessors;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.math3.util.Precision;
@@ -20,17 +30,12 @@ import org.thymeleaf.context.Context;
 import org.thymeleaf.templatemode.TemplateMode;
 import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver;
 
-import com.github.freva.asciitable.AsciiTable;
-import com.github.freva.asciitable.Column;
-import com.github.freva.asciitable.ColumnData;
-import com.github.freva.asciitable.HorizontalAlign;
-
-import io.codiqo.api.metrics.DriverScaler;
 import io.codiqo.api.metrics.DriverScaler.DimensionStats;
+import io.codiqo.api.metrics.DriverScaler;
 import io.codiqo.api.metrics.DriverScore;
 import io.codiqo.client.model.AnalysisSubmissionModel;
-import io.codiqo.client.model.CodeUnitModel;
 import io.codiqo.client.model.CodeUnitModel.OperationEnum;
+import io.codiqo.client.model.CodeUnitModel;
 import io.codiqo.client.model.CommitModel;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.MetricsModel;
@@ -40,11 +45,6 @@ import io.codiqo.submit.ModuleQualityTracker;
 import io.codiqo.submit.SampleMaxTracker;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.submit.SubmissionPopulator;
-import lombok.AccessLevel;
-import lombok.Getter;
-import lombok.RequiredArgsConstructor;
-import lombok.Value;
-import lombok.experimental.Accessors;
 
 @RequiredArgsConstructor
 public class SubmissionSummaryPrinter implements SubmissionPopulator {
@@ -107,9 +107,9 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
 
     @Override
     public void accept(SubmissionContext ctx) {
-        log.info("");
+        log.info(StringUtils.EMPTY);
         logLines(StringUtils.stripEnd(renderTextSummary(ctx), StringUtils.LF));
-        log.info("");
+        log.info(StringUtils.EMPTY);
 
         log.info("max contributors:");
         log.info("  method/prod:");
@@ -123,12 +123,12 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
 
         RowBundle rowBundle = buildChangedBlockRows(ctx, ctx.getSubmissionModel());
         if (CollectionUtils.isNotEmpty(rowBundle.nonTrivial())) {
-            log.info("");
+            log.info(StringUtils.EMPTY);
             log.info("Changed code blocks (ordered by driver score):");
             logLines(renderChangedBlocksTable(rowBundle.nonTrivial()));
         }
         if (CollectionUtils.isNotEmpty(rowBundle.trivial())) {
-            log.info("");
+            log.info(StringUtils.EMPTY);
             log.info("Trivial changed code blocks (excluded from driver score):");
             logLines(renderTrivialBlocksTable(rowBundle.trivial()));
         }
@@ -138,8 +138,8 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
                 .sorted(Comparator.comparingDouble((BlockRow r) -> Math.max(r.deviationNcss(), r.deviationInvocations())).reversed())
                 .collect(Collectors.toList());
         double maxDeviation = ctx.getArgs().getDriverFactorMaxDeviation();
-        log.info("");
-        log.info(String.format("Ratio outliers in this commit (block S/L or I/L deviates > %.2f from bucket median):", maxDeviation));
+        log.info(StringUtils.EMPTY);
+        log.info(String.format(Locale.ROOT, "Ratio outliers in this commit (block S/L or I/L deviates > %.2f from bucket median):", maxDeviation));
         if (outliers.isEmpty()) {
             log.info("  none");
         } else {
@@ -147,12 +147,12 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         }
 
         OutlierBucketCounts bucketCounts = countOutliersByBucket(rowBundle.nonTrivial());
-        log.info("");
+        log.info(StringUtils.EMPTY);
         log.info("Ratio outlier counts by bucket:");
-        log.info(String.format("  method/prod:       %d", bucketCounts.methodProd()));
-        log.info(String.format("  method/test:       %d", bucketCounts.methodTest()));
-        log.info(String.format("  constructor/prod:  %d", bucketCounts.ctorProd()));
-        log.info(String.format("  constructor/test:  %d", bucketCounts.ctorTest()));
+        log.info(String.format(Locale.ROOT, "  method/prod:       %d", bucketCounts.methodProd()));
+        log.info(String.format(Locale.ROOT, "  method/test:       %d", bucketCounts.methodTest()));
+        log.info(String.format(Locale.ROOT, "  constructor/prod:  %d", bucketCounts.ctorProd()));
+        log.info(String.format(Locale.ROOT, "  constructor/test:  %d", bucketCounts.ctorTest()));
     }
     private static String renderOutliersTable(List<BlockRow> rows) {
         List<ColumnData<BlockRow>> columns = new ArrayList<>();
@@ -164,7 +164,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
     private static OutlierBucketCounts countOutliersByBucket(List<BlockRow> rows) {
         OutlierBucketCounts counts = new OutlierBucketCounts();
         for (BlockRow row : rows) {
-            if (!row.outlier()) {
+            if (BooleanUtils.negate(row.outlier())) {
                 continue;
             }
             boolean isCtor = SymbolKind.Constructor.name().equals(row.kind());
@@ -211,11 +211,11 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         tctx.setVariable("blocks", countChangedBlocks(submission));
         tctx.setVariable("rows", rows);
         tctx.setVariable("quantilePercent", (int) Math.round(ctx.getArgs().getStatsQuantile() * 100));
-        tctx.setVariable("capMultiplierFmt", String.format("%.2f", capMultiplier));
-        tctx.setVariable("weightLines", String.format("%.2f", DriverScore.WEIGHT_LINES));
-        tctx.setVariable("weightNcss", String.format("%.2f", DriverScore.WEIGHT_NCSS));
-        tctx.setVariable("weightInvocs", String.format("%.2f", DriverScore.WEIGHT_INVOCATIONS));
-        tctx.setVariable("totalWeight", String.format("%.2f", DriverScore.TOTAL_WEIGHT));
+        tctx.setVariable("capMultiplierFmt", String.format(Locale.ROOT, "%.2f", capMultiplier));
+        tctx.setVariable("weightLines", String.format(Locale.ROOT, "%.2f", DriverScore.WEIGHT_LINES));
+        tctx.setVariable("weightNcss", String.format(Locale.ROOT, "%.2f", DriverScore.WEIGHT_NCSS));
+        tctx.setVariable("weightInvocs", String.format(Locale.ROOT, "%.2f", DriverScore.WEIGHT_INVOCATIONS));
+        tctx.setVariable("totalWeight", String.format(Locale.ROOT, "%.2f", DriverScore.TOTAL_WEIGHT));
         return TEMPLATE_ENGINE.process(TEMPLATE_NAME, tctx);
     }
     private static FileCounts countFiles(AnalysisSubmissionModel submission) {
@@ -242,7 +242,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         for (FileChangeModel file : CollectionUtils.emptyIfNull(submission.getFiles())) {
             boolean isTest = Boolean.TRUE.equals(file.getIsTest());
             for (CodeUnitModel unit : CollectionUtils.emptyIfNull(file.getCodeUnits())) {
-                if (!isMethodOrConstructor(unit.getKind()) || unit.getOperation() == OperationEnum.DELETE) {
+                if (BooleanUtils.negate(isMethodOrConstructor(unit.getKind())) || unit.getOperation() == OperationEnum.DELETE) {
                     continue;
                 }
                 if (Boolean.TRUE.equals(unit.getIsTrivial())) {
@@ -283,7 +283,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         for (FileChangeModel file : CollectionUtils.emptyIfNull(submission.getFiles())) {
             boolean isTest = Boolean.TRUE.equals(file.getIsTest());
             for (CodeUnitModel unit : CollectionUtils.emptyIfNull(file.getCodeUnits())) {
-                if (!isMethodOrConstructor(unit.getKind()) || unit.getOperation() == OperationEnum.DELETE) {
+                if (BooleanUtils.negate(isMethodOrConstructor(unit.getKind())) || unit.getOperation() == OperationEnum.DELETE) {
                     continue;
                 }
                 buildRow(ctx, file, unit, isTest).ifPresent(row -> {
@@ -403,11 +403,11 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
     }
     private static String formatDriver(BlockRow r) {
         if (r.operation() == OperationEnum.MODIFY) {
-            return String.format("%.2f = (%.2f+%.2f)/2",
+            return String.format(Locale.ROOT, "%.2f = (%.2f+%.2f)/2",
                     r.driver(),
                     r.projectedLines(), r.projectedInvocations());
         }
-        return String.format("%.2f = (%.2f+%.2f+%.2f)/%.2f",
+        return String.format(Locale.ROOT, "%.2f = (%.2f+%.2f+%.2f)/%.2f",
                 r.driver(),
                 r.projectedLines(), r.projectedNcss(), r.projectedInvocations(),
                 DriverScore.TOTAL_WEIGHT);
@@ -438,13 +438,13 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         return dot > 0 ? name.substring(0, dot) : name;
     }
     private static String formatDouble(double value) {
-        return String.format("%.2f", value);
+        return String.format(Locale.ROOT, "%.2f", value);
     }
     private static String formatPercent(double ratio) {
-        return String.format("%.0f%%", ratio * 100);
+        return String.format(Locale.ROOT, "%.0f%%", ratio * 100);
     }
     private static String formatDimension(DimensionStats stats) {
-        return String.format("min=%-4d p50=%-6.1f p75=%-6.1f p90=%-6.1f p95=%-6.1f max=%d",
+        return String.format(Locale.ROOT, "min=%-4d p50=%-6.1f p75=%-6.1f p90=%-6.1f p95=%-6.1f max=%d",
                 stats.min(),
                 stats.p50(),
                 stats.p75(),
@@ -496,18 +496,18 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         double capMultiplier;
 
         public String baselineLine() {
-            return String.format("  %-17s  N=%-5d  trivials_excluded=%d", label + ":", scaler.population(), trivialsExcluded);
+            return String.format(Locale.ROOT, "  %-17s  N=%-5d  trivials_excluded=%d", label + ":", scaler.population(), trivialsExcluded);
         }
         public String capLine() {
             int budgetPerBlock = (int) Math.round(capQuantile * capMultiplier);
-            return String.format("  %-17s quantile=%-5d bucket_budget_per_block=%d", label + ":", capQuantile, budgetPerBlock);
+            return String.format(Locale.ROOT, "  %-17s quantile=%-5d bucket_budget_per_block=%d", label + ":", capQuantile, budgetPerBlock);
         }
         public List<String> scalerLines() {
             if (scaler.isEmpty()) {
                 return Arrays.asList(String.format("  %s: (N=0)", label));
             }
             return Arrays.asList(
-                    String.format("  %s: (N=%d)", label, scaler.population()),
+                    String.format(Locale.ROOT, "  %s: (N=%d)", label, scaler.population()),
                     String.format("    lines:   %s", formatDimension(scaler.lines())),
                     String.format("    ncss:    %s", formatDimension(scaler.ncss())),
                     String.format("    invocs:  %s", formatDimension(scaler.invocations())));
@@ -516,7 +516,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
             if (scaler.isEmpty()) {
                 return String.format("    %-17s (N=0)", label + ":");
             }
-            return String.format("    %-17s k_S=%.3f  k_I=%.3f   (lines.p50=%.1f, ncss.p50=%.1f, invocs.p50=%.1f)",
+            return String.format(Locale.ROOT, "    %-17s k_S=%.3f  k_I=%.3f   (lines.p50=%.1f, ncss.p50=%.1f, invocs.p50=%.1f)",
                     label + ":",
                     scaler.ncssFactor(),
                     scaler.invocationsFactor(),

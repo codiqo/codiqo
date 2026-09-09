@@ -42,7 +42,9 @@ import io.codiqo.client.model.ToolUsageModel;
 import io.codiqo.client.model.VolumeScoreModel;
 import io.codiqo.llm.client.ScoringClient.ScoringResult;
 import io.codiqo.llm.schema.LlmScoringResponse;
+import lombok.experimental.UtilityClass;
 
+@UtilityClass
 public class LlmResponseMapper {
     public void mapToAnalysisResult(LlmScoringResponse llmResponse, AnalysisResultModel result) {
         result.setChangeClassification(Optional.ofNullable(llmResponse.getChangeClassification())

@@ -2,6 +2,7 @@ package io.codiqo.submit;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 
@@ -84,6 +85,6 @@ public class ApiRetry {
         if (millis < DateUtils.MILLIS_PER_SECOND) {
             return millis + "ms";
         }
-        return String.format("%.1fs", (double) millis / DateUtils.MILLIS_PER_SECOND);
+        return String.format(Locale.ROOT, "%.1fs", (double) millis / DateUtils.MILLIS_PER_SECOND);
     }
 }

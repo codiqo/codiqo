@@ -82,7 +82,7 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
 
             long merges = commits.stream().filter(commit -> Boolean.TRUE.equals(commit.getIsMerge())).count();
             long reverts = commits.stream().filter(commit -> Boolean.TRUE.equals(commit.getIsRevert())).count();
-            getLogger().lifecycle(String.format(
+            getLogger().lifecycle(String.format(Locale.ROOT,
                     "codiqo: extracted %d commits since %s (window=%s, branch=%s; %d merges, %d reverts)",
                     commits.size(), cutoff, commitWindow, branch, merges, reverts));
 
