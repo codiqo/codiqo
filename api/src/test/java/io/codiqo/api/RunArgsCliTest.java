@@ -168,6 +168,18 @@ class RunArgsCliTest {
 
         assertEquals("1.61.0", args.effectiveJdtlsVersion());
     }
+    /** the whole point of the accessor: no archive name means no download, so a caller that only reports the version cannot hang or fail on an unreachable download.eclipse.org */
+    @Test
+    void resolvedJdtlsVersionIsEmptyRatherThanFetchingTheArchiveName() {
+        assertTrue(new RunArgs().resolvedJdtlsVersion().isEmpty());
+    }
+    @Test
+    void resolvedJdtlsVersionParsesTheArchiveNameThatWasAlreadyResolved() {
+        RunArgs args = new RunArgs();
+        args.setJdtlsArchiveName("jdt-language-server-1.59.0-202605111959.tar.gz");
+
+        assertEquals("1.59.0", args.resolvedJdtlsVersion().orElseThrow());
+    }
     @Test
     void isExcludedAuthorIsFalseWhenListUnset() {
         assertFalse(new RunArgs().isExcludedAuthor("bob@example.com"));
