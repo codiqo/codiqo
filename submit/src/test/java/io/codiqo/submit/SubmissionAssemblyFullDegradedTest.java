@@ -125,6 +125,26 @@ class SubmissionAssemblyFullDegradedTest {
 
         assertThrows(IllegalStateException.class, () -> SubmissionAssembly.full(ctx));
     }
+    /** the language server did run here, so the version it ran at is already known and travels with the submission */
+    @Test
+    void fullCarriesTheVersionOfTheLanguageServerThatActuallyRan() throws Exception {
+        args.setJdtlsArchiveName("jdt-language-server-1.61.0-202609081200.tar.gz");
+
+        SubmissionAssembly.full(ctx);
+
+        assertEquals("1.61.0", ctx.getSubmissionModel().getScoringConfig().getJdtlsVersion());
+    }
+    /**
+     * a failed build never starts a language server, so there is no version to report — and resolving one would
+     * fetch latest.txt over the network, which is a lost commit rather than a degraded one whenever Eclipse is down
+     */
+    @Test
+    void degradedReportsNoLanguageServerVersionAndNeverResolvesOne() throws Exception {
+        SubmissionAssembly.degraded(ctx);
+
+        assertNull(ctx.getSubmissionModel().getScoringConfig().getJdtlsVersion(),
+                "an unresolved language server must be reported as absent, not fetched to fill the field");
+    }
     @Test
     void degradedLeavesTheUnmeasuredAggregatesAbsentRatherThanZero() throws Exception {
         SubmissionAssembly.degraded(ctx);

@@ -1152,7 +1152,22 @@ public class RunArgs {
         return Files.createDirectories(JDT_SHARED_INDEX.resolve(effectiveJdtlsVersion()));
     }
     public String effectiveJdtlsVersion() {
-        Matcher matcher = JDTLS_ARCHIVE_VERSION.matcher(resolveJdtlsArchiveName());
+        return parseArchiveVersion(resolveJdtlsArchiveName());
+    }
+    /**
+     * The language-server version this run actually resolved, or empty when nothing resolved one — the degraded
+     * and diff-only paths never start a server. Unlike {@link #effectiveJdtlsVersion()} this never downloads
+     * {@code latest.txt}, so merely reporting the version cannot reach the network, and an unreachable
+     * download.eclipse.org cannot fail a submission that describes no language server in the first place.
+     */
+    public Optional<String> resolvedJdtlsVersion() {
+        if (StringUtils.isBlank(jdtlsArchiveName)) {
+            return Optional.empty();
+        }
+        return Optional.of(parseArchiveVersion(jdtlsArchiveName));
+    }
+    private String parseArchiveVersion(String archiveName) {
+        Matcher matcher = JDTLS_ARCHIVE_VERSION.matcher(archiveName);
         if (matcher.find()) {
             return matcher.group(1);
         }

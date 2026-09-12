@@ -13,7 +13,12 @@ public class ScoringConfigs {
         ScoringConfigModel toReturn = new ScoringConfigModel();
 
         toReturn.setCommitId(args.getCommitId());
-        toReturn.setJdtlsVersion(args.effectiveJdtlsVersion());
+        /**
+         * left absent when no language server ran: resolving it here would fetch latest.txt over the network, and
+         * the unscored paths' callers catch IOException only, so a download.eclipse.org outage would surface as an
+         * unchecked throw and lose the commit rather than degrade it
+         */
+        args.resolvedJdtlsVersion().ifPresent(toReturn::setJdtlsVersion);
         toReturn.setPmdMinPriority(args.getPmdMinPriority());
         toReturn.setPmdRules(args.getPmdRules());
         toReturn.setSpotbugsPriorityThreshold(args.getSpotbugsPriorityThreshold());

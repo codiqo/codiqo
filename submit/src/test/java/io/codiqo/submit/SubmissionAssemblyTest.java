@@ -92,6 +92,18 @@ class SubmissionAssemblyTest {
                 "reading the instruction files can throw, and must never be able to fail an exclusion");
         assertNull(ctx.getSubmissionModel().getCommit(), "excluded() runs the file populator alone");
     }
+    /**
+     * no language server runs on this path, so there is no version to report — and resolving one would fetch
+     * latest.txt over the network, which is a lost commit rather than a degraded one whenever Eclipse is down
+     */
+    @Test
+    void diffOnlyReportsNoLanguageServerVersionAndNeverResolvesOne() throws Exception {
+        SubmissionContext ctx = context();
+        SubmissionAssembly.diffOnly(ctx);
+
+        assertNull(ctx.getSubmissionModel().getScoringConfig().getJdtlsVersion(),
+                "an unresolved language server must be reported as absent, not fetched to fill the field");
+    }
     @Test
     void aZeroBudgetIsTheDocumentedKillSwitchRatherThanAFailure() throws Exception {
         writeConventions("Fail fast.\n");
