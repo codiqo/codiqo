@@ -12,10 +12,10 @@ import java.util.Date;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.UUID;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.mutable.MutableInt;
 import org.eclipse.jgit.api.Git;
@@ -44,9 +44,9 @@ import org.slf4j.event.Level;
 import io.codiqo.api.DeltaAnalyzer;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
+import io.codiqo.api.diff.DiffWhitespacePolicy;
 import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.api.diff.FileRevisionInfo;
-import io.codiqo.api.diff.DiffWhitespacePolicy;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.core.diff.GitCommitAnalysis;
@@ -234,7 +234,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
     public CommitAnalysis analyzeUncommitted(Status status) throws Exception {
         GitCommitAnalysis toReturn = new GitCommitAnalysis();
 
-        toReturn.setCommitId(UUID.randomUUID().toString());
+        toReturn.setCommitId(RandomStringUtils.insecure().nextAlphanumeric(getClass().getName().length()));
         toReturn.setMessage("Uncommitted changes analysis at " + LocalDateTime.now().toString() + " by " + System.getProperty("user.name"));
 
         toReturn.setAuthor(System.getProperty("user.name"));
@@ -290,7 +290,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
     public CommitAnalysis analyzeUncommittedNoHead(Status status) throws Exception {
         GitCommitAnalysis toReturn = new GitCommitAnalysis();
 
-        toReturn.setCommitId(UUID.randomUUID().toString());
+        toReturn.setCommitId(RandomStringUtils.insecure().nextAlphanumeric(getClass().getName().length()));
         toReturn.setMessage("Initial uncommitted changes (no commits yet)");
         toReturn.setAuthor(System.getProperty("user.name"));
         toReturn.setAuthorTimestamp(new Date());

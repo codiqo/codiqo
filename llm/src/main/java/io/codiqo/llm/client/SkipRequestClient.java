@@ -93,8 +93,7 @@ public class SkipRequestClient implements LlmClient {
         Context ctx = new Context();
         ctx.setVariable("commit_message", classified);
 
-        JsonCompletionClient.Result<SkipRequestResponse> result = completions
-                .complete(LABEL, PromptTemplates.process(TEMPLATE_SKIP_REQUEST, ctx), SkipRequestResponse.class);
+        JsonCompletionClient.Result<SkipRequestResponse> result = completions.complete(LABEL, PromptTemplates.process(TEMPLATE_SKIP_REQUEST, ctx), SkipRequestResponse.class);
         return new Detection(groundedQuote(commitMessage, result.getResponse(), log), result.getUsage());
     }
     @Override
