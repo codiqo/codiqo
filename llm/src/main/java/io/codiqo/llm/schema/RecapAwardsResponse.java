@@ -14,6 +14,10 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class RecapAwardsResponse {
     private String intro;
+    /** a light joke for the reel's interlude card, about the work and never at anyone's expense */
+    private String joke;
+    /** the closing card's line */
+    private String signOff;
     @Builder.Default
     private List<Award> awards = new ArrayList<>();
 
