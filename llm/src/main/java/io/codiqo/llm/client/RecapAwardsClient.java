@@ -63,6 +63,7 @@ public class RecapAwardsClient implements LlmClient {
             }
             toReturn.append(StringUtils.LF);
 
+            appendFact(toReturn, "first name", StringUtils.substringBefore(StringUtils.trim(contender.getName()), StringUtils.SPACE));
             appendFact(toReturn, contender.getHeadlineLabel(), contender.getHeadlineValue());
             appendFact(toReturn, "commits", contender.getCommits());
             appendFact(toReturn, "senior-grade commits", contender.getSeniorGradeCommits());
