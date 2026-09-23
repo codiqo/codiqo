@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.thymeleaf.context.Context;
 
@@ -16,9 +17,8 @@ import io.codiqo.llm.schema.RecapAwardsResponse;
 import io.codiqo.llm.schema.RecapContender;
 
 /**
- * writes the prose for a period recap — an opening line plus an award title and citation per ranked
- * contributor. every figure in the prompt was measured by the caller and is already rendered beside the text,
- * so the model contributes wording only: it is told to restate at most two numbers and invent none
+ * every figure in the prompt was measured by the caller and is rendered beside the text, so the model
+ * contributes wording only and is told to invent no number
  */
 public class RecapAwardsClient implements LlmClient {
     private static final String TEMPLATE_RECAP_AWARDS = "recap-awards-prompt";
@@ -71,6 +71,10 @@ public class RecapAwardsClient implements LlmClient {
             appendFact(toReturn, "average task complexity (1-10)", contender.getAvgComplexity());
             appendFact(toReturn, "changed-line test coverage %", contender.getAvgCoverage());
             appendFact(toReturn, "leads the team on", contender.getDistinction());
+            if (CollectionUtils.isNotEmpty(contender.getProjects())) {
+                appendFact(toReturn, "worked mostly in", String.join(", ", contender.getProjects()));
+            }
+            appendFact(toReturn, "hardest piece of work (analysis summary)", contender.getBestWork());
 
             toReturn.append(StringUtils.LF);
         }

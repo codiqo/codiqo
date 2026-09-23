@@ -1,14 +1,13 @@
 package io.codiqo.llm.schema;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-/**
- * one ranked contributor as the award writer sees them. every figure here was computed by the caller and is
- * already on screen in the reel, so the model is asked to write around these numbers rather than produce any
- */
 @Data
 @Builder
 @NoArgsConstructor
@@ -26,4 +25,9 @@ public class RecapContender {
     private Double avgComplexity;
     private Double avgCoverage;
     private String distinction;
+    /** busiest first */
+    @Builder.Default
+    private List<String> projects = new ArrayList<>();
+    /** the analysis summary of their hardest commit in the window */
+    private String bestWork;
 }
