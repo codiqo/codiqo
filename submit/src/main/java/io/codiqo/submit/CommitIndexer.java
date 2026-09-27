@@ -100,7 +100,7 @@ public class CommitIndexer {
                 if (commit.getParentCount() == 1 && BooleanUtils.isFalse(seenPatchIds.add(patchId(repo, commit)))) {
                     continue;
                 }
-                toReturn.add(toCommitModel(commit, branches, author));
+                toReturn.add(toCommitModel(repo, commit, branches, author));
             }
         }
         return toReturn;
@@ -116,7 +116,7 @@ public class CommitIndexer {
             return formatter.getCalulatedPatchId();
         }
     }
-    private static CommitModel toCommitModel(RevCommit commit, List<String> branches, PersonIdent author) {
+    private static CommitModel toCommitModel(Repository repo, RevCommit commit, List<String> branches, PersonIdent author) throws IOException {
         CommitModel toReturn = new CommitModel();
 
         toReturn.setSha(commit.getName());
@@ -129,7 +129,7 @@ public class CommitIndexer {
         toReturn.setBranches(branches);
         toReturn.setIsMerge(JGit.isMerge(commit));
 
-        JGit.detectRevertedSha(commit.getFullMessage()).ifPresent(sha -> {
+        JGit.detectRevertedSha(repo, commit.getFullMessage()).ifPresent(sha -> {
             toReturn.setIsRevert(true);
             toReturn.setRevertedCommitId(sha);
         });

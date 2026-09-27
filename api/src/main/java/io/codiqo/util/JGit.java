@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -22,6 +23,8 @@ import org.eclipse.jgit.api.ListBranchCommand.ListMode;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.DiffFormatter;
 import org.eclipse.jgit.diff.Edit;
+import org.eclipse.jgit.lib.AbbreviatedObjectId;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -38,6 +41,8 @@ import lombok.experimental.UtilityClass;
 @UtilityClass
 public class JGit {
     private static final Pattern REVERT_PATTERN = Pattern.compile("This reverts commit ([a-f0-9]{40})\\.");
+    /** git writes the full hash, but a hand-edited revert message often carries an abbreviated one */
+    private static final Pattern ABBREVIATED_REVERT_PATTERN = Pattern.compile("This reverts commit ([a-f0-9]{7,39})\\.");
     private static final Pattern AUTO_GENERATED_BRANCH_PATTERN = Pattern.compile("^[^/]+/[^/]+(?:-[^/]+){2,}-\\d{12,}$");
     private static final Pattern DETACHED_HEAD_SHA = Pattern.compile("^[a-f0-9]{40}$");
     private static final Set<String> NOISY_BRANCH_EXACT = Set.of(Constants.HEAD, "tmp", "tmp-skip");
@@ -81,6 +86,30 @@ public class JGit {
         Matcher matcher = REVERT_PATTERN.matcher(fullMessage);
         if (matcher.find()) {
             return Optional.of(matcher.group(1));
+        }
+        return Optional.empty();
+    }
+    /**
+     * {@link #detectRevertedSha(String)}, also accepting an abbreviated hash, which is expanded against the
+     * repository. an abbreviation counts only when it names exactly one commit there: a squash-merge message can
+     * quote "This reverts commit …" for a commit of a branch that no longer exists, and that commit is not a revert.
+     */
+    public static Optional<String> detectRevertedSha(Repository repo, String fullMessage) throws IOException {
+        Optional<String> full = detectRevertedSha(fullMessage);
+        if (full.isPresent()) {
+            return full;
+        }
+        Matcher matcher = ABBREVIATED_REVERT_PATTERN.matcher(fullMessage);
+        if (matcher.find()) {
+            try (ObjectReader reader = repo.newObjectReader()) {
+                Collection<ObjectId> candidates = reader.resolve(AbbreviatedObjectId.fromString(matcher.group(1)));
+                if (candidates.size() == 1) {
+                    ObjectId id = candidates.iterator().next();
+                    if (reader.has(id, Constants.OBJ_COMMIT)) {
+                        return Optional.of(id.getName());
+                    }
+                }
+            }
         }
         return Optional.empty();
     }

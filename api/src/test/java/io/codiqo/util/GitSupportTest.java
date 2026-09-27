@@ -75,4 +75,31 @@ class GitSupportTest {
         assertTrue(sha.isPresent());
         assertEquals(FORTY_HEX, sha.get());
     }
+    @Test
+    void expandsAnAbbreviatedHashThatNamesOneCommit(@TempDir Path tempDir) throws Exception {
+        try (Git git = Git.init().setDirectory(tempDir.toFile()).call()) {
+            String reverted = git.commit().setAllowEmpty(true).setMessage("harden port allocation").setSign(false).call().getName();
+            String message = "Revert \"harden port allocation\"\n\nThis reverts commit " + reverted.substring(0, 9) + ". It broke CI.";
+
+            assertEquals(Optional.of(reverted), JGit.detectRevertedSha(git.getRepository(), message));
+        }
+    }
+    @Test
+    void ignoresAnAbbreviatedHashThatIsNotInTheRepository(@TempDir Path tempDir) throws Exception {
+        try (Git git = Git.init().setDirectory(tempDir.toFile()).call()) {
+            git.commit().setAllowEmpty(true).setMessage("feature").setSign(false).call();
+            // a squash-merge quoting a revert from a branch that no longer exists
+            String message = "TWN-1615: add brand support (#18)\n\n* This reverts commit 8e37fbad.";
+
+            assertFalse(JGit.detectRevertedSha(git.getRepository(), message).isPresent());
+        }
+    }
+    @Test
+    void keepsTheFullHashWithoutLookingItUp(@TempDir Path tempDir) throws Exception {
+        try (Git git = Git.init().setDirectory(tempDir.toFile()).call()) {
+            String message = "Revert \"x\"\n\nThis reverts commit " + FORTY_HEX + ".\n";
+
+            assertEquals(Optional.of(FORTY_HEX), JGit.detectRevertedSha(git.getRepository(), message));
+        }
+    }
 }
