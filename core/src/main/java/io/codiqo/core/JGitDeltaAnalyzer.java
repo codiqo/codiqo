@@ -159,7 +159,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
 
         toReturn.setCommitId(commit.getName());
         toReturn.setMessage(commit.getFullMessage());
-        JGit.detectRevertedSha(commit.getFullMessage()).ifPresent(sha -> {
+        JGit.detectRevertedSha(args.getGit(), commit.getFullMessage()).ifPresent(sha -> {
             toReturn.setRevertCommit(true);
             toReturn.setRevertedCommitId(sha);
         });
