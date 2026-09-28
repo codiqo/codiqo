@@ -1604,7 +1604,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     .build();
         }
 
-        Optional<String> structural = Maven.severeProblem(pbe.getResults().stream().flatMap(r -> r.getProblems().stream()));
+        Optional<String> structural = Maven.severeProblem(Maven.modelProblems(pbe));
         if (structural.isPresent()) {
             return BuildOutcome.Skipped.builder()
                     .reason("host model building: " + structural.get())

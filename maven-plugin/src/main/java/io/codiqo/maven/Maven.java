@@ -20,6 +20,7 @@ import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.artifact.resolver.ArtifactNotFoundException;
 import org.apache.maven.artifact.resolver.ArtifactResolutionException;
 import org.apache.maven.execution.MavenSession;
+import org.apache.maven.model.building.ModelBuildingException;
 import org.apache.maven.model.building.ModelProblem;
 import org.apache.maven.model.resolution.UnresolvableModelException;
 import org.apache.maven.project.DefaultProjectBuildingRequest;
@@ -134,6 +135,19 @@ public class Maven {
             }
         }
         return AnalysisExcludeCategory.BUILD_FAILURE;
+    }
+    /**
+     * the multi-POM build reports its problems through getResults(), but the single-POM
+     * ProjectBuilder.build(File, request) leaves results null and wraps the ModelBuildingException as the cause
+     */
+    public static Stream<ModelProblem> modelProblems(ProjectBuildingException pbe) {
+        if (Objects.nonNull(pbe.getResults())) {
+            return pbe.getResults().stream().flatMap(r -> r.getProblems().stream());
+        }
+        if (pbe.getCause() instanceof ModelBuildingException mbe) {
+            return mbe.getProblems().stream();
+        }
+        return Stream.empty();
     }
     public static List<String> unresolvedDependencyCoords(ProjectBuildingException pbe) {
         if (CollectionUtils.isEmpty(pbe.getResults())) {
