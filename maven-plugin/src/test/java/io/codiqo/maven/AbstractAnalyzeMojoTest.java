@@ -1,17 +1,25 @@
 package io.codiqo.maven;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.File;
 import java.util.Optional;
 import java.util.stream.Stream;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.maven.model.building.DefaultModelBuilderFactory;
+import org.apache.maven.model.building.DefaultModelBuildingRequest;
 import org.apache.maven.model.building.DefaultModelProblem;
+import org.apache.maven.model.building.ModelBuildingException;
 import org.apache.maven.model.building.ModelProblem;
 import org.apache.maven.model.building.ModelProblem.Severity;
 import org.apache.maven.model.building.ModelProblem.Version;
+import org.apache.maven.project.ProjectBuildingException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class AbstractAnalyzeMojoTest {
     @Test
@@ -82,6 +90,26 @@ class AbstractAnalyzeMojoTest {
                 problem("msg", Severity.FATAL, "pom.xml", 7, 0, "mid"));
 
         assertEquals("broken POM at pom.xml:7 [modelId=mid, severity=FATAL]: msg", formatted);
+    }
+    @Test
+    void modelProblemsReadsTheCauseWhenSinglePomBuildLeavesResultsNull(@TempDir File worktree) {
+        File missingPom = new File(worktree, "pom.xml");
+        ModelBuildingException cause = assertThrows(ModelBuildingException.class, () -> new DefaultModelBuilderFactory().newInstance()
+                .build(new DefaultModelBuildingRequest().setPomFile(missingPom)));
+
+        // the shape DefaultProjectBuilder.build(File, request) throws: results stay null, the problems ride on the cause
+        ProjectBuildingException pbe = new ProjectBuildingException(cause.getModelId(), cause.getMessage(), missingPom, cause) {};
+
+        assertNull(pbe.getResults());
+        Optional<String> result = Maven.severeProblem(Maven.modelProblems(pbe));
+        assertTrue(result.isPresent());
+        assertTrue(result.get().contains("Non-readable POM"), result.get());
+    }
+    @Test
+    void modelProblemsIsEmptyWithoutResultsOrModelCause() {
+        ProjectBuildingException pbe = new ProjectBuildingException("g:a:1", "boom", new IllegalStateException());
+
+        assertEquals(0, Maven.modelProblems(pbe).count());
     }
     private static ModelProblem problem(String message, Severity severity, String source, int line, int column, String modelId) {
         return new DefaultModelProblem(message, severity, Version.BASE, source, line, column, modelId, null);
