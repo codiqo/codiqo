@@ -15,6 +15,7 @@ import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -39,6 +40,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.lib.Repository;
 import org.slf4j.event.Level;
@@ -83,6 +85,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
      * file sequence, not of a count.
      */
     private static final int CPD_RETRY_BATCH_SIZE = 1000;
+    private static final Set<DiffEntry.ChangeType> MODIFIED_IN_PLACE = EnumSet.of(DiffEntry.ChangeType.MODIFY, DiffEntry.ChangeType.RENAME);
     private static final int ORPHAN_SAMPLE_SIZE = 20;
 
     private final Log log;
@@ -367,6 +370,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     }
     private void identifySymbols(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
         AtomicInteger identified = new AtomicInteger();
+        int removed = 0;
 
         for (LanguageSpec processor : processors) {
             for (FileAnalysis it : analysis) {
@@ -399,12 +403,47 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                                 }
                             }
                         }
+                        removed += identifyRemoved(processor, gitAnalysis, summary.getBlocks().get(gitAnalysis.getFile()));
                     }
                 }
             }
         }
 
-        log.info("identified %d potentially affected symbols", identified.get());
+        log.info("identified %d potentially affected symbols and %d removed code units", identified.get(), removed);
+    }
+    /**
+     * the code units a file the commit kept has lost: blocks of its previous content whose signature the file no
+     * longer has and whose lines the commit removed. Kept apart from the affected symbols, which are located in the
+     * new content; a whole-file deletion is not indexed at all and is reported by its change type instead.
+     */
+    private static int identifyRemoved(LanguageSpec processor, GitFileAnalysis gitAnalysis, Collection<CodeBlockInfo> current) throws IOException {
+        Set<Integer> removedLines = new HashSet<>();
+        if (BooleanUtils.and(new boolean[] {
+                MODIFIED_IN_PLACE.contains(gitAnalysis.getChangeType()),
+                Objects.nonNull(gitAnalysis.getContentBefore()),
+                Objects.nonNull(gitAnalysis.getStructuredDiff()) })) {
+            for (GitDiffHunk hunk : gitAnalysis.getStructuredDiff().getHunks()) {
+                for (int line = hunk.getOldStartLine(); line < hunk.getOldEndLine(); line++) {
+                    removedLines.add(line + SourceLocation.GIT_OFFSET);
+                }
+            }
+        }
+        if (removedLines.isEmpty()) {
+            return 0;
+        }
+
+        int toReturn = 0;
+        Collection<CodeBlockInfo> before = processor.parseRemoved(
+                gitAnalysis.project().orElse(null), gitAnalysis.getFile(), gitAnalysis.getContentBefore(), CollectionUtils.emptyIfNull(current));
+        for (CodeBlockInfo block : before) {
+            int startLine = block.getLocation().getStartLine();
+            int endLine = block.getLocation().getEndLine();
+            if (removedLines.stream().anyMatch(line -> line >= startLine && line <= endLine)) {
+                gitAnalysis.getRemovedCodeBlocks().add(block);
+                toReturn++;
+            }
+        }
+        return toReturn;
     }
     /**
      * Runs one capture stage and reports what it cost. Peak heap rather than a before/after difference, because a

@@ -99,6 +99,7 @@ import net.sourceforge.pmd.lang.ast.NodeStream;
 import net.sourceforge.pmd.lang.ast.Parser;
 import net.sourceforge.pmd.lang.ast.Parser.ParserTask;
 import net.sourceforge.pmd.lang.ast.SemanticErrorReporter;
+import net.sourceforge.pmd.lang.document.FileId;
 import net.sourceforge.pmd.lang.document.FileLocation;
 import net.sourceforge.pmd.lang.document.TextDocument;
 import net.sourceforge.pmd.lang.document.TextFile;
@@ -200,6 +201,40 @@ public class JavaLanguageSpec implements LanguageSpec {
     public List<CodeBlockInfo> parse(ProjectSpec owner, Collection<File> files) throws IOException {
         List<CodeBlockInfo> toReturn = new ArrayList<>();
 
+        try (LanguageProcessorRegistry processingRegistry = processingRegistry(owner)) {
+            Parser pmd = processingRegistry.getProcessor(language).services().getParser();
+            SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
+
+            for (File destination : files) {
+                if (FilenameUtils.isExtension(destination.getName(), lang().getExtensions())) {
+                    TextFile text = TextFile.forPath(destination.toPath().normalize(), StandardCharsets.UTF_8, language.getDefaultVersion());
+                    toReturn.addAll(parseFile(owner, destination, text, pmd, errorReporter, processingRegistry));
+                }
+            }
+        }
+
+        return List.copyOf(toReturn);
+    }
+    /**
+     * parsed with the module's current classpath, which is what the commit's parent resolved against for every type
+     * the commit did not touch; a signature that drifts anyway only reads as a removal for a method whose lines the
+     * commit removed, since the caller keeps the blocks that overlap removed lines
+     */
+    @Override
+    public List<CodeBlockInfo> parseRemoved(ProjectSpec owner, File file, String contentBefore, Collection<CodeBlockInfo> current) throws IOException {
+        Set<String> remaining = current.stream().map(CodeBlockInfo::getSignature).collect(Collectors.toSet());
+
+        try (LanguageProcessorRegistry processingRegistry = processingRegistry(owner)) {
+            Parser pmd = processingRegistry.getProcessor(language).services().getParser();
+            SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
+            TextFile text = TextFile.forCharSeq(contentBefore, FileId.fromPath(file.toPath().normalize()), language.getDefaultVersion());
+
+            return parseFile(owner, file, text, pmd, errorReporter, processingRegistry).stream()
+                    .filter(before -> BooleanUtils.negate(remaining.contains(before.getSignature())))
+                    .toList();
+        }
+    }
+    private LanguageProcessorRegistry processingRegistry(ProjectSpec owner) {
         LanguagePropertyBundle bundle = language.newPropertyBundle();
         bundle.setProperty(JavaLanguageProperties.FIRST_CLASS_LOMBOK, true);
 
@@ -212,18 +247,7 @@ public class JavaLanguageSpec implements LanguageSpec {
 
         LanguageRegistry languageRegistry = LanguageRegistry.singleton(language);
         Map<Language, LanguagePropertyBundle> languageProperties = Map.of(language, bundle);
-        try (LanguageProcessorRegistry processingRegistry = LanguageProcessorRegistry.create(languageRegistry, languageProperties, log)) {
-            Parser pmd = processingRegistry.getProcessor(language).services().getParser();
-            SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
-
-            for (File destination : files) {
-                if (FilenameUtils.isExtension(destination.getName(), lang().getExtensions())) {
-                    toReturn.addAll(parseFile(owner, destination, pmd, errorReporter, processingRegistry));
-                }
-            }
-        }
-
-        return List.copyOf(toReturn);
+        return LanguageProcessorRegistry.create(languageRegistry, languageProperties, log);
     }
     @Override
     public void captureViolations(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
@@ -260,12 +284,13 @@ public class JavaLanguageSpec implements LanguageSpec {
     private List<CodeBlockInfo> parseFile(
             ProjectSpec owner,
             File destination,
+            TextFile text,
             Parser pmd,
             SemanticErrorReporter errorReporter,
             LanguageProcessorRegistry processingRegistry) throws IOException {
         List<CodeBlockInfo> toReturn = new ArrayList<>();
 
-        try (TextFile file = TextFile.forPath(destination.toPath().normalize(), StandardCharsets.UTF_8, language.getDefaultVersion())) {
+        try (TextFile file = text) {
             try (TextDocument doc = TextDocument.create(file)) {
                 /**
                  * PMD's type inference can crash on valid code it fails to disambiguate —

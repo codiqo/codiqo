@@ -95,6 +95,48 @@ class JavaLanguageSpecParseTest {
             assertEquals(List.of(), spec.parse(mock(ProjectSpec.class), List.of(source)));
         }
     }
+    @Test
+    void reportsTheMethodsAFileNoLongerHas() throws Exception {
+        String before = """
+                package com.example;
+
+                public class Shrinking {
+                    public int kept(int x) {
+                        return x + 1;
+                    }
+                    public void retired(String s) {
+                        System.out.println(s);
+                    }
+                    public Shrinking(int seed) {
+                        System.out.println(seed);
+                    }
+                }
+                """;
+        String after = """
+                package com.example;
+
+                public class Shrinking {
+                    public int kept(int x) {
+                        return x + 2;
+                    }
+                }
+                """;
+        Path source = workTree.resolve("Shrinking.java");
+        Files.writeString(source, after);
+
+        try (JavaLanguageSpec spec = spec()) {
+            ProjectSpec owner = mock(ProjectSpec.class);
+            List<CodeBlockInfo> current = spec.parse(owner, List.of(source.toFile()));
+            List<CodeBlockInfo> removed = spec.parseRemoved(owner, source.toFile(), before, current);
+
+            // kept() changed its body, not its signature, so it is no removal
+            assertEquals(
+                    Set.of("com/example/Shrinking.retired(Ljava/lang/String;)V", "com/example/Shrinking.<init>(I)V"),
+                    removed.stream().map(CodeBlockInfo::getSignature).collect(Collectors.toSet()));
+            CodeBlockInfo retired = removed.stream().filter(block -> block.getSignature().contains("retired")).findFirst().orElseThrow();
+            assertEquals(7, retired.getLocation().getStartLine(), "located in the previous content");
+        }
+    }
     private File write(String name) throws Exception {
         Path toReturn = workTree.resolve(name);
         Files.writeString(toReturn, SOURCE);
