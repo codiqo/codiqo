@@ -133,6 +133,7 @@ import io.codiqo.util.Env;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
 import io.codiqo.util.MemoryReport;
+import io.codiqo.util.ProgressStage;
 import io.codiqo.util.Split;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
@@ -453,6 +454,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         Optional.ofNullable(javaHome).ifPresent(args::setJavaHome);
         Optional.ofNullable(mavenHome).ifPresent(args::setMavenHome);
         args.setBuildTimeout(Duration.ofMinutes(buildTimeoutMinutes));
+        args.setBuildProgressFile(buildProgressFile);
         args.setTestTimeout(Duration.ofMinutes(testTimeoutMinutes));
         Optional.ofNullable(perTestTimeoutMinutes).ifPresent(minutes -> args.setPerTestTimeout(Duration.ofMinutes(minutes)));
         args.setImportTimeout(Duration.ofMinutes(importTimeoutMinutes));
@@ -1103,7 +1105,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
          * the deadline is enforced here rather than with the request's own timeout, which kills only the launching
          * shell and leaves the forked Maven and its test JVMs running — see ForkProcessTree
          */
-        try (ExecutorService runner = Executors.newSingleThreadExecutor()) {
+        try (ExecutorService runner = Executors.newSingleThreadExecutor(); ProgressStage stage = ProgressStage.start(args, "build")) {
             Future<InvocationResult> run = runner.submit(() -> invoker.execute(request));
             try {
                 result = run.get(args.getBuildTimeout().toMillis(), TimeUnit.MILLISECONDS);
@@ -1114,6 +1116,13 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 result = run.get();
             } catch (ExecutionException err) {
                 throw err.getCause() instanceof Exception cause ? cause : err;
+            }
+            if (timedOut) {
+                stage.detail("timed out after " + args.getBuildTimeout());
+            } else if (result.getExitCode() == 0) {
+                stage.succeeded();
+            } else {
+                stage.detail("exit code " + result.getExitCode());
             }
         }
         if (timedOut || result.getExitCode() != 0) {

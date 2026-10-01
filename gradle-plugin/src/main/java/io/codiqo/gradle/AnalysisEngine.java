@@ -53,6 +53,7 @@ import io.codiqo.submit.SubmissionAssembly;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
+import io.codiqo.util.ProgressStage;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
 import lombok.experimental.UtilityClass;
@@ -91,6 +92,7 @@ public class AnalysisEngine {
         args.setFailOnUninstrumentedModule(request.isFailOnUninstrumentedModule());
         args.setJavaHome(new File(request.getJavaHome()));
         args.setOutputDirectory(new File(request.getOutputDirectory()));
+        Optional.ofNullable(request.getBuildProgressFile()).map(File::new).ifPresent(args::setBuildProgressFile);
 
         args.setJdtlsVersion(request.getJdtlsVersion());
         args.setJdtlsUseSnapshot(request.isJdtlsUseSnapshot());
@@ -464,14 +466,17 @@ public class AnalysisEngine {
                 }
 
                 if (request.isSubmit()) {
-                    AnalysisAcceptedModel accepted = AnalysisSubmitter.submit(
-                            request.getApiUrl(),
-                            request.getApiKey(),
-                            request.getConnectTimeoutSeconds(),
-                            request.getReadTimeoutSeconds(),
-                            ctx.getSubmissionModel(),
-                            log);
-                    log.info("accepted analysis id: %s status: %s", accepted.getAnalysisId(), accepted.getStatus());
+                    try (ProgressStage stage = ProgressStage.start(args, "submit")) {
+                        AnalysisAcceptedModel accepted = AnalysisSubmitter.submit(
+                                request.getApiUrl(),
+                                request.getApiKey(),
+                                request.getConnectTimeoutSeconds(),
+                                request.getReadTimeoutSeconds(),
+                                ctx.getSubmissionModel(),
+                                log);
+                        log.info("accepted analysis id: %s status: %s", accepted.getAnalysisId(), accepted.getStatus());
+                        stage.succeeded();
+                    }
                 }
             }
         }

@@ -26,6 +26,7 @@ public class AnalysisRequest implements Serializable {
     private String outputDirectory;
     private String javaHome;
     private String analysisMaxHeap;
+    private String buildProgressFile;
 
     /**
      * set by the task, not the collector: codiqoDumpAnalysis and codiqoSubmitAnalysis share one collected model.

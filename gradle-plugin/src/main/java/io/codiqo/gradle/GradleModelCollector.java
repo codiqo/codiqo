@@ -50,6 +50,7 @@ public class GradleModelCollector {
         request.setOutputDirectory(resolveOutputDirectory(root, ext));
         request.setJavaHome(resolveJavaHome(root, ext));
         request.setAnalysisMaxHeap(stringProp(root, "codiqo.analysisMaxHeap", ext.getAnalysisMaxHeap()));
+        request.setBuildProgressFile(stringProp(root, "codiqo.buildProgressFile", null));
 
         request.setApiUrl(stringProp(root, "codiqo.apiUrl", ext.getApiUrl()));
         resolveApiKey(root, ext).ifPresent(request::setApiKey);
