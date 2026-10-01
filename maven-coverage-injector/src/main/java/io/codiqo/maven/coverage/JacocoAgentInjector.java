@@ -84,9 +84,11 @@ public class JacocoAgentInjector extends AbstractMavenLifecycleParticipant {
     }
     private static void injectAgent(Plugin plugin, String javaAgent, Set<String> agentPropertyNames, String argLineProperty) {
         /**
-         * append to the plugin-level argLine (applies to executions that do not declare their own argLine) and to every
-         * execution that sets its own argLine — an execution-level value overrides the plugin-level one, so a shared
-         * parent's default-test execution (with an explicit argLine) would otherwise drop the agent.
+         * append to the plugin-level argLine, which reaches the executions the lifecycle adds later (surefire's
+         * default-test), and to every declared execution. A declared execution already carries its own merged copy of
+         * the plugin configuration by the time this participant runs, so the plugin-level value never reaches it:
+         * Jetty's failsafe integration-test execution ran with the bare ${argLine} and wrote no coverage. An
+         * execution-level argLine, where one is set, overrides the plugin-level one in the same way.
          */
         Xpp3Dom config = (Xpp3Dom) plugin.getConfiguration();
         if (Objects.isNull(config)) {
@@ -97,9 +99,11 @@ public class JacocoAgentInjector extends AbstractMavenLifecycleParticipant {
 
         for (PluginExecution execution : plugin.getExecutions()) {
             Xpp3Dom executionConfig = (Xpp3Dom) execution.getConfiguration();
-            if (Objects.nonNull(executionConfig) && Objects.nonNull(executionConfig.getChild(ARG_LINE))) {
-                appendAgent(executionConfig, javaAgent, agentPropertyNames, argLineProperty);
+            if (Objects.isNull(executionConfig)) {
+                executionConfig = new Xpp3Dom(CONFIGURATION);
+                execution.setConfiguration(executionConfig);
             }
+            appendAgent(executionConfig, javaAgent, agentPropertyNames, argLineProperty);
         }
     }
     private static void appendAgent(Xpp3Dom config, String javaAgent, Set<String> agentPropertyNames, String argLineProperty) {
