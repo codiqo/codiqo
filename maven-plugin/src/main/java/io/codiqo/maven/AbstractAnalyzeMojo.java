@@ -115,6 +115,7 @@ import io.codiqo.lang.config.ConfigFiles;
 import io.codiqo.util.DaemonExecutors;
 import io.codiqo.maven.coverage.CoverageInjectorConfig;
 import io.codiqo.maven.eventspy.BuildFailureConfig;
+import io.codiqo.maven.eventspy.BuildProgressConfig;
 import io.codiqo.maven.logging.MavenLogFactory;
 import io.codiqo.maven.populator.LlmScoringPopulator;
 import io.codiqo.maven.populator.ProjectModelPopulator;
@@ -223,6 +224,13 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
     @Parameter(property = "codiqo.buildTimeoutMinutes", defaultValue = "45")
     protected long buildTimeoutMinutes;
+
+    /**
+     * a file the forked build's event spy appends one line to per reactor module started and finished, for a watcher
+     * outside the build to report progress from. the caller owns the file; unset, nothing is written.
+     */
+    @Parameter(property = "codiqo.buildProgressFile")
+    protected File buildProgressFile;
 
     @Parameter(property = "codiqo.testTimeoutMinutes", defaultValue = "30")
     protected long testTimeoutMinutes;
@@ -786,6 +794,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             reportFile.deleteOnExit();
             args.setBuildFailureReportFile(reportFile);
             props.setProperty(BuildFailureConfig.PROP_REPORT_FILE, reportFile.getAbsolutePath());
+            if (Objects.nonNull(buildProgressFile)) {
+                props.setProperty(BuildProgressConfig.PROP_PROGRESS_FILE, buildProgressFile.getAbsolutePath());
+            }
         }
 
         if (timeMachineActive) {
