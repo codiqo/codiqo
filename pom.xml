@@ -53,7 +53,7 @@
         <!-- CORE -->
         <!-- -->
         <slf4j.version>2.0.20</slf4j.version>
-        <logback.version>1.6.4</logback.version>
+        <logback.version>1.6.5</logback.version>
         <asm.version>9.10.1</asm.version>
         <javax.inject.version>1</javax.inject.version>
         <jakarta.annotation-api.version>3.0.0</jakarta.annotation-api.version>
@@ -61,7 +61,7 @@
         <jakarta.ws.rs-api.version>4.0.0</jakarta.ws.rs-api.version>
         <lombok.version>1.18.48</lombok.version>
         <gson.version>2.14.0</gson.version>
-        <google-auth.version>1.53.0</google-auth.version>
+        <google-auth.version>1.54.0</google-auth.version>
         <google-api-client.version>2.9.1</google-api-client.version>
         <google-http-client.version>2.2.0</google-http-client.version>
         <google-api-services-artifactregistry.version>v1-rev20260822-2.0.0</google-api-services-artifactregistry.version>
@@ -73,7 +73,7 @@
         <snakeyaml.version>2.7</snakeyaml.version>
         <okio.version>3.18.2</okio.version>
         <okhttp.version>5.5.0</okhttp.version>
-        <guava.version>33.7.1-jre</guava.version>
+        <guava.version>33.7.2-jre</guava.version>
         <vavr.version>1.0.0</vavr.version>
         <jgit.version>7.8.0.202609011348-r</jgit.version>
         <ztzip.version>1.18.2</ztzip.version>
@@ -85,21 +85,21 @@
         <lsp4j.version>1.0.0</lsp4j.version>
         <openrewrite.version>8.90.4</openrewrite.version>
         <openrewrite.recipe.version>2.41.1</openrewrite.recipe.version>
-        <pmd.version>7.27.0</pmd.version>
+        <pmd.version>7.28.0</pmd.version>
         <spotbugs.version>4.10.4</spotbugs.version>
         <findbugs.sec.version>1.14.0</findbugs.sec.version>
         <findbugs.contrib.version>7.7.4</findbugs.contrib.version>
         <jacoco.version>0.8.15</jacoco.version>
         <classgraph.version>4.8.196</classgraph.version>
-        <oshi.version>7.6.1</oshi.version>
+        <oshi.version>7.7.0</oshi.version>
         <jol.version>0.17</jol.version>
-        <openai.version>4.69.2</openai.version>
+        <openai.version>4.73.0</openai.version>
         <djl.tokenizers.version>0.38.0</djl.tokenizers.version>
         <jtokkit.version>1.1.0</jtokkit.version>
         <gradle.api.version>8.11.1</gradle.api.version>
         <micrometer.version>1.17.1</micrometer.version>
         <thymeleaf.version>3.1.5.RELEASE</thymeleaf.version>
-        <commons-lang3.version>3.20.0</commons-lang3.version>
+        <commons-lang3.version>3.21.0</commons-lang3.version>
         <commons-collections4.version>4.6.0</commons-collections4.version>
         <commons-cli.version>1.11.0</commons-cli.version>
         <commons-io.version>2.22.0</commons-io.version>
@@ -110,9 +110,9 @@
         <failsafe.version>3.3.2</failsafe.version>
         <ascii-table.version>1.13.0</ascii-table.version>
         <antlr4.version>4.13.2</antlr4.version>
-        <aether.version>2.0.23</aether.version>
+        <aether.version>2.0.24</aether.version>
         <maven.plugin-annotations.version>3.16.0</maven.plugin-annotations.version>
-        <maven.version>3.9.16</maven.version>
+        <maven.version>3.10.0</maven.version>
         <maven.invoker.version>3.3.0</maven.invoker.version>
         <scala.binary.version>2.13</scala.binary.version>
         <scala.version>${scala.binary.version}.18</scala.version>
