@@ -306,10 +306,10 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         Map<String, CoverageInfo.MethodCoverage> methodCoverages = new HashMap<>();
         List<CoverageInfo.UncoveredPath> uncoveredPaths = new ArrayList<>();
         for (FileChangeModel file : files) {
-            if (CollectionUtils.isEmpty(file.getCodeUnits())) {
+            if (CollectionUtils.isEmpty(scoredCodeUnits(file))) {
                 continue;
             }
-            for (CodeUnitModel codeUnit : file.getCodeUnits()) {
+            for (CodeUnitModel codeUnit : scoredCodeUnits(file)) {
                 CoverageModel coverage = codeUnit.getCoverage();
                 if (Objects.isNull(coverage)) {
                     continue;
@@ -368,10 +368,10 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         List<Integer> perMethodCyclomatic = new ArrayList<>();
 
         for (FileChangeModel file : files) {
-            if (CollectionUtils.isEmpty(file.getCodeUnits())) {
+            if (CollectionUtils.isEmpty(scoredCodeUnits(file))) {
                 continue;
             }
-            for (CodeUnitModel codeUnit : file.getCodeUnits()) {
+            for (CodeUnitModel codeUnit : scoredCodeUnits(file)) {
                 if (isMethodOrConstructor(codeUnit.getKind())) {
                     MetricsModel metrics = codeUnit.getMetrics();
                     if (Objects.isNull(metrics)) {
@@ -434,14 +434,14 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     private static List<CodeBlockChange> mapCodeBlockChanges(List<FileChangeModel> files, FileContext fileContext) {
         List<CodeBlockChange> toReturn = new ArrayList<>();
         for (FileChangeModel file : files) {
-            if (CollectionUtils.isEmpty(file.getCodeUnits())) {
+            if (CollectionUtils.isEmpty(scoredCodeUnits(file))) {
                 continue;
             }
             DiffStats stats = fileContext.diffStatsFor(file);
             if (BooleanUtils.negate(stats.effectiveChanges())) {
                 continue;
             }
-            for (CodeUnitModel codeUnit : file.getCodeUnits()) {
+            for (CodeUnitModel codeUnit : scoredCodeUnits(file)) {
                 if (isMethodOrConstructor(codeUnit.getKind())) {
                     if (Boolean.TRUE.equals(codeUnit.getIsTrivial())) {
                         continue;
@@ -597,7 +597,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
             }
 
             // files without code units (config, resources) always count their lines
-            if (CollectionUtils.isEmpty(file.getCodeUnits())) {
+            if (CollectionUtils.isEmpty(scoredCodeUnits(file))) {
                 linesAdded += stats.effectiveAdded();
                 linesDeleted += stats.effectiveDeleted();
 
@@ -618,7 +618,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
 
             boolean fileHasCodeBlockChange = false;
             boolean fileHasClassChange = false;
-            for (CodeUnitModel codeUnit : file.getCodeUnits()) {
+            for (CodeUnitModel codeUnit : scoredCodeUnits(file)) {
                 SymbolKindModel kind = codeUnit.getKind();
                 OperationEnum operation = codeUnit.getOperation();
                 if (isMethodOrConstructor(kind)) {
@@ -704,7 +704,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 testFiles.add(path);
             }
 
-            List<int[]> blockRanges = collectBlockRanges(file.getCodeUnits());
+            List<int[]> blockRanges = collectBlockRanges(scoredCodeUnits(file));
             if (CollectionUtils.isNotEmpty(blockRanges)) {
                 blockRangesByFile.put(path, blockRanges);
             }
@@ -734,6 +734,18 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
             }
         }
         return new FileContext(testFiles, diffStatsByFile, addedByFile, effectiveAddedByFile, effectiveDeletionAnchorsByFile, blockRangesByFile);
+    }
+    /**
+     * the code units scoring reads. A DELETE unit describes a method or constructor the commit removed from a file
+     * it kept: its location is a line range in the previous content and it carries no metrics, coverage or callers.
+     * Removed lines are already priced as file-level deletion efforts (VolumeScoreCalculator), so the unit is
+     * reported for visibility and kept out of every figure computed here, which would otherwise count it twice
+     * and read old-file line numbers against the new file's diff.
+     */
+    private static List<CodeUnitModel> scoredCodeUnits(FileChangeModel file) {
+        return CollectionUtils.emptyIfNull(file.getCodeUnits()).stream()
+                .filter(codeUnit -> codeUnit.getOperation() != OperationEnum.DELETE)
+                .toList();
     }
     private static List<int[]> collectBlockRanges(List<CodeUnitModel> codeUnits) {
         List<int[]> toReturn = new ArrayList<>();

@@ -646,6 +646,28 @@ class SubmissionToRequestMapperTest {
                 "build-failure detail must be abbreviated to the prompt excerpt limit");
     }
 
+    @Test
+    void deleteCodeUnitIsKeptOutOfScoring() {
+        LlmScoringRequest without = mapper.apply(baseSubmission());
+
+        AnalysisSubmissionModel submission = baseSubmission();
+        // what the plugin reports for a removed method: a range in the previous content, no metrics or coverage
+        CodeUnitModel removed = new CodeUnitModel();
+        removed.setName("retired");
+        removed.setSignature("com.example.Foo.retired()");
+        removed.setKind(SymbolKindModel.METHOD);
+        removed.setOperation(CodeUnitModel.OperationEnum.DELETE);
+        removed.setLocation(location(40, 60));
+        submission.getFiles().get(0).getCodeUnits().add(removed);
+
+        LlmScoringRequest with = mapper.apply(submission);
+
+        assertEquals(without.getCodeBlockChanges(), with.getCodeBlockChanges(), "a removed method must not become a scored block");
+        assertEquals(without.getChangeSummary(), with.getChangeSummary(), "nor shift the change summary");
+        assertEquals(without.getCoverage(), with.getCoverage());
+        assertEquals(without.getComplexity(), with.getComplexity());
+    }
+
     private static AnalysisSubmissionModel diffOnlySubmission() {
         AnalysisSubmissionModel toReturn = baseSubmission();
         toReturn.setDuplication(null);

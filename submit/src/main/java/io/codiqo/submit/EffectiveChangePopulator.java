@@ -121,7 +121,8 @@ public class EffectiveChangePopulator implements SubmissionPopulator {
     private static List<int[]> collectBlockRanges(List<CodeUnitModel> codeUnits) {
         List<int[]> toReturn = new ArrayList<>();
         for (CodeUnitModel codeUnit : CollectionUtils.emptyIfNull(codeUnits)) {
-            if (Boolean.TRUE.equals(codeUnit.getIsTrivial())) {
+            // a DELETE unit's range is in the previous content, so it cannot nest anything in the new file
+            if (BooleanUtils.or(new boolean[] { Boolean.TRUE.equals(codeUnit.getIsTrivial()), codeUnit.getOperation() == OperationEnum.DELETE })) {
                 continue;
             }
             if (METHOD_OR_CONSTRUCTOR.contains(codeUnit.getKind())) {
