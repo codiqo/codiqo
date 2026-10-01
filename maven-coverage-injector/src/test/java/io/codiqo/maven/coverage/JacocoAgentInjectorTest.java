@@ -134,6 +134,25 @@ class JacocoAgentInjectorTest {
     }
 
     @Test
+    void injectsIntoDeclaredExecutionsWithoutTheirOwnArgLine() {
+        Build build = build();
+        build.addPlugin(plugin(MAVEN_PLUGINS, SUREFIRE));
+        Plugin failsafe = plugin(MAVEN_PLUGINS, FAILSAFE);
+        PluginExecution integrationTest = new PluginExecution();
+        integrationTest.setId("integration-test");
+        integrationTest.addGoal("integration-test");
+        failsafe.addExecution(integrationTest);
+        build.addPlugin(failsafe);
+
+        runInjector(build, "/opt/agent/jacoco.jar");
+
+        // the shape Jetty's HTTP2 webapp module declares: the execution's merged config never sees the plugin level
+        Xpp3Dom executionConfig = (Xpp3Dom) integrationTest.getConfiguration();
+        assertTrue(executionConfig.getChild("argLine").getValue().contains("-javaagent:"),
+                "a declared execution with no argLine of its own must still receive the agent");
+    }
+
+    @Test
     void doesNotFabricateFailsafeWhenAbsent() {
         Build build = build();
         build.addPlugin(plugin(MAVEN_PLUGINS, SUREFIRE));
