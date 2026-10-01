@@ -65,6 +65,8 @@ Config overrides (project properties, or a `codiqo { … }` extension block): `-
 `-Pcodiqo.firstParentOnly`, `-Pcodiqo.excludeRevertedCommits`, `-Pcodiqo.includeBranches`,
 `-Pcodiqo.include/excludeAuthorEmails`, `-Pcodiqo.testTimeoutMinutes`,
 `-Pcodiqo.perTestTimeoutMinutes`, `-Pcodiqo.ignoreTestFailures`.
+`-Pcodiqo.buildProgressFile` (property only) names a file to append one line to per project
+started and finished, in the format the Maven fork writes, for a watcher outside the build.
 For `codiqoIndexCommits`: `-Pcodiqo.indexRef`, `-Pcodiqo.commitWindow`, `-Pcodiqo.includeBranches`,
 `-Pcodiqo.includeAuthorEmails`, `-Pcodiqo.excludeAuthorEmails`, `-Pcodiqo.firstParentOnly`.
 
