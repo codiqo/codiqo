@@ -241,7 +241,15 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             }
         } finally {
             clone.close();
-            FileUtils.deleteDirectory(temp);
+            /**
+             * by now the commit's outcome is already decided and, for a skip, already reported; a checkout that will
+             * not delete must not turn that into a failed run
+             */
+            try {
+                FileUtils.deleteDirectory(temp);
+            } catch (IOException err) {
+                getLog().warn("could not delete the analysis checkout " + temp + ", leaving it behind: " + err);
+            }
             /**
              * the private local repository deliberately outlives the analysis: it is shared by every commit of this
              * project and its seeded releases are what make the next commit cheap, so cleanup belongs at the end of
