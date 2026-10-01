@@ -1,1 +1,2 @@
 io.codiqo.maven.eventspy.BuildFailureEventSpy
+io.codiqo.maven.eventspy.BuildProgressEventSpy
