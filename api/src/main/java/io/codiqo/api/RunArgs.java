@@ -534,6 +534,10 @@ public class RunArgs {
     @Nullable
     private transient File buildFailureReportFile;
 
+    /** File module and analysis-stage progress is appended to, for a watcher outside the build; unset writes nothing. */
+    @Nullable
+    private transient File buildProgressFile;
+
     /**
      * Comma-separated <b>regular expressions</b> matched against a commit's branches; empty accepts everything.
      * Applied at indexing time as well as analysis time, because a commit this rejects is not worth a build.

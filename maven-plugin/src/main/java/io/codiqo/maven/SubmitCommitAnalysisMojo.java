@@ -15,6 +15,7 @@ import io.codiqo.maven.auth.BrowserLogin;
 import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.submit.AnalysisSubmitter;
 import io.codiqo.submit.SubmissionContext;
+import io.codiqo.util.ProgressStage;
 
 @Mojo(name = "submit-commit-analysis",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
@@ -34,14 +35,17 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
     protected void doLlmScoring(SubmissionContext ctx) throws Exception {
         String resolvedApiKey = BrowserLogin.resolveApiKey(apiKey, authUrl, getLog());
 
-        AnalysisAcceptedModel response = AnalysisSubmitter.submit(
-                apiUrl,
-                resolvedApiKey,
-                connectTimeoutSeconds,
-                readTimeoutSeconds,
-                ctx.getSubmissionModel(),
-                new MavenMessageReporter(getLog()));
-        getLog().info(String.format("accepted analysis id: %s status: %s", response.getAnalysisId(), response.getStatus()));
+        try (ProgressStage stage = ProgressStage.start(ctx.getArgs(), "submit")) {
+            AnalysisAcceptedModel response = AnalysisSubmitter.submit(
+                    apiUrl,
+                    resolvedApiKey,
+                    connectTimeoutSeconds,
+                    readTimeoutSeconds,
+                    ctx.getSubmissionModel(),
+                    new MavenMessageReporter(getLog()));
+            getLog().info(String.format("accepted analysis id: %s status: %s", response.getAnalysisId(), response.getStatus()));
+            stage.succeeded();
+        }
     }
     @Override
     protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files, ProjectMetricsModel projectMetrics) throws Exception {

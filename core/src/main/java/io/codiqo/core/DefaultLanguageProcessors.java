@@ -68,6 +68,7 @@ import io.codiqo.lang.spec.PmdAffectedSymbolInfo;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
 import io.codiqo.util.MemoryReport;
+import io.codiqo.util.ProgressStage;
 import net.sourceforge.pmd.cpd.CPDConfiguration;
 import net.sourceforge.pmd.cpd.CpdAnalysis;
 import net.sourceforge.pmd.cpd.Match;
@@ -114,10 +115,20 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     }
     @Override
     public void load() {
-        processors.forEach(LanguageSpec::load);
+        try (ProgressStage stage = ProgressStage.start(args, "language server")) {
+            processors.forEach(LanguageSpec::load);
+            stage.succeeded();
+        }
     }
     @Override
     public IndexingSummary index(CommitAnalysis analysis) throws IOException {
+        try (ProgressStage stage = ProgressStage.start(args, "index")) {
+            IndexingSummary toReturn = indexFiles(analysis);
+            stage.succeeded();
+            return toReturn;
+        }
+    }
+    private IndexingSummary indexFiles(CommitAnalysis analysis) throws IOException {
         IndexingSummaryBuilder toReturn = IndexingSummary.builder();
 
         /**
@@ -349,6 +360,12 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     }
     @Override
     public void identifyAffectedSymbols(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
+        try (ProgressStage stage = ProgressStage.start(args, "affected symbols")) {
+            identifySymbols(summary, analysis);
+            stage.succeeded();
+        }
+    }
+    private void identifySymbols(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
         AtomicInteger identified = new AtomicInteger();
 
         for (LanguageSpec processor : processors) {
@@ -398,9 +415,11 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         long entryHeap = MemoryReport.heapUsed();
         MemoryReport.resetHeapPeak();
         StopWatch stopWatch = StopWatch.createStarted();
+        ProgressStage progress = ProgressStage.start(args, stage);
 
         try {
             capture.run(summary, analysis);
+            progress.succeeded();
         } finally {
             /**
              * reported in a finally block because the stage that runs out of heap is the one worth measuring, and
@@ -415,6 +434,8 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                     MemoryReport.human(Runtime.getRuntime().maxMemory()),
                     MemoryReport.human(Math.max(0, peak - entryHeap)),
                     stopWatch);
+            progress.detail("peak heap " + MemoryReport.human(peak) + "/" + MemoryReport.human(Runtime.getRuntime().maxMemory()));
+            progress.close();
         }
 
         MemoryReport.retained(summary, analysis).ifPresent(size -> log.info("memory (%s) retained(index+analysis)=%s", stage, size));
