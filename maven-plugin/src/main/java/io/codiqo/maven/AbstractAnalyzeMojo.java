@@ -28,7 +28,12 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -74,7 +79,6 @@ import org.apache.maven.shared.invoker.InvocationRequest;
 import org.apache.maven.shared.invoker.InvocationResult;
 import org.apache.maven.shared.invoker.Invoker;
 import org.apache.maven.shared.invoker.PrintStreamHandler;
-import org.apache.maven.shared.utils.cli.CommandLineTimeOutException;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
@@ -155,6 +159,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     private static final String COVERAGE_INJECTOR_ARTIFACT_ID = "codiqo-maven-coverage-injector";
     private static final String SUREFIRE_INJECTOR_ARTIFACT_ID = "codiqo-maven-surefire-injector";
     private static final String BUILD_EVENTSPY_ARTIFACT_ID = "codiqo-maven-build-eventspy";
+    private static final Duration FORK_STOP_GRACE = Duration.ofSeconds(30);
 
     private static final String JACOCO_GROUP_ID = "org.jacoco";
     private static final String JACOCO_AGENT_ARTIFACT_ID = "org.jacoco.agent";
@@ -760,7 +765,6 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     "-Dsurefire.timeout=" + surefireTimeout,
                     "-Dsurefire.exitTimeout=" + FORK_EXIT_GRACE_SECONDS));
         }
-        request.setTimeoutInSeconds((int) args.getBuildTimeout().getSeconds());
         request.setBatchMode(true);
         request.setThreads(String.valueOf(mavenSession.getRequest().getDegreeOfConcurrency()));
         if (Objects.nonNull(javaHome)) {
@@ -1092,9 +1096,28 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         request.setErrorHandler(syserr);
 
         Invoker invoker = new DefaultInvoker();
-        InvocationResult result = invoker.execute(request);
-        if (result.getExitCode() != 0) {
-            if (result.getExecutionException() instanceof CommandLineTimeOutException) {
+        Set<Long> beforeFork = ForkProcessTree.snapshot();
+        boolean timedOut = false;
+        InvocationResult result;
+        /**
+         * the deadline is enforced here rather than with the request's own timeout, which kills only the launching
+         * shell and leaves the forked Maven and its test JVMs running — see ForkProcessTree
+         */
+        try (ExecutorService runner = Executors.newSingleThreadExecutor()) {
+            Future<InvocationResult> run = runner.submit(() -> invoker.execute(request));
+            try {
+                result = run.get(args.getBuildTimeout().toMillis(), TimeUnit.MILLISECONDS);
+            } catch (TimeoutException err) {
+                timedOut = true;
+                int stopped = ForkProcessTree.stop(beforeFork, FORK_STOP_GRACE);
+                getLog().warn(String.format(Locale.ROOT, "fork build reached its deadline, stopped %d process(es)", stopped));
+                result = run.get();
+            } catch (ExecutionException err) {
+                throw err.getCause() instanceof Exception cause ? cause : err;
+            }
+        }
+        if (timedOut || result.getExitCode() != 0) {
+            if (timedOut) {
                 String reason = "fork build timed out after " + args.getBuildTimeout();
                 if (args.isSkipOnBuildFailure()) {
                     getLog().warn(reason + ", skipping with category " + AnalysisExcludeCategory.BUILD_FAILURE);
