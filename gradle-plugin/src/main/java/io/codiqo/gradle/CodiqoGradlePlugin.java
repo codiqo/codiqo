@@ -1,8 +1,11 @@
 package io.codiqo.gradle;
 
+import java.io.File;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -11,13 +14,17 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
+import javax.inject.Inject;
+
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.gradle.api.GradleException;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.Task;
+import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.testing.Test;
+import org.gradle.build.event.BuildEventsListenerRegistry;
 import org.gradle.testing.jacoco.plugins.JacocoPluginExtension;
 import org.gradle.testing.jacoco.plugins.JacocoTaskExtension;
 import org.jacoco.core.JaCoCo;
@@ -25,7 +32,7 @@ import org.jacoco.core.JaCoCo;
 import io.codiqo.api.RunArgs;
 import io.codiqo.gradle.model.AnalysisRequest;
 
-public class CodiqoGradlePlugin implements Plugin<Project> {
+public abstract class CodiqoGradlePlugin implements Plugin<Project> {
     private static final String EXTENSION_NAME = "codiqo";
     private static final String TASK_GROUP = "codiqo";
     private static final String DUMP_TASK = "codiqoDumpAnalysis";
@@ -39,6 +46,10 @@ public class CodiqoGradlePlugin implements Plugin<Project> {
     private static final String SEPARATE_THREAD = "SEPARATE_THREAD";
 
     private static final Pattern AGENT_ARTIFACT_VERSION = Pattern.compile("^(\\d+\\.\\d+\\.\\d+)");
+    private static final String PROGRESS_SERVICE = "codiqoBuildProgress";
+
+    @Inject
+    protected abstract BuildEventsListenerRegistry getEventsListenerRegistry();
 
     @Override
     public void apply(Project project) {
@@ -79,6 +90,10 @@ public class CodiqoGradlePlugin implements Plugin<Project> {
             }
         });
 
+        Optional.ofNullable(project.findProperty("codiqo.buildProgressFile"))
+                .map(Object::toString)
+                .ifPresent(path -> trackBuildProgress(project, new File(path)));
+
         project.getRootProject().getAllprojects().forEach(module -> module.getPluginManager()
                 .withPlugin(JACOCO_PLUGIN_ID, applied -> module.afterEvaluate(CodiqoGradlePlugin::pinJacocoToolVersion)));
 
@@ -100,6 +115,30 @@ public class CodiqoGradlePlugin implements Plugin<Project> {
                         ownJacoco(test);
                         ownTestExecution(test, timeouts, boolProp(project, "codiqo.ignoreTestFailures", ext.isIgnoreTestFailures()));
                     });
+        });
+    }
+    /**
+     * module progress for a watcher outside the build, as the Maven fork's event spy writes it. The counts are taken
+     * when the graph is ready, leaving out the analysis tasks: they are not part of building any module, and counting
+     * them would keep the root project running until the analysis ends.
+     */
+    private void trackBuildProgress(Project project, File progressFile) {
+        Provider<BuildProgressService> service = project.getGradle().getSharedServices().registerIfAbsent(PROGRESS_SERVICE,
+                BuildProgressService.class, spec -> spec.getParameters().getProgressFile().set(progressFile));
+        getEventsListenerRegistry().onTaskCompletion(service);
+
+        project.getGradle().getTaskGraph().whenReady(graph -> {
+            Map<String, Integer> tasksByProject = new LinkedHashMap<>();
+            Map<String, String> ids = new LinkedHashMap<>();
+            graph.getAllTasks().stream()
+                    .filter(task -> BooleanUtils.negate(ANALYSIS_TASKS.contains(task.getName())))
+                    .forEach(task -> {
+                        Project owner = task.getProject();
+                        tasksByProject.merge(owner.getPath(), 1, Integer::sum);
+                        // the root's path is a bare ":", which says nothing in a status line
+                        ids.putIfAbsent(owner.getPath(), Objects.equals(owner, owner.getRootProject()) ? ":" + owner.getName() : owner.getPath());
+                    });
+            service.get().expect(tasksByProject, ids);
         });
     }
     private static void registerAnalysisTask(Project project, String name, boolean submit, String description) {
