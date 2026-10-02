@@ -1183,8 +1183,30 @@ public class RunArgs {
         }
         throw new IllegalArgumentException(name + " must be a finite number, got: " + value);
     }
+    /**
+     * The build tool's declared source roots decide ownership; the directory only decides it for a file no root holds,
+     * such as a pom.xml or a resource. Ranked, first module in reactor order within each rank: a module that both
+     * contains and declares the file, then one that only declares it, then one that only contains it. A declaration
+     * never reaches into a module removed with excludeProjects.
+     */
     public Optional<ProjectSpec> owner(File filePath) {
-        return projects.stream().filter(proj -> proj.contains(filePath)).findAny();
+        Optional<ProjectSpec> declaring = Optional.empty();
+        Optional<ProjectSpec> containing = Optional.empty();
+        for (ProjectSpec proj : projects) {
+            if (proj.contains(filePath)) {
+                if (proj.declaresSource(filePath)) {
+                    return Optional.of(proj);
+                }
+                containing = containing.or(() -> Optional.of(proj));
+            } else if (declaring.isEmpty() && proj.declaresSource(filePath)) {
+                declaring = Optional.of(proj);
+            }
+        }
+
+        if (isExcludedProjectPath(filePath)) {
+            return containing;
+        }
+        return declaring.isPresent() ? declaring : containing;
     }
     public boolean matchesByBranch(List<String> branches) {
         if (StringUtils.isEmpty(includeBranches)) {
