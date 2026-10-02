@@ -18,6 +18,13 @@ public interface ProjectSpec extends Closeable {
     default boolean contains(File filePath) {
         return PathContainment.isUnder(getBaseDirectory(), filePath);
     }
+    /**
+     * Whether the module compiles the file from a source root it declares, wherever that root lives: kryo's main/
+     * declares ../src and ../test, so its every source sits outside the module's own directory.
+     */
+    default boolean declaresSource(File filePath) {
+        return false;
+    }
     Optional<Date> latestModified();
     void setLatestModified(Date date);
     Optional<Date> latestSourceModified();
