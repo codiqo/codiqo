@@ -131,6 +131,14 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
     public LanguageServer get() {
         return launcher.getRemoteProxy();
     }
+    /**
+     * jdt.ls's java/buildWorkspace, incremental. IWorkspace.build takes the workspace rule, so the answer cannot
+     * arrive before a workspace job already holding that rule has finished — which makes this the barrier for work
+     * the server ran as a job rather than inside the request.
+     */
+    public CompletableFuture<Object> buildWorkspace() {
+        return launcher.getRemoteEndpoint().request("java/buildWorkspace", false);
+    }
     @JsonNotification("language/status")
     public void languageStatus(StatusReport params) {
         log.info("%s - %s", params.getType().getJsonValue(), params.getMessage());
