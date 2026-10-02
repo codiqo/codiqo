@@ -15,17 +15,20 @@ import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
@@ -39,6 +42,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.lib.Repository;
 import org.slf4j.event.Level;
@@ -50,6 +54,8 @@ import io.codiqo.api.LanguageSpec;
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.code.CodeBlockInfo;
+import io.codiqo.api.code.ParsedSources;
+import io.codiqo.api.code.PreviousRevision;
 import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.cpd.DuplicationMatch;
 import io.codiqo.api.cpd.PMDCopyPasteDetectionSummary;
@@ -83,6 +89,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
      * file sequence, not of a count.
      */
     private static final int CPD_RETRY_BATCH_SIZE = 1000;
+    private static final Set<DiffEntry.ChangeType> MODIFIED_IN_PLACE = EnumSet.of(DiffEntry.ChangeType.MODIFY, DiffEntry.ChangeType.RENAME);
     private static final int ORPHAN_SAMPLE_SIZE = 20;
 
     private final Log log;
@@ -142,6 +149,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                 return new LinkedHashSet<>();
             }
         };
+        Set<File> parsedFiles = ConcurrentHashMap.newKeySet();
         List<Path> totalFiles = new ArrayList<>();
         List<Path> ignoredFiles = new ArrayList<>();
         List<Path> excludedFiles = new ArrayList<>();
@@ -296,7 +304,9 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                 if (CollectionUtils.isNotEmpty(matching)) {
                     for (;;) {
                         try {
-                            processor.parse(group.getKey(), matching).forEach(block -> {
+                            ParsedSources parsed = processor.parse(group.getKey(), matching);
+                            parsedFiles.addAll(parsed.getParsedFiles());
+                            parsed.getBlocks().forEach(block -> {
                                 synchronized (blocks) {
                                     blocks.put(block.getFile(), block);
                                 }
@@ -349,6 +359,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
             return toReturn
                     .projects(args.getProjects())
                     .blocks(blocks)
+                    .parsedFiles(Set.copyOf(parsedFiles))
                     .totalFiles(totalFiles)
                     .skippedFiles(skippedFiles)
                     .ignoredFiles(ignoredFiles)
@@ -367,8 +378,11 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     }
     private void identifySymbols(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
         AtomicInteger identified = new AtomicInteger();
+        int removed = 0;
 
         for (LanguageSpec processor : processors) {
+            Map<ProjectSpec, Map<GitFileAnalysis, Set<Integer>>> removalCandidates = new LinkedHashMap<>();
+
             for (FileAnalysis it : analysis) {
                 if (it.isExtension(processor.lang())) {
                     if (it instanceof GitFileAnalysis gitAnalysis) {
@@ -399,12 +413,69 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                                 }
                             }
                         }
+
+                        /**
+                         * only a file the index parsed has a trustworthy "now" to subtract from: an excluded, orphaned
+                         * or unparseable file has no blocks either, and reading that as "every method is gone" would
+                         * report each method the commit touched as removed
+                         */
+                        if (summary.getParsedFiles().contains(gitAnalysis.getFile())) {
+                            Set<Integer> removedLines = removedLines(gitAnalysis);
+                            if (CollectionUtils.isNotEmpty(removedLines)) {
+                                removalCandidates.computeIfAbsent(gitAnalysis.project().orElseThrow(), owner -> new LinkedHashMap<>()).put(gitAnalysis, removedLines);
+                            }
+                        }
                     }
                 }
             }
+
+            // one call per module, so the language shares its parser setup the way the index does
+            for (Entry<ProjectSpec, Map<GitFileAnalysis, Set<Integer>>> group : removalCandidates.entrySet()) {
+                removed += identifyRemoved(processor, group.getKey(), group.getValue());
+            }
         }
 
-        log.info("identified %d potentially affected symbols", identified.get());
+        log.info("identified %d potentially affected symbols and %d removed code units", identified.get(), removed);
+    }
+    /**
+     * the code units files the commit kept have lost: blocks of their previous content the file no longer declares
+     * and whose lines the commit removed. A rename is a kept file too, so its members are paired across the two
+     * paths. Kept apart from the affected symbols, which are located in the new content; a whole-file deletion is
+     * not indexed at all and is reported by its change type instead.
+     */
+    private static int identifyRemoved(LanguageSpec processor, ProjectSpec owner, Map<GitFileAnalysis, Set<Integer>> removedLinesByFile) throws IOException {
+        List<PreviousRevision> revisions = removedLinesByFile.keySet().stream()
+                .map(gitAnalysis -> new PreviousRevision(gitAnalysis.getFile(), gitAnalysis.getOldPath(), gitAnalysis.getContentBefore()))
+                .toList();
+        MultiValuedMap<File, CodeBlockInfo> before = processor.parseRemoved(owner, revisions);
+
+        int toReturn = 0;
+        for (Entry<GitFileAnalysis, Set<Integer>> entry : removedLinesByFile.entrySet()) {
+            for (CodeBlockInfo block : before.get(entry.getKey().getFile())) {
+                int startLine = block.getLocation().getStartLine();
+                int endLine = block.getLocation().getEndLine();
+                if (entry.getValue().stream().anyMatch(line -> line >= startLine && line <= endLine)) {
+                    entry.getKey().getRemovedCodeBlocks().add(block);
+                    toReturn++;
+                }
+            }
+        }
+        return toReturn;
+    }
+    /** the previous content's lines the commit removed or replaced, for a file it kept */
+    private static Set<Integer> removedLines(GitFileAnalysis gitAnalysis) {
+        Set<Integer> toReturn = new HashSet<>();
+        if (BooleanUtils.and(new boolean[] {
+                MODIFIED_IN_PLACE.contains(gitAnalysis.getChangeType()),
+                Objects.nonNull(gitAnalysis.getContentBefore()),
+                Objects.nonNull(gitAnalysis.getStructuredDiff()) })) {
+            for (GitDiffHunk hunk : gitAnalysis.getStructuredDiff().getHunks()) {
+                for (int line = hunk.getOldStartLine(); line < hunk.getOldEndLine(); line++) {
+                    toReturn.add(line + SourceLocation.GIT_OFFSET);
+                }
+            }
+        }
+        return toReturn;
     }
     /**
      * Runs one capture stage and reports what it cost. Peak heap rather than a before/after difference, because a

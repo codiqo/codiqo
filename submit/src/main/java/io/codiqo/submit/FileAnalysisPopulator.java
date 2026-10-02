@@ -32,6 +32,7 @@ import edu.umd.cs.findbugs.BugInstance;
 import edu.umd.cs.findbugs.BugRankCategory;
 import edu.umd.cs.findbugs.MethodAnnotation;
 import edu.umd.cs.findbugs.Priorities;
+import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.coverage.CodeBlockCoverage;
 import io.codiqo.api.diff.AffectedSymbolInfo;
@@ -56,9 +57,11 @@ import io.codiqo.client.model.SymbolKindModel;
 import io.codiqo.lang.config.ConfigFiles;
 import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
+import io.codiqo.lang.spec.PmdAffectedSymbolInfo;
 import io.codiqo.llm.lang.LanguageCapabilities;
 import io.codiqo.util.JGit;
 import lombok.RequiredArgsConstructor;
+import net.sourceforge.pmd.lang.Language;
 import net.sourceforge.pmd.lang.java.ast.ASTAnnotation;
 import net.sourceforge.pmd.lang.java.ast.ASTAnonymousClassDeclaration;
 import net.sourceforge.pmd.lang.java.ast.ASTExecutableDeclaration;
@@ -118,6 +121,11 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
                     }
                 });
             }
+            for (CodeBlockInfo removed : fileAnalysis.getRemovedCodeBlocks()) {
+                if (removed instanceof JavaCodeBlockInfo javaBlock) {
+                    fileChangeModel.getCodeUnits().add(removedCodeUnitModel(ctx, fileAnalysis.getLanguage(), javaBlock, workTreeRealPath));
+                }
+            }
 
             if (MapUtils.isNotEmpty(fileAnalysis.getLineCoverage())) {
                 fileChangeModel.setCoverage(buildCoverageModel(fileAnalysis.getLineCoverage()));
@@ -138,6 +146,52 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         ctx.getSubmissionModel().setHasCodeChanges(
                 LanguageCapabilities.hasCodeChanges(files.stream().map(FileChangeModel::getLanguage).toList()));
     }
+    /**
+     * a method or constructor the commit removed from a file it kept: its identity, previous body and range in the
+     * previous content only. It did not exist in this build, so it carries no coverage, metrics, callers or
+     * diagnostics, and scoring skips it (see SubmissionToRequestMapper.scoredCodeUnits for what its lines do and do
+     * not earn). Named and typed through the same symbol as every other unit, so a removed overload reads apart from
+     * its siblings.
+     */
+    static CodeUnitModel removedCodeUnitModel(SubmissionContext ctx, Language language, JavaCodeBlockInfo javaBlock, Path workTreeRealPath) {
+        JavaInfoModel infoModel = javaInfo(javaBlock);
+        AffectedSymbolInfo symbol = new PmdAffectedSymbolInfo(javaBlock, language);
+
+        LocationModel locationModel = new LocationModel();
+        locationModel.setStartLine(javaBlock.getLocation().getStartLine());
+        locationModel.setStartColumn(javaBlock.getLocation().getStartColumn());
+        locationModel.setEndLine(javaBlock.getLocation().getEndLine());
+        locationModel.setEndColumn(javaBlock.getLocation().getEndColumn());
+
+        CodeUnitModel toReturn = new CodeUnitModel();
+        toReturn.setName(symbol.getName());
+        toReturn.setSignature(javaBlock.getSignature());
+        toReturn.setSignatureFormat(SignatureFormatModel.JVM_DESCRIPTOR);
+        toReturn.setModifiers(javaBlock.getModifiers());
+        toReturn.setOperation(CodeUnitModel.OperationEnum.DELETE);
+        toReturn.setBodyBefore(javaBlock.getBody());
+        toReturn.setLocation(locationModel);
+        toReturn.setIsTrivial(javaBlock.isTrivial());
+        toReturn.setJavaInfo(infoModel);
+
+        populateSymbolInfo(ctx, symbol, toReturn, infoModel, workTreeRealPath);
+        populateTypeInfo(javaBlock, toReturn, infoModel);
+        return toReturn;
+    }
+    private static JavaInfoModel javaInfo(JavaCodeBlockInfo javaBlock) {
+        JavaInfoModel toReturn = new JavaInfoModel();
+        toReturn.setIsAnonymous(javaBlock.getType() instanceof ASTAnonymousClassDeclaration);
+        toReturn.setIsAbstract(javaBlock.isAbstract());
+        toReturn.setIsFinal(javaBlock.isFinal());
+        toReturn.setIsStatic(javaBlock.isStatic());
+        toReturn.setIsSynchronized(javaBlock.isSynchronized());
+        toReturn.setEnclosingClass(javaBlock.getEnclosingType().getSimpleName());
+        if (Objects.nonNull(javaBlock.getType())) {
+            toReturn.setPackageName(javaBlock.getType().getPackageName());
+            toReturn.setClassName(javaBlock.getType().getSimpleName());
+        }
+        return toReturn;
+    }
     private static CodeUnitModel createCodeUnitModel(
             SubmissionContext ctx,
             FileAnalysis fileAnalysis,
@@ -145,17 +199,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             JavaCodeBlockInfo javaBlock,
             LocationModel locationModel,
             Path workTreeRealPath) {
-        JavaInfoModel infoModel = new JavaInfoModel();
-        infoModel.setIsAnonymous(javaBlock.getType() instanceof ASTAnonymousClassDeclaration);
-        infoModel.setIsAbstract(javaBlock.isAbstract());
-        infoModel.setIsFinal(javaBlock.isFinal());
-        infoModel.setIsStatic(javaBlock.isStatic());
-        infoModel.setIsSynchronized(javaBlock.isSynchronized());
-        infoModel.setEnclosingClass(javaBlock.getEnclosingType().getSimpleName());
-        if (Objects.nonNull(javaBlock.getType())) {
-            infoModel.setPackageName(javaBlock.getType().getPackageName());
-            infoModel.setClassName(javaBlock.getType().getSimpleName());
-        }
+        JavaInfoModel infoModel = javaInfo(javaBlock);
 
         CodeUnitModel codeUnitModel = new CodeUnitModel();
         codeUnitModel.setName(affectedSymbol.getName());

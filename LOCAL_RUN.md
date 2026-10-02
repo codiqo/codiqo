@@ -6,10 +6,16 @@ changes can be compared against what production already scored for the same comm
 ## 1. Build and install the engine
 
 ```bash
-JAVA_HOME=$(/usr/libexec/java_home -v26) mvn -o install -DskipTests
+JDK26=~/.m2/jdks/jdk-26.0.2+10/Contents/Home   # any JDK 26 home; this is the one codiqo-server runs on
+JAVA_HOME=$JDK26 mvn -o install -DskipTests
 ```
 
 JDK 26 is required — the backend and the Ebean migration generator reject the Maven default JDK.
+
+**Do not pick it with `/usr/libexec/java_home -v26`.** When no JDK 26 is registered with macOS, that command silently
+returns a newer one: since Homebrew replaced `openjdk` 26 with 27 it resolves to JDK 27, and a per-commit fork built
+with it dies in Error Prone (`ExceptionInInitializerError: com.sun.tools.javac.tree.EndPosTable`). Name the home
+explicitly and check it with `$JDK26/bin/java -version`.
 
 ## 2. Restart the server
 
@@ -35,10 +41,11 @@ Run from the target repository, not from `codiqo`:
 
 ```bash
 cd ~/dev/turbospaces-boot
+JDK26=~/.m2/jdks/jdk-26.0.2+10/Contents/Home   # the same JDK 26 as step 1
 
 mvn io.codiqo:codiqo-maven-plugin:1.0-SNAPSHOT:submit-commit-analysis -T 1C \
   -Dmaven.ext.class.path="$(cat /tmp/codiqo-tm-ext.classpath)" \
-  -Dcodiqo.javaHome=$(/usr/libexec/java_home -v26) \
+  -Dcodiqo.javaHome=$JDK26 \
   -Dcodiqo.apiUrl=http://localhost:7771 \
   -Dcodiqo.commitId=<sha> \
   -Dcodiqo.apiKey=<project api key> \

@@ -3,7 +3,9 @@ package io.codiqo.api;
 import java.io.File;
 import java.nio.file.Path;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.apache.commons.collections4.MultiValuedMap;
 import org.apache.commons.lang3.time.StopWatch;
@@ -20,6 +22,9 @@ public class IndexingSummary {
     private File projectRoot;
     private Collection<ProjectSpec> projects;
     private MultiValuedMap<File, CodeBlockInfo> blocks;
+    /** the files the language processors parsed; one that failed to parse has no blocks but is not "empty" */
+    @Builder.Default
+    private Set<File> parsedFiles = new HashSet<>();
     private List<Path> totalFiles;
     private List<Path> skippedFiles;
     private List<Path> ignoredFiles;
