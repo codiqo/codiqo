@@ -20,15 +20,8 @@ import net.sourceforge.pmd.lang.java.ast.ASTTypeDeclaration;
 import net.sourceforge.pmd.lang.java.ast.ASTVariableDeclarator;
 
 /**
- * the identity of an executable as its source spells it, which is what pairs the executables of two revisions of one
- * file. A JVM descriptor cannot: it embeds the package and the name of the file's primary type (both change with a
- * move or rename), the return type, the resolved parameter types (which drift with the imports and the classpath) and
- * the position of every anonymous class (which shifts when an earlier one is deleted).
- *
- * <p>So the type path is relative to the file, with its primary type written {@code *}; an anonymous
- * class is named after the member, variable or enum constant that declares it plus its ordinal there; and parameters
- * are erased simple type names. Two overloads that differ only in the package of a same-named parameter type collide,
- * which can only hide a removal, never invent one.
+ * pairs the executables of two revisions of one file. A JVM descriptor cannot: it embeds the package, the primary type's
+ * name, the return type, the resolved parameter types and the position of every anonymous class
  */
 @UtilityClass
 class JavaSourceIdentity {
@@ -47,32 +40,21 @@ class JavaSourceIdentity {
     public String of(ASTExecutableDeclaration executable, String primaryTypeName) {
         return key(executable, primaryTypeName, true, true);
     }
-    /** a compact constructor is the canonical one, so it carries the record components as its parameters */
     public String of(ASTCompactConstructorDeclaration constructor, String primaryTypeName) {
         return key(constructor, primaryTypeName, true, true);
     }
-    /**
-     * the identity with the enclosing executables' parameter lists left out but the executable's own kept: what still
-     * pairs the methods of an anonymous class whose declaring method or constructor changed its parameters, where
-     * overloads inside that class would make {@link #nameOf} ambiguous
-     */
     public String memberOf(ASTExecutableDeclaration executable, String primaryTypeName) {
         return key(executable, primaryTypeName, false, true);
     }
     public String memberOf(ASTCompactConstructorDeclaration constructor, String primaryTypeName) {
         return key(constructor, primaryTypeName, false, true);
     }
-    /**
-     * the identity with every parameter list left out, its enclosing executables' included: what still pairs a method
-     * whose own parameters changed, once the exact and member identities are exhausted
-     */
     public String nameOf(ASTExecutableDeclaration executable, String primaryTypeName) {
         return key(executable, primaryTypeName, false, false);
     }
     public String nameOf(ASTCompactConstructorDeclaration constructor, String primaryTypeName) {
         return key(constructor, primaryTypeName, false, false);
     }
-    /** the executable's own parameter types as {@link #of} spells them, in declaration order */
     public List<String> parametersOf(ASTExecutableDeclaration executable) {
         return executable.getFormalParameters().toList().stream().map(parameter -> simpleTypeName(parameter.getTypeNode())).toList();
     }
@@ -131,7 +113,6 @@ class JavaSourceIdentity {
         }
         return contextKey(context(context), primaryTypeName, withParameters) + INITIALIZER_MARKER;
     }
-    /** the nearest enclosing node that can declare a type, or null for a top-level type */
     private Node context(Node node) {
         return node.ancestors()
                 .filter(ancestor -> CONTEXTS.stream().anyMatch(kind -> kind.isInstance(ancestor)))

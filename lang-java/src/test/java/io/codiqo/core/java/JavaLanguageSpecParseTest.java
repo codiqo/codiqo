@@ -134,7 +134,6 @@ class JavaLanguageSpecParseTest {
             ProjectSpec owner = mock(ProjectSpec.class);
             List<CodeBlockInfo> removed = List.copyOf(spec.parseRemoved(owner, List.of(new PreviousRevision(source.toFile(), "Shrinking.java", before))).values());
 
-            // kept() changed its body, not its signature, so it is no removal
             assertEquals(
                     Set.of("com/example/Shrinking.retired(Ljava/lang/String;)V", "com/example/Shrinking.<init>(I)V"),
                     removed.stream().map(CodeBlockInfo::getSignature).collect(Collectors.toSet()));
@@ -142,10 +141,6 @@ class JavaLanguageSpecParseTest {
             assertEquals(7, retired.getLocation().getStartLine(), "located in the previous content");
         }
     }
-    /**
-     * a parse failure and a file with no code units both yield zero blocks; only the parsed-file set tells them apart,
-     * and removal detection depends on the difference
-     */
     @Test
     void anUnparseableFileIsNotReportedAsParsed() throws Exception {
         Path broken = workTree.resolve("Broken.java");
@@ -170,7 +165,6 @@ class JavaLanguageSpecParseTest {
                     List.of(new PreviousRevision(source.toFile(), "Sample.java", "public class Sample { void f() { int x = ; } }"))).values()));
         }
     }
-    /** an executable that lost its body, or became abstract or compact, is no code unit now but is still declared */
     @Test
     void aMethodThatLostItsBodyIsNoRemoval() throws Exception {
         String before = """
@@ -218,7 +212,6 @@ class JavaLanguageSpecParseTest {
                 """;
         assertEquals(Set.of(), removed("E.java", recordBefore, "E.java", recordAfter));
     }
-    /** the descriptor embeds the package and the primary type's name, so a moved or renamed file must not shed its members */
     @Test
     void aRenamedAndMovedFileKeepsItsMembers() throws Exception {
         String before = """
@@ -255,7 +248,6 @@ class JavaLanguageSpecParseTest {
                 """;
         assertEquals(Set.of(), removed("com/a/Foo.java", before, "Bar.java", after));
     }
-    /** PMD numbers anonymous classes by position, so deleting the first renames every later one */
     @Test
     void deletingAnAnonymousClassDoesNotRenumberTheSurvivors() throws Exception {
         String before = """
@@ -320,7 +312,6 @@ class JavaLanguageSpecParseTest {
                 """;
         assertEquals(Set.of("p/Op$1.apply(I)I"), removed("Op.java", enumBefore, "Op.java", enumAfter));
     }
-    /** a return type, or a parameter type that resolves differently, changes the descriptor but not the method */
     @Test
     void aDescriptorChangeIsNoRemoval() throws Exception {
         String before = """
@@ -351,7 +342,6 @@ class JavaLanguageSpecParseTest {
                 """;
         assertEquals(Set.of(), removed("R.java", before, "R.java", after));
     }
-    /** a method whose parameters changed is one edited method, reported under its new signature — never removed plus added */
     @Test
     void aChangedParameterListIsAnEditNotARemoval() throws Exception {
         String before = """
@@ -384,10 +374,8 @@ class JavaLanguageSpecParseTest {
                     }
                 }
                 """;
-        // the anonymous run() pairs too: its identity carries task's parameters, its name-only identity does not
         assertEquals(Set.of(), removed("Calc.java", before, "Calc.java", after));
     }
-    /** a retyped constructor parameter beside an untouched sibling overload: the sibling pairs exactly, the rest by name */
     @Test
     void aRetypedConstructorParameterIsAnEdit() throws Exception {
         String before = """
@@ -414,7 +402,6 @@ class JavaLanguageSpecParseTest {
                 """;
         assertEquals(Set.of(), removed("Endpoint.java", before, "Endpoint.java", after));
     }
-    /** a deprecated overload deleted while its replacement stays untouched */
     @Test
     void aDeletedOverloadBesideItsSurvivingSiblingIsARemoval() throws Exception {
         String before = """
@@ -439,11 +426,6 @@ class JavaLanguageSpecParseTest {
                 """;
         assertEquals(Set.of("p/Channel.<init>(Ljava/lang/String;LLegacyRegistry;)V"), removed("Channel.java", before, "Channel.java", after));
     }
-    /**
-     * the constructor dropped a parameter, which changes the identity of every method
-     * of the anonymous class inside it. The class has overloads of equal count, so neither the name nor the name and
-     * count can pair them — only the member identity, which keeps each method's own parameters
-     */
     @Test
     void anAnonymousClassInsideAConstructorThatLostAParameterKeepsItsMethods() throws Exception {
         String before = """
@@ -480,7 +462,6 @@ class JavaLanguageSpecParseTest {
                 """;
         assertEquals(Set.of(), removed("Resolver.java", before, "Resolver.java", after));
     }
-    /** one overload deleted and its longer sibling retyped — the count tells them apart */
     @Test
     void aRetypedOverloadIsToldFromADeletedOneByParameterCount() throws Exception {
         String before = """
@@ -504,7 +485,6 @@ class JavaLanguageSpecParseTest {
                 """;
         assertEquals(Set.of("p/Provider.<init>(Ljava/lang/String;LPool;)V"), removed("Provider.java", before, "Provider.java", after));
     }
-    /** one type retyped across two overloads of equal count */
     @Test
     void aTypeRetypedAcrossEqualCountOverloadsPairsEachWithItsClosestSuccessor() throws Exception {
         String before = """
@@ -531,7 +511,6 @@ class JavaLanguageSpecParseTest {
                 """;
         assertEquals(Set.of(), removed("Client.java", before, "Client.java", after));
     }
-    /** two old overloads equally close to the one new declaration: a tie is not broken, both stay removals */
     @Test
     void aTieBetweenEqualCountOverloadsIsNotBroken() throws Exception {
         String before = """
@@ -555,7 +534,6 @@ class JavaLanguageSpecParseTest {
                 """;
         assertEquals(Set.of("p/Tie.put(Ljava/lang/String;I)V", "p/Tie.put(Ljava/lang/String;J)V"), removed("Tie.java", before, "Tie.java", after));
     }
-    /** more than one leftover candidate on either side is not guessed at: the old overloads stay removals */
     @Test
     void ambiguousOverloadsStayRemovals() throws Exception {
         String before = """
@@ -579,7 +557,6 @@ class JavaLanguageSpecParseTest {
                 """;
         assertEquals(Set.of("p/Overloads.put(I)V", "p/Overloads.put(Ljava/lang/String;)V"), removed("Overloads.java", before, "Overloads.java", after));
     }
-    /** one module's files share a parser setup, so each file's removals must stay attributed to that file */
     @Test
     void aBatchKeepsEachFilesRemovalsApart() throws Exception {
         Path first = workTree.resolve("First.java");

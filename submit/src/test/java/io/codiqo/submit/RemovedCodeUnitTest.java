@@ -28,15 +28,10 @@ import io.codiqo.core.java.JavaLanguageSpec;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.util.Fetch;
 
-/**
- * A DELETE unit describes a method that no longer exists: it must read like every other unit (display name, kind,
- * type info) and must not pick up data that only describes the new tree.
- */
 class RemovedCodeUnitTest {
     @TempDir
     Path workTree;
 
-    /** two removed overloads must read apart, and a removed deprecated API must say so */
     @Test
     void aRemovedUnitIsNamedAndTypedLikeAnyOther() throws Exception {
         String before = """
@@ -88,7 +83,6 @@ class RemovedCodeUnitTest {
         assertEquals(SymbolKindModel.METHOD, byName.get("foo(String)").getKind());
         assertEquals(SymbolKindModel.CONSTRUCTOR, byName.get("Shrinking(int)").getKind());
     }
-    /** CPD read the new tree, so a clone sharing a removed unit's signature is some other, surviving code */
     @Test
     void aRemovedUnitTakesNoDuplicationFromTheNewTree() {
         CodeUnitModel removed = unit(CodeUnitModel.OperationEnum.DELETE);

@@ -23,7 +23,6 @@ public interface FileAnalysis extends Consumer<ProjectSpec> {
     String getContentAfter();
     String getDiffText();
     Set<AffectedSymbolInfo> getPotentiallyAffectedSymbols();
-    /** code units this file had before the commit and no longer has, located in {@link #getContentBefore()} */
     Set<CodeBlockInfo> getRemovedCodeBlocks();
     boolean isTestFile();
     boolean isExtension(Language lang);

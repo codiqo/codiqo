@@ -414,11 +414,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                             }
                         }
 
-                        /**
-                         * only a file the index parsed has a trustworthy "now" to subtract from: an excluded, orphaned
-                         * or unparseable file has no blocks either, and reading that as "every method is gone" would
-                         * report each method the commit touched as removed
-                         */
+                        // an unparsed file has no blocks either, which is no proof that its methods are gone
                         if (summary.getParsedFiles().contains(gitAnalysis.getFile())) {
                             Set<Integer> removedLines = removedLines(gitAnalysis);
                             if (CollectionUtils.isNotEmpty(removedLines)) {
@@ -429,7 +425,6 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                 }
             }
 
-            // one call per module, so the language shares its parser setup the way the index does
             for (Entry<ProjectSpec, Map<GitFileAnalysis, Set<Integer>>> group : removalCandidates.entrySet()) {
                 removed += identifyRemoved(processor, group.getKey(), group.getValue());
             }
@@ -437,12 +432,6 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
 
         log.info("identified %d potentially affected symbols and %d removed code units", identified.get(), removed);
     }
-    /**
-     * the code units files the commit kept have lost: blocks of their previous content the file no longer declares
-     * and whose lines the commit removed. A rename is a kept file too, so its members are paired across the two
-     * paths. Kept apart from the affected symbols, which are located in the new content; a whole-file deletion is
-     * not indexed at all and is reported by its change type instead.
-     */
     private static int identifyRemoved(LanguageSpec processor, ProjectSpec owner, Map<GitFileAnalysis, Set<Integer>> removedLinesByFile) throws IOException {
         List<PreviousRevision> revisions = removedLinesByFile.keySet().stream()
                 .map(gitAnalysis -> new PreviousRevision(gitAnalysis.getFile(), gitAnalysis.getOldPath(), gitAnalysis.getContentBefore()))
@@ -462,7 +451,6 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         }
         return toReturn;
     }
-    /** the previous content's lines the commit removed or replaced, for a file it kept */
     private static Set<Integer> removedLines(GitFileAnalysis gitAnalysis) {
         Set<Integer> toReturn = new HashSet<>();
         if (BooleanUtils.and(new boolean[] {

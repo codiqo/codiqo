@@ -146,13 +146,6 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         ctx.getSubmissionModel().setHasCodeChanges(
                 LanguageCapabilities.hasCodeChanges(files.stream().map(FileChangeModel::getLanguage).toList()));
     }
-    /**
-     * a method or constructor the commit removed from a file it kept: its identity, previous body and range in the
-     * previous content only. It did not exist in this build, so it carries no coverage, metrics, callers or
-     * diagnostics, and scoring skips it (see SubmissionToRequestMapper.scoredCodeUnits for what its lines do and do
-     * not earn). Named and typed through the same symbol as every other unit, so a removed overload reads apart from
-     * its siblings.
-     */
     static CodeUnitModel removedCodeUnitModel(SubmissionContext ctx, Language language, JavaCodeBlockInfo javaBlock, Path workTreeRealPath) {
         JavaInfoModel infoModel = javaInfo(javaBlock);
         AffectedSymbolInfo symbol = new PmdAffectedSymbolInfo(javaBlock, language);

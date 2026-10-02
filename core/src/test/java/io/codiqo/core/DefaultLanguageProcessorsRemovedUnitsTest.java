@@ -29,11 +29,6 @@ import io.codiqo.core.diff.GitStructuredDiff;
 import io.codiqo.core.logging.SlfLogFactory;
 import io.codiqo.util.Fetch;
 
-/**
- * Removal detection subtracts the file's code units now from those it had before, so it is only sound when the index
- * actually parsed the file. An excluded, orphaned or unparseable file has no blocks as well, and must not read as a
- * file whose every method was deleted.
- */
 class DefaultLanguageProcessorsRemovedUnitsTest {
     private static final String BEFORE = """
             package com.example;
