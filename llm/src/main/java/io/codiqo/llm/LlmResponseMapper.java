@@ -543,7 +543,7 @@ public class LlmResponseMapper {
         toReturn.setQualityGateMet(dimensionScore.isQualityGateMet());
         return toReturn;
     }
-    private static StaticAnalysisReviewModel mapStaticAnalysisReview(LlmScoringResponse.StaticAnalysisReview staticAnalysisReview) {
+    public static StaticAnalysisReviewModel mapStaticAnalysisReview(LlmScoringResponse.StaticAnalysisReview staticAnalysisReview) {
         StaticAnalysisReviewModel toReturn = new StaticAnalysisReviewModel();
         toReturn.setPmdInChangedLines(Optional.ofNullable(staticAnalysisReview.getPmdInChangedLines())
                 .map(LlmResponseMapper::mapFindings).orElse(Collections.emptyList()));
@@ -610,7 +610,7 @@ public class LlmResponseMapper {
                 throw new IllegalArgumentException("Unknown finding severity: " + severity);
         }
     }
-    private static BlastRadiusAnalysisModel mapBlastRadiusAnalysis(LlmScoringResponse.BlastRadiusAnalysis blastRadiusAnalysis) {
+    public static BlastRadiusAnalysisModel mapBlastRadiusAnalysis(LlmScoringResponse.BlastRadiusAnalysis blastRadiusAnalysis) {
         BlastRadiusAnalysisModel toReturn = new BlastRadiusAnalysisModel();
         toReturn.setTotalCallers(blastRadiusAnalysis.getTotalCallers());
         toReturn.setProductionCallers(blastRadiusAnalysis.getProductionCallers());
