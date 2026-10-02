@@ -12,13 +12,16 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.Validate;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -57,6 +60,8 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
     public static final int EXIT_SIGTERM = 143;
     private static final long DETACH_TIMEOUT_SECONDS = 60;
     private static final long DETACH_POLL_MILLIS = 250;
+    private static final String JAVA_EXTENSION = "java";
+    private static final Set<String> TYPELESS_SOURCES = Set.of("package-info.java", "module-info.java");
 
     private final CompletableFuture<JdtLspClient> clientFuture = new CompletableFuture<>();
     private final AtomicReference<JdtLspClient> curr = new AtomicReference<>();
@@ -97,8 +102,7 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
      * Removes the non-Java projects that would win the URI lookup for sources a module declares outside its own
      * directory (see {@link ShadowingProjects}). Only the workspace entry goes: jdt.ls deletes with
      * deleteContent=false, so the work tree is untouched. The deletion runs as a workspace job, so this waits until
-     * the projects are gone rather than racing the first query. The job then re-runs the importers and updates
-     * projects, both over the empty lists passed here, so nothing of substance is left once the deletion shows.
+     * the projects are gone and the sources they hid resolve, rather than racing the first query.
      *
      * <p>Never wait for it with java/buildWorkspace: autobuild is off for a reason, and a build compiles into m2e's
      * output folders, which for a module like kryo's are linked to the forked build's own target/classes. ECJ's class
@@ -137,16 +141,34 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
         List<String> toDelete = shadowing.stream().map(URI::toString).toList();
         executeCommand("java.project.changeImportedProjects", List.of(List.of(), List.of(), toDelete));
 
+        /**
+         * the deletion showing is not enough: the job goes on to refresh the Java model, and a query sent before that
+         * finds the module's linked copy without its packages ("com.example [in src [in main]] does not exist"). One
+         * source file per root answering with symbols is the capability the shadowing took away, so that is the wait
+         */
+        List<String> probes = new ArrayList<>();
+        for (File root : externalRoots) {
+            probeSourceFile(root).ifPresent(file -> probes.add(file.toPath().normalize().toUri().toString()));
+        }
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(DETACH_TIMEOUT_SECONDS);
-        while (projectUris(true).stream().anyMatch(shadowing::contains)) {
+        while (BooleanUtils.or(new boolean[] { projectUris(true).stream().anyMatch(shadowing::contains), anyUnresolved(probes) })) {
             if (System.nanoTime() >= deadline) {
-                log.warn("the language server still lists %s after %ds; queries on sources under them may report no callers",
+                log.warn("the language server still lists %s or cannot resolve %s after %ds; queries on sources under them may report no callers",
                         shadowing,
+                        probes,
                         DETACH_TIMEOUT_SECONDS);
                 return;
             }
             TimeUnit.MILLISECONDS.sleep(DETACH_POLL_MILLIS);
         }
+    }
+    private boolean anyUnresolved(List<String> uris) throws Exception {
+        for (String uri : uris) {
+            if (CollectionUtils.isEmpty(documentSymbol(uri).get(args.getLspQueryTimeout().getSeconds(), TimeUnit.SECONDS))) {
+                return true;
+            }
+        }
+        return false;
     }
     private List<URI> projectUris(boolean includeNonJava) throws Exception {
         /**
@@ -318,5 +340,13 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
     }
     private LanguageServer getLangServer() {
         return getClient().get();
+    }
+    /**
+     * a file that declares a type, so an empty symbol list can only mean the language server cannot see it
+     */
+    private static Optional<File> probeSourceFile(File root) throws IOException {
+        try (Stream<File> files = FileUtils.streamFiles(root, true, JAVA_EXTENSION)) {
+            return files.filter(file -> !TYPELESS_SOURCES.contains(file.getName())).filter(file -> FileUtils.sizeOf(file) > 0).findFirst();
+        }
     }
 }
