@@ -265,6 +265,9 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.cpdMinimumTileSize", defaultValue = "64")
     protected int cpdMinimumTileSize;
 
+    @Parameter(property = "codiqo.cpdIgnoreIdentifiers", defaultValue = "true")
+    protected boolean cpdIgnoreIdentifiers;
+
     @Parameter(property = "codiqo.diffContextLines", defaultValue = "10")
     protected int diffContextLines;
 
@@ -464,6 +467,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setMaxRequests(maxRequests);
         args.setMaxRequestsPerHost(maxRequestsPerHost);
         args.setCpdMinimumTileSize(cpdMinimumTileSize);
+        args.setCpdIgnoreIdentifiers(cpdIgnoreIdentifiers);
         args.setDiffContextLines(diffContextLines);
         args.setJdtlsVersion(jdtlsVersion);
         args.setJdtlsUseSnapshot(jdtlsUseSnapshot);

@@ -30,6 +30,7 @@ class MojoDefaultsDriftTest {
         assertEquals(String.valueOf(reference.getSpotbugsPriorityThreshold()), defaultValueOf(pluginXml, "spotbugsPriorityThreshold"));
         assertEquals(reference.getPmdMinPriority().toUpperCase(), defaultValueOf(pluginXml, "pmdMinPriority").toUpperCase());
         assertEquals(String.valueOf(reference.getCpdMinimumTileSize()), defaultValueOf(pluginXml, "cpdMinimumTileSize"));
+        assertEquals(String.valueOf(reference.isCpdIgnoreIdentifiers()), defaultValueOf(pluginXml, "cpdIgnoreIdentifiers"));
 
         assertEquals(String.valueOf(reference.getMaxRequests()), defaultValueOf(pluginXml, "maxRequests"));
         assertEquals(String.valueOf(reference.getMaxRequestsPerHost()), defaultValueOf(pluginXml, "maxRequestsPerHost"));

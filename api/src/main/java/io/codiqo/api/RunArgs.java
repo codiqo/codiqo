@@ -347,6 +347,12 @@ public class RunArgs {
     private int cpdMinimumTileSize = 64;
 
     /**
+     * CPD replaces every identifier (variables, methods and types alike; PMD has no finer setting) with one placeholder,
+     * so renamed copies still match. Turning it off reports only clones that keep their names.
+     */
+    private boolean cpdIgnoreIdentifiers = true;
+
+    /**
      * Unified-diff context lines around each hunk. This is not cosmetic: the model is asked to classify every
      * changed line and to pair deletions with additions, and context is what lets it recognise a pair as one
      * in-place edit rather than a delete plus an unrelated add.

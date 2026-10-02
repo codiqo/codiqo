@@ -4,24 +4,19 @@ import java.io.File;
 import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.Iterator;
-import java.util.Objects;
 import java.util.Set;
 import java.util.LinkedHashSet;
 import java.util.function.Supplier;
-
-import org.apache.commons.lang3.builder.CompareToBuilder;
 
 import io.codiqo.api.DuplicateMark;
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.util.Lazy;
 import lombok.Builder;
 import lombok.Getter;
-import net.sourceforge.pmd.cpd.Match;
 
 @Builder
 @Getter
 public class PmdDuplicationMatch implements DuplicationMatch {
-    private final Match match;
     private final int tokenCount;
     private final int lineCount;
     private final Collection<DuplicateMark> marks;
@@ -46,17 +41,5 @@ public class PmdDuplicationMatch implements DuplicationMatch {
     }
     private boolean computeCrossFile() {
         return marks.stream().map(DuplicateMark::getFile).distinct().count() > BigDecimal.ONE.intValue();
-    }
-    @Override
-    public int hashCode() {
-        return match.hashCode();
-    }
-    @Override
-    public boolean equals(Object obj) {
-        return Objects.equals(match, ((PmdDuplicationMatch) obj).match);
-    }
-    @Override
-    public int compareTo(PmdDuplicationMatch o) {
-        return new CompareToBuilder().append(tokenCount, o.tokenCount).append(lineCount, o.lineCount).toComparison();
     }
 }
