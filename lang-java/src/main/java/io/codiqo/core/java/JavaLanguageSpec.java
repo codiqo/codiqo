@@ -229,12 +229,6 @@ public class JavaLanguageSpec implements LanguageSpec {
 
         return new ParsedSources(List.copyOf(blocks), Set.copyOf(parsedFiles));
     }
-    /**
-     * pairs the previous content's executables with the ones {@code file} declares now by {@link JavaSourceIdentity},
-     * counting every declaration on both sides — an executable whose body was emptied or that became abstract is no
-     * code unit, but it is still there. The previous content is parsed with the module's current classpath, which only
-     * feeds the reported blocks' metrics, never the pairing.
-     */
     @Override
     public MultiValuedMap<File, CodeBlockInfo> parseRemoved(ProjectSpec owner, Collection<PreviousRevision> revisions) throws IOException {
         MultiValuedMap<File, CodeBlockInfo> toReturn = new ArrayListValuedHashMap<>();
@@ -310,10 +304,6 @@ public class JavaLanguageSpec implements LanguageSpec {
     public void close() throws IOException {
         jdt.close();
     }
-    /**
-     * empty when PMD cannot analyze the content, which is not the same as content with no code units;
-     * {@code failureConsequence} says what that failure costs the caller, for the warning
-     */
     private Optional<List<CodeBlockInfo>> parseFile(
             ProjectSpec owner,
             File destination,
@@ -324,7 +314,7 @@ public class JavaLanguageSpec implements LanguageSpec {
             String failureConsequence) throws IOException {
         return parseTree(destination, text, pmd, errorReporter, processingRegistry, failureConsequence, tree -> collectBlocks(owner, destination, tree));
     }
-    /** {@code reader} runs inside the crash guard, because type resolution is lazy and fails while the tree is read */
+    // reader runs inside the crash guard: type resolution is lazy and fails while the tree is read
     private <T> Optional<T> parseTree(
             File destination,
             TextFile text,
@@ -993,13 +983,8 @@ public class JavaLanguageSpec implements LanguageSpec {
         }
     }
     /**
-     * a block is removed when the file no longer declares its exact identity and no unambiguous successor is left for
-     * it. The leftovers pair in three further stages, each only where exactly one candidate remains on either side: by
-     * member identity, for the methods of an anonymous class whose declaring method or constructor changed its
-     * parameters; by name and parameter count, for a retyped parameter among overloads that differ in count; by the
-     * closest parameter list among overloads of equal count; then by name alone, for a method whose own parameters
-     * changed. Either way it is an edit, which the new side already reports under its new signature; where overloads
-     * leave several equally good candidates at every stage nothing is guessed.
+     * leftovers of exact pairing are edits, not removals, when a later stage finds exactly one candidate on each side;
+     * an ambiguous overload stays a removal rather than being guessed at
      */
     private static List<CodeBlockInfo> removedBlocks(List<CodeBlockInfo> blocks, Map<String, Declaration> before, Map<String, Declaration> now, String previousPrimaryType) {
         Set<Declaration> leftoverBefore = before.values().stream().filter(not(declaration -> now.containsKey(declaration.getExact()))).collect(Collectors.toCollection(HashSet::new));
@@ -1015,7 +1000,6 @@ public class JavaLanguageSpec implements LanguageSpec {
                 .filter(block -> removed.contains(JavaSourceIdentity.of(((AbstractJavaPmdDeclarationInfo) block).getNode(), previousPrimaryType)))
                 .toList();
     }
-    /** drops from both sides every declaration whose key is held by exactly one leftover on each */
     private static void pairUnique(Set<Declaration> leftoverBefore, Set<Declaration> leftoverNow, Function<Declaration, String> key) {
         Map<String, List<Declaration>> byKeyBefore = leftoverBefore.stream().collect(Collectors.groupingBy(key));
         Map<String, List<Declaration>> byKeyNow = leftoverNow.stream().collect(Collectors.groupingBy(key));
@@ -1027,11 +1011,6 @@ public class JavaLanguageSpec implements LanguageSpec {
             }
         });
     }
-    /**
-     * among same-name overloads of equal count, pairs an old and a new declaration when each is the other's unique best
-     * match by the number of parameter types equal at the same position: the shape of a type retyped across a family
-     * of overloads, such as a mapper type replaced by its successor in every constructor. A tie pairs nothing.
-     */
     private static void pairMutualBest(Set<Declaration> leftoverBefore, Set<Declaration> leftoverNow) {
         Map<String, List<Declaration>> byKeyNow = leftoverNow.stream().collect(Collectors.groupingBy(Declaration::getNameAndArity));
         Map<Declaration, Declaration> pairs = new HashMap<>();
@@ -1062,7 +1041,6 @@ public class JavaLanguageSpec implements LanguageSpec {
         }
         return toReturn;
     }
-    /** every executable the tree declares, bodiless ones included, keyed by its exact identity */
     private static Map<String, Declaration> declaredIdentities(ASTCompilationUnit tree, String primaryTypeName) {
         Map<String, Declaration> toReturn = new HashMap<>();
         tree.descendants(ASTExecutableDeclaration.class)
@@ -1244,7 +1222,6 @@ public class JavaLanguageSpec implements LanguageSpec {
         Set<String> classNames;
     }
 
-    /** one executable's identities at the levels removal detection pairs on, strictest first, and its parameters */
     @Value
     private static class Declaration {
         String exact;

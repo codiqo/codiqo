@@ -736,12 +736,8 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         return new FileContext(testFiles, diffStatsByFile, addedByFile, effectiveAddedByFile, effectiveDeletionAnchorsByFile, blockRangesByFile);
     }
     /**
-     * the code units scoring reads. A DELETE unit describes a method or constructor the commit removed from a file
-     * it kept: its location is a line range in the previous content and it carries no metrics, coverage or callers,
-     * so every figure computed here would read old-file line numbers against the new file's diff. It is reported for
-     * visibility only and earns no effort of its own: removed lines are priced only where a deletion anchor falls
-     * inside a surviving modified block, or when the whole file change is deletion-only (VolumeScoreCalculator) — a
-     * method removed beside other edits in the same file earns nothing.
+     * DELETE units are located in the previous content and carry no metrics, so scoring skips them: a method removed
+     * beside other edits in the same file earns no deletion effort
      */
     private static List<CodeUnitModel> scoredCodeUnits(FileChangeModel file) {
         return CollectionUtils.emptyIfNull(file.getCodeUnits()).stream()

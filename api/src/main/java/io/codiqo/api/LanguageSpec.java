@@ -20,11 +20,6 @@ public interface LanguageSpec extends Closeable {
     default void load() {
     }
     ParsedSources parse(ProjectSpec owner, Collection<File> files) throws IOException;
-    /**
-     * per revision, the code units its previous content had that the file no longer declares, as blocks located in
-     * that previous content. Only called for files the index parsed, all owned by {@code owner}, so a language can
-     * share one parser setup across them. A language that cannot tell returns none.
-     */
     default MultiValuedMap<File, CodeBlockInfo> parseRemoved(ProjectSpec owner, Collection<PreviousRevision> revisions) throws IOException {
         return new ArrayListValuedHashMap<>();
     }

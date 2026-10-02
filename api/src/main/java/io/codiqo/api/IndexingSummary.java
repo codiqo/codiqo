@@ -22,7 +22,6 @@ public class IndexingSummary {
     private File projectRoot;
     private Collection<ProjectSpec> projects;
     private MultiValuedMap<File, CodeBlockInfo> blocks;
-    /** the files the language processors parsed; one that failed to parse has no blocks but is not "empty" */
     @Builder.Default
     private Set<File> parsedFiles = new HashSet<>();
     private List<Path> totalFiles;
