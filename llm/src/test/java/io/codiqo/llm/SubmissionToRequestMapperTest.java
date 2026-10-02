@@ -646,10 +646,7 @@ class SubmissionToRequestMapperTest {
                 "build-failure detail must be abbreviated to the prompt excerpt limit");
     }
 
-    /**
-     * the removed unit carries metrics and coverage the plugin never sends, and sits inside the modified method's
-     * range, so every pass that read it — complexity, coverage, nesting — would visibly move its figure
-     */
+    // metrics, coverage and a nested range the plugin never sends: each pass that read DELETE units would move
     @Test
     void deleteCodeUnitIsKeptOutOfScoring() {
         LlmScoringRequest without = mapper.apply(modifiedMethodSubmission());
@@ -663,7 +660,6 @@ class SubmissionToRequestMapperTest {
         assertEquals(without.getCoverage(), with.getCoverage());
         assertEquals(without.getComplexity(), with.getComplexity());
     }
-    /** a file whose only unit was removed has no scored unit, so its lines count the way a unit-less file's do */
     @Test
     void aFileWhoseOnlyUnitIsRemovedCountsLikeAFileWithoutUnits() {
         AnalysisSubmissionModel unitless = baseSubmission();

@@ -170,10 +170,7 @@ public class DuplicationReportPopulator implements SubmissionPopulator {
             ChangedLines changed = changedByPath.get(fileChangeModel.getPath());
             for (CodeUnitModel codeUnitModel : fileChangeModel.getCodeUnits()) {
                 Set<String> duplicateOf = duplicateOfBySignature.get(codeUnitModel.getSignature());
-                /**
-                 * a DELETE unit is gone from the tree CPD read, and its range is in the previous content: a clone that
-                 * shares its signature — the class moved to its own file, the FQN reused in another module — is not it
-                 */
+                // a DELETE unit no longer exists in the tree CPD read, so a clone sharing its signature is not it
                 if (BooleanUtils.and(new boolean[] { codeUnitModel.getOperation() != CodeUnitModel.OperationEnum.DELETE, CollectionUtils.isNotEmpty(duplicateOf) })) {
                     CodeUnitDuplicationModel duplicationModel = new CodeUnitDuplicationModel();
                     duplicationModel.setIsDuplicated(true);
