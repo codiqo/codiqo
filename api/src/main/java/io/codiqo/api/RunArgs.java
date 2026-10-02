@@ -1198,7 +1198,9 @@ public class RunArgs {
                 if (proj.declaresSource(filePath)) {
                     return Optional.of(proj);
                 }
-                containing = containing.or(() -> Optional.of(proj));
+                if (containing.isEmpty()) {
+                    containing = Optional.of(proj);
+                }
             } else if (declaring.isEmpty() && proj.declaresSource(filePath)) {
                 declaring = Optional.of(proj);
             }
@@ -1258,8 +1260,7 @@ public class RunArgs {
         if (CollectionUtils.isEmpty(excludedProjectDirs)) {
             return false;
         }
-        Path candidate = file.toPath().normalize().toAbsolutePath();
-        return excludedProjectDirs.stream().anyMatch(dir -> candidate.startsWith(dir.toPath().normalize().toAbsolutePath()));
+        return excludedProjectDirs.stream().anyMatch(dir -> PathContainment.isUnder(dir, file));
     }
     public boolean isExcludedProject(String groupId, String artifactId) {
         if (StringUtils.isEmpty(excludeProjects)) {

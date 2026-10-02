@@ -79,6 +79,21 @@ class RunArgsOwnerTest {
         assertTrue(args.owner(root.resolve("excluded/src/main/java/Gone.java").toFile()).isEmpty());
     }
     /**
+     * the build tool spells the work tree through a symlink (/var on macOS) and the language server through its real
+     * path (/private/var); the exclusion must hold under both spellings, as the ownership checks it guards already do
+     */
+    @Test
+    void declaredRootNeverReachesIntoAnExcludedModuleSpelledThroughASymlink(@TempDir Path root) throws Exception {
+        Path real = Files.createDirectories(root.resolve("real"));
+        Files.createDirectories(real.resolve("excluded/src/main/java"));
+        Path link = Files.createSymbolicLink(root.resolve("link"), real);
+        JvmProjectSpec included = module("included", link.resolve("included"), List.of(link.resolve("excluded/src/main/java")), List.of());
+        RunArgs args = args(included);
+        args.getExcludedProjectDirs().add(link.resolve("excluded").toFile());
+
+        assertTrue(args.owner(real.resolve("excluded/src/main/java/Gone.java").toFile()).isEmpty());
+    }
+    /**
      * a commit that deletes kryo's last test leaves ../test absent from the work tree, so the compile lists drop it;
      * the deletions must still belong to the module that declares it
      */
