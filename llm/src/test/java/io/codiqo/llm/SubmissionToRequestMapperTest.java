@@ -646,6 +646,61 @@ class SubmissionToRequestMapperTest {
                 "build-failure detail must be abbreviated to the prompt excerpt limit");
     }
 
+    /**
+     * the removed unit carries metrics and coverage the plugin never sends, and sits inside the modified method's
+     * range, so every pass that read it — complexity, coverage, nesting — would visibly move its figure
+     */
+    @Test
+    void deleteCodeUnitIsKeptOutOfScoring() {
+        LlmScoringRequest without = mapper.apply(modifiedMethodSubmission());
+
+        AnalysisSubmissionModel submission = modifiedMethodSubmission();
+        submission.getFiles().get(0).getCodeUnits().add(removedUnit(2, 4));
+
+        LlmScoringRequest with = mapper.apply(submission);
+
+        assertEquals(without.getCodeBlockChanges(), with.getCodeBlockChanges(), "a removed method must neither be scored nor nest inside a kept one");
+        assertEquals(without.getCoverage(), with.getCoverage());
+        assertEquals(without.getComplexity(), with.getComplexity());
+    }
+    /** a file whose only unit was removed has no scored unit, so its lines count the way a unit-less file's do */
+    @Test
+    void aFileWhoseOnlyUnitIsRemovedCountsLikeAFileWithoutUnits() {
+        AnalysisSubmissionModel unitless = baseSubmission();
+        unitless.getFiles().get(0).setCodeUnits(new ArrayList<>());
+        LlmScoringRequest without = mapper.apply(unitless);
+
+        AnalysisSubmissionModel submission = baseSubmission();
+        submission.getFiles().get(0).setCodeUnits(new ArrayList<>(List.of(removedUnit(40, 60))));
+
+        assertEquals(without.getChangeSummary(), mapper.apply(submission).getChangeSummary());
+    }
+    private static AnalysisSubmissionModel modifiedMethodSubmission() {
+        AnalysisSubmissionModel toReturn = baseSubmission();
+        toReturn.getFiles().get(0).setCodeUnits(new ArrayList<>(List.of(modifyMethod("doWork", "com.example.Foo.doWork()", 1, 6))));
+        return toReturn;
+    }
+    private static CodeUnitModel removedUnit(int startLine, int endLine) {
+        MetricsModel metrics = baseMetrics();
+        metrics.setCyclomaticComplexity(20);
+
+        CoverageModel coverage = new CoverageModel();
+        coverage.setCoveredLines(3);
+        coverage.setMissedLines(1);
+        coverage.setLinePercent(75.0);
+
+        CodeUnitModel toReturn = new CodeUnitModel();
+        toReturn.setName("retired()");
+        toReturn.setSignature("com.example.Foo.retired()");
+        toReturn.setKind(SymbolKindModel.METHOD);
+        toReturn.setOperation(CodeUnitModel.OperationEnum.DELETE);
+        toReturn.setLocation(location(startLine, endLine));
+        toReturn.setIsTrivial(false);
+        toReturn.setMetrics(metrics);
+        toReturn.setCoverage(coverage);
+        return toReturn;
+    }
+
     private static AnalysisSubmissionModel diffOnlySubmission() {
         AnalysisSubmissionModel toReturn = baseSubmission();
         toReturn.setDuplication(null);

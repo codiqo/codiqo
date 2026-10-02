@@ -1,5 +1,7 @@
 package io.codiqo.core.java;
 
+import static java.util.function.Predicate.not;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -17,6 +19,7 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.EnumSet;
 import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -32,6 +35,8 @@ import java.util.stream.Stream;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
+import org.apache.commons.collections4.MultiValuedMap;
+import org.apache.commons.collections4.multimap.ArrayListValuedHashMap;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.filefilter.FileFilterUtils;
@@ -41,6 +46,7 @@ import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.lang3.time.StopWatch;
 import org.eclipse.lsp4j.SymbolKind;
 import org.jacoco.core.analysis.Analyzer;
@@ -75,6 +81,8 @@ import io.codiqo.api.LanguageSpec;
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.code.CodeBlockInfo;
+import io.codiqo.api.code.ParsedSources;
+import io.codiqo.api.code.PreviousRevision;
 import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.coverage.CoverageExclusionReason;
 import io.codiqo.api.coverage.ExcludedCoverageClass;
@@ -87,6 +95,7 @@ import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.Split;
+import lombok.EqualsAndHashCode;
 import lombok.Value;
 import net.sourceforge.pmd.PMDConfiguration;
 import net.sourceforge.pmd.PmdAnalysis;
@@ -99,6 +108,7 @@ import net.sourceforge.pmd.lang.ast.NodeStream;
 import net.sourceforge.pmd.lang.ast.Parser;
 import net.sourceforge.pmd.lang.ast.Parser.ParserTask;
 import net.sourceforge.pmd.lang.ast.SemanticErrorReporter;
+import net.sourceforge.pmd.lang.document.FileId;
 import net.sourceforge.pmd.lang.document.FileLocation;
 import net.sourceforge.pmd.lang.document.TextDocument;
 import net.sourceforge.pmd.lang.document.TextFile;
@@ -106,6 +116,7 @@ import net.sourceforge.pmd.lang.java.JavaLanguageModule;
 import net.sourceforge.pmd.lang.java.ast.ASTAnonymousClassDeclaration;
 import net.sourceforge.pmd.lang.java.ast.ASTBlock;
 import net.sourceforge.pmd.lang.java.ast.ASTCompilationUnit;
+import net.sourceforge.pmd.lang.java.ast.ASTCompactConstructorDeclaration;
 import net.sourceforge.pmd.lang.java.ast.ASTConstructorDeclaration;
 import net.sourceforge.pmd.lang.java.ast.ASTExecutableDeclaration;
 import net.sourceforge.pmd.lang.java.ast.ASTMethodDeclaration;
@@ -197,9 +208,62 @@ public class JavaLanguageSpec implements LanguageSpec {
         return true;
     }
     @Override
-    public List<CodeBlockInfo> parse(ProjectSpec owner, Collection<File> files) throws IOException {
-        List<CodeBlockInfo> toReturn = new ArrayList<>();
+    public ParsedSources parse(ProjectSpec owner, Collection<File> files) throws IOException {
+        List<CodeBlockInfo> blocks = new ArrayList<>();
+        Set<File> parsedFiles = new HashSet<>();
 
+        try (LanguageProcessorRegistry processingRegistry = processingRegistry(owner)) {
+            Parser pmd = processingRegistry.getProcessor(language).services().getParser();
+            SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
+
+            for (File destination : files) {
+                if (FilenameUtils.isExtension(destination.getName(), lang().getExtensions())) {
+                    TextFile text = TextFile.forPath(destination.toPath().normalize(), StandardCharsets.UTF_8, language.getDefaultVersion());
+                    parseFile(owner, destination, text, pmd, errorReporter, processingRegistry, "skipping code unit indexing for this file").ifPresent(parsed -> {
+                        blocks.addAll(parsed);
+                        parsedFiles.add(destination);
+                    });
+                }
+            }
+        }
+
+        return new ParsedSources(List.copyOf(blocks), Set.copyOf(parsedFiles));
+    }
+    /**
+     * pairs the previous content's executables with the ones {@code file} declares now by {@link JavaSourceIdentity},
+     * counting every declaration on both sides — an executable whose body was emptied or that became abstract is no
+     * code unit, but it is still there. The previous content is parsed with the module's current classpath, which only
+     * feeds the reported blocks' metrics, never the pairing.
+     */
+    @Override
+    public MultiValuedMap<File, CodeBlockInfo> parseRemoved(ProjectSpec owner, Collection<PreviousRevision> revisions) throws IOException {
+        MultiValuedMap<File, CodeBlockInfo> toReturn = new ArrayListValuedHashMap<>();
+
+        try (LanguageProcessorRegistry processingRegistry = processingRegistry(owner)) {
+            Parser pmd = processingRegistry.getProcessor(language).services().getParser();
+            SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
+            String unpaired = "the code units the commit removed from it are not reported";
+
+            for (PreviousRevision revision : revisions) {
+                File file = revision.getFile();
+                TextFile now = TextFile.forPath(file.toPath().normalize(), StandardCharsets.UTF_8, language.getDefaultVersion());
+                Optional<Map<String, Declaration>> declaredNow = parseTree(file, now, pmd, errorReporter, processingRegistry, unpaired,
+                        tree -> declaredIdentities(tree, FilenameUtils.getBaseName(file.getName())));
+
+                if (declaredNow.isPresent()) {
+                    String previousPrimaryType = FilenameUtils.getBaseName(revision.getPath());
+                    TextFile before = TextFile.forCharSeq(revision.getContent(), FileId.fromPath(file.toPath().normalize()), language.getDefaultVersion());
+                    parseTree(file, before, pmd, errorReporter, processingRegistry, "its previous content: " + unpaired,
+                            tree -> Pair.of(collectBlocks(owner, file, tree), declaredIdentities(tree, previousPrimaryType)))
+                            .ifPresent(previous -> removedBlocks(previous.getLeft(), previous.getRight(), declaredNow.get(), previousPrimaryType)
+                                    .forEach(block -> toReturn.put(file, block)));
+                }
+            }
+        }
+
+        return toReturn;
+    }
+    private LanguageProcessorRegistry processingRegistry(ProjectSpec owner) {
         LanguagePropertyBundle bundle = language.newPropertyBundle();
         bundle.setProperty(JavaLanguageProperties.FIRST_CLASS_LOMBOK, true);
 
@@ -212,18 +276,7 @@ public class JavaLanguageSpec implements LanguageSpec {
 
         LanguageRegistry languageRegistry = LanguageRegistry.singleton(language);
         Map<Language, LanguagePropertyBundle> languageProperties = Map.of(language, bundle);
-        try (LanguageProcessorRegistry processingRegistry = LanguageProcessorRegistry.create(languageRegistry, languageProperties, log)) {
-            Parser pmd = processingRegistry.getProcessor(language).services().getParser();
-            SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
-
-            for (File destination : files) {
-                if (FilenameUtils.isExtension(destination.getName(), lang().getExtensions())) {
-                    toReturn.addAll(parseFile(owner, destination, pmd, errorReporter, processingRegistry));
-                }
-            }
-        }
-
-        return List.copyOf(toReturn);
+        return LanguageProcessorRegistry.create(languageRegistry, languageProperties, log);
     }
     @Override
     public void captureViolations(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
@@ -257,15 +310,30 @@ public class JavaLanguageSpec implements LanguageSpec {
     public void close() throws IOException {
         jdt.close();
     }
-    private List<CodeBlockInfo> parseFile(
+    /**
+     * empty when PMD cannot analyze the content, which is not the same as content with no code units;
+     * {@code failureConsequence} says what that failure costs the caller, for the warning
+     */
+    private Optional<List<CodeBlockInfo>> parseFile(
             ProjectSpec owner,
             File destination,
+            TextFile text,
             Parser pmd,
             SemanticErrorReporter errorReporter,
-            LanguageProcessorRegistry processingRegistry) throws IOException {
-        List<CodeBlockInfo> toReturn = new ArrayList<>();
-
-        try (TextFile file = TextFile.forPath(destination.toPath().normalize(), StandardCharsets.UTF_8, language.getDefaultVersion())) {
+            LanguageProcessorRegistry processingRegistry,
+            String failureConsequence) throws IOException {
+        return parseTree(destination, text, pmd, errorReporter, processingRegistry, failureConsequence, tree -> collectBlocks(owner, destination, tree));
+    }
+    /** {@code reader} runs inside the crash guard, because type resolution is lazy and fails while the tree is read */
+    private <T> Optional<T> parseTree(
+            File destination,
+            TextFile text,
+            Parser pmd,
+            SemanticErrorReporter errorReporter,
+            LanguageProcessorRegistry processingRegistry,
+            String failureConsequence,
+            Function<ASTCompilationUnit, T> reader) throws IOException {
+        try (TextFile file = text) {
             try (TextDocument doc = TextDocument.create(file)) {
                 /**
                  * PMD's type inference can crash on valid code it fails to disambiguate —
@@ -275,24 +343,26 @@ public class JavaLanguageSpec implements LanguageSpec {
                  * trips it on every self-analysis, so the guard is load-bearing, not historical
                  */
                 try {
-                    ASTCompilationUnit tree = (ASTCompilationUnit) pmd.parse(new ParserTask(doc, errorReporter, processingRegistry));
-
-                    /**
-                     * every type declaration, anonymous class and lambda is a find boundary in PMD's Java AST, so
-                     * without crossFindBoundaries the traversal stops before it reaches a single method body. KNOWN
-                     * GAP: ASTCompactConstructorDeclaration is not an ASTExecutableDeclaration (pmd-java 7.23.0), so
-                     * a record's compact constructor indexes as zero code units.
-                     */
-                    tree.descendants(ASTExecutableDeclaration.class)
-                            .crossFindBoundaries()
-                            .forEach(executable -> collectBlock(owner, destination, tree, executable, toReturn));
+                    return Optional.of(reader.apply((ASTCompilationUnit) pmd.parse(new ParserTask(doc, errorReporter, processingRegistry))));
                 } catch (RuntimeException err) {
-                    log.warn("PMD failed to analyze %s, skipping code unit indexing for this file: %s", destination, ExceptionUtils.getRootCauseMessage(err));
-                    return List.of();
+                    log.warn("PMD failed to analyze %s, %s: %s", destination, failureConsequence, ExceptionUtils.getRootCauseMessage(err));
+                    return Optional.empty();
                 }
             }
         }
+    }
+    private List<CodeBlockInfo> collectBlocks(ProjectSpec owner, File destination, ASTCompilationUnit tree) {
+        List<CodeBlockInfo> toReturn = new ArrayList<>();
 
+        /**
+         * every type declaration, anonymous class and lambda is a find boundary in PMD's Java AST, so
+         * without crossFindBoundaries the traversal stops before it reaches a single method body. KNOWN
+         * GAP: ASTCompactConstructorDeclaration is not an ASTExecutableDeclaration (pmd-java 7.23.0), so
+         * a record's compact constructor indexes as zero code units.
+         */
+        tree.descendants(ASTExecutableDeclaration.class)
+                .crossFindBoundaries()
+                .forEach(executable -> collectBlock(owner, destination, tree, executable, toReturn));
         return toReturn;
     }
     private void collectBlock(
@@ -923,6 +993,105 @@ public class JavaLanguageSpec implements LanguageSpec {
         }
     }
     /**
+     * a block is removed when the file no longer declares its exact identity and no unambiguous successor is left for
+     * it. The leftovers pair in three further stages, each only where exactly one candidate remains on either side: by
+     * member identity, for the methods of an anonymous class whose declaring method or constructor changed its
+     * parameters; by name and parameter count, for a retyped parameter among overloads that differ in count; by the
+     * closest parameter list among overloads of equal count; then by name alone, for a method whose own parameters
+     * changed. Either way it is an edit, which the new side already reports under its new signature; where overloads
+     * leave several equally good candidates at every stage nothing is guessed.
+     */
+    private static List<CodeBlockInfo> removedBlocks(List<CodeBlockInfo> blocks, Map<String, Declaration> before, Map<String, Declaration> now, String previousPrimaryType) {
+        Set<Declaration> leftoverBefore = before.values().stream().filter(not(declaration -> now.containsKey(declaration.getExact()))).collect(Collectors.toCollection(HashSet::new));
+        Set<Declaration> leftoverNow = now.values().stream().filter(not(declaration -> before.containsKey(declaration.getExact()))).collect(Collectors.toCollection(HashSet::new));
+
+        pairUnique(leftoverBefore, leftoverNow, Declaration::getMember);
+        pairUnique(leftoverBefore, leftoverNow, Declaration::getNameAndArity);
+        pairMutualBest(leftoverBefore, leftoverNow);
+        pairUnique(leftoverBefore, leftoverNow, Declaration::getName);
+
+        Set<String> removed = leftoverBefore.stream().map(Declaration::getExact).collect(Collectors.toSet());
+        return blocks.stream()
+                .filter(block -> removed.contains(JavaSourceIdentity.of(((AbstractJavaPmdDeclarationInfo) block).getNode(), previousPrimaryType)))
+                .toList();
+    }
+    /** drops from both sides every declaration whose key is held by exactly one leftover on each */
+    private static void pairUnique(Set<Declaration> leftoverBefore, Set<Declaration> leftoverNow, Function<Declaration, String> key) {
+        Map<String, List<Declaration>> byKeyBefore = leftoverBefore.stream().collect(Collectors.groupingBy(key));
+        Map<String, List<Declaration>> byKeyNow = leftoverNow.stream().collect(Collectors.groupingBy(key));
+        byKeyBefore.forEach((candidate, sameBefore) -> {
+            List<Declaration> sameNow = byKeyNow.getOrDefault(candidate, List.of());
+            if (BooleanUtils.and(new boolean[] { sameBefore.size() == 1, sameNow.size() == 1 })) {
+                leftoverBefore.removeAll(sameBefore);
+                leftoverNow.removeAll(sameNow);
+            }
+        });
+    }
+    /**
+     * among same-name overloads of equal count, pairs an old and a new declaration when each is the other's unique best
+     * match by the number of parameter types equal at the same position: the shape of a type retyped across a family
+     * of overloads, such as a mapper type replaced by its successor in every constructor. A tie pairs nothing.
+     */
+    private static void pairMutualBest(Set<Declaration> leftoverBefore, Set<Declaration> leftoverNow) {
+        Map<String, List<Declaration>> byKeyNow = leftoverNow.stream().collect(Collectors.groupingBy(Declaration::getNameAndArity));
+        Map<Declaration, Declaration> pairs = new HashMap<>();
+        for (Declaration old : leftoverBefore) {
+            List<Declaration> candidates = byKeyNow.getOrDefault(old.getNameAndArity(), List.of());
+            uniqueBest(old, candidates).ifPresent(candidate -> {
+                List<Declaration> rivals = leftoverBefore.stream().filter(other -> other.getNameAndArity().equals(old.getNameAndArity())).toList();
+                uniqueBest(candidate, rivals).filter(old::equals).ifPresent(confirmed -> pairs.put(old, candidate));
+            });
+        }
+        leftoverBefore.removeAll(pairs.keySet());
+        leftoverNow.removeAll(pairs.values());
+    }
+    private static Optional<Declaration> uniqueBest(Declaration from, List<Declaration> candidates) {
+        int best = candidates.stream().mapToInt(candidate -> samePositions(from, candidate)).max().orElse(0);
+        List<Declaration> top = candidates.stream().filter(candidate -> samePositions(from, candidate) == best).toList();
+        if (BooleanUtils.and(new boolean[] { best > 0, top.size() == 1 })) {
+            return Optional.of(top.iterator().next());
+        }
+        return Optional.empty();
+    }
+    private static int samePositions(Declaration left, Declaration right) {
+        int toReturn = 0;
+        for (int i = 0; i < Math.min(left.getParameters().size(), right.getParameters().size()); i++) {
+            if (left.getParameters().get(i).equals(right.getParameters().get(i))) {
+                toReturn++;
+            }
+        }
+        return toReturn;
+    }
+    /** every executable the tree declares, bodiless ones included, keyed by its exact identity */
+    private static Map<String, Declaration> declaredIdentities(ASTCompilationUnit tree, String primaryTypeName) {
+        Map<String, Declaration> toReturn = new HashMap<>();
+        tree.descendants(ASTExecutableDeclaration.class)
+                .crossFindBoundaries()
+                .forEach(executable -> {
+                    String name = JavaSourceIdentity.nameOf(executable, primaryTypeName);
+                    Declaration declaration = new Declaration(
+                            JavaSourceIdentity.of(executable, primaryTypeName),
+                            JavaSourceIdentity.memberOf(executable, primaryTypeName),
+                            name + '/' + executable.getArity(),
+                            name,
+                            JavaSourceIdentity.parametersOf(executable));
+                    toReturn.put(declaration.getExact(), declaration);
+                });
+        tree.descendants(ASTCompactConstructorDeclaration.class)
+                .crossFindBoundaries()
+                .forEach(constructor -> {
+                    String name = JavaSourceIdentity.nameOf(constructor, primaryTypeName);
+                    Declaration declaration = new Declaration(
+                            JavaSourceIdentity.of(constructor, primaryTypeName),
+                            JavaSourceIdentity.memberOf(constructor, primaryTypeName),
+                            name + '/' + constructor.getEnclosingType().getRecordComponents().size(),
+                            name,
+                            JavaSourceIdentity.parametersOf(constructor));
+                    toReturn.put(declaration.getExact(), declaration);
+                });
+        return toReturn;
+    }
+    /**
      * When the module's classes were last exercised: the modification time of the newest exec file that holds a record
      * for any of them. Empty when no loaded exec mentions the module at all, which is how a module no test ever touched
      * is told apart from one whose coverage is merely old.
@@ -1073,6 +1242,17 @@ public class JavaLanguageSpec implements LanguageSpec {
     static class LoadedExec {
         File file;
         Set<String> classNames;
+    }
+
+    /** one executable's identities at the levels removal detection pairs on, strictest first, and its parameters */
+    @Value
+    private static class Declaration {
+        String exact;
+        String member;
+        String nameAndArity;
+        String name;
+        @EqualsAndHashCode.Exclude
+        List<String> parameters;
     }
 
     @Value
