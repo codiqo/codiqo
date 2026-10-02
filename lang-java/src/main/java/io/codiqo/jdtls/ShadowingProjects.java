@@ -24,6 +24,7 @@ import lombok.experimental.UtilityClass;
  * project. A file URI then matches both resources, and JDTUtils.findResource keeps the one with the shorter
  * project-relative path, the first on a tie. When the root is a direct child of the aggregator the depths tie, the
  * aggregator's copy can win, and it has no compilation unit — every call hierarchy query on that file answers null.
+ * Buildship imports a Gradle project declaring {@code srcDirs = ['../src']} the same way, with the same result.
  */
 @UtilityClass
 class ShadowingProjects {
