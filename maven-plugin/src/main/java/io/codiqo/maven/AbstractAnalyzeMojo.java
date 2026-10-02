@@ -225,6 +225,14 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.mavenHome")
     protected File mavenHome;
 
+    /**
+     * MAVEN_OPTS for the forked per-commit build. Unset, the fork inherits this JVM's MAVEN_OPTS, so the analysis heap
+     * and the build heap move together; set it when they need different sizes, as on a reactor whose analysis needs
+     * more heap than its build. It replaces the inherited value whole, so repeat any -D the project's build relies on.
+     */
+    @Parameter(property = "codiqo.forkMavenOpts")
+    protected String forkMavenOpts;
+
     @Parameter(property = "codiqo.preferYaml", defaultValue = "true")
     protected boolean preferYaml;
 
@@ -740,6 +748,11 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             }
         }
     }
+    static void applyForkMavenOpts(InvocationRequest request, String forkMavenOpts) {
+        if (StringUtils.isNotBlank(forkMavenOpts)) {
+            request.setMavenOpts(forkMavenOpts.trim());
+        }
+    }
     @SuppressWarnings("deprecation")
     protected InvocationRequest invocationRequest(RunArgs args, boolean timeMachineRequested, Duration targetOffset) throws IOException {
         File rootPom = new File(args.getGit().getWorkTree(), "pom.xml");
@@ -781,6 +794,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         if (Objects.nonNull(mavenHome)) {
             request.setMavenHome(mavenHome);
         }
+        applyForkMavenOpts(request, forkMavenOpts);
 
         boolean timeMachineActive = BooleanUtils.and(new boolean[] { StringUtils.isNotBlank(args.getCommitId()), timeMachineRequested });
         boolean injectJacocoAgent = BooleanUtils.and(new boolean[] { BooleanUtils.negate(args.isIgnoreCoverage()), Objects.nonNull(jacocoAgentJar) });
