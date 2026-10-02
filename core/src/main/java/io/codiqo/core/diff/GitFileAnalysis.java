@@ -15,6 +15,7 @@ import org.jacoco.core.analysis.ILine;
 
 
 import io.codiqo.api.ProjectSpec;
+import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.diff.FileAnalysis;
 import lombok.AccessLevel;
@@ -41,6 +42,8 @@ public class GitFileAnalysis implements FileAnalysis {
     private GitStructuredDiff structuredDiff;
     @ToString.Exclude
     private Set<AffectedSymbolInfo> potentiallyAffectedSymbols = new LinkedHashSet<>();
+    @ToString.Exclude
+    private Set<CodeBlockInfo> removedCodeBlocks = new LinkedHashSet<>();
     @ToString.Exclude
     private Map<Integer, ILine> lineCoverage = new HashMap<>();
     private boolean testFile;

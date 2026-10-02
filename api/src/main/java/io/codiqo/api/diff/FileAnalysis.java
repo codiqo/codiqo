@@ -10,6 +10,7 @@ import org.eclipse.jgit.diff.DiffEntry;
 import org.jacoco.core.analysis.ILine;
 
 import io.codiqo.api.ProjectSpec;
+import io.codiqo.api.code.CodeBlockInfo;
 import net.sourceforge.pmd.lang.Language;
 
 public interface FileAnalysis extends Consumer<ProjectSpec> {
@@ -22,6 +23,8 @@ public interface FileAnalysis extends Consumer<ProjectSpec> {
     String getContentAfter();
     String getDiffText();
     Set<AffectedSymbolInfo> getPotentiallyAffectedSymbols();
+    /** code units this file had before the commit and no longer has, located in {@link #getContentBefore()} */
+    Set<CodeBlockInfo> getRemovedCodeBlocks();
     boolean isTestFile();
     boolean isExtension(Language lang);
     Optional<ProjectSpec> project();

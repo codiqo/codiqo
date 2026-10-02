@@ -16,6 +16,7 @@ import java.util.HashMap;
 import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
@@ -162,14 +163,18 @@ public class DuplicationReportPopulator implements SubmissionPopulator {
             duplicationReportModel.setChangedLineCpdPercent((addedDuplicated + modifiedDuplicated) * 100.0 / changedTotal);
         }
     }
-    private static void applyDuplicationToCodeUnits(SubmissionContext ctx, Map<String, Set<String>> duplicateOfBySignature,
+    static void applyDuplicationToCodeUnits(SubmissionContext ctx, Map<String, Set<String>> duplicateOfBySignature,
             Map<String, Set<Integer>> duplicatedLinesByPath, Map<String, ChangedLines> changedByPath) {
         for (FileChangeModel fileChangeModel : ctx.getSubmissionModel().getFiles()) {
             Set<Integer> duplicatedLines = duplicatedLinesByPath.getOrDefault(fileChangeModel.getPath(), Collections.emptySet());
             ChangedLines changed = changedByPath.get(fileChangeModel.getPath());
             for (CodeUnitModel codeUnitModel : fileChangeModel.getCodeUnits()) {
                 Set<String> duplicateOf = duplicateOfBySignature.get(codeUnitModel.getSignature());
-                if (CollectionUtils.isNotEmpty(duplicateOf)) {
+                /**
+                 * a DELETE unit is gone from the tree CPD read, and its range is in the previous content: a clone that
+                 * shares its signature — the class moved to its own file, the FQN reused in another module — is not it
+                 */
+                if (BooleanUtils.and(new boolean[] { codeUnitModel.getOperation() != CodeUnitModel.OperationEnum.DELETE, CollectionUtils.isNotEmpty(duplicateOf) })) {
                     CodeUnitDuplicationModel duplicationModel = new CodeUnitDuplicationModel();
                     duplicationModel.setIsDuplicated(true);
                     duplicationModel.setDuplicateOf(new ArrayList<>(duplicateOf));
