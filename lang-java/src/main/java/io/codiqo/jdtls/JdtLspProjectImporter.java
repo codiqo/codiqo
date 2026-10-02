@@ -1,10 +1,18 @@
 package io.codiqo.jdtls;
 
+import static java.util.function.Predicate.not;
+
 import java.io.Closeable;
+import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -22,6 +30,7 @@ import org.eclipse.lsp4j.CallHierarchyOutgoingCallsParams;
 import org.eclipse.lsp4j.DefinitionParams;
 import org.eclipse.lsp4j.DocumentSymbol;
 import org.eclipse.lsp4j.DocumentSymbolParams;
+import org.eclipse.lsp4j.ExecuteCommandParams;
 import org.eclipse.lsp4j.ImplementationParams;
 import org.eclipse.lsp4j.Location;
 import org.eclipse.lsp4j.ReferenceContext;
@@ -34,6 +43,8 @@ import org.eclipse.lsp4j.services.LanguageServer;
 import org.eclipse.lsp4j.services.TextDocumentService;
 import org.eclipse.lsp4j.services.WorkspaceService;
 
+import com.google.gson.JsonArray;
+
 import io.codiqo.api.LanguageServerProjectImporter;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
@@ -43,6 +54,7 @@ import io.codiqo.util.Fetch;
 public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectImporter, Closeable {
     public static final int EXIT_OK = 0;
     public static final int EXIT_SIGTERM = 143;
+    private static final long DETACH_TIMEOUT_SECONDS = 60;
 
     private final CompletableFuture<JdtLspClient> clientFuture = new CompletableFuture<>();
     private final AtomicReference<JdtLspClient> curr = new AtomicReference<>();
@@ -70,6 +82,7 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
                 JdtLspClient c = getClient();
                 c.initialize();
                 c.ready().get(args.getImportTimeout().getSeconds(), TimeUnit.SECONDS);
+                detachShadowingProjects();
                 stopWatch.stop();
                 log.info("JDT loaded project: %s in: %s ", args.getGit().getWorkTree(), stopWatch);
                 return;
@@ -77,6 +90,77 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
                 ExceptionUtils.wrapAndThrow(err);
             }
         }
+    }
+    /**
+     * Removes the non-Java projects that would win the URI lookup for sources a module declares outside its own
+     * directory (see {@link ShadowingProjects}). Only the workspace entry goes: jdt.ls deletes with
+     * deleteContent=false, so the work tree is untouched. The deletion runs as a workspace job that goes on to
+     * re-run the importers and update projects after deleting, so this waits for the deletion to show and then for
+     * the whole job through {@link JdtLspClient#buildWorkspace()}, rather than racing the first query.
+     */
+    private void detachShadowingProjects() {
+        List<File> externalRoots = ShadowingProjects.externalSourceRoots(args.getProjects());
+        if (externalRoots.isEmpty()) {
+            return;
+        }
+        /**
+         * best effort: the import itself succeeded, and a language server that rejects these commands (a pinned older
+         * jdtls-version) should cost the callers of those sources, not the whole analysis
+         */
+        try {
+            detachShadowingProjects(externalRoots);
+        } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
+            log.warn("interrupted while removing the projects that hide source roots declared outside their module; queries on those sources may report no callers");
+        } catch (Exception err) {
+            log.warn("could not remove the projects that hide source roots declared outside their module (%s); queries on those sources may report no callers",
+                    ExceptionUtils.getRootCause(err));
+        }
+    }
+    private void detachShadowingProjects(List<File> externalRoots) throws Exception {
+        Set<URI> javaProjects = new HashSet<>(projectUris(false));
+        List<URI> nonJavaProjects = projectUris(true).stream().filter(not(javaProjects::contains)).toList();
+        List<URI> shadowing = ShadowingProjects.select(nonJavaProjects, externalRoots);
+        if (shadowing.isEmpty()) {
+            return;
+        }
+
+        log.info("removing %d non-Java project(s) from the language server workspace, since they hold source roots declared outside their module and would hide them from call hierarchy queries: %s",
+                shadowing.size(),
+                shadowing);
+        List<String> toDelete = shadowing.stream().map(URI::toString).toList();
+        executeCommand("java.project.changeImportedProjects", List.of(List.of(), List.of(), toDelete));
+
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(DETACH_TIMEOUT_SECONDS);
+        while (projectUris(true).stream().anyMatch(shadowing::contains)) {
+            if (System.nanoTime() >= deadline) {
+                log.warn("the language server still lists %s after %ds; queries on sources under them may report no callers",
+                        shadowing,
+                        DETACH_TIMEOUT_SECONDS);
+                return;
+            }
+            TimeUnit.MILLISECONDS.sleep(250);
+        }
+        getClient().buildWorkspace().get(args.getImportTimeout().getSeconds(), TimeUnit.SECONDS);
+    }
+    private List<URI> projectUris(boolean includeNonJava) throws Exception {
+        /**
+         * the option travels as a JSON string: jdt.ls receives command arguments as plain objects, so a JSON object
+         * arrives as a map, which JSONUtility.toModel turns into null and the handler then dereferences
+         */
+        List<Object> arguments = includeNonJava ? List.of("{\"includeNonJava\":true}") : List.of();
+        Object result = executeCommand("java.project.getAll", arguments);
+        List<URI> uris = new ArrayList<>();
+        if (result instanceof JsonArray array) {
+            array.forEach(element -> uris.add(URI.create(element.getAsString())));
+        } else if (result instanceof Collection<?> collection) {
+            collection.forEach(element -> uris.add(URI.create(String.valueOf(element))));
+        }
+        return uris;
+    }
+    private Object executeCommand(String command, List<Object> arguments) throws Exception {
+        ExecuteCommandParams params = new ExecuteCommandParams(command, arguments);
+        return getLangServer().getWorkspaceService().executeCommand(params).get(args.getLspQueryTimeout().getSeconds(), TimeUnit.SECONDS);
     }
     private void start() throws IOException {
         try (ServerSocket socket = new ServerSocket(0)) {
