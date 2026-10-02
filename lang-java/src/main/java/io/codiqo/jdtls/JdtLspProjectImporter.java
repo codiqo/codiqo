@@ -18,6 +18,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.Validate;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -55,6 +56,7 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
     public static final int EXIT_OK = 0;
     public static final int EXIT_SIGTERM = 143;
     private static final long DETACH_TIMEOUT_SECONDS = 60;
+    private static final long DETACH_POLL_MILLIS = 250;
 
     private final CompletableFuture<JdtLspClient> clientFuture = new CompletableFuture<>();
     private final AtomicReference<JdtLspClient> curr = new AtomicReference<>();
@@ -104,7 +106,7 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
      */
     private void detachShadowingProjects() {
         List<File> externalRoots = ShadowingProjects.externalSourceRoots(args.getProjects());
-        if (externalRoots.isEmpty()) {
+        if (CollectionUtils.isEmpty(externalRoots)) {
             return;
         }
         /**
@@ -125,7 +127,7 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
         Set<URI> javaProjects = new HashSet<>(projectUris(false));
         List<URI> nonJavaProjects = projectUris(true).stream().filter(not(javaProjects::contains)).toList();
         List<URI> shadowing = ShadowingProjects.select(nonJavaProjects, externalRoots);
-        if (shadowing.isEmpty()) {
+        if (CollectionUtils.isEmpty(shadowing)) {
             return;
         }
 
@@ -143,7 +145,7 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
                         DETACH_TIMEOUT_SECONDS);
                 return;
             }
-            TimeUnit.MILLISECONDS.sleep(250);
+            TimeUnit.MILLISECONDS.sleep(DETACH_POLL_MILLIS);
         }
     }
     private List<URI> projectUris(boolean includeNonJava) throws Exception {
@@ -158,6 +160,9 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
             array.forEach(element -> uris.add(URI.create(element.getAsString())));
         } else if (result instanceof Collection<?> collection) {
             collection.forEach(element -> uris.add(URI.create(String.valueOf(element))));
+        } else {
+            // an empty answer here would remove nothing and log nothing, and the callers would silently go missing
+            throw new IllegalStateException("unexpected java.project.getAll reply: " + result);
         }
         return uris;
     }
