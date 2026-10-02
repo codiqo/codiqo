@@ -361,12 +361,14 @@ public class AnalysisEngine {
 
             for (String path : module.getCompileSourceRoots()) {
                 File dir = new File(path);
+                wrapper.getDeclaredSourceRoots().add(dir);
                 if (dir.exists()) {
                     wrapper.getCompileSourceRoots().add(dir);
                 }
             }
             for (String path : module.getTestCompileSourceRoots()) {
                 File dir = new File(path);
+                wrapper.getDeclaredTestSourceRoots().add(dir);
                 if (dir.exists()) {
                     wrapper.getTestCompileSourceRoots().add(dir);
                 }

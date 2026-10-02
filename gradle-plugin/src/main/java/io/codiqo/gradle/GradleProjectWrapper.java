@@ -48,6 +48,8 @@ public class GradleProjectWrapper implements JvmProjectSpec {
     private Collection<File> compileClasspathElements = new ArrayList<>();
     private Collection<File> testCompileSourceRoots = new ArrayList<>();
     private Collection<File> testClasspathElements = new ArrayList<>();
+    private Collection<File> declaredSourceRoots = new ArrayList<>();
+    private Collection<File> declaredTestSourceRoots = new ArrayList<>();
     private Collection<File> testReportDirectories = new ArrayList<>();
 
     private List<DependencyData> dependencies = new ArrayList<>();
@@ -64,12 +66,7 @@ public class GradleProjectWrapper implements JvmProjectSpec {
     }
     @Override
     public boolean isTestResource(File destination) {
-        for (File dir : getTestCompileSourceRoots()) {
-            if (dir.isDirectory() && PathContainment.isUnder(dir, destination)) {
-                return true;
-            }
-        }
-        return false;
+        return declaredTestSourceRoots.stream().anyMatch(dir -> PathContainment.isUnder(dir, destination));
     }
     @Override
     public void setLatestModified(Date date) {

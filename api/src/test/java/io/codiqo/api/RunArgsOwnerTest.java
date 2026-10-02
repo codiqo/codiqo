@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
@@ -77,6 +78,19 @@ class RunArgsOwnerTest {
 
         assertTrue(args.owner(root.resolve("excluded/src/main/java/Gone.java").toFile()).isEmpty());
     }
+    /**
+     * a commit that deletes kryo's last test leaves ../test absent from the work tree, so the compile lists drop it;
+     * the deletions must still belong to the module that declares it
+     */
+    @Test
+    void deletionFromARootTheCommitEmptiedKeepsItsOwner(@TempDir Path root) throws Exception {
+        Files.createDirectories(root.resolve("src"));
+        JvmProjectSpec main = module("kryo", root.resolve("main"), List.of(root.resolve("src")), List.of(root.resolve("test")));
+        RunArgs args = args(main);
+
+        assertTrue(main.getTestCompileSourceRoots().isEmpty());
+        assertEquals(Optional.of(main), args.owner(root.resolve("test/com/esotericsoftware/kryo/KryoTest.java").toFile()));
+    }
     @Test
     void fileNeitherUnderAModuleNorInADeclaredRootStaysAnOrphan(@TempDir Path root) {
         RunArgs args = args(module("kryo", root.resolve("main"), List.of(root.resolve("src")), List.of(root.resolve("test"))));
@@ -91,7 +105,7 @@ class RunArgsOwnerTest {
     }
     /**
      * only what ownership reads is answered; the interface's own default methods run as written, so contains and
-     * declaresSource are the production code under test
+     * declaresSource are the production code under test. The compile lists drop absent roots, as both wrappers do
      */
     private static JvmProjectSpec module(String id, Path baseDirectory, List<Path> sourceRoots, List<Path> testSourceRoots) {
         InvocationHandler handler = (proxy, method, methodArgs) -> {
@@ -101,8 +115,10 @@ class RunArgsOwnerTest {
             return switch (method.getName()) {
                 case "getId", "toString" -> id;
                 case "getBaseDirectory" -> baseDirectory.toFile();
-                case "getCompileSourceRoots" -> sourceRoots.stream().map(Path::toFile).toList();
-                case "getTestCompileSourceRoots" -> testSourceRoots.stream().map(Path::toFile).toList();
+                case "getCompileSourceRoots" -> sourceRoots.stream().filter(Files::exists).map(Path::toFile).toList();
+                case "getTestCompileSourceRoots" -> testSourceRoots.stream().filter(Files::exists).map(Path::toFile).toList();
+                case "getDeclaredSourceRoots" -> sourceRoots.stream().map(Path::toFile).toList();
+                case "getDeclaredTestSourceRoots" -> testSourceRoots.stream().map(Path::toFile).toList();
                 case "hashCode" -> System.identityHashCode(proxy);
                 case "equals" -> proxy == methodArgs[0];
                 default -> throw new UnsupportedOperationException(method.getName());

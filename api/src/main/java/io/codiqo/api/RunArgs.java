@@ -1185,9 +1185,10 @@ public class RunArgs {
     }
     /**
      * The build tool's declared source roots decide ownership; the directory only decides it for a file no root holds,
-     * such as a pom.xml or a resource. Ranked, first module in reactor order within each rank: a module that both
-     * contains and declares the file, then one that only declares it, then one that only contains it. A declaration
-     * never reaches into a module removed with excludeProjects.
+     * such as a pom.xml or a resource. Ranked, first module in the order the build lists them within each rank: a module
+     * that both contains and declares the file, then one that only declares it, then one that only contains it. That
+     * order is Maven's reactor order, but Gradle's getAllprojects() is a TreeSet, so on Gradle it is project-path
+     * order. A declaration never reaches into a module removed with excludeProjects.
      */
     public Optional<ProjectSpec> owner(File filePath) {
         Optional<ProjectSpec> declaring = Optional.empty();

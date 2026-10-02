@@ -51,6 +51,8 @@ public class MavenProjectWrapper implements MavenProjectSpec {
     private Collection<File> compileClasspathElements = new ArrayList<>();
     private Collection<File> testCompileSourceRoots = new ArrayList<>();
     private Collection<File> testClasspathElements = new ArrayList<>();
+    private Collection<File> declaredSourceRoots = new ArrayList<>();
+    private Collection<File> declaredTestSourceRoots = new ArrayList<>();
     private Collection<File> testReportDirectories = new ArrayList<>();
     private BidiMap<Artifact, File> artifacts = new DualHashBidiMap<>();
     @Delegate
@@ -62,12 +64,7 @@ public class MavenProjectWrapper implements MavenProjectSpec {
     }
     @Override
     public boolean isTestResource(File destination) {
-        for (File dir : getTestCompileSourceRoots()) {
-            if (dir.isDirectory() && PathContainment.isUnder(dir, destination)) {
-                return true;
-            }
-        }
-        return false;
+        return declaredTestSourceRoots.stream().anyMatch(dir -> PathContainment.isUnder(dir, destination));
     }
     @Override
     public void setLatestModified(Date date) {
