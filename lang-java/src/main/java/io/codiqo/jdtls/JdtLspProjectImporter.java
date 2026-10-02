@@ -94,9 +94,13 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
     /**
      * Removes the non-Java projects that would win the URI lookup for sources a module declares outside its own
      * directory (see {@link ShadowingProjects}). Only the workspace entry goes: jdt.ls deletes with
-     * deleteContent=false, so the work tree is untouched. The deletion runs as a workspace job that goes on to
-     * re-run the importers and update projects after deleting, so this waits for the deletion to show and then for
-     * the whole job through {@link JdtLspClient#buildWorkspace()}, rather than racing the first query.
+     * deleteContent=false, so the work tree is untouched. The deletion runs as a workspace job, so this waits until
+     * the projects are gone rather than racing the first query. The job then re-runs the importers and updates
+     * projects, both over the empty lists passed here, so nothing of substance is left once the deletion shows.
+     *
+     * <p>Never wait for it with java/buildWorkspace: autobuild is off for a reason, and a build compiles into m2e's
+     * output folders, which for a module like kryo's are linked to the forked build's own target/classes. ECJ's class
+     * files replace javac's, the class ids stop matching the JaCoCo execution data, and coverage drops to zero.
      */
     private void detachShadowingProjects() {
         List<File> externalRoots = ShadowingProjects.externalSourceRoots(args.getProjects());
@@ -141,7 +145,6 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
             }
             TimeUnit.MILLISECONDS.sleep(250);
         }
-        getClient().buildWorkspace().get(args.getImportTimeout().getSeconds(), TimeUnit.SECONDS);
     }
     private List<URI> projectUris(boolean includeNonJava) throws Exception {
         /**
