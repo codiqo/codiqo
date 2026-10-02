@@ -16,9 +16,15 @@ public interface JvmProjectSpec extends ProjectSpec, ClassGraphSpec {
     Collection<File> getCompileClasspathElements();
     Collection<File> getTestCompileSourceRoots();
     Collection<File> getTestClasspathElements();
+    /**
+     * Every root the build declares, including those absent from the work tree. The compile lists above keep only the
+     * roots that exist, but a commit that deletes the last file of a root still has to attribute those deletions.
+     */
+    Collection<File> getDeclaredSourceRoots();
+    Collection<File> getDeclaredTestSourceRoots();
     @Override
     default boolean declaresSource(File filePath) {
-        return Stream.concat(getCompileSourceRoots().stream(), getTestCompileSourceRoots().stream())
+        return Stream.concat(getDeclaredSourceRoots().stream(), getDeclaredTestSourceRoots().stream())
                 .anyMatch(root -> PathContainment.isUnder(root, filePath));
     }
 

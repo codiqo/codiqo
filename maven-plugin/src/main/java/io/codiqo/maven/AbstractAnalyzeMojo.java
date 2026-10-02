@@ -658,6 +658,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     try {
                         prj.getCompileSourceRoots().forEach(root -> {
                             File file = new File(root);
+                            toReturn.getDeclaredSourceRoots().add(file);
                             if (file.exists()) {
                                 toReturn.getCompileSourceRoots().add(file);
                             }
@@ -675,6 +676,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     try {
                         prj.getTestCompileSourceRoots().forEach(root -> {
                             File file = new File(root);
+                            toReturn.getDeclaredTestSourceRoots().add(file);
                             if (file.exists()) {
                                 toReturn.getTestCompileSourceRoots().add(file);
                             }
