@@ -137,9 +137,5 @@ class PMDCopyPasteDetectionSummaryTest {
         public void accept(CodeBlockInfo block) {
             throw new UnsupportedOperationException();
         }
-        @Override
-        public int compareTo(PmdDuplicationMatch other) {
-            throw new UnsupportedOperationException();
-        }
     }
 }

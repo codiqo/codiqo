@@ -15,7 +15,7 @@ import net.sourceforge.pmd.cpd.Mark;
 public class PmdDuplicationMark implements DuplicateMark {
     private final Mark mark;
     private final File file;
-    private final String sourceCodeSlice;
+    private final CharSequence sourceCodeSlice;
     private final SourceLocation location;
     @Builder.Default
     private Optional<CodeBlockInfo> block = Optional.empty();

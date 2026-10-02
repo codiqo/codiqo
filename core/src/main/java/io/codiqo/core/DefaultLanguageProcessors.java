@@ -14,9 +14,12 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Date;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -26,7 +29,7 @@ import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.SortedSet;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -77,10 +80,13 @@ import io.codiqo.util.MemoryReport;
 import io.codiqo.util.ProgressStage;
 import net.sourceforge.pmd.cpd.CPDConfiguration;
 import net.sourceforge.pmd.cpd.CpdAnalysis;
+import net.sourceforge.pmd.cpd.Mark;
 import net.sourceforge.pmd.cpd.Match;
 import net.sourceforge.pmd.internal.util.IOUtil;
+import net.sourceforge.pmd.lang.Language;
 import net.sourceforge.pmd.lang.LanguageProcessorRegistry.LanguageTerminationException;
 import net.sourceforge.pmd.lang.LanguageRegistry;
+import net.sourceforge.pmd.lang.document.FileId;
 
 public class DefaultLanguageProcessors implements LanguageProcessors {
     /**
@@ -557,18 +563,12 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
      * cannot be committed as a fixture.
      */
     void tokenizeAndCollect(LanguageSpec processor, List<Path> files, IndexingSummary summary, CommitAnalysis analysis) throws IOException {
-        SortedSet<DuplicationMatch> matches = new TreeSet<>();
+        Set<DuplicationMatch> matches = new LinkedHashSet<>();
+        Map<FileId, File> filesById = new HashMap<>();
         boolean anyFileAdded = false;
 
-        CPDConfiguration cfg = new CPDConfiguration(LanguageRegistry.singleton(processor.lang()));
+        CPDConfiguration cfg = cpdConfiguration(processor.lang(), args);
         cfg.setReporter(log);
-        cfg.setDefaultLanguageVersion(processor.lang().getDefaultVersion());
-        cfg.setFailOnViolation(false);
-        cfg.setFailOnError(true);
-        cfg.setIgnoreLiterals(true);
-        cfg.setIgnoreIdentifiers(true);
-        cfg.setMinimumTileSize(args.getCpdMinimumTileSize());
-        cfg.setSourceEncoding(StandardCharsets.UTF_8);
 
         try (CpdAnalysis cpd = CpdAnalysis.create(cfg)) {
             for (Path path : files) {
@@ -577,14 +577,13 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
 
             if (anyFileAdded) {
                 cpd.performAnalysis(report -> {
-                    for (Match match : report.getMatches()) {
+                    cloneClasses(report.getMatches()).forEach((match, marks) -> {
                         matches.add(PmdDuplicationMatch.builder()
-                                .match(match)
                                 .tokenCount(match.getTokenCount())
                                 .lineCount(match.getLineCount())
-                                .marks(match.getMarkSet().stream().map(mark -> PmdDuplicationMark.builder()
+                                .marks(marks.stream().map(mark -> PmdDuplicationMark.builder()
                                         .mark(mark)
-                                        .file(Paths.get(mark.getLocation().getFileId().getAbsolutePath()).toFile())
+                                        .file(filesById.computeIfAbsent(mark.getLocation().getFileId(), id -> Paths.get(id.getAbsolutePath()).toFile()))
                                         .sourceCodeSlice(report.getSourceCodeSlice(mark).toString())
                                         .location(SourceLocation.builder()
                                                 .startLine(mark.getLocation().getStartLine())
@@ -594,7 +593,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                                                 .build())
                                         .build()).collect(Collectors.toUnmodifiableList()))
                                 .build());
-                    }
+                    });
 
                     PMDCopyPasteDetectionSummary toAccept = new PMDCopyPasteDetectionSummary(
                             report.getNumberOfTokensPerFile()
@@ -671,6 +670,46 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         if (Objects.nonNull(err)) {
             throw new LanguageTerminationException(err);
         }
+    }
+    static CPDConfiguration cpdConfiguration(Language language, RunArgs args) {
+        CPDConfiguration toReturn = new CPDConfiguration(LanguageRegistry.singleton(language));
+        toReturn.setDefaultLanguageVersion(language.getDefaultVersion());
+        toReturn.setFailOnViolation(false);
+        toReturn.setFailOnError(true);
+        toReturn.setIgnoreLiterals(true);
+        toReturn.setIgnoreIdentifiers(args.isCpdIgnoreIdentifiers());
+        toReturn.setMinimumTileSize(args.getCpdMinimumTileSize());
+        toReturn.setSourceEncoding(StandardCharsets.UTF_8);
+        return toReturn;
+    }
+    /**
+     * PMD splits a clone with three or more copies into pairwise matches ([A,C] and [B,C] rather than [A,B,C]). Two
+     * matches of one length that share a start token hold the same tokens and are one clone class; each class is keyed
+     * by the first match reported for it, so one copied region is counted once.
+     *
+     * <p>Marks are compared by position, which only {@link Mark#compareTo} does: {@code Mark.equals} compares token
+     * content, so every copy of a clone is equal to every other.
+     */
+    static Map<Match, Set<Mark>> cloneClasses(List<Match> matches) {
+        Map<Integer, Map<Mark, Set<Mark>>> classOf = new HashMap<>();
+        for (Match match : matches) {
+            Map<Mark, Set<Mark>> sameLength = classOf.computeIfAbsent(match.getTokenCount(), count -> new TreeMap<>());
+            Set<Mark> merged = new TreeSet<>(match.getMarkSet());
+            for (Mark mark : match.getMarkSet()) {
+                Optional.ofNullable(sameLength.get(mark)).ifPresent(merged::addAll);
+            }
+            merged.forEach(mark -> sameLength.put(mark, merged));
+        }
+
+        Map<Match, Set<Mark>> toReturn = new LinkedHashMap<>();
+        Set<Set<Mark>> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Match match : matches) {
+            Set<Mark> merged = classOf.get(match.getTokenCount()).get(match.getFirstMark());
+            if (seen.add(merged)) {
+                toReturn.put(match, merged);
+            }
+        }
+        return toReturn;
     }
     @FunctionalInterface
     private interface CaptureStage {

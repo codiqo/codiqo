@@ -7,7 +7,7 @@ import java.util.function.Consumer;
 import io.codiqo.api.DuplicateMark;
 import io.codiqo.api.code.CodeBlockInfo;
 
-public interface DuplicationMatch extends Comparable<PmdDuplicationMatch>, Consumer<CodeBlockInfo>, Iterable<DuplicateMark> {
+public interface DuplicationMatch extends Consumer<CodeBlockInfo>, Iterable<DuplicateMark> {
     int getTokenCount();
     int getLineCount();
     boolean isCrossFile();
