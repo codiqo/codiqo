@@ -2,7 +2,8 @@ package io.codiqo.lang.spec;
 
 import java.util.Collection;
 import java.util.List;
-import java.util.Map;
+
+import org.eclipse.collections.api.map.primitive.IntObjectMap;
 import org.jacoco.core.analysis.ILine;
 
 import edu.umd.cs.findbugs.BugInstance;
@@ -15,7 +16,7 @@ public interface JavaCodeBlockInfo extends CodeBlockInfo {
     ASTTypeDeclaration getType();
     ASTTypeDeclaration getEnclosingType();
     JMethodSig getGenericSignature();
-    Map<Integer, ILine> getLineCoverage();
+    IntObjectMap<ILine> getLineCoverage();
     void lineCoverage(int lineNumber, ILine line);
     void spotbug(BugInstance violation);
     Collection<BugInstance> getSpotbugs();

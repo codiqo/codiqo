@@ -2,8 +2,8 @@ package io.codiqo.submit;
 
 import io.codiqo.api.metrics.DriverScaler;
 import lombok.Getter;
-import lombok.Value;
 import lombok.experimental.Accessors;
+import org.apache.commons.lang3.tuple.ImmutableTriple;
 
 @Getter
 @Accessors(fluent = true)
@@ -35,13 +35,20 @@ public class SampleMaxTracker {
         }
     }
 
-    @Value
-    @Accessors(fluent = true)
-    public static class MaxHolder {
+    public static final class MaxHolder extends ImmutableTriple<String, String, Integer> {
         public static final MaxHolder EMPTY = new MaxHolder("-", "-", -1);
 
-        String file;
-        String block;
-        int value;
+        public MaxHolder(String file, String block, int value) {
+            super(file, block, value);
+        }
+        public String file() {
+            return getLeft();
+        }
+        public String block() {
+            return getMiddle();
+        }
+        public int value() {
+            return getRight();
+        }
     }
 }

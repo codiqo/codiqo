@@ -7,18 +7,18 @@ import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
-import java.util.HashMap;
 import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.eclipse.collections.api.map.primitive.IntObjectMap;
+import org.eclipse.collections.api.map.primitive.MutableIntObjectMap;
+import org.eclipse.collections.impl.map.mutable.primitive.IntObjectHashMap;
 import org.eclipse.lsp4j.CallHierarchyIncomingCall;
 import org.eclipse.lsp4j.CallHierarchyItem;
 import org.eclipse.lsp4j.Range;
@@ -127,7 +127,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
                 }
             }
 
-            if (MapUtils.isNotEmpty(fileAnalysis.getLineCoverage())) {
+            if (fileAnalysis.getLineCoverage().notEmpty()) {
                 fileChangeModel.setCoverage(buildCoverageModel(fileAnalysis.getLineCoverage()));
                 populateChangedLineCoverage(ctx, fileChangeModel, fileAnalysis);
             }
@@ -136,10 +136,11 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         }
 
         /**
-         * change-set shape flags, derived once here because this is the only writer of the submission's
-         * file list (normal, degraded and exclusion paths all run this populator). hasCodeChanges follows
-         * the language field, which upstream sets only for files a LanguageSpec actually handled — so a
-         * diff-only exclusion carries no language and reports false, matching "nothing was analysable"
+         * The change-set shape flags are derived once here because this is the only writer of the
+         * submission's file list (the normal, degraded and exclusion paths all run this populator), so setting
+         * them anywhere else could disagree with the files actually submitted. hasCodeChanges follows the
+         * language field, which upstream sets only for files a LanguageSpec actually handled, so a diff-only
+         * exclusion carries no language and reports false, matching "nothing was analysable".
          */
         List<FileChangeModel> files = ctx.getSubmissionModel().getFiles();
         ctx.getSubmissionModel().setConfigOnly(ConfigFiles.isConfigOnly(files.stream().map(FileChangeModel::getPath).toList()));
@@ -238,7 +239,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         }
 
         /**
-         * deliberately no source body per caller: nothing downstream reads one, and on a high fan-in commit the
+         * Deliberately no source body per caller: nothing downstream reads one, and on a high fan-in commit the
          * bodies outweighed every other part of the submission. Blast radius is grounded by counting these rows,
          * so the rows themselves must stay complete.
          */
@@ -309,7 +310,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             codeUnitModel.setCoverage(buildCoverageModel(javaBlock.getLineCoverage()));
         }
     }
-    private static CoverageModel buildCoverageModel(Map<Integer, ILine> lineCoverageMap) {
+    private static CoverageModel buildCoverageModel(IntObjectMap<ILine> lineCoverageMap) {
         CodeBlockCoverage cov = CodeBlockCoverage.from(lineCoverageMap);
 
         CoverageModel coverageModel = new CoverageModel();
@@ -324,9 +325,8 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             coverageModel.setBranchPercent(cov.branchCoveragePercent());
         }
 
-        for (Map.Entry<Integer, ILine> lineEntry : lineCoverageMap.entrySet()) {
-            Integer lineNumber = lineEntry.getKey();
-            ILine lineInfo = lineEntry.getValue();
+        for (int lineNumber : lineCoverageMap.keySet().toSortedArray()) {
+            ILine lineInfo = lineCoverageMap.get(lineNumber);
 
             LineCoverageModel lineModel = new LineCoverageModel();
             lineModel.setLine(lineNumber);
@@ -509,7 +509,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         }
     }
     private static void populateChangedLineCoverage(SubmissionContext ctx, FileChangeModel fileChangeModel, FileAnalysis fileAnalysis) {
-        Map<Integer, ILine> lineCoverage = fileAnalysis.getLineCoverage();
+        IntObjectMap<ILine> lineCoverage = fileAnalysis.getLineCoverage();
 
         ChangedLines changed = ChangedLineClassifier.classify(fileAnalysis.getDiffText(), LanguageCapabilities.filterFor(fileChangeModel));
 
@@ -529,8 +529,8 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             });
         }
     }
-    private static CodeBlockCoverage coverageOfLines(Set<Integer> lines, Map<Integer, ILine> lineCoverage) {
-        Map<Integer, ILine> submap = new HashMap<>();
+    private static CodeBlockCoverage coverageOfLines(Set<Integer> lines, IntObjectMap<ILine> lineCoverage) {
+        MutableIntObjectMap<ILine> submap = new IntObjectHashMap<>();
         for (Integer line : lines) {
             ILine lineInfo = lineCoverage.get(line);
             if (Objects.nonNull(lineInfo)) {
@@ -572,9 +572,10 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         }
     }
     /**
-     * kinds arrive straight from the language server, whose vocabulary is broader than the submission schema
-     * (26 LSP values against 15 schema values), so every value is mapped explicitly — an unmapped kind used to
-     * abort the whole run: jdt.ls reports enum constants that call a changed member as EnumMember
+     * Kinds arrive straight from the language server, whose vocabulary is broader than the submission schema
+     * (26 LSP values against 15 schema values), so every value is mapped explicitly and the switch stays exhaustive.
+     * An unmapped kind aborts the whole run; jdt.ls, for example, reports enum constants that call a changed member
+     * as EnumMember, which did abort runs before it was mapped.
      */
     static SymbolKindModel resolveSymbolKind(SymbolKind kind) {
         return switch (kind) {

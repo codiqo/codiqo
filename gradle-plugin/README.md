@@ -58,7 +58,7 @@ attributed per module, so running an unrelated module's tests yields a correct b
 
 Config overrides (project properties, or a `codiqo { … }` extension block): `-Pcodiqo.commitId`,
 `-Pcodiqo.outputDirectory`, `-Pcodiqo.javaHome`, `-Pcodiqo.ignoreCoverage`, `-Pcodiqo.ignoreCpd`,
-`-Pcodiqo.ignoreDiagnostics`, `-Pcodiqo.ignoreComplexity`, `-Pcodiqo.testTimeoutMinutes`,
+`-Pcodiqo.ignoreDiagnostics`, `-Pcodiqo.ignoreComplexity`, `-Pcodiqo.hotspots`, `-Pcodiqo.hotspotsCommitId`, `-Pcodiqo.testTimeoutMinutes`,
 `-Pcodiqo.perTestTimeoutMinutes`, `-Pcodiqo.importTimeoutMinutes`, `-Pcodiqo.lspQueryTimeoutSeconds`,
 `-Pcodiqo.jdtlsVersion`, `-Pcodiqo.jdtUseSharedIndex`, `-Pcodiqo.failOnUninstrumentedModule`,
 `-Pcodiqo.analysisMaxHeap`, `-Pcodiqo.skipOnBuildFailure`, `-Pcodiqo.scoreOnBuildFailure`,

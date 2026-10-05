@@ -15,6 +15,7 @@ import javax.inject.Inject;
 import javax.inject.Named;
 import javax.inject.Singleton;
 
+import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.impl.VersionResolver;
@@ -27,7 +28,6 @@ import org.eclipse.aether.resolution.VersionResult;
 import org.eclipse.sisu.Priority;
 
 import io.codiqo.maven.timemachine.repo.RepoClient;
-import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
@@ -86,9 +86,10 @@ public class TimeMachineVersionResolver implements VersionResolver {
         Duration forwardGap = Duration.between(target, pick.getDeployedAt());
         if (forwardGap.compareTo(TimeMachineConfig.forwardWindow()) > 0) {
             throw new VersionResolutionException(new VersionResult(request), String.format(
-                    "time-machine: no snapshot of %s:%s:%s deployed at or before %s%s; nearest is %s (deployed %s, %s after the target — beyond the forward window %s). "
-                            + "refusing to build against a far-forward snapshot: verify the artifact registry exposes historical snapshot deploys "
-                            + "(a *-maven.pkg.dev registry uses the GAR REST connector; other repositories expose only the latest snapshot in maven-metadata).",
+                    """
+                        time-machine: no snapshot of %s:%s:%s deployed at or before %s%s; nearest is %s (deployed %s, %s after the target — beyond the forward window %s). \
+                        refusing to build against a far-forward snapshot: verify the artifact registry exposes historical snapshot deploys \
+                        (a *-maven.pkg.dev registry uses the GAR REST connector; other repositories expose only the latest snapshot in maven-metadata).""",
                     artifact.getGroupId(),
                     artifact.getArtifactId(),
                     artifact.getBaseVersion(),
@@ -203,9 +204,9 @@ public class TimeMachineVersionResolver implements VersionResolver {
         return matcher.find() ? Integer.valueOf(matcher.group(1)) : null;
     }
 
-    @Value
-    private static class CacheKey {
-        Artifact artifact;
-        Instant target;
+    private static final class CacheKey extends ImmutablePair<Artifact, Instant> {
+        public CacheKey(Artifact artifact, Instant target) {
+            super(artifact, target);
+        }
     }
 }

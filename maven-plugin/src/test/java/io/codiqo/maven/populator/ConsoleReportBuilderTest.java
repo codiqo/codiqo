@@ -30,8 +30,8 @@ class ConsoleReportBuilderTest {
         String report = new ConsoleReportBuilder(new RunArgs()).buildReport(result(), request(), context());
 
         assertTrue(report.contains("Codiqo — Commit Analysis"), "title missing");
-        assertTrue(report.contains("0c643723"), "commit sha not shortened into the header");
-        assertTrue(report.contains("Andrey"), "author missing");
+        assertTrue(report.contains("1a2b3c4d"), "commit sha not shortened into the header");
+        assertTrue(report.contains("Jane"), "author missing");
         assertTrue(report.contains("62.47 × 0.95 + 2.81"), "score calculation not carried through verbatim");
         assertTrue(report.contains("key dimensions:"), "dimensions section missing");
         assertTrue(report.contains("Architecture Impact"), "assessed dimension missing");
@@ -115,17 +115,17 @@ class ConsoleReportBuilderTest {
     @Test
     void manyBranchesAreCappedRatherThanListedInline() {
         ReportContext manyBranches = ReportContext.builder()
-                .commitId("2639b2da9")
+                .commitId("5e6f7a8b9")
                 .timestamp("2026-06-24 09:14")
                 .analysisDuration(Duration.ofSeconds(28))
-                .branches(new ArrayList<>(List.of("dev", "main", "prev-release", "fix-build", "ENB-31", "PAY-12997")))
+                .branches(new ArrayList<>(List.of("dev", "main", "prev-release", "fix-build", "FEAT-31", "FEAT-12997")))
                 .build();
 
         String report = new ConsoleReportBuilder(new RunArgs()).buildReport(result(), request(), manyBranches);
         String header = report.lines().filter(line -> line.startsWith("commit:")).findFirst().orElse("");
 
         assertTrue(header.contains("+4 more"), "branch overflow not summarised, was: " + header);
-        assertFalse(header.contains("PAY-12997"), "every branch still listed inline, was: " + header);
+        assertFalse(header.contains("FEAT-12997"), "every branch still listed inline, was: " + header);
         assertTrue(header.length() < 120, "commit header should stay one readable line, was " + header.length() + " chars");
     }
     private static String blastLine(String report) {
@@ -139,7 +139,7 @@ class ConsoleReportBuilderTest {
         toReturn.setScore(62.0);
         toReturn.setScoreCalculation("62.47 × 0.95 + 2.81 = 62.16 ≈ 62");
         toReturn.setRequiresSeniorReview(7);
-        toReturn.setSummary("Refactors the resteasy channel and moves filter wiring into the bootstrap module.");
+        toReturn.setSummary("Refactors the HTTP channel and moves filter wiring into the core module.");
         toReturn.setQualityMultiplier(QualityMultiplier.builder().finalMultiplier(0.95).build());
         toReturn.setRiskAssessment(RiskAssessment.builder().riskScore(59).build());
         toReturn.setQualityDimensions(QualityDimensions.builder()
@@ -149,7 +149,7 @@ class ConsoleReportBuilderTest {
     }
     private static LlmScoringRequest request() {
         FileChange file = FileChange.builder()
-                .path("bootstrap-core/src/main/java/com/turbospaces/Foo.java")
+                .path("core/src/main/java/com/example/Foo.java")
                 .changeType(FileChangeType.MODIFIED)
                 .language("java")
                 .linesAdded(15)
@@ -178,13 +178,13 @@ class ConsoleReportBuilderTest {
     }
     private static ReportContext context() {
         return ReportContext.builder()
-                .commitId("0c6437232be1cda1dad83486a7a5794529786c4c")
-                .author("Andrey Borisov")
-                .authorEmail("andrey@xcxcxc.org")
+                .commitId("1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b")
+                .author("Jane Developer")
+                .authorEmail("jane@example.com")
                 .timestamp("2026-07-10 10:56")
-                .commitMessage("refactor resteasy channel\n\nlonger body that must not reach the header")
+                .commitMessage("refactor http channel\n\nlonger body that must not reach the header")
                 .branches(new ArrayList<>(List.of("main")))
-                .repositoryName("bootstrap-parent")
+                .repositoryName("example-service")
                 .llmModel("kimi-k2.7-code:cloud")
                 .analysisDuration(Duration.ofSeconds(258))
                 .build();

@@ -16,7 +16,7 @@ public class CodiqoExtension {
     private String outputDirectory;
 
     /**
-     * heap for the forked analysis JVM, the Gradle counterpart of the -Xmx the Maven path takes from MAVEN_OPTS.
+     * Heap for the forked analysis JVM, the Gradle counterpart of the -Xmx the Maven path takes from MAVEN_OPTS.
      * Deliberately NOT the analysed project's org.gradle.jvmargs: a project pinned to -Xmx1g would otherwise decide
      * how much memory codiqo's ClassGraph scan and JDT import get. The default matches the -Xmx8g measured against
      * real projects, so a commit is not analyzed under a smaller envelope merely because it builds with Gradle.
@@ -41,6 +41,7 @@ public class CodiqoExtension {
     private String excludePaths;
     private boolean ignoreDiagnostics;
     private boolean ignoreComplexity;
+    private boolean hotspots = true;
 
     private long testTimeoutMinutes = 30;
     private Long perTestTimeoutMinutes;

@@ -4,14 +4,14 @@ import java.io.File;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
-import java.util.HashMap;
 import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.eclipse.collections.api.map.primitive.MutableIntObjectMap;
+import org.eclipse.collections.impl.map.mutable.primitive.IntObjectHashMap;
 import org.jacoco.core.analysis.ILine;
 
 import java.util.Objects;
@@ -58,7 +58,7 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
     @Builder.Default
     private List<BugInstance> spotbugs = new ArrayList<>();
     @Builder.Default
-    private Map<Integer, ILine> lineCoverage = new HashMap<>();
+    private MutableIntObjectMap<ILine> lineCoverage = new IntObjectHashMap<>();
     @Builder.Default
     private Optional<AffectedSymbolInfo> affectedSymbol = Optional.empty();
 

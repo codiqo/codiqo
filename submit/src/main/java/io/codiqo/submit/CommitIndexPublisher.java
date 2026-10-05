@@ -17,6 +17,7 @@ import org.apache.commons.collections4.ListUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
+import org.apache.commons.lang3.tuple.ImmutableTriple;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Repository;
@@ -34,7 +35,6 @@ import io.codiqo.client.model.MissingAnalysesModel;
 import io.codiqo.client.model.ProjectModel;
 import io.codiqo.util.JGit;
 import io.codiqo.util.RepositoryUrls;
-import lombok.Value;
 import lombok.experimental.UtilityClass;
 
 /**
@@ -140,10 +140,18 @@ public class CommitIndexPublisher {
 
         return new MissingAnalysesSelection(analyzable, skippedMissingCommit, skippedMissingParent);
     }
-    @Value
-    public static class MissingAnalysesSelection {
-        List<String> analyzableShas;
-        int skippedMissingCommitCount;
-        int skippedMissingParentCount;
+    public static final class MissingAnalysesSelection extends ImmutableTriple<List<String>, Integer, Integer> {
+        public MissingAnalysesSelection(List<String> analyzableShas, int skippedMissingCommitCount, int skippedMissingParentCount) {
+            super(analyzableShas, skippedMissingCommitCount, skippedMissingParentCount);
+        }
+        public List<String> getAnalyzableShas() {
+            return getLeft();
+        }
+        public int getSkippedMissingCommitCount() {
+            return getMiddle();
+        }
+        public int getSkippedMissingParentCount() {
+            return getRight();
+        }
     }
 }

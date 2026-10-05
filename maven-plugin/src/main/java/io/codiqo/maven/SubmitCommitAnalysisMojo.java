@@ -10,11 +10,13 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisAcceptedModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.FileChangeModel;
+import io.codiqo.client.model.HotspotSnapshotModel;
 import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.maven.auth.BrowserLogin;
 import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.submit.AnalysisSubmitter;
 import io.codiqo.submit.SubmissionContext;
+import io.codiqo.submit.hotspots.HotspotSnapshots;
 import io.codiqo.util.ProgressStage;
 
 @Mojo(name = "submit-commit-analysis",
@@ -46,6 +48,17 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
             getLog().info(String.format("accepted analysis id: %s status: %s", response.getAnalysisId(), response.getStatus()));
             stage.succeeded();
         }
+    }
+    @Override
+    protected void doSubmitHotspots(SubmissionContext ctx, HotspotSnapshotModel snapshot) throws Exception {
+        HotspotSnapshots.submit(
+                apiUrl,
+                BrowserLogin.resolveApiKey(apiKey, authUrl, getLog()),
+                connectTimeoutSeconds,
+                readTimeoutSeconds,
+                ctx.getProjectCode(),
+                snapshot,
+                new MavenMessageReporter(getLog()));
     }
     @Override
     protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files, ProjectMetricsModel projectMetrics) throws Exception {

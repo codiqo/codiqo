@@ -24,8 +24,8 @@ import java.util.Properties;
 import java.util.Set;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.tuple.ImmutableTriple;
 
-import lombok.Value;
 
 /**
  * The key a browser login leaves behind, in {@code ~/.codiqo/credentials-<host>} — beside where gh, aws and gcloud
@@ -40,11 +40,14 @@ import lombok.Value;
  */
 public class CredentialStore {
     private static final Set<PosixFilePermission> OWNER_ONLY = EnumSet.of(OWNER_READ, OWNER_WRITE);
-    /** a directory also needs the execute bit, or its own owner cannot reach the file inside it */
+    /** A directory also needs the execute bit, or its own owner cannot reach the credentials file inside it. */
     private static final Set<PosixFilePermission> OWNER_ONLY_DIRECTORY = EnumSet.of(OWNER_READ, OWNER_WRITE, OWNER_EXECUTE);
     private static final boolean POSIX = FileSystems.getDefault().supportedFileAttributeViews().contains("posix");
 
-    /** re-authorise slightly early, so a submission never fails on an expiry we could see coming */
+    /**
+     * A key is treated as expired this long before its recorded expiry, so the plugin re-authorises early and a
+     * submission never fails on an expiry that was visible in advance.
+     */
     private static final Duration EXPIRY_HEADROOM = Duration.ofMinutes(1);
 
     private final Path file;
@@ -67,7 +70,9 @@ public class CredentialStore {
     public void store(Credentials credentials) throws IOException {
         Properties stored = new Properties();
         stored.setProperty("key", credentials.getKey());
-        // written for whoever opens the file wondering which organisation a key belongs to; nothing reads it back
+        /**
+         * Written for whoever opens the file wondering which organisation a key belongs to; nothing reads it back.
+         */
         stored.setProperty("organizationId", StringUtils.defaultString(credentials.getOrganizationId()));
         stored.setProperty("expiresAt", StringUtils.defaultString(credentials.getExpiresAt()));
 
@@ -156,10 +161,18 @@ public class CredentialStore {
             return false;
         }
     }
-    @Value
-    public static class Credentials {
-        String key;
-        String organizationId;
-        String expiresAt;
+    public static final class Credentials extends ImmutableTriple<String, String, String> {
+        public Credentials(String key, String organizationId, String expiresAt) {
+            super(key, organizationId, expiresAt);
+        }
+        public String getKey() {
+            return getLeft();
+        }
+        public String getOrganizationId() {
+            return getMiddle();
+        }
+        public String getExpiresAt() {
+            return getRight();
+        }
     }
 }

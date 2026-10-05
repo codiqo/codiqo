@@ -64,6 +64,7 @@ import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Parameter;
+import org.apache.maven.project.DefaultProjectBuildingRequest;
 import org.apache.maven.project.MavenProject;
 import org.apache.maven.project.ProjectBuilder;
 import org.apache.maven.project.ProjectBuildingException;
@@ -105,12 +106,14 @@ import io.codiqo.api.MavenProjectSpec;
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
+import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.client.ApiException;
 import io.codiqo.client.model.AnalysisBuildFailureModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.ClientInfoModel;
 import io.codiqo.client.model.FileChangeModel;
+import io.codiqo.client.model.HotspotSnapshotModel;
 import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.core.ClassGraphWrapper;
 import io.codiqo.core.DefaultLanguageProcessors;
@@ -129,6 +132,7 @@ import io.codiqo.maven.timemachine.TimeMachineConfig;
 import io.codiqo.submit.OutputSerializer;
 import io.codiqo.submit.SubmissionAssembly;
 import io.codiqo.submit.SubmissionContext;
+import io.codiqo.submit.hotspots.HotspotSnapshots;
 import io.codiqo.util.Env;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
@@ -189,7 +193,11 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
      */
     private static final long FORK_EXIT_GRACE_SECONDS = 120L;
 
-    // StringUtils.abbreviate requires a width of at least 4 ("a...")
+    /**
+     * The build-error capture limit is passed to StringUtils.abbreviate, which throws IllegalArgumentException for a
+     * width below 4 (the shortest abbreviation is "a..."). The configured limit is clamped to this floor so a small
+     * codiqo.buildErrorCaptureLimit cannot turn the capture of a build failure into a crash of its own.
+     */
     private static final int MIN_ABBREVIATE_WIDTH = 4;
 
     private Collection<File> timeMachineExtensionJars;
@@ -303,6 +311,12 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.ignoreComplexity", defaultValue = "false")
     protected boolean ignoreComplexity;
 
+    @Parameter(property = "codiqo.hotspots", defaultValue = "true")
+    protected boolean hotspots;
+
+    @Parameter(property = "codiqo.hotspotsCommitId")
+    protected String hotspotsCommitId;
+
     @Parameter(property = "codiqo.failOnJdtlsError", defaultValue = "false")
     protected boolean failOnJdtlsError;
 
@@ -360,7 +374,11 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     @Parameter(property = "codiqo.llm.autoDiscoveryAgentInstructions", defaultValue = "true")
     protected boolean autoDiscoveryAgentInstructions;
 
-    // -1 marks "unset" so that an explicit 0, which disables instruction loading, is forwarded rather than swallowed
+    /**
+     * Maximum characters of convention files sent to the LLM. The default of -1 marks "unset" and keeps the RunArgs
+     * default; only a value of 0 or more is forwarded. 0 is a real setting that disables instruction loading, so it
+     * must not double as the "unset" marker or an explicit 0 would be swallowed.
+     */
     @Parameter(property = "codiqo.llm.conventionFilesMaxChars", defaultValue = "-1")
     protected int llmConventionFilesMaxChars;
 
@@ -485,6 +503,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setIgnoreCpd(ignoreCpd);
         args.setIgnoreDiagnostics(ignoreDiagnostics);
         args.setIgnoreComplexity(ignoreComplexity);
+        args.setHotspotsEnabled(hotspots);
+        args.setHotspotsCommitId(hotspotsCommitId);
         args.setFailOnJdtlsError(failOnJdtlsError);
         args.setSkipOnBuildFailure(skipOnBuildFailure);
         args.setScoreOnBuildFailure(scoreOnBuildFailure);
@@ -1235,6 +1255,26 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             ProjectBuildingRequest buildingRequest,
             RunArgs args,
             Collection<MavenProject> collected) throws Exception {
+        ReactorWorkspaceReader reactor = ReactorWorkspaceReader.fromPoms(parent.getFile(), getLog()::warn);
+
+        ProjectBuildingRequest reactorRequest = new DefaultProjectBuildingRequest(buildingRequest);
+        reactorRequest.setResolveDependencies(false);
+        Maven.isolateRepositorySession(reactorRequest);
+        if (Objects.nonNull(args.getLocalRepositoryDir())) {
+            Maven.pinLocalRepository(repositorySystem, reactorRequest, args.getLocalRepositoryDir());
+        }
+        Maven.attachReactor(reactorRequest, reactor);
+        readReactor(parent, baseDir, reactorRequest, args, reactor);
+
+        return buildAndCollectModules(parent, baseDir, buildingRequest, args, reactor, collected);
+    }
+    private Optional<BuildOutcome.Skipped> buildAndCollectModules(
+            MavenProject parent,
+            File baseDir,
+            ProjectBuildingRequest buildingRequest,
+            RunArgs args,
+            ReactorWorkspaceReader reactor,
+            Collection<MavenProject> collected) throws Exception {
         if (CollectionUtils.isEmpty(parent.getModules())) {
             collected.add(parent);
             return Optional.empty();
@@ -1253,6 +1293,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 if (Objects.nonNull(args.getLocalRepositoryDir())) {
                     Maven.pinLocalRepository(repositorySystem, buildingRequest, args.getLocalRepositoryDir());
                 }
+                Maven.attachReactor(buildingRequest, reactor);
 
                 ProjectBuildingResult moduleResult;
                 try {
@@ -1270,6 +1311,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                             new File(baseDir, moduleName),
                             buildingRequest,
                             args,
+                            reactor,
                             collected);
                     if (nested.isPresent()) {
                         return nested;
@@ -1278,6 +1320,32 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             }
         }
         return Optional.empty();
+    }
+    /**
+     * Registers the effective model of every module, so the jar lookups of the real per-module builds know each sibling's
+     * interpolated output directories before that sibling is built. The walk is the one {@link #buildAndCollectModules}
+     * makes, so both see the same modules, and the reader is already attached: a reactor POM in a parent or imported-BOM
+     * chain resolves from the clone, never from a remote snapshot. Dependencies are not resolved here.
+     *
+     * <p>
+     * A module whose model cannot be built here is reported and left unregistered, together with its sub-modules: they
+     * resolve from the repository as they did before the reader existed. The real per-module build still decides whether
+     * the commit can be analyzed, so this pass can never fail an analysis that would otherwise succeed.
+     */
+    private void readReactor(MavenProject parent, File baseDir, ProjectBuildingRequest request, RunArgs args, ReactorWorkspaceReader reactor) throws Exception {
+        reactor.add(parent);
+        for (String moduleName : parent.getModules()) {
+            File moduleDir = new File(baseDir, moduleName);
+            File modulePom = new File(moduleDir, "pom.xml");
+            if (modulePom.exists()) {
+                try {
+                    MavenProject module = TimeMachineSupport.withHostPinning(args, getLog(), () -> projectBuilder.build(modulePom, request)).getProject();
+                    readReactor(module, moduleDir, request, args, reactor);
+                } catch (ProjectBuildingException err) {
+                    getLog().warn(String.format("reactor module %s not readable, it resolves from the repository: %s", modulePom, err.getMessage()));
+                }
+            }
+        }
     }
     protected void doPrepare(RunArgs args) throws Exception {
         if (StringUtils.isEmpty(args.getDefaultBranch())) {
@@ -1302,7 +1370,42 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             } else {
                 doLlmScoring(ctx);
             }
+            doHotspots(ctx);
         }
+    }
+    /**
+     * The hotspot snapshot is submitted only after the commit's own analysis, because that submission is what creates
+     * the project the snapshot belongs to; submitted first, the snapshot would target a project that does not exist
+     * yet. A failure is logged and the previously submitted snapshot stays in place.
+     */
+    protected void doHotspots(SubmissionContext ctx) {
+        if (ctx.getHotspotSnapshot().isPresent()) {
+            try {
+                doSubmitHotspots(ctx, ctx.getHotspotSnapshot().get());
+            } catch (Exception err) {
+                getLog().warn(String.format("hotspot snapshot for %s not submitted, the previous one stays: %s", ctx.getArgs().getCommitId(), err), err);
+            }
+        }
+    }
+    /**
+     * Must be called while the language processors are still open: the code blocks' metrics resolve lazily against
+     * the processors' class loaders, so building the snapshot after they close would fail or resolve nothing. A
+     * failure is caught and logged, so it costs only the snapshot and never the commit's analysis.
+     */
+    private void buildHotspots(SubmissionContext ctx) {
+        Log log = new MavenLogFactory(getLog()).getLogger(HotspotSnapshots.class);
+        try {
+            Optional<HotspotSnapshotModel> snapshot = HotspotSnapshots.build(ctx, log);
+            if (snapshot.isPresent()) {
+                HotspotSnapshots.write(ctx, snapshot.get(), log);
+                ctx.setHotspotSnapshot(snapshot);
+            }
+        } catch (Exception err) {
+            getLog().warn(String.format("hotspot snapshot for %s not produced, the previous one stays: %s", ctx.getArgs().getCommitId(), err), err);
+        }
+    }
+    protected void doSubmitHotspots(SubmissionContext ctx, HotspotSnapshotModel snapshot) throws Exception {
+        getLog().debug("hotspot snapshot not submitted: this goal does not submit");
     }
     protected Optional<SubmissionContext> doAnalyze(RunArgs args) throws Exception {
         purgeNonJavaSourceJars(args);
@@ -1330,7 +1433,11 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 });
                 String skipReason = null;
                 AnalysisExcludeCategory skipCategory = null;
-                // ahead of the extension check: both leave an empty file list, but only one of them is a language problem
+                /**
+                 * The shallow-clone check runs ahead of the extension check because both leave an empty file list.
+                 * Checked the other way round, a commit whose parent is missing would be reported as having no files
+                 * in a registered language, hiding that the fix is to re-run with full history.
+                 */
                 if (analysis.isHistoryIncomplete()) {
                     skipReason = String.format("commit %s sits on a shallow-clone boundary, so its parent is not present locally and its delta cannot be computed"
                             + " — re-run with full history (fetch-depth: 0)", args.getCommitId());
@@ -1418,10 +1525,15 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                             project.getName(),
                             clientInfo);
                     new ProjectModelPopulator(getLog()).accept(ctx);
-                    // the summary prints between the populators and the instruction read, which can fail over budget
+                    /**
+                     * The summary is printed from the hook between the populators and the instruction read, because
+                     * reading the instruction files throws when they exceed the budget. Printed after that read, a
+                     * commit that fails over budget would leave no submission summary in the log to diagnose it by.
+                     */
                     SubmissionAssembly.full(ctx, new SubmissionSummaryPrinter(getLog()));
 
                     new OutputSerializer(preferYaml, logFactory.getLogger(OutputSerializer.class)).accept(ctx);
+                    buildHotspots(ctx);
                     return Optional.of(ctx);
                 }
             }
@@ -1472,7 +1584,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         getLog().debug(String.format("no exclusion handler, commit %s would be excluded with reason: %s (category: %s)", commitSha, reason, category));
     }
     /**
-     * with codiqo.scoreOnBuildFailure enabled, a build-pipeline failure no longer excludes the commit
+     * with codiqo.scoreOnBuildFailure enabled, a build-pipeline failure does not exclude the commit
      * outright: the change still represents real developer work, so score it in degraded mode instead.
      * falls back to exclusion when the flag is off (default), when the commit has no analyzable diff files,
      * and mirrors the revert gate that the successful-build path applies in doExecute. only reachable from
@@ -1533,7 +1645,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
      * already persists. A diff-only submission carries no project metrics, so {@code DriverScaler} is empty:
      * blocks are priced on raw line counts instead of the project's own distribution, and because the
      * baseline is zero the global cap cannot bind either. That is a materially different scoring regime from
-     * a source-only degraded run, and until now the only record of having entered it was a log line.
+     * a source-only degraded run, and a log line alone would not outlive log retention as a record of it.
      */
     private static String diffOnlyFallbackDetail(String detail, IOException err) {
         String note = String.format("%s (%s) — scored diff-only: no project metrics, so driver scores are raw"
@@ -1553,24 +1665,26 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         }
 
         CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
-        IndexingSummary index = DefaultLanguageProcessors.sourceOnlyIndex(args, analysis, logFactory);
 
         ClientInfoModel clientInfo = new ClientInfoModel();
         clientInfo.setBuildTool(ClientInfoModel.BuildToolEnum.MAVEN);
         clientInfo.setVersion(runtimeInformation.getMavenVersion());
         clientInfo.setName("codiqo-maven-plugin");
 
-        SubmissionContext ctx = SubmissionContext.create(
-                args,
-                index,
-                analysis,
-                workTree,
-                logFactory,
-                project.getGroupId() + ":" + project.getArtifactId(),
-                project.getName(),
-                clientInfo);
-        new ProjectModelPopulator(getLog()).accept(ctx);
-        SubmissionAssembly.degraded(ctx);
+        SubmissionContext ctx = DefaultLanguageProcessors.sourceOnlyIndex(args, analysis, logFactory, index -> {
+            SubmissionContext toReturn = SubmissionContext.create(
+                    args,
+                    index,
+                    analysis,
+                    workTree,
+                    logFactory,
+                    project.getGroupId() + ":" + project.getArtifactId(),
+                    project.getName(),
+                    clientInfo);
+            new ProjectModelPopulator(getLog()).accept(toReturn);
+            SubmissionAssembly.degraded(toReturn);
+            return toReturn;
+        });
 
         applyBuildFailure(ctx, reason, category, detail);
         return ctx;

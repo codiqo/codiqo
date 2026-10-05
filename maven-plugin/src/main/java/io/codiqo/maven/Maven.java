@@ -33,6 +33,7 @@ import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.DefaultSessionData;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.repository.LocalRepository;
+import org.eclipse.aether.repository.WorkspaceReader;
 import org.eclipse.aether.util.repository.SimpleResolutionErrorPolicy;
 
 import io.codiqo.client.model.AnalysisExcludeCategory;
@@ -74,6 +75,19 @@ public class Maven {
         derived.setCache(new DefaultRepositoryCache());
         derived.setData(new DefaultSessionData());
         derived.setResolutionErrorPolicy(new SimpleResolutionErrorPolicy(false, false));
+
+        request.setRepositorySession(derived);
+    }
+    /**
+     * Makes host-side model building resolve the analyzed reactor's own modules from what the fork build compiled, not
+     * from the repository. The reader replaces any workspace reader already on the session rather than chaining onto
+     * it: the host session's reader is Maven's ReactorReader for the HOST working tree, whose modules share coordinates
+     * with the analyzed clone whenever both sit on the same version, and would hand the analysis the working tree's
+     * classes instead of the commit's.
+     */
+    public static void attachReactor(ProjectBuildingRequest request, WorkspaceReader reactor) {
+        DefaultRepositorySystemSession derived = new DefaultRepositorySystemSession(request.getRepositorySession());
+        derived.setWorkspaceReader(reactor);
 
         request.setRepositorySession(derived);
     }

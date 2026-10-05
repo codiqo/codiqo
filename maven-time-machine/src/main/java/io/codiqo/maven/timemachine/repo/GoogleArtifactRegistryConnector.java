@@ -34,6 +34,7 @@ import javax.net.ssl.TrustManagerFactory;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.apache.commons.lang3.tuple.ImmutableTriple;
 import org.apache.maven.artifact.repository.metadata.SnapshotVersion;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.Artifact;
@@ -61,7 +62,6 @@ import com.google.cloud.artifactregistry.auth.DefaultCredentialProvider;
 
 import io.codiqo.maven.timemachine.TimeMachineConfig;
 import lombok.SneakyThrows;
-import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 
 @Named
@@ -112,7 +112,7 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
     @Override
     public boolean supports(RemoteRepository repo) {
         /**
-         * engage for any Google Artifact Registry repository, identified by its *-maven.pkg.dev host — not only the
+         * Engage for any Google Artifact Registry repository, identified by its *-maven.pkg.dev host, not only the
          * artifactregistry:// scheme. CI configures the same registry as an https:// URL, and only this REST connector
          * enumerates the full history of timestamped snapshot deploys; the metadata fallback exposes just the latest,
          * which would silently pin the newest snapshot instead of the commit-date one.
@@ -261,12 +261,25 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
         }
     }
 
-    @Value
-    private static class GoogleArtifactRegistryLocation {
-        String project;
-        String locationId;
-        String repository;
-
+    private static final class GoogleArtifactRegistryLocation extends ImmutableTriple<String, String, String> {
+        GoogleArtifactRegistryLocation(String project, String locationId, String repository) {
+            super(project, locationId, repository);
+        }
+        String getProject() {
+            return getLeft();
+        }
+        String getLocationId() {
+            return getMiddle();
+        }
+        String getRepository() {
+            return getRight();
+        }
+        String parentResource() {
+            return StringUtils.joinWith(String.valueOf(RESOURCE_SEPARATOR),
+                    "projects", getProject(),
+                    "locations", getLocationId(),
+                    "repositories", getRepository());
+        }
         static GoogleArtifactRegistryLocation parse(RemoteRepository repo) {
             URI uri = URI.create(repo.getUrl());
             String host = uri.getHost();
@@ -281,12 +294,6 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
 
             Iterator<String> segmentIterator = segments.iterator();
             return new GoogleArtifactRegistryLocation(segmentIterator.next(), locationId, segmentIterator.next());
-        }
-        String parentResource() {
-            return StringUtils.joinWith(String.valueOf(RESOURCE_SEPARATOR),
-                    "projects", project,
-                    "locations", locationId,
-                    "repositories", repository);
         }
         private static String invalidUrlMessage(RemoteRepository repo) {
             return "expected artifactregistry://<location>" + HOST_SUFFIX + "/<project>/<repo>, got: " + repo.getUrl();

@@ -4,6 +4,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 import io.codiqo.api.IndexingSummary;
@@ -14,6 +15,7 @@ import io.codiqo.api.metrics.DriverScaler;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.ClientInfoModel;
 import io.codiqo.client.model.DependencyRegistryModel;
+import io.codiqo.client.model.HotspotSnapshotModel;
 import io.codiqo.client.model.ModuleFullCoverageModel;
 import io.codiqo.client.model.ProjectModel;
 import io.codiqo.llm.client.ScoringClient.ScoringResult;
@@ -77,6 +79,9 @@ public class SubmissionContext {
     @Setter
     @Builder.Default
     private SampleMaxTracker constructorMaxTest = new SampleMaxTracker();
+    @Setter
+    @Builder.Default
+    private Optional<HotspotSnapshotModel> hotspotSnapshot = Optional.empty();
 
     @Setter
     private LlmScoringResponse llmScoringResponse;

@@ -288,6 +288,36 @@ paths:
       security:
         - apiKey: []
 
+  /api/v1/projects/{projectId}/hotspots:
+    post:
+      operationId: submitHotspots
+      tags: [Hotspots]
+      summary: Replace the project's hotspot snapshot with the one computed from its latest commit
+      description: |
+        The most important classes and the hotspots of the project, each with the findings a developer (or a local
+        agent) can act on. Only the latest snapshot is kept; a submission replaces the previous one.
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HotspotSnapshotModel'
+      responses:
+        '204':
+          description: Snapshot stored
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - apiKey: []
+
 components:
   securitySchemes:
     apiKey:
@@ -1644,6 +1674,124 @@ components:
           items:
             type: string
             pattern: '^[a-f0-9]{40}$'
+
+    HotspotSnapshotModel:
+      type: object
+      required: [commitSha, classes]
+      properties:
+        commitSha:
+          type: string
+          pattern: '^[a-f0-9]{40}$'
+          description: The commit the snapshot was computed from
+        classes:
+          type: array
+          maxItems: 192
+          description: Union of the ranked important classes and the ranked hotspots
+          items:
+            $ref: '#/components/schemas/HotspotClassModel'
+
+    HotspotClassModel:
+      type: object
+      required: [className, filePath, kind, ncss, dependents, dependencies, commits, recentCommits, recentFixCommits]
+      properties:
+        className:
+          type: string
+          description: Fully-qualified name of the top-level type
+        filePath:
+          type: string
+          description: Source file, relative to the repository root, with forward slashes
+        module:
+          type: string
+          description: Build module that owns the file
+        kind:
+          $ref: '#/components/schemas/HotspotTypeKind'
+        importanceRank:
+          type: integer
+          minimum: 1
+          description: 1-based rank among the most important classes; absent when the class is not ranked there
+        hotspotRank:
+          type: integer
+          minimum: 1
+          description: 1-based rank among the hotspots; absent when the class is not ranked there
+        ncss:
+          type: integer
+          description: Non-commenting source statements
+        dependents:
+          type: integer
+          description: Distinct production types that depend on this one
+        effectiveDependents:
+          type: number
+          format: double
+          description: Dependents plus a share of the dependents of the interfaces and abstract classes it implements
+        dependencies:
+          type: integer
+          description: Distinct production types this one depends on
+        commits:
+          type: integer
+          description: Non-merge commits that touched the file, over the whole history
+        recentCommits:
+          type: integer
+          description: Non-merge commits that touched the file in the year before the snapshot commit
+        recentFixCommits:
+          type: integer
+          description: Of the recent commits, those whose subject mentions a fix, bug or revert
+        lineCoverage:
+          type: number
+          format: double
+          description: Covered share of the executable lines, 0..1; absent without coverage data
+        maxCognitiveComplexity:
+          type: integer
+          description: Highest cognitive complexity of any method or constructor
+        findings:
+          type: array
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/HotspotFindingModel'
+
+    HotspotTypeKind:
+      type: string
+      enum:
+        - CLASS
+        - ABSTRACT_CLASS
+        - INTERFACE
+        - ENUM
+        - RECORD
+        - ANNOTATION
+
+    HotspotFindingModel:
+      type: object
+      required: [kind, startLine, endLine, message]
+      properties:
+        kind:
+          $ref: '#/components/schemas/HotspotFindingKind'
+        member:
+          type: string
+          description: Method or constructor signature the finding sits in
+        startLine:
+          type: integer
+        endLine:
+          type: integer
+        message:
+          type: string
+        rule:
+          type: string
+          description: PMD rule or SpotBugs pattern
+        otherFilePath:
+          type: string
+          description: For a clone, the file holding the other copy
+        otherStartLine:
+          type: integer
+        otherEndLine:
+          type: integer
+
+    HotspotFindingKind:
+      type: string
+      enum:
+        - SPOTBUGS
+        - UNCOVERED_METHOD
+        - CPD_CLONE
+        - COMPLEX_METHOD
+        - PMD
 
     MissingAnalysesModel:
       type: object
