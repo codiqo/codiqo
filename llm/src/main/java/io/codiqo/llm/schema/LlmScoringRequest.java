@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import org.apache.commons.collections4.CollectionUtils;
 
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import io.codiqo.api.diff.IneffectiveLineFilter;
 import io.codiqo.api.metrics.DriverScaler;
 import lombok.AllArgsConstructor;
@@ -44,12 +46,20 @@ public class LlmScoringRequest {
     private DuplicationInfo duplication;
     private BuildFailureInfo buildFailure;
 
+    /**
+     * In-process inputs, kept out of the JSON the model receives: the model sees their effect through the
+     * pre-computed scores instead.
+     */
+    @JsonIgnore
     @Builder.Default
     private DriverScaler methodScalerProd = DriverScaler.EMPTY;
+    @JsonIgnore
     @Builder.Default
     private DriverScaler methodScalerTest = DriverScaler.EMPTY;
+    @JsonIgnore
     @Builder.Default
     private DriverScaler constructorScalerProd = DriverScaler.EMPTY;
+    @JsonIgnore
     @Builder.Default
     private DriverScaler constructorScalerTest = DriverScaler.EMPTY;
 
@@ -139,6 +149,8 @@ public class LlmScoringRequest {
         private boolean isConfig;
         private boolean linesJustificationRequired;
 
+        /** In-process input, kept out of the JSON: the model sees its effect as the cleaned diff. */
+        @JsonIgnore
         @Builder.Default
         private IneffectiveLineFilter lineFilter = IneffectiveLineFilter.NONE;
     }
@@ -151,7 +163,6 @@ public class LlmScoringRequest {
         NEW, MODIFY, DELETE
     }
 
-    /** distinguishes NEW code blocks from MODIFIED ones */
     @Data
     @Builder
     @NoArgsConstructor
@@ -167,20 +178,23 @@ public class LlmScoringRequest {
         private String file;
         private int startLine;
         private int endLine;
-        // body block range — line of `{` and `}`. 0 when block has no body (abstract / interface methods)
+        /** Body block range: the lines of `{` and `}`. 0 when the block has no body (abstract / interface methods). */
         private int bodyStartLine;
         private int bodyEndLine;
 
         private int linesAdded;
         private int linesDeleted;
         private int totalLinesChanged;
-        // total physical code lines (signature + body, excluding comments/blanks) in this code block
+        /** Total physical code lines in this block (signature + body), excluding comments and blank lines. */
         private int nonCommentCodeLines;
-        // comment and javadoc lines in this code block
         private int commentLines;
-        // declaration-only physical code lines (signature, parameters, throws, modifiers — everything before `{`). 1 for an abstract / interface method (signature line). When `{` shares a line with the signature it is attributed to the body, not the declaration
+        /**
+         * Declaration-only physical code lines: signature, parameters, throws and modifiers, everything before `{`.
+         * 1 for an abstract / interface method (the signature line). When `{` shares a line with the signature, that
+         * line is attributed to the body, not the declaration.
+         */
         private int declarationCodeLines;
-        // body-only physical code lines (`{` ... `}`, excluding comments/blanks). Used as L in driver score
+        /** Body-only physical code lines (`{` ... `}`, excluding comments and blanks); L in the driver score. */
         private int bodyCodeLines;
 
         private int nonCommentCodeStatements;
@@ -204,7 +218,10 @@ public class LlmScoringRequest {
         @Builder.Default
         private List<CallerInfo> callers = new ArrayList<>();
 
-        // when callers is capped for the prompt, how many entries were omitted; the counts below stay exact
+        /**
+         * How many caller entries were omitted when {@code callers} was capped for the prompt. The caller counts
+         * add these back, so they stay exact even though the list is truncated.
+         */
         private int omittedCallerCount;
         private int omittedProductionCallerCount;
 
@@ -343,7 +360,8 @@ public class LlmScoringRequest {
         private int maxMethodComplexity;
         private double methodComplexityQuantile;
 
-        private int complexityDelta; // Positive = more complex overall
+        /** Positive means the change made the code more complex overall. */
+        private int complexityDelta;
         private int newHighComplexityMethods;
         private int modifiedHighComplexityMethods;
 

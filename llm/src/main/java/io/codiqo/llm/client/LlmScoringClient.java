@@ -31,12 +31,6 @@ import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 import org.apache.commons.lang3.exception.ExceptionUtils;
-import tools.jackson.databind.DeserializationFeature;
-import tools.jackson.databind.MapperFeature;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.PropertyNamingStrategies;
-import tools.jackson.databind.cfg.EnumFeature;
-import tools.jackson.databind.json.JsonMapper;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
@@ -56,7 +50,6 @@ public class LlmScoringClient implements ScoringClient {
     private static final int MAX_TOOL_CALLS = Byte.MAX_VALUE;
     private static final String FINISH_REASON_STOP = "stop";
     private static final String FINISH_REASON_LENGTH = "length";
-    private static final String MARKDOWN_FENCE = "```";
     private static final long RESPONSE_RETRY_BACKOFF_BASE_MS = 1_000L;
     private static final long RESPONSE_RETRY_BACKOFF_MAX_MS = 30_000L;
 
@@ -67,7 +60,6 @@ public class LlmScoringClient implements ScoringClient {
     private final DefaultLlmTokenizers tokenizers;
     private final boolean ownsTokenizers;
     private final FinalScoreCalculator finalScoreCalculator;
-    private final ObjectMapper objectMapper;
     private final OllamaWebSearchClient webSearchClient;
 
     private final String model;
@@ -125,12 +117,6 @@ public class LlmScoringClient implements ScoringClient {
                 validationMaxRetries,
                 enableWebSearch));
 
-        this.objectMapper = JsonMapper.builder()
-                .propertyNamingStrategy(PropertyNamingStrategies.LOWER_CAMEL_CASE)
-                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-                .enable(EnumFeature.READ_UNKNOWN_ENUM_VALUES_AS_NULL)
-                .enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_ENUMS)
-                .build();
     }
     @Override
     public ScoringResult score(ScoringClient.Params params) throws Exception {
@@ -168,10 +154,10 @@ public class LlmScoringClient implements ScoringClient {
             paramsBuilder.maxCompletionTokens(maxTokens.longValue());
         }
         /**
-         * Ollama applies sampling through its native `options` object — num_ctx only takes effect there,
-         * and the merge precedence between a raw `options` body and the OpenAI-derived parameters is undocumented.
-         * Send every sampling knob through `options` so temperature/seed are honored together with num_ctx and scoring is reproducible
-         * (top-level temperature/topP above stay for portability to non-Ollama providers).
+         * Ollama applies sampling through its native {@code options} object: num_ctx only takes effect there, and the
+         * merge precedence between a raw {@code options} body and the OpenAI-derived parameters is undocumented. Every
+         * sampling knob is sent through {@code options} so temperature and seed are honoured together with num_ctx and
+         * scoring is reproducible; the top-level temperature and topP above stay for non-Ollama providers.
          */
         Map<String, Object> options = new LinkedHashMap<>();
         if (Objects.nonNull(numCtx)) {
@@ -256,7 +242,10 @@ public class LlmScoringClient implements ScoringClient {
                             break;
                         }
 
-                        // jackson maps a literal null body to null rather than throwing, so treat it as unusable
+                        /**
+                         * Jackson maps a literal {@code null} body to null rather than throwing, so it is recorded as
+                         * an unusable response and retried; accepting it would hand a null response to scoring.
+                         */
                         lastError = new IOException("LLM returned a null JSON body");
                     } catch (Exception err) {
                         lastError = err;
@@ -301,7 +290,10 @@ public class LlmScoringClient implements ScoringClient {
                         validationAttempt + 1,
                         validationMaxRetries));
 
-                // the feedback critiques the prior response, so it must be in the conversation
+                /**
+                 * The feedback critiques the prior response, so that response is added to the conversation first;
+                 * without it the model receives a critique of an answer it cannot see.
+                 */
                 paramsBuilder.addMessage(ChatCompletionAssistantMessageParam.builder().content(rawContent).build());
                 paramsBuilder.addUserMessage(promptBuilder.buildValidationFeedback(report));
 
@@ -361,7 +353,7 @@ public class LlmScoringClient implements ScoringClient {
     }
     private LlmScoringResponse deserializeResponse(String rawContent) throws Exception {
         try {
-            return objectMapper.readValue(stripMarkdownFences(rawContent), LlmScoringResponse.class);
+            return LlmJson.readAnswer(rawContent, LlmScoringResponse.class);
         } catch (Exception err) {
             log.warn("failed to parse LLM response: " + err.getMessage());
             throw err;
@@ -373,7 +365,7 @@ public class LlmScoringClient implements ScoringClient {
          * WebSearchTool call even when the tool was never offered, and webSearchClient is null in that case
          */
         if (BooleanUtils.and(new boolean[] { enableWebSearch, WebSearchTool.class.getSimpleName().equals(name) })) {
-            WebSearchTool searchTool = objectMapper.readValue(arguments, WebSearchTool.class);
+            WebSearchTool searchTool = LlmJson.readAnswer(arguments, WebSearchTool.class);
             try {
                 return searchTool.apply(webSearchClient);
             } catch (RuntimeException err) {
@@ -427,17 +419,6 @@ public class LlmScoringClient implements ScoringClient {
             return false;
         }
         return Family.familyOf(err.statusCode()) == Family.CLIENT_ERROR;
-    }
-    static String stripMarkdownFences(String raw) {
-        String trimmed = raw.strip();
-        int jsonStart = trimmed.indexOf('{');
-        int jsonEnd = trimmed.lastIndexOf('}');
-        if (trimmed.startsWith(MARKDOWN_FENCE) && trimmed.endsWith(MARKDOWN_FENCE)) {
-            if (jsonStart > 0 && jsonEnd > jsonStart) {
-                trimmed = trimmed.substring(jsonStart, jsonEnd + 1);
-            }
-        }
-        return trimmed;
     }
     private static Integer normalizeNumCtx(Integer numCtx) {
         if (Objects.nonNull(numCtx) && numCtx <= 0) {

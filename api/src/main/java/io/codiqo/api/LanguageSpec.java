@@ -6,7 +6,6 @@ import java.io.IOException;
 import java.util.Collection;
 
 import org.apache.commons.collections4.MultiValuedMap;
-import org.apache.commons.collections4.multimap.ArrayListValuedHashMap;
 
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.ParsedSources;
@@ -17,12 +16,9 @@ import net.sourceforge.pmd.lang.Language;
 public interface LanguageSpec extends Closeable {
     Language lang();
     boolean supportsCpd();
-    default void load() {
-    }
+    default void load() {}
     ParsedSources parse(ProjectSpec owner, Collection<File> files) throws IOException;
-    default MultiValuedMap<File, CodeBlockInfo> parseRemoved(ProjectSpec owner, Collection<PreviousRevision> revisions) throws IOException {
-        return new ArrayListValuedHashMap<>();
-    }
+    MultiValuedMap<File, CodeBlockInfo> parseRemoved(ProjectSpec owner, Collection<PreviousRevision> revisions) throws IOException;
     void captureCoverage(IndexingSummary summary, CommitAnalysis analysis) throws IOException;
     void captureViolations(IndexingSummary summary, CommitAnalysis analysis) throws IOException;
     void captureIncomingCalls(IndexingSummary summary, CommitAnalysis analysis) throws IOException;

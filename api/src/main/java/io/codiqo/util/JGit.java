@@ -2,6 +2,7 @@ package io.codiqo.util;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -15,6 +16,8 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
@@ -60,6 +63,28 @@ public class JGit {
                 .readEnvironment()
                 .findGitDir()
                 .build();
+    }
+    /** the full SHA behind HEAD, a branch, a tag or an abbreviated SHA, so commit IDs compare as plain strings */
+    public static String resolveCommit(Repository repo, String revision) throws IOException {
+        ObjectId toReturn = repo.resolve(revision + "^{commit}");
+        if (Objects.nonNull(toReturn)) {
+            return toReturn.name();
+        }
+        throw new IllegalArgumentException("failed to resolve commit: " + revision);
+    }
+    /**
+     * Copies the source repository's {@code shallow} file into a clone made by fetching from it. A fetch does not carry
+     * the shallow boundary over, so without this file a history walk in the clone of a shallow checkout (a CI clone,
+     * for one) runs past the boundary into parents whose objects were never fetched.
+     */
+    public static void copyShallowBoundary(Repository source, Repository clone) throws IOException {
+        Set<ObjectId> shallow;
+        try (ObjectReader reader = source.newObjectReader()) {
+            shallow = reader.getShallowCommits();
+        }
+        if (CollectionUtils.isNotEmpty(shallow)) {
+            FileUtils.writeLines(new File(clone.getDirectory(), Constants.SHALLOW), StandardCharsets.UTF_8.name(), shallow.stream().map(ObjectId::name).toList(), StringUtils.LF);
+        }
     }
     public static String effectivePath(DiffEntry diff) {
         return effectivePath(diff.getChangeType(), diff.getOldPath(), diff.getNewPath());

@@ -29,6 +29,7 @@ import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -46,8 +47,12 @@ import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.commons.lang3.tuple.Triple;
 import org.apache.commons.lang3.time.StopWatch;
+import org.eclipse.collections.api.set.primitive.MutableLongSet;
+import org.eclipse.collections.impl.set.mutable.primitive.LongHashSet;
 import org.eclipse.lsp4j.SymbolKind;
 import org.jacoco.core.analysis.Analyzer;
 import org.jacoco.core.analysis.CoverageBuilder;
@@ -81,9 +86,11 @@ import io.codiqo.api.LanguageSpec;
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.code.CodeBlockInfo;
+import io.codiqo.api.code.DeclaredType;
 import io.codiqo.api.code.ParsedSources;
 import io.codiqo.api.code.PreviousRevision;
 import io.codiqo.api.code.SourceLocation;
+import io.codiqo.api.code.TypeReference;
 import io.codiqo.api.coverage.CoverageExclusionReason;
 import io.codiqo.api.coverage.ExcludedCoverageClass;
 import io.codiqo.api.diff.CommitAnalysis;
@@ -101,6 +108,7 @@ import net.sourceforge.pmd.PMDConfiguration;
 import net.sourceforge.pmd.PmdAnalysis;
 import net.sourceforge.pmd.lang.JvmLanguagePropertyBundle;
 import net.sourceforge.pmd.lang.Language;
+import net.sourceforge.pmd.internal.util.IOUtil;
 import net.sourceforge.pmd.lang.LanguageProcessorRegistry;
 import net.sourceforge.pmd.lang.LanguagePropertyBundle;
 import net.sourceforge.pmd.lang.LanguageRegistry;
@@ -138,7 +146,10 @@ public class JavaLanguageSpec implements LanguageSpec {
 
     public static final String CLASS_EXTENSION = "class";
 
-    /** each group already runs on its own thread of the parallel stream, so PMD must not fan out again inside it */
+    /**
+     * Each module group already runs on its own thread of the parallel stream, so PMD must not fan out again inside it;
+     * a higher value multiplies the thread count by the number of groups parsed at once.
+     */
     private static final int PMD_THREADS = 1;
 
     private static final String XML_EXTENSION = "xml";
@@ -150,7 +161,10 @@ public class JavaLanguageSpec implements LanguageSpec {
 
     private static final IOFileFilter CLASS_FILE_FILTER = FileFilterUtils.suffixFileFilter(FilenameUtils.EXTENSION_SEPARATOR_STR + CLASS_EXTENSION);
 
-    /** surefire, failsafe and Gradle's junitXml writer all name a JUnit XML report the same way */
+    /**
+     * Surefire, Failsafe and Gradle's junitXml writer all name a JUnit XML report {@code TEST-*.xml}, so one filter
+     * detects an executed test run under either build tool.
+     */
     private static final IOFileFilter JUNIT_REPORT_FILTER = FileFilterUtils.and(
             FileFilterUtils.prefixFileFilter(JUNIT_REPORT_PREFIX),
             FileFilterUtils.suffixFileFilter(FilenameUtils.EXTENSION_SEPARATOR_STR + XML_EXTENSION));
@@ -183,6 +197,13 @@ public class JavaLanguageSpec implements LanguageSpec {
     };
     private final IncomingCallsResolver incomingCallsResolver;
     private final JdtLspProjectImporter jdt;
+    /**
+     * One PMD registry per module, kept open until {@link #close()}. The code blocks returned by parse keep PMD AST nodes,
+     * and those nodes resolve types lazily (metrics such as fan-out, generic signatures, annotation checks) against the
+     * module's classpath loader long after parse returns. Closing the registry at the end of parse makes every later
+     * lookup of a class PMD had not loaded yet fail with "AuxClasspathLoader is closed" or silently come back unresolved.
+     */
+    private final Map<ProjectSpec, LanguageProcessorRegistry> registries = new ConcurrentHashMap<>();
 
     public JavaLanguageSpec(LogFactory logFactory, RunArgs args, Fetch fetch) {
         this.log = logFactory.getLogger(getClass());
@@ -193,9 +214,9 @@ public class JavaLanguageSpec implements LanguageSpec {
     @Override
     public void load() {
         /**
-         * construction stays cheap (no download, no fork) so source-only callers — degraded
-         * build-failure scoring running index()/identifyAffectedSymbols() — never spawn the JDT
-         * language server; only load() downloads and forks it
+         * Construction stays cheap (no download, no fork) so that source-only callers, such as degraded build-failure
+         * scoring running index()/identifyAffectedSymbols(), never spawn the JDT language server. Only load() downloads
+         * and forks it; moving that work into the constructor would fork a language server on every degraded run.
          */
         jdt.load();
     }
@@ -211,47 +232,69 @@ public class JavaLanguageSpec implements LanguageSpec {
     public ParsedSources parse(ProjectSpec owner, Collection<File> files) throws IOException {
         List<CodeBlockInfo> blocks = new ArrayList<>();
         Set<File> parsedFiles = new HashSet<>();
+        List<DeclaredType> types = new ArrayList<>();
+        List<TypeReference> references = new ArrayList<>();
+        boolean readTypeGraph = args.isHotspotsCommit();
 
-        try (LanguageProcessorRegistry processingRegistry = processingRegistry(owner)) {
-            Parser pmd = processingRegistry.getProcessor(language).services().getParser();
-            SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
+        LanguageProcessorRegistry processingRegistry = registries.computeIfAbsent(owner, this::processingRegistry);
+        Parser pmd = processingRegistry.getProcessor(language).services().getParser();
+        SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
 
-            for (File destination : files) {
-                if (FilenameUtils.isExtension(destination.getName(), lang().getExtensions())) {
-                    TextFile text = TextFile.forPath(destination.toPath().normalize(), StandardCharsets.UTF_8, language.getDefaultVersion());
-                    parseFile(owner, destination, text, pmd, errorReporter, processingRegistry, "skipping code unit indexing for this file").ifPresent(parsed -> {
-                        blocks.addAll(parsed);
-                        parsedFiles.add(destination);
-                    });
-                }
+        for (File destination : files) {
+            if (FilenameUtils.isExtension(destination.getName(), lang().getExtensions())) {
+                TextFile text = TextFile.forPath(destination.toPath().normalize(), StandardCharsets.UTF_8, language.getDefaultVersion());
+                boolean test = owner.isTestResource(destination);
+                parseTree(destination, text, pmd, errorReporter, processingRegistry, "skipping code unit indexing for this file", tree -> {
+                    List<CodeBlockInfo> fileBlocks = collectBlocks(owner, destination, tree);
+                    List<DeclaredType> fileTypes = new ArrayList<>();
+                    List<TypeReference> fileReferences = new ArrayList<>();
+                    if (readTypeGraph) {
+                        /**
+                         * Reading the type graph resolves far more types than block collection does, so it fails more
+                         * often; its failure must cost only the hotspot type graph, never the file's code units.
+                         */
+                        try {
+                            JavaTypeGraphReader.read(tree, destination, test, fileTypes, fileReferences);
+                        } catch (RuntimeException err) {
+                            log.warn("PMD failed to read the type graph of %s, its types are left out of the hotspots: %s", destination, ExceptionUtils.getRootCauseMessage(err));
+                            fileTypes.clear();
+                            fileReferences.clear();
+                        }
+                    }
+                    return Triple.of(fileBlocks, fileTypes, fileReferences);
+                }).ifPresent(parsed -> {
+                    blocks.addAll(parsed.getLeft());
+                    types.addAll(parsed.getMiddle());
+                    references.addAll(parsed.getRight());
+                    parsedFiles.add(destination);
+                });
             }
         }
 
-        return new ParsedSources(List.copyOf(blocks), Set.copyOf(parsedFiles));
+        return new ParsedSources(List.copyOf(blocks), Set.copyOf(parsedFiles), List.copyOf(types), List.copyOf(references));
     }
     @Override
     public MultiValuedMap<File, CodeBlockInfo> parseRemoved(ProjectSpec owner, Collection<PreviousRevision> revisions) throws IOException {
         MultiValuedMap<File, CodeBlockInfo> toReturn = new ArrayListValuedHashMap<>();
 
-        try (LanguageProcessorRegistry processingRegistry = processingRegistry(owner)) {
-            Parser pmd = processingRegistry.getProcessor(language).services().getParser();
-            SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
-            String unpaired = "the code units the commit removed from it are not reported";
+        LanguageProcessorRegistry processingRegistry = registries.computeIfAbsent(owner, this::processingRegistry);
+        Parser pmd = processingRegistry.getProcessor(language).services().getParser();
+        SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
+        String unpaired = "the code units the commit removed from it are not reported";
 
-            for (PreviousRevision revision : revisions) {
-                File file = revision.getFile();
-                TextFile now = TextFile.forPath(file.toPath().normalize(), StandardCharsets.UTF_8, language.getDefaultVersion());
-                Optional<Map<String, Declaration>> declaredNow = parseTree(file, now, pmd, errorReporter, processingRegistry, unpaired,
-                        tree -> declaredIdentities(tree, FilenameUtils.getBaseName(file.getName())));
+        for (PreviousRevision revision : revisions) {
+            File file = revision.getFile();
+            TextFile now = TextFile.forPath(file.toPath().normalize(), StandardCharsets.UTF_8, language.getDefaultVersion());
+            Optional<Map<String, Declaration>> declaredNow = parseTree(file, now, pmd, errorReporter, processingRegistry, unpaired,
+                    tree -> declaredIdentities(tree, FilenameUtils.getBaseName(file.getName())));
 
-                if (declaredNow.isPresent()) {
-                    String previousPrimaryType = FilenameUtils.getBaseName(revision.getPath());
-                    TextFile before = TextFile.forCharSeq(revision.getContent(), FileId.fromPath(file.toPath().normalize()), language.getDefaultVersion());
-                    parseTree(file, before, pmd, errorReporter, processingRegistry, "its previous content: " + unpaired,
-                            tree -> Pair.of(collectBlocks(owner, file, tree), declaredIdentities(tree, previousPrimaryType)))
-                            .ifPresent(previous -> removedBlocks(previous.getLeft(), previous.getRight(), declaredNow.get(), previousPrimaryType)
-                                    .forEach(block -> toReturn.put(file, block)));
-                }
+            if (declaredNow.isPresent()) {
+                String previousPrimaryType = FilenameUtils.getBaseName(revision.getPath());
+                TextFile before = TextFile.forCharSeq(revision.getContent(), FileId.fromPath(file.toPath().normalize()), language.getDefaultVersion());
+                parseTree(file, before, pmd, errorReporter, processingRegistry, "its previous content: " + unpaired,
+                        tree -> Pair.of(collectBlocks(owner, file, tree), declaredIdentities(tree, previousPrimaryType)))
+                        .ifPresent(previous -> removedBlocks(previous.getLeft(), previous.getRight(), declaredNow.get(), previousPrimaryType)
+                                .forEach(block -> toReturn.put(file, block)));
             }
         }
 
@@ -302,19 +345,18 @@ public class JavaLanguageSpec implements LanguageSpec {
     }
     @Override
     public void close() throws IOException {
-        jdt.close();
+        List<AutoCloseable> toClose = new ArrayList<>(registries.values());
+        toClose.add(jdt);
+        Exception err = IOUtil.closeAll(toClose);
+        if (Objects.nonNull(err)) {
+            throw new IOException(err);
+        }
     }
-    private Optional<List<CodeBlockInfo>> parseFile(
-            ProjectSpec owner,
-            File destination,
-            TextFile text,
-            Parser pmd,
-            SemanticErrorReporter errorReporter,
-            LanguageProcessorRegistry processingRegistry,
-            String failureConsequence) throws IOException {
-        return parseTree(destination, text, pmd, errorReporter, processingRegistry, failureConsequence, tree -> collectBlocks(owner, destination, tree));
-    }
-    // reader runs inside the crash guard: type resolution is lazy and fails while the tree is read
+    /**
+     * The reader runs inside the crash guard, not after it: PMD resolves types lazily, so a type-inference crash surfaces
+     * while the reader walks the tree rather than during parse. Applying the reader outside the try would let that crash
+     * fail the whole run instead of costing only the offending file.
+     */
     private <T> Optional<T> parseTree(
             File destination,
             TextFile text,
@@ -326,11 +368,11 @@ public class JavaLanguageSpec implements LanguageSpec {
         try (TextFile file = text) {
             try (TextDocument doc = TextDocument.create(file)) {
                 /**
-                 * PMD's type inference can crash on valid code it fails to disambiguate —
-                 * degrade to zero code units for the offending file instead of failing the run.
-                 * PMD 7.27.0 fixed the diamond-anonymous-class trigger (pmd/pmd#4436), but the
-                 * invariant still fires on other input: AbstractAnalyzeMojo in this repository
-                 * trips it on every self-analysis, so the guard is load-bearing, not historical
+                 * PMD's type inference can crash on valid code it fails to disambiguate, so the offending file
+                 * degrades to zero code units instead of failing the run. PMD 7.27.0 fixed the
+                 * diamond-anonymous-class trigger (pmd/pmd#4436), but the invariant still fires on other input:
+                 * AbstractAnalyzeMojo in this repository trips it on every self-analysis, so removing the guard
+                 * breaks codiqo's own analysis.
                  */
                 try {
                     return Optional.of(reader.apply((ASTCompilationUnit) pmd.parse(new ParserTask(doc, errorReporter, processingRegistry))));
@@ -345,10 +387,10 @@ public class JavaLanguageSpec implements LanguageSpec {
         List<CodeBlockInfo> toReturn = new ArrayList<>();
 
         /**
-         * every type declaration, anonymous class and lambda is a find boundary in PMD's Java AST, so
-         * without crossFindBoundaries the traversal stops before it reaches a single method body. KNOWN
-         * GAP: ASTCompactConstructorDeclaration is not an ASTExecutableDeclaration (pmd-java 7.23.0), so
-         * a record's compact constructor indexes as zero code units.
+         * Every type declaration, anonymous class and lambda is a find boundary in PMD's Java AST, so without
+         * crossFindBoundaries the traversal stops before it reaches a single method body. Known gap:
+         * ASTCompactConstructorDeclaration is not an ASTExecutableDeclaration (pmd-java 7.23.0), so a record's compact
+         * constructor indexes as zero code units.
          */
         tree.descendants(ASTExecutableDeclaration.class)
                 .crossFindBoundaries()
@@ -459,8 +501,9 @@ public class JavaLanguageSpec implements LanguageSpec {
                 verifyCoverageNotStale(project, file);
 
                 /**
-                 * aggregated destFile configurations point every module at the same file — load it once.
-                 * the per-module staleness check above still runs for each module.
+                 * An aggregated destFile configuration points every module at the same file, so it is loaded once;
+                 * loading it again would merge the same probes twice. The staleness check above still runs for each
+                 * module.
                  */
                 if (BooleanUtils.negate(loadedExecs.containsKey(file))) {
                     loader.load(file);
@@ -484,8 +527,8 @@ public class JavaLanguageSpec implements LanguageSpec {
     }
     private void verifyCoverageNotStale(ProjectSpec project, File coverage) throws IOException {
         /**
-         * coverage recorded before the module's sources changed describes other code, and no amount of analysis can
-         * tell which — abort rather than report it
+         * Coverage recorded before the module's sources changed describes other code, and no amount of analysis can
+         * tell which lines it still applies to, so the run aborts rather than report misattributed coverage.
          */
         FileTime fileTime = Files.readAttributes(coverage.toPath(), BasicFileAttributes.class).lastModifiedTime();
         Optional<Date> lm = project.latestModified();
@@ -525,8 +568,9 @@ public class JavaLanguageSpec implements LanguageSpec {
                 continue;
             }
             /**
-             * a code generator or a fixtures module no test ever touches would otherwise fold into the totals at
-             * a confident 0% and dilute the figure for the code actually under test
+             * A module none of whose classes appear in any loaded exec is skipped: a code generator or a fixtures module
+             * no test ever touches would otherwise fold into the totals at a confident 0% and dilute the figure for the
+             * code actually under test.
              */
             Optional<Date> exercisedAt = newestExecContaining(loadedExecs, compiledClassNames(project.getOutputDirectory()));
             if (exercisedAt.isEmpty()) {
@@ -534,8 +578,8 @@ public class JavaLanguageSpec implements LanguageSpec {
                 continue;
             }
             /**
-             * the staleness guard the owning-module branch applies to its own exec file, applied here against the
-             * newest exec that actually carries this module's classes. the newest exec overall is the wrong
+             * The staleness guard the owning-module branch applies to its own exec file, applied here against the
+             * newest exec that actually carries this module's classes. The newest exec overall is the wrong
              * comparison: a fresh run of an unrelated module would vouch for probes that were recorded before this
              * module's sources changed, and those probes describe other code.
              */
@@ -571,10 +615,10 @@ public class JavaLanguageSpec implements LanguageSpec {
         int coveredLines = 0;
 
         /**
-         * line totals dedupe by class id and packages by name so identical copies of a class across modules are not
-         * double-counted
+         * Line totals dedupe by class id and packages by name, because each module has its own builder and identical
+         * copies of a class across modules would otherwise be double-counted.
          */
-        Set<Long> countedClassIds = new HashSet<>();
+        MutableLongSet countedClassIds = new LongHashSet();
         Set<String> countedPackages = new HashSet<>();
 
         for (ProjectSpec project : coveredProjects) {
@@ -923,11 +967,11 @@ public class JavaLanguageSpec implements LanguageSpec {
     }
     static boolean expectsCoverage(ProjectSpec project) throws IOException {
         /**
-         * a module "expects" coverage only when its test run actually happened: compiled main classes AND at least one
-         * JUnit XML report in a directory the build tool named for it. a pom aggregator, a code-less module, or a module
+         * A module expects coverage only when its test run actually happened: compiled main classes and at least one
+         * JUnit XML report in a directory the build tool named for it. A pom aggregator, a code-less module, or a module
          * whose only src/test sources are main()-style helpers (dev-server starters, migration generators) with no
-         * @Test methods runs no tests, forks no JVM, and legitimately produces no exec file — so it must not be
-         * flagged. keying on executed reports still catches the real regression: tests ran (reports present) but the
+         * {@code @Test} methods runs no tests, forks no JVM, and legitimately produces no exec file, so it must not be
+         * flagged. Keying on executed reports still catches the real regression: tests ran (reports present) but the
          * agent never attached (no exec file).
          */
         if (project instanceof JvmProjectSpec jvm) {
@@ -983,8 +1027,9 @@ public class JavaLanguageSpec implements LanguageSpec {
         }
     }
     /**
-     * leftovers of exact pairing are edits, not removals, when a later stage finds exactly one candidate on each side;
-     * an ambiguous overload stays a removal rather than being guessed at
+     * Declarations left over after exact pairing are edits, not removals, when a later stage finds exactly one candidate
+     * on each side. An ambiguous overload stays a removal rather than being guessed at, because pairing it with the
+     * wrong counterpart would attribute one method's change to another.
      */
     private static List<CodeBlockInfo> removedBlocks(List<CodeBlockInfo> blocks, Map<String, Declaration> before, Map<String, Declaration> now, String previousPrimaryType) {
         Set<Declaration> leftoverBefore = before.values().stream().filter(not(declaration -> now.containsKey(declaration.getExact()))).collect(Collectors.toCollection(HashSet::new));
@@ -1215,11 +1260,16 @@ public class JavaLanguageSpec implements LanguageSpec {
         return files.stream().map(File::getAbsolutePath).toList();
     }
 
-    /** one loaded exec file and the class names it holds records for */
-    @Value
-    static class LoadedExec {
-        File file;
-        Set<String> classNames;
+    static final class LoadedExec extends ImmutablePair<File, Set<String>> {
+        public LoadedExec(File file, Set<String> classNames) {
+            super(file, classNames);
+        }
+        public File getFile() {
+            return getLeft();
+        }
+        public Set<String> getClassNames() {
+            return getRight();
+        }
     }
 
     @Value

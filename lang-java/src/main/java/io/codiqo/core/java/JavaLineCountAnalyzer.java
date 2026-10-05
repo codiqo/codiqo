@@ -7,6 +7,7 @@ import java.util.Optional;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 
 import lombok.Value;
 import lombok.experimental.UtilityClass;
@@ -31,7 +32,10 @@ public class JavaLineCountAnalyzer {
         int nodeEndCol = endLoc.getEndColumn();
         List<CommentSpan> spans = collectContainedComments(root, nodeBeginLine, nodeBeginCol, nodeEndLine, nodeEndCol);
 
-        // abstract and interface declarations have no body, so every body-relative bound falls back
+        /**
+         * Abstract and interface method declarations have no body, so every body bound falls back to 0 and the
+         * declaration is taken to end where the node ends.
+         */
         Optional<BodyRange> body = bodyRange(node);
         int bodyStartLine = body.map(range -> range.startLine).orElse(0);
         int bodyEndLine = body.map(range -> range.endLine).orElse(0);
@@ -52,10 +56,10 @@ public class JavaLineCountAnalyzer {
             String lineText = readLine(doc, line);
 
             LineClassification classification = classifyLine(lineText, line, effStart, effEnd, spans);
-            if (classification.hasCode) {
+            if (classification.hasCode()) {
                 codeLines++;
             }
-            if (classification.hasComment) {
+            if (classification.hasComment()) {
                 commentLines++;
             }
 
@@ -64,7 +68,7 @@ public class JavaLineCountAnalyzer {
                 int declEffEnd = line == declEndLine ? declEndColExclusive : Integer.MAX_VALUE;
                 if (declEffStart < declEffEnd) {
                     LineClassification declClassification = classifyLine(lineText, line, declEffStart, declEffEnd, spans);
-                    if (declClassification.hasCode) {
+                    if (declClassification.hasCode()) {
                         declarationCodeLines++;
                     }
                 }
@@ -74,10 +78,10 @@ public class JavaLineCountAnalyzer {
                 int bodyEffStart = line == bodyStartLine ? bodyStartCol : 1;
                 int bodyEffEnd = line == bodyEndLine ? bodyEndCol : Integer.MAX_VALUE;
                 LineClassification bodyClassification = classifyLine(lineText, line, bodyEffStart, bodyEffEnd, spans);
-                if (bodyClassification.hasCode) {
+                if (bodyClassification.hasCode()) {
                     bodyCodeLines++;
                 }
-                if (bodyClassification.hasComment) {
+                if (bodyClassification.hasComment()) {
                     bodyCommentLines++;
                 }
             }
@@ -192,10 +196,16 @@ public class JavaLineCountAnalyzer {
         int endLine;
         int endCol;
     }
-    @Value
-    private static class LineClassification {
-        boolean hasCode;
-        boolean hasComment;
+    private static final class LineClassification extends ImmutablePair<Boolean, Boolean> {
+        public LineClassification(boolean hasCode, boolean hasComment) {
+            super(hasCode, hasComment);
+        }
+        public boolean hasCode() {
+            return getLeft();
+        }
+        public boolean hasComment() {
+            return getRight();
+        }
     }
     @Value
     private static class BodyRange {

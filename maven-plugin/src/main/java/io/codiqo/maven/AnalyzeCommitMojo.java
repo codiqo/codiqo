@@ -32,6 +32,7 @@ import org.apache.commons.lang3.CharUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.time.StopWatch;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
@@ -60,7 +61,6 @@ import io.codiqo.submit.CommitExclusions;
 import io.codiqo.submit.CommitExclusions.Exclusion;
 import io.codiqo.util.JGit;
 import io.codiqo.util.MemoryReport;
-import lombok.Value;
 
 @Mojo(name = "analyze-commit",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
@@ -68,8 +68,10 @@ import lombok.Value;
         aggregator = true)
 public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     /**
-     * back-off ladder mirroring how stale a developer's local snapshot copy may have been (Maven's default
-     * updatePolicy is daily): each rung steps the resolution target further back from the commit instant
+     * Back-off ladder mirroring how stale a developer's local snapshot copy may have been when the commit was built:
+     * Maven's default updatePolicy is daily, so the snapshot the author compiled against can be up to a day older than
+     * the commit. Each rung steps the snapshot resolution target further back from the commit instant, so a commit
+     * that only compiled against such a stale copy still finds the snapshot it was built with.
      */
     private static final List<Duration> TIME_MACHINE_BACKOFF_LADDER = List.of(
             Duration.ZERO,
@@ -81,12 +83,14 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     private static final String BUILD_ELEMENT = "build";
     private static final String DIRECTORY_ELEMENT_NAME = "directory";
     private static final Set<String> RESOURCE_ELEMENTS = Set.of("resource", "testResource");
-    /** a pom under one of these is a test fixture or build output, never a reactor module */
     private static final Set<String> NON_MODULE_PATH_SEGMENTS = Set.of("src", "target");
     private static final String DISALLOW_DOCTYPE_DECL = "http://apache.org/xml/features/disallow-doctype-decl";
     /** In-module and deliberately absent, so maven copies nothing from it and m2e maps it without complaint. */
     private static final String NEUTRALISED_RESOURCE_DIR = "target/codiqo-out-of-module-resources";
-    /** attribute-tolerant so a {@code <directory>} carrying e.g. {@code xml:space} is still seen */
+    /**
+     * Attribute-tolerant, so a {@code <directory>} carrying an attribute such as {@code xml:space} is still matched;
+     * a pattern for the bare element would leave that directory escaping the module.
+     */
     private static final Pattern DIRECTORY_ELEMENT = Pattern.compile("(<directory[^>]*>)([^<]*)(</directory>)");
     /**
      * per-attempt excerpt of the structured failure detail kept in the exclusion history — enough to carry the
@@ -105,9 +109,14 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     protected void doPrepare(RunArgs args) throws Exception {
         super.doPrepare(args);
 
-        args.setCommitId(commitId);
-        args.setFirstParentOnly(firstParentOnly);
         requireResolvableCommit(args, commitId);
+        args.setCommitId(JGit.resolveCommit(args.getGit(), commitId));
+        args.setFirstParentOnly(firstParentOnly);
+        /**
+         * Resolved here, against the user's repository: once the clone checks the analyzed commit out, HEAD means that
+         * commit itself, so resolving later would rank hotspots at the analyzed commit instead of the run's tip.
+         */
+        args.setHotspotsCommitId(JGit.resolveCommit(args.getGit(), StringUtils.defaultIfBlank(args.getHotspotsCommitId(), Constants.HEAD)));
     }
     @Override
     protected void doExecute(RunArgs args) throws Exception {
@@ -125,7 +134,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
         File temp = Files.createTempDirectory("codiqo").toFile();
         temp.deleteOnExit();
 
-        // clone to a temporary location, so the user's working directory is untouched and uncommitted files are excluded
+        /** The clone keeps the user's working directory untouched and keeps uncommitted files out of the analysis. */
         StopWatch stopWatch = StopWatch.createStarted();
         StoredConfig originalConfig = args.getGit().getConfig();
         args.setDefaultBranch(args.getGit().getBranch());
@@ -147,6 +156,8 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                     .call();
         }
 
+        JGit.copyShallowBoundary(args.getGit(), clone);
+
         RefUpdate headUpdate = clone.updateRef(Constants.HEAD, true);
         headUpdate.setNewObjectId(sourceHead);
         headUpdate.forceUpdate();
@@ -154,7 +165,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
         stopWatch.stop();
         getLog().info(String.format("cloned directory: %s for analysis in %s", temp.getAbsolutePath(), stopWatch.toString()));
 
-        // the clone needs the original remote URLs so relative URLs still resolve during the build
+        /** The clone needs the original remote URLs, or relative URLs in the build no longer resolve. */
         StoredConfig cloneConfig = clone.getConfig();
         try {
             for (String remote : originalConfig.getSubsections("remote")) {
@@ -173,7 +184,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
         }
 
         try {
-            // check the commit out exactly as it was: the clone is clean, with nothing untracked
+            /** Clean and hard reset first, so the commit is checked out exactly as it was, with nothing untracked. */
             args.setGit(clone);
             try (Git git = Git.wrap(clone)) {
                 git.clean().setCleanDirectories(true).setForce(true).call();
@@ -504,9 +515,15 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
         toReturn.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, StringUtils.EMPTY);
         return toReturn;
     }
-    @Value
-    private static class ResourceDirScan {
-        Set<String> rewritable;
-        Charset charset;
+    private static final class ResourceDirScan extends ImmutablePair<Set<String>, Charset> {
+        public ResourceDirScan(Set<String> rewritable, Charset charset) {
+            super(rewritable, charset);
+        }
+        public Set<String> getRewritable() {
+            return getLeft();
+        }
+        public Charset getCharset() {
+            return getRight();
+        }
     }
 }

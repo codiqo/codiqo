@@ -8,6 +8,7 @@ import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import lombok.Builder;
 import lombok.Value;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 
 public interface PromptBuilder {
     String buildSystemPrompt(PromptContext context);
@@ -28,8 +29,11 @@ public interface PromptBuilder {
         @Builder.Default
         int tagsVocabularyCap = 30;
 
-        // assembled by ConventionGuidance outside the prompt builder: reading it can fail the analysis, and
-        // a builder constructor is not a safe place to throw from — it sits inside a try-with-resources head
+        /**
+         * Assembled by ConventionGuidance outside the prompt builder and passed in as text. Reading it can fail the
+         * analysis, and a builder constructor is not a safe place to throw from because it sits inside a
+         * try-with-resources head.
+         */
         @Builder.Default
         String conventionGuidance = "";
 
@@ -55,10 +59,16 @@ public interface PromptBuilder {
         }
     }
 
-    @Value
-    class UserMessageResult {
-        String message;
-        PreComputedScores preComputedScores;
+    final class UserMessageResult extends ImmutablePair<String, PreComputedScores> {
+        public UserMessageResult(String message, PreComputedScores preComputedScores) {
+            super(message, preComputedScores);
+        }
+        public String getMessage() {
+            return getLeft();
+        }
+        public PreComputedScores getPreComputedScores() {
+            return getRight();
+        }
     }
 
     @Value

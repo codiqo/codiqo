@@ -10,4 +10,6 @@ import lombok.Value;
 public class ParsedSources {
     List<CodeBlockInfo> blocks;
     Set<File> parsedFiles;
+    List<DeclaredType> types;
+    List<TypeReference> references;
 }

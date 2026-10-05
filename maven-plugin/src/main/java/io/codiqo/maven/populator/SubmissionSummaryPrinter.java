@@ -22,6 +22,7 @@ import lombok.experimental.Accessors;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.math3.util.Precision;
 import org.apache.maven.plugin.logging.Log;
 import org.eclipse.lsp4j.SymbolKind;
@@ -526,12 +527,16 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         }
     }
 
-    @Value
-    @Accessors(fluent = true)
-    @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
-    private static final class RowBundle {
-        List<BlockRow> nonTrivial;
-        List<BlockRow> trivial;
+    private static final class RowBundle extends ImmutablePair<List<BlockRow>, List<BlockRow>> {
+        private RowBundle(List<BlockRow> nonTrivial, List<BlockRow> trivial) {
+            super(nonTrivial, trivial);
+        }
+        public List<BlockRow> nonTrivial() {
+            return getLeft();
+        }
+        public List<BlockRow> trivial() {
+            return getRight();
+        }
     }
 
     @Value

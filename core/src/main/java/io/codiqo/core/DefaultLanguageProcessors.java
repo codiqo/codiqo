@@ -28,10 +28,12 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
@@ -42,6 +44,7 @@ import org.apache.commons.collections4.multimap.HashSetValuedHashMap;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.apache.commons.lang3.function.FailableFunction;
 import org.apache.commons.lang3.time.StopWatch;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
@@ -57,9 +60,11 @@ import io.codiqo.api.LanguageSpec;
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.code.CodeBlockInfo;
+import io.codiqo.api.code.DeclaredType;
 import io.codiqo.api.code.ParsedSources;
 import io.codiqo.api.code.PreviousRevision;
 import io.codiqo.api.code.SourceLocation;
+import io.codiqo.api.code.TypeReference;
 import io.codiqo.api.cpd.DuplicationMatch;
 import io.codiqo.api.cpd.PMDCopyPasteDetectionSummary;
 import io.codiqo.api.cpd.PmdDuplicationMark;
@@ -90,8 +95,8 @@ import net.sourceforge.pmd.lang.document.FileId;
 
 public class DefaultLanguageProcessors implements LanguageProcessors {
     /**
-     * the CPD retry batch, never the first attempt. Sized under the smallest set observed to poison PMD's shared
-     * lexer (micronaut-core's 5033 files crashed; 2000 passed), with headroom: the threshold is a property of the
+     * The CPD retry batch, never the first attempt. Sized under the smallest set observed to poison PMD's shared
+     * lexer (micronaut-core's 5033 files crashed; 2000 passed), with head room: the threshold is a property of the
      * file sequence, not of a count.
      */
     private static final int CPD_RETRY_BATCH_SIZE = 1000;
@@ -156,6 +161,8 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
             }
         };
         Set<File> parsedFiles = ConcurrentHashMap.newKeySet();
+        Queue<DeclaredType> types = new ConcurrentLinkedQueue<>();
+        Queue<TypeReference> references = new ConcurrentLinkedQueue<>();
         List<Path> totalFiles = new ArrayList<>();
         List<Path> ignoredFiles = new ArrayList<>();
         List<Path> excludedFiles = new ArrayList<>();
@@ -312,6 +319,8 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                         try {
                             ParsedSources parsed = processor.parse(group.getKey(), matching);
                             parsedFiles.addAll(parsed.getParsedFiles());
+                            types.addAll(parsed.getTypes());
+                            references.addAll(parsed.getReferences());
                             parsed.getBlocks().forEach(block -> {
                                 synchronized (blocks) {
                                     blocks.put(block.getFile(), block);
@@ -331,7 +340,10 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                 }
             }));
             if (CollectionUtils.isNotEmpty(orphans)) {
-                // error, not warn: an orphan means module ownership is broken, which drops those files from per-module metrics
+                /**
+                 * Logged as an error, not a warning: an orphan means module ownership is broken, and those files then
+                 * drop out of every per-module metric without any other signal.
+                 */
                 log.error("could not determine owner for %d orphan files, first %d: %s",
                         orphans.size(),
                         Math.min(orphans.size(), ORPHAN_SAMPLE_SIZE),
@@ -366,6 +378,8 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                     .projects(args.getProjects())
                     .blocks(blocks)
                     .parsedFiles(Set.copyOf(parsedFiles))
+                    .types(new ArrayList<>(types))
+                    .references(new ArrayList<>(references))
                     .totalFiles(totalFiles)
                     .skippedFiles(skippedFiles)
                     .ignoredFiles(ignoredFiles)
@@ -420,7 +434,11 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                             }
                         }
 
-                        // an unparsed file has no blocks either, which is no proof that its methods are gone
+                        /**
+                         * Only parsed files become removal candidates. A file PMD could not parse has no blocks
+                         * either, which is no proof that its methods are gone; treating it as parsed would report its
+                         * removed lines against methods that may still exist.
+                         */
                         if (summary.getParsedFiles().contains(gitAnalysis.getFile())) {
                             Set<Integer> removedLines = removedLines(gitAnalysis);
                             if (CollectionUtils.isNotEmpty(removedLines)) {
@@ -506,15 +524,18 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         MemoryReport.retained(summary, analysis).ifPresent(size -> log.info("memory (%s) retained(index+analysis)=%s", stage, size));
     }
     /**
-     * the index a build-failed commit is scored from: a pure source (PMD) pass with no {@code load()}, so the JDT
+     * The index a build-failed commit is scored from: a pure source (PMD) pass with no {@code load()}, so the JDT
      * language server is never started for a commit whose build produced no classes. Shared by both plugins so a
      * copy cannot quietly reintroduce the {@code load()} this path exists to avoid.
+     *
+     * <p>The reader runs before the processors close, because the index's blocks resolve types lazily against the
+     * processors' loaders; reading the index after the try block would resolve against closed loaders.
      */
-    public static IndexingSummary sourceOnlyIndex(RunArgs args, CommitAnalysis analysis, LogFactory logFactory) throws IOException {
+    public static <T> T sourceOnlyIndex(RunArgs args, CommitAnalysis analysis, LogFactory logFactory, FailableFunction<IndexingSummary, T, Exception> reader) throws Exception {
         try (Fetch fetch = new Fetch(args); LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, args, fetch)) {
             IndexingSummary index = registry.index(analysis);
             registry.identifyAffectedSymbols(index, analysis);
-            return index;
+            return reader.apply(index);
         }
     }
     @Override
@@ -602,7 +623,8 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                                     .collect(Collectors.toMap(it -> Paths.get(it.getKey().getAbsolutePath()).toFile(), it -> it.getValue())),
                             matches,
                             summary,
-                            analysis);
+                            analysis,
+                            args.isHotspotsCommit());
                     /**
                      * registered last, after everything that could still throw: a failure here falls into the batched
                      * retry, and a summary already published would be counted again by its own batches

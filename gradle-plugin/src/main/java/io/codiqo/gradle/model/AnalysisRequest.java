@@ -29,7 +29,8 @@ public class AnalysisRequest implements Serializable {
     private String buildProgressFile;
 
     /**
-     * set by the task, not the collector: codiqoDumpAnalysis and codiqoSubmitAnalysis share one collected model.
+     * Set by the task, not the collector: codiqoDumpAnalysis and codiqoSubmitAnalysis share one collected model, so
+     * the collector cannot know which of them will run.
      */
     private boolean submit;
     private String apiUrl;
@@ -38,7 +39,7 @@ public class AnalysisRequest implements Serializable {
     private long readTimeoutSeconds;
 
     /**
-     * set by the task from the build-failure recorder: it is only known once the build has run.
+     * Set by the task from the build-failure recorder, because it is only known once the build has run.
      */
     private String buildFailureDetail;
     private boolean skipOnBuildFailure = true;
@@ -56,6 +57,8 @@ public class AnalysisRequest implements Serializable {
     private String excludePaths;
     private boolean ignoreDiagnostics;
     private boolean ignoreComplexity;
+    private boolean hotspots = true;
+    private String hotspotsCommitId;
     private boolean failOnJdtlsError;
     private boolean failOnUninstrumentedModule = true;
 

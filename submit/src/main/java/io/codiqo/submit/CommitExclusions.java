@@ -7,6 +7,7 @@ import java.util.Optional;
 
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -17,7 +18,6 @@ import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.lang.config.ConfigFiles;
 import io.codiqo.util.JGit;
-import lombok.Value;
 import lombok.experimental.UtilityClass;
 
 /**
@@ -30,7 +30,7 @@ import lombok.experimental.UtilityClass;
 @UtilityClass
 public class CommitExclusions {
     /**
-     * gates that need only the commit and the run configuration, so they run before the clone/build/analysis pipeline.
+     * Gates that need only the commit and the run configuration, so they run before the clone/build/analysis pipeline.
      */
     public static Optional<Exclusion> beforeAnalysis(RunArgs args) throws IOException {
         if (JGit.isMerge(args.getGit(), args.getCommitId())) {
@@ -45,12 +45,15 @@ public class CommitExclusions {
         return Optional.empty();
     }
     /**
-     * gates that need the computed delta: whether the delta could be computed at all, whether anything in the diff is
+     * Gates that need the computed delta: whether the delta could be computed at all, whether anything in the diff is
      * analysable, and whether the commit survives the include-rules. The caller still submits diff-only file models
      * for an excluded commit, so the backend records what changed even though nothing was scored.
      */
     public static Optional<Exclusion> afterDelta(RunArgs args, CommitAnalysis analysis, Collection<String> extensions, Collection<String> changedFiles) {
-        // first: the delta could not be computed at all, so a later gate would blame the language registry for the empty file list
+        /**
+         * Checked first: when the delta could not be computed at all, the changed-file list is empty, and the
+         * analysable-file gate below would misreport the commit as having no files of a registered language.
+         */
         if (analysis.isHistoryIncomplete()) {
             return Optional.of(new Exclusion(
                     String.format("commit %s sits on a shallow-clone boundary, so its parent is not present locally and its delta cannot be computed"
@@ -105,7 +108,10 @@ public class CommitExclusions {
                 if (JGit.mergeSideCommits(args.getGit(), merge).isEmpty()) {
                     return Optional.of("merge introduces no side-branch commits");
                 }
-                // a multi-author side branch is analysed and credited to whoever dominates it
+                /**
+                 * A multi-author side branch is not skipped: it is analysed and credited to whoever dominates it
+                 * ({@link JGit#mergeSideCreditedAuthor}).
+                 */
                 return Optional.empty();
             }
         }
@@ -135,9 +141,15 @@ public class CommitExclusions {
             return commit.getAuthorIdent().getEmailAddress();
         }
     }
-    @Value
-    public static class Exclusion {
-        String reason;
-        AnalysisExcludeCategory category;
+    public static final class Exclusion extends ImmutablePair<String, AnalysisExcludeCategory> {
+        public Exclusion(String reason, AnalysisExcludeCategory category) {
+            super(reason, category);
+        }
+        public String getReason() {
+            return getLeft();
+        }
+        public AnalysisExcludeCategory getCategory() {
+            return getRight();
+        }
     }
 }

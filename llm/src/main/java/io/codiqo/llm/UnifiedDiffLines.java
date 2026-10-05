@@ -13,11 +13,11 @@ import java.util.ArrayList;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.tuple.ImmutableTriple;
 
 
 import io.codiqo.api.diff.IneffectiveLineFilter;
 import lombok.Getter;
-import lombok.Value;
 
 /**
  * Single-pass walker over a per-file unified diff. Tracks old- and new-file line counters from
@@ -37,7 +37,7 @@ import lombok.Value;
  * in diff order; a run with no effective line gets no block,</li>
  * <li>{@link #getAnnotated()} — the diff with each candidate line prefixed
  * {@code -<old>|B<n>|content} / {@code +<new>|B<n>|content} (filtered {@code ±} lines keep the
- * Phase-1 {@code -<old>|content} form without a block tag), so the LLM copies coordinates and
+ * {@code -<old>|content} form without a block tag), so the LLM copies coordinates and
  * block ids instead of deriving them.</li>
  * </ul>
  */
@@ -57,9 +57,10 @@ public final class UnifiedDiffLines {
     private final Map<Integer, String> candidateAddedContent = new TreeMap<>();
     private final Map<Integer, String> candidateDeletedContent = new TreeMap<>();
     /**
-     * old-file line -> new-file anchor (the next surviving line, i.e. the newLine counter which
-     * does not advance on deletions) — the same coordinate EffectiveLineParser anchors deleted
-     * lines to when billing them to a code unit's new-file span
+     * Maps an old-file line to its new-file anchor: the next surviving line, that is the newLine
+     * counter, which does not advance on deletions. This is the same coordinate EffectiveLineParser
+     * anchors deleted lines to when billing them to a code unit's new-file span; a different anchor
+     * would attribute moved-out invocations to a block that was never billed for them.
      */
     private final Map<Integer, Integer> candidateDeletedAnchor = new TreeMap<>();
     private final List<ChangeBlock> blocks = new ArrayList<>();
@@ -74,7 +75,7 @@ public final class UnifiedDiffLines {
         boolean inHunk = false;
         List<Integer> runDeleted = new ArrayList<>();
         List<Integer> runAdded = new ArrayList<>();
-        // -1 limit keeps trailing empty strings so the annotated text round-trips exactly
+        /** The -1 limit keeps trailing empty strings so the annotated text round-trips the diff exactly. */
         String[] lines = diff.split(StringUtils.LF, -1);
         for (int i = 0; i < lines.length; i++) {
             String raw = lines[i];
@@ -93,7 +94,7 @@ public final class UnifiedDiffLines {
             }
 
             /**
-             * file headers before the first @@ and "\ No newline at end of file" markers are
+             * File headers before the first @@ and "\ No newline at end of file" markers are
              * metadata: they advance neither counter. A "\" marker can sit between the deleted
              * and added halves of one logical block, so it must not close the run either.
              */
@@ -159,10 +160,18 @@ public final class UnifiedDiffLines {
         return BooleanUtils.negate(skip);
     }
 
-    @Value
-    public static class ChangeBlock {
-        String id;
-        List<Integer> deletedLines;
-        List<Integer> addedLines;
+    public static final class ChangeBlock extends ImmutableTriple<String, List<Integer>, List<Integer>> {
+        public ChangeBlock(String id, List<Integer> deletedLines, List<Integer> addedLines) {
+            super(id, deletedLines, addedLines);
+        }
+        public String getId() {
+            return getLeft();
+        }
+        public List<Integer> getDeletedLines() {
+            return getMiddle();
+        }
+        public List<Integer> getAddedLines() {
+            return getRight();
+        }
     }
 }

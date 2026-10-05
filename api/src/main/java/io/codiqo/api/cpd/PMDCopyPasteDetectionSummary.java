@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collection;
 import java.util.Map;
@@ -12,6 +13,7 @@ import java.util.Set;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 
 import org.apache.commons.lang3.CharUtils;
 
@@ -30,6 +32,7 @@ public class PMDCopyPasteDetectionSummary implements CopyPasteDetectionSummary {
     private final Map<CodeBlockInfo, Set<CodeBlockInfo>> copyPasteFrom = new LinkedHashMap<>();
     private final Set<Set<CodeBlockInfo>> copyPasteNew = new LinkedHashSet<>();
     private final Set<DuplicationMatch> affected = new LinkedHashSet<>();
+    private final List<CloneLocations> clones;
     private final Map<File, Integer> tokensPerFile;
     private static final int READ_BUFFER_BYTES = 64 * 1024;
 
@@ -40,11 +43,20 @@ public class PMDCopyPasteDetectionSummary implements CopyPasteDetectionSummary {
             Map<File, Integer> tokensPerFile,
             Set<DuplicationMatch> matches,
             IndexingSummary summary,
-            CommitAnalysis analysis) {
+            CommitAnalysis analysis,
+            boolean keepClones) {
         this.tokensPerFile = Objects.requireNonNull(tokensPerFile);
 
+        List<CloneLocations> kept = List.of();
+        if (keepClones) {
+            kept = matches.stream()
+                    .map(match -> new CloneLocations(match.getLineCount(), match.getTokenCount(), spans(match)))
+                    .toList();
+        }
+        this.clones = kept;
+
         /**
-         * measured over every match, before the commit filter below narrows the set: a duplication density describes
+         * Measured over every match, before the commit filter below narrows the set: a duplication density describes
          * the codebase, so both of its sides have to be drawn from everything the detector read.
          */
         this.duplicatedLines = countDuplicatedLines(matches);
@@ -110,6 +122,13 @@ public class PMDCopyPasteDetectionSummary implements CopyPasteDetectionSummary {
                 }
             }
         });
+    }
+    static List<CloneLocations.Span> spans(DuplicationMatch match) {
+        List<CloneLocations.Span> toReturn = new ArrayList<>();
+        for (DuplicateMark mark : match) {
+            toReturn.add(new CloneLocations.Span(mark.getFile(), mark.getLocation().getStartLine(), mark.getLocation().getEndLine()));
+        }
+        return toReturn;
     }
     static int countDuplicatedLines(Set<DuplicationMatch> matches) {
         Map<File, BitSet> linesByFile = new HashMap<>();

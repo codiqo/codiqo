@@ -15,23 +15,19 @@ import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.thymeleaf.context.Context;
 
-import com.fasterxml.jackson.annotation.JsonInclude.Include;
-import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.SerializationFeature;
-import tools.jackson.databind.json.JsonMapper;
-import tools.jackson.databind.util.StdDateFormat;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
+import io.codiqo.llm.client.LlmJson;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import lombok.Builder;
 import lombok.Data;
 import lombok.SneakyThrows;
-import lombok.Value;
 
 public class ThymeleafPromptBuilder implements PromptBuilder {
     private static final String TEMPLATE_SYSTEM_PROMPT = "system-prompt";
@@ -40,13 +36,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private static final String TEMPLATE_PRE_COMPUTED_SCORES = "pre-computed-scores";
     private static final String TEMPLATE_VALIDATION_FEEDBACK = "validation-feedback";
 
-    private static final ObjectMapper MAPPER = JsonMapper.builder()
-            .defaultDateFormat(new StdDateFormat().withColonInTimeZone(true))
-            .changeDefaultPropertyInclusion(incl -> incl.withValueInclusion(Include.NON_NULL))
-            .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
-            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-            .enable(SerializationFeature.INDENT_OUTPUT)
-            .build();
+    private static final ObjectMapper MAPPER = LlmJson.requestMapper();
 
     private final Log log;
     private final VolumeScoreCalculator volumeCalculator;
@@ -170,7 +160,10 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         String requestJson = MAPPER.writeValueAsString(request);
 
         String model = args.getLlmModel();
-        // convention guidance shares the user message with the request JSON, so it comes out of the same budget
+        /**
+         * Convention guidance (reservedTokens) shares the user message with the request JSON, so it comes out of the
+         * same budget; leaving it out would let the combined message exceed the model's window.
+         */
         int budget = Math.max(0, effectivePromptTokenBudget(args) - reservedTokens);
         int tokens = estimateTokens(model, requestJson);
         if (tokens > budget) {
@@ -203,7 +196,10 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     }
     private static int effectivePromptTokenBudget(RunArgs args) {
         int numCtx = Optional.ofNullable(args.getLlmNumCtx()).orElse(RunArgs.DEFAULT_NUM_CTX);
-        // a window at or below the reserve cannot fit any request; clamp to 0 so callers are fully trimmed rather than leaving a negative budget
+        /**
+         * A window at or below the reserve cannot fit any request. It is clamped to 0 so callers are fully trimmed,
+         * rather than leaving a negative budget.
+         */
         int window = Math.max(0, numCtx - RunArgs.PROMPT_TOKEN_RESERVE);
         return Optional.ofNullable(args.getLlmPromptTokenBudget()).map(cap -> Math.min(cap, window)).orElse(window);
     }
@@ -392,9 +388,15 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         int linesChanged;
     }
 
-    @Value
-    private static class BudgetedRequest {
-        String json;
-        int tokens;
+    private static final class BudgetedRequest extends ImmutablePair<String, Integer> {
+        public BudgetedRequest(String json, int tokens) {
+            super(json, tokens);
+        }
+        public String getJson() {
+            return getLeft();
+        }
+        public int getTokens() {
+            return getRight();
+        }
     }
 }

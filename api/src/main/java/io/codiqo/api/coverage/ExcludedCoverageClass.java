@@ -1,9 +1,15 @@
 package io.codiqo.api.coverage;
 
-import lombok.Value;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 
-@Value
-public class ExcludedCoverageClass {
-    String className;
-    CoverageExclusionReason reason;
+public final class ExcludedCoverageClass extends ImmutablePair<String, CoverageExclusionReason> {
+    public ExcludedCoverageClass(String className, CoverageExclusionReason reason) {
+        super(className, reason);
+    }
+    public String getClassName() {
+        return getLeft();
+    }
+    public CoverageExclusionReason getReason() {
+        return getRight();
+    }
 }

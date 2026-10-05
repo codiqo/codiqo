@@ -14,6 +14,7 @@ import java.util.Optional;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.tuple.ImmutableTriple;
 import org.apache.commons.math3.util.Precision;
 import org.thymeleaf.TemplateEngine;
 import org.thymeleaf.context.Context;
@@ -186,9 +187,10 @@ public class ConsoleReportBuilder implements ReportBuilder {
         }
     }
     /**
-     * file counts come from request.getFileChanges() — the same list the table renders — not from
-     * ChangeSummary.totalFilesChanged, which counts only files whose diff has effective changes, so
-     * mixing the two made the page contradict itself
+     * File counts come from request.getFileChanges(), the same list the files table renders, not from
+     * ChangeSummary.totalFilesChanged, which counts only files whose diff has effective changes.
+     * Mixing the two sources made the page contradict itself, with a headline count that did not
+     * match the rows below it.
      */
     private static void populateVolume(Context ctx, LlmScoringRequest request, LlmScoringResponse response) {
         ChangeSummary summary = request.getChangeSummary();
@@ -236,8 +238,8 @@ public class ConsoleReportBuilder implements ReportBuilder {
         return AsciiTable.getTable(AsciiTable.BASIC_ASCII_NO_DATA_SEPARATORS, rows, DIMENSION_COLUMNS);
     }
     /**
-     * a dimension the model scored null is "not touched by this change" rather than zero, so it is
-     * rendered as a dash instead of being dropped — the absence is itself informative
+     * A dimension the model scored null means "not touched by this change" rather than zero, so it is
+     * rendered as a dash instead of being dropped or shown as 0: the absence is itself informative.
      */
     private static void addDimension(List<DimensionRow> rows, String name, DimensionScore dim) {
         if (Objects.nonNull(dim)) {
@@ -326,8 +328,8 @@ public class ConsoleReportBuilder implements ReportBuilder {
         return StringUtils.join(values, ", ");
     }
     /**
-     * a commit reachable from many refs carries all of them, which is unreadable on one line and not
-     * what the reader wants anyway — keep a couple and count the rest
+     * A commit reachable from many refs carries all of them, which is unreadable on one console line,
+     * so only the first MAX_BRANCHES are listed and the rest are counted.
      */
     private static String branchLabel(List<String> branches) {
         List<String> values = Optional.ofNullable(branches).orElse(Collections.emptyList());
@@ -339,7 +341,7 @@ public class ConsoleReportBuilder implements ReportBuilder {
         }
         return StringUtils.join(values.subList(0, MAX_BRANCHES), ", ") + " +" + (values.size() - MAX_BRANCHES) + " more";
     }
-    /** an absent enum is "the model did not say", which a literal "null" misrepresents as a value. */
+    /** An absent enum means "the model did not say", which a literal "null" would misrepresent as a value. */
     private static String label(Object value) {
         return Objects.isNull(value) ? "-" : String.valueOf(value);
     }
@@ -353,8 +355,9 @@ public class ConsoleReportBuilder implements ReportBuilder {
         return StringUtils.abbreviate(StringUtils.defaultString(StringUtils.substringBefore(message, StringUtils.LF)).trim(), MESSAGE_MAX_CHARS);
     }
     /**
-     * paths are discriminated by their tail (module + class), so an over-long one keeps its end and
-     * loses its head — the opposite of what abbreviate() does
+     * Paths are told apart by their tail (module and class), so an over-long one keeps its end and
+     * loses its head. StringUtils.abbreviate() does the opposite and would leave rows that all start
+     * with the same prefix and differ only in the part it cut.
      */
     private static String abbreviateLeft(String path, int max) {
         String value = StringUtils.defaultString(path);
@@ -363,7 +366,10 @@ public class ConsoleReportBuilder implements ReportBuilder {
         }
         return "..." + StringUtils.right(value, max - 3);
     }
-    /** word wrap: commons-text is unused by any module and lang3's WordUtils is deprecated */
+    /**
+     * Word wrap is hand-written because commons-text is not a dependency of any module and the
+     * commons-lang3 WordUtils is deprecated.
+     */
     private static String wrap(String text) {
         if (StringUtils.isBlank(text)) {
             return "  (none)";
@@ -383,11 +389,19 @@ public class ConsoleReportBuilder implements ReportBuilder {
         }
         return toReturn.toString();
     }
-    @Value
-    private static class DimensionRow {
-        String name;
-        String score;
-        String gate;
+    private static final class DimensionRow extends ImmutableTriple<String, String, String> {
+        public DimensionRow(String name, String score, String gate) {
+            super(name, score, gate);
+        }
+        public String getName() {
+            return getLeft();
+        }
+        public String getScore() {
+            return getMiddle();
+        }
+        public String getGate() {
+            return getRight();
+        }
     }
     @Value
     private static class FileRow {

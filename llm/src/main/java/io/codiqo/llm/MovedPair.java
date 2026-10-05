@@ -6,6 +6,7 @@ import java.util.Optional;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.math.NumberUtils;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 
 import io.codiqo.util.Split;
 import lombok.Value;
@@ -59,9 +60,15 @@ public class MovedPair {
         return Optional.of(new FileLine(file, line));
     }
 
-    @Value
-    private static class FileLine {
-        String file;
-        int line;
+    private static final class FileLine extends ImmutablePair<String, Integer> {
+        public FileLine(String file, int line) {
+            super(file, line);
+        }
+        public String getFile() {
+            return getLeft();
+        }
+        public int getLine() {
+            return getRight();
+        }
     }
 }
