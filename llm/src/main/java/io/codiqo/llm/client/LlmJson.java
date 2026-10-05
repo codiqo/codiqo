@@ -24,7 +24,6 @@ public class LlmJson {
                 .changeDefaultPropertyInclusion(incl -> incl.withValueInclusion(Include.NON_NULL))
                 .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
                 .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-                .enable(SerializationFeature.INDENT_OUTPUT)
                 .build();
     }
     public ObjectMapper responseMapper() {

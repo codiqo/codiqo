@@ -23,6 +23,7 @@ import com.openai.models.chat.completions.ChatCompletionAssistantMessageParam;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionMessageFunctionToolCall;
 import com.openai.models.chat.completions.ChatCompletionStreamOptions;
+import com.openai.models.chat.completions.ChatCompletionToolChoiceOption;
 import com.openai.models.chat.completions.ChatCompletionToolMessageParam;
 import jakarta.ws.rs.core.Response.Status.Family;
 import org.apache.commons.collections4.CollectionUtils;
@@ -48,6 +49,12 @@ import io.codiqo.llm.schema.LlmScoringResponse;
 
 public class LlmScoringClient implements ScoringClient {
     private static final int MAX_TOOL_CALLS = Byte.MAX_VALUE;
+    /**
+     * every tool call resends the whole conversation, so searches multiply the prompt: one commit made 40 searches over
+     * a 123k-character prompt and was billed 8.1M prompt tokens
+     */
+    private static final int MAX_WEB_SEARCHES = 5;
+    private static final String ERR_WEB_SEARCH_BUDGET = "web search budget of %d searches is used up; answer from the data you have";
     private static final String FINISH_REASON_STOP = "stop";
     private static final String FINISH_REASON_LENGTH = "length";
     private static final long RESPONSE_RETRY_BACKOFF_BASE_MS = 1_000L;
@@ -215,14 +222,25 @@ public class LlmScoringClient implements ScoringClient {
                 for (AccumulatedToolCall tc : streamResult.getToolCalls()) {
                     String toolName = tc.getName();
                     String arguments = tc.getArguments().toString();
-                    toolCallsMade.add(toolName + ": " + arguments);
                     handler.onToolCall(toolName);
 
-                    Object result = executeTool(toolName, arguments);
+                    /**
+                     * Every tool call in an assistant message must be answered by a tool message with its id, or the
+                     * provider rejects the next request. A call over the search budget is therefore answered with the
+                     * refusal instead of being dropped.
+                     */
+                    Object result = Map.of("error", ERR_WEB_SEARCH_BUDGET.formatted(MAX_WEB_SEARCHES));
+                    if (toolCallsMade.size() < MAX_WEB_SEARCHES) {
+                        result = executeTool(toolName, arguments);
+                    }
+                    toolCallsMade.add(toolName + ": " + arguments);
                     paramsBuilder.addMessage(ChatCompletionToolMessageParam.builder()
                             .toolCallId(tc.getId())
                             .contentAsJson(result)
                             .build());
+                }
+                if (toolCallsMade.size() >= MAX_WEB_SEARCHES) {
+                    paramsBuilder.toolChoice(ChatCompletionToolChoiceOption.Auto.NONE);
                 }
                 continue;
             }

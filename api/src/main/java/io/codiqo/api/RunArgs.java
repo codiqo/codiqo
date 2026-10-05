@@ -90,7 +90,12 @@ public class RunArgs {
      * so a large commit overflows the model's context window instead of having its callers trimmed.
      */
     public static final int PROMPT_TOKEN_RESERVE = 72 * 1024;
-    public static final int DEFAULT_MAX_CALLERS_PER_BLOCK = 64;
+    /**
+     * A sample, not the list: the model judges blast radius from {@code callerCount} / {@code productionCallerCount},
+     * and listing up to 64 callers per block made caller rows the largest part of high fan-in prompts (Guava commits
+     * carried 10k–29k). Every caller is still submitted and persisted; only the prompt is trimmed.
+     */
+    public static final int DEFAULT_MAX_CALLERS_PER_BLOCK = 8;
     /**
      * Default ceiling on the assembled agent-instruction text, sized above a single large instruction file (observed
      * 40-75 KB). Exceeding {@link #llmConventionFilesMaxChars} fails the analysis rather than trimming, so a default
