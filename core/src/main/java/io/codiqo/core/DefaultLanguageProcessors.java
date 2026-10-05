@@ -38,7 +38,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.collections4.ListUtils;
 import org.apache.commons.collections4.MultiValuedMap;
 import org.apache.commons.collections4.multimap.HashSetValuedHashMap;
 import org.apache.commons.io.FilenameUtils;
@@ -51,7 +50,6 @@ import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.lib.Repository;
-import org.slf4j.event.Level;
 
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.IndexingSummary.IndexingSummaryBuilder;
@@ -94,12 +92,6 @@ import net.sourceforge.pmd.lang.LanguageRegistry;
 import net.sourceforge.pmd.lang.document.FileId;
 
 public class DefaultLanguageProcessors implements LanguageProcessors {
-    /**
-     * The CPD retry batch, never the first attempt. Sized under the smallest set observed to poison PMD's shared
-     * lexer (micronaut-core's 5033 files crashed; 2000 passed), with head room: the threshold is a property of the
-     * file sequence, not of a count.
-     */
-    private static final int CPD_RETRY_BATCH_SIZE = 1000;
     private static final Set<DiffEntry.ChangeType> MODIFIED_IN_PLACE = EnumSet.of(DiffEntry.ChangeType.MODIFY, DiffEntry.ChangeType.RENAME);
     private static final int ORPHAN_SAMPLE_SIZE = 20;
 
@@ -547,42 +539,12 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                             .filter(path -> FilenameUtils.isExtension(path.toFile().getName(), processor.lang().getExtensions()))
                             .toList();
                     if (CollectionUtils.isNotEmpty(files)) {
-                        detectCopyPaste(processor, files, summary, analysis);
+                        tokenizeAndCollect(processor, files, summary, analysis);
                     }
                 }
             }
         }
     }
-    /**
-     * PMD reuses one {@code CpdLexer} per analysis and {@code JavaCpdLexer}'s {@code ConstructorDetector} accumulates
-     * state across file boundaries, so a large enough set dies with an NPE that names no culprit file and that
-     * {@code setFailOnError(false)} cannot contain. Observed on micronaut-core (5033 files) and spring-framework.
-     *
-     * <p>Batching is only the retry: CPD finds clones within one analysis, so batching unconditionally would silently
-     * drop every cross-batch duplicate on every project.
-     */
-    void detectCopyPaste(LanguageSpec processor, List<Path> files, IndexingSummary summary, CommitAnalysis analysis) throws IOException {
-        try {
-            tokenizeAndCollect(processor, files, summary, analysis);
-            return;
-        } catch (RuntimeException err) {
-            log.logEx(Level.WARN, "CPD failed over all %d %s file(s); retrying in batches of %d, which loses clones spanning two batches",
-                    new Object[] { files.size(), processor.lang().getName(), CPD_RETRY_BATCH_SIZE }, err);
-        }
-
-        for (List<Path> batch : ListUtils.partition(files, CPD_RETRY_BATCH_SIZE)) {
-            try {
-                tokenizeAndCollect(processor, batch, summary, analysis);
-            } catch (RuntimeException err) {
-                log.logEx(Level.WARN, "CPD batch of %d %s file(s) failed; its duplication data is omitted",
-                        new Object[] { batch.size(), processor.lang().getName() }, err);
-            }
-        }
-    }
-    /**
-     * package-private so CpdBatchRetryTest can substitute the PMD call: the real crash needs thousands of files and
-     * cannot be committed as a fixture.
-     */
     void tokenizeAndCollect(LanguageSpec processor, List<Path> files, IndexingSummary summary, CommitAnalysis analysis) throws IOException {
         Set<DuplicationMatch> matches = new LinkedHashSet<>();
         Map<FileId, File> filesById = new HashMap<>();

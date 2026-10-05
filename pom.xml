@@ -85,7 +85,7 @@
         <lsp4j.version>1.0.0</lsp4j.version>
         <openrewrite.version>8.90.4</openrewrite.version>
         <openrewrite.recipe.version>2.41.1</openrewrite.recipe.version>
-        <pmd.version>7.28.0</pmd.version>
+        <pmd.version>7.29.0-SNAPSHOT</pmd.version>
         <spotbugs.version>4.10.4</spotbugs.version>
         <findbugs.sec.version>1.14.0</findbugs.sec.version>
         <findbugs.contrib.version>7.7.4</findbugs.contrib.version>
@@ -157,6 +157,34 @@
             <url>https://central.sonatype.com/repository/maven-snapshots/</url>
         </snapshotRepository>
     </distributionManagement>
+    <!-- TEMPORARY, only for pmd.version 7.29.0-SNAPSHOT: it carries pmd/pmd#7138, which stops JavaCpdLexer's
+         ConstructorDetector leaking state across files and crashing CPD on large file sets (micronaut-core,
+         spring-framework). pluginRepositories is needed too because maven-pmd-plugin is pinned to ${pmd.version}.
+         Delete both blocks once PMD 7.29.0 is released (milestone due 2026-10-30) -->
+    <repositories>
+        <repository>
+            <id>central-snapshots</id>
+            <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+            <releases>
+                <enabled>false</enabled>
+            </releases>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
+    <pluginRepositories>
+        <pluginRepository>
+            <id>central-snapshots</id>
+            <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+            <releases>
+                <enabled>false</enabled>
+            </releases>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+        </pluginRepository>
+    </pluginRepositories>
     <dependencyManagement>
         <dependencies>
             <dependency>
