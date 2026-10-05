@@ -40,7 +40,7 @@ The server's start time must be later than the class mtimes.
 Run from the target repository, not from `codiqo`:
 
 ```bash
-cd ~/dev/turbospaces-boot
+cd ~/dev/<your-project>
 JDK26=~/.m2/jdks/jdk-26.0.2+10/Contents/Home   # the same JDK 26 as step 1
 
 mvn io.codiqo:codiqo-maven-plugin:1.0-SNAPSHOT:submit-commit-analysis -T 1C \
@@ -49,8 +49,8 @@ mvn io.codiqo:codiqo-maven-plugin:1.0-SNAPSHOT:submit-commit-analysis -T 1C \
   -Dcodiqo.apiUrl=http://localhost:7771 \
   -Dcodiqo.commitId=<sha> \
   -Dcodiqo.apiKey=<project api key> \
-  -Dartifact.registry.url=artifactregistry://europe-maven.pkg.dev/patrianna-dev/nexus \
-  -Dartifact.registry.mirror.url=artifactregistry://europe-west1-maven.pkg.dev/patrianna-prod/maven-mirror
+  -Dartifact.registry.url=<your snapshot registry url> \
+  -Dartifact.registry.mirror.url=<your mirror registry url>
 ```
 
 ### The `maven.ext.class.path` argument
