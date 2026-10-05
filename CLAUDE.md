@@ -734,6 +734,39 @@ This ensures:
 - Collections are never null when using the builder
 - Safe iteration without null checks
 
+### Two- or Three-Field Values Extend commons-lang3 Tuples
+
+**A value class with exactly two or three fields extends `ImmutablePair` / `ImmutableTriple`** (or `MutablePair` /
+`MutableTriple` for a mutable holder) instead of carrying Lombok `@Value`/`@Data`. It keeps readable, named getters
+that delegate to the tuple, so callers never see `getLeft()`:
+
+```java
+// Good
+public static final class FileChurn extends ImmutableTriple<Integer, Integer, Integer> {
+    public FileChurn(int commits, int recentCommits, int recentFixCommits) {
+        super(commits, recentCommits, recentFixCommits);
+    }
+    public int getCommits() {
+        return getLeft();
+    }
+    public int getRecentCommits() {
+        return getMiddle();
+    }
+    public int getRecentFixCommits() {
+        return getRight();
+    }
+}
+```
+
+- **Never for a class that takes part in JSON** — a Jackson/Gson DTO, an LLM request/response schema class, anything a
+  mapper reads or writes or that sits inside such a class. A tuple implements `Map.Entry`, which Jackson writes as
+  `{key: value}`, silently changing the document. Those stay `@Value`/`@Data`.
+- Make the class `final`, as `@Value` did. Four or more fields stay `@Value`.
+- A field named `key` or `value` collides with `Map.Entry.getKey()/getValue()`: drop the named getter and use the
+  inherited one, which returns the boxed component — and compare boxed values with `.doubleValue()`/`.equals`,
+  never `==`.
+- `toString()` prints `(a,b,c)` and `hashCode()` differs from Lombok's: do not rely on either for output.
+
 ### Lombok @Value Instead of Java Records
 
 **Do not declare Java `record`s.** Immutable value objects use Lombok `@Value`; mutable holders use `@Data`. Every data
@@ -947,65 +980,54 @@ if (array == null || array.length == 0) { ... }
 
 ## Comments and JavaDoc
 
-**Don't write obvious comments or JavaDoc**. Code should be self-documenting.
+**HARD RULE: write a comment only when it is necessary, and when it is, write it fully.** A comment is necessary when
+the code cannot say it: a non-obvious reason, an invariant another part of the system relies on, a trap that was hit
+before, a measured number, or external context (a spec, an upstream bug, a tool's documented behaviour). Everything
+else is noise and must not be written: restating the code, naming what a well-named method already says, narrating the
+next line, history ("changed from X", "now does Y"), or a decorative divider.
+
+**Every comment that is kept is a Javadoc-style block (`/** ... */`), never `//`** — on classes, fields and methods
+alike, and inside method bodies. A kept comment is written to be understood by someone who has never seen the change
+that produced it, so it covers, in full sentences:
+
+- **what** the constraint or decision is;
+- **why** it holds — the cause, with the concrete evidence (the failure that was observed, the project it was observed
+  on, the number that was measured, the issue or spec that defines it);
+- **what breaks** if the code is changed without honouring it.
+
+A one-line hint that leaves the reader to reconstruct the reasoning is worse than no comment: either expand it until it
+explains, or delete it.
 
 ```java
-// Bad - obvious comment
-/** Returns the user's name */
-public String getName() { return name; }
-
-// Bad - restating the code
+// Bad - restates the code
 // Increment counter by one
 counter++;
 
-// Good - explains non-obvious business logic
-// CPD clones in test code get 1/5 penalty weight
-effectivePenalty += clone.isAllTestCode() ? 0.2 : 1.0;
+// Bad - obvious Javadoc
+/** Returns the user's name */
+public String getName() { return name; }
 
-// Good - explains "why" not "what"
-// Using 40% threshold because minor edits to existing clones
-// shouldn't mark the whole clone as "introduced"
-boolean introduced = overlapRatio > 0.4;
+// Bad - a terse hint that makes the reader reconstruct the reasoning
+// keeps the loader open
+private final Map<ProjectSpec, LanguageProcessorRegistry> registries = new ConcurrentHashMap<>();
+
+// Good - the constraint, the evidence, and what breaks
+/**
+ * One PMD registry per module, kept open until {@link #close()}. The code blocks returned by parse keep PMD AST nodes,
+ * and those nodes resolve types lazily (metrics such as fan-out, generic signatures, annotation checks) against the
+ * module's classpath loader long after parse returns. Closing the registry at the end of parse made every later lookup
+ * of a class PMD had not loaded yet fail with "AuxClasspathLoader is closed" or silently come back unresolved, which
+ * changed fan-out and rendered parameter types as unresolved on multi-module regression commits.
+ */
+private final Map<ProjectSpec, LanguageProcessorRegistry> registries = new ConcurrentHashMap<>();
 ```
 
-Only add comments when:
-- Business logic is non-obvious
-- There's a specific reason for an unusual implementation
-- External context is needed (e.g., referencing a spec or algorithm)
-
-**No section dividers** - don't use decorative comment blocks to separate code sections:
+**No section dividers** — let the code structure speak for itself:
 
 ```java
-// Bad - unnecessary section dividers
+// Bad
 // ========== CONSTANTS ==========
 private static final int THRESHOLD = 10;
-
-// ========== METHODS ==========
-public void process() { ... }
-
-// Good - let the code structure speak for itself
-private static final int THRESHOLD = 10;
-
-public void process() { ... }
-```
-
-**Use Javadoc-style block comments (`/** ... */`) for multiline comments** — including implementation comments inside method bodies. Each continuation line is aligned with a leading `*`. Single-line comments stay as `//`:
-
-```java
-// Good - multiline comment uses a Javadoc-style block
-/**
- * entries are server-derived from the diff (DiffClassificationDeriver), so totals match
- * the effective targets by construction — a mismatch means candidate filtering drifted
- */
-if (addedTotal != fc.getLinesAdded()) { ... }
-
-// Good - single-line comment stays as //
-// explicit "perFile": null from the LLM bypasses the @Builder.Default empty list
-
-// Bad - stacked single-line comments for one multiline note
-// entries are server-derived from the diff (DiffClassificationDeriver), so totals match
-// the effective targets by construction — a mismatch means candidate filtering drifted
-if (addedTotal != fc.getLinesAdded()) { ... }
 ```
 
 ## Boolean Checks
