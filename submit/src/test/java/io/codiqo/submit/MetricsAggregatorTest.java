@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 
 
 import io.codiqo.api.code.CodeBlockInfo;
+import io.codiqo.api.cpd.CloneLocations;
 import io.codiqo.api.cpd.CopyPasteDetectionSummary;
 import io.codiqo.api.cpd.DuplicationMatch;
 import io.codiqo.api.metrics.DriverScaler;
@@ -31,7 +32,7 @@ class MetricsAggregatorTest {
         assertEquals(0.0, MetricsAggregator.cpdDuplicationPercent(List.of(new ScannedCode(0, 53_000))).orElseThrow(),
                 "a run that read code and found no clones is a measured zero, not unknown");
     }
-    /** the numbers are ebean's 1545e68c3e (42 duplicated lines) and c275953582 (133), over its ~53k-line reactor. */
+    /** The numbers are ebean's 1545e68c3e (42 duplicated lines) and c275953582 (133), over its ~53k-line reactor. */
     @Test
     void cpdPercentIsAShareOfEverythingScannedNotOfTheCommit() {
         assertEquals(0.079, MetricsAggregator.cpdDuplicationPercent(List.of(new ScannedCode(42, 53_000))).orElseThrow(), 0.001);
@@ -130,6 +131,10 @@ class MetricsAggregatorTest {
         @Override
         public Set<DuplicationMatch> affected() {
             return Collections.emptySet();
+        }
+        @Override
+        public List<CloneLocations> clones() {
+            return Collections.emptyList();
         }
         @Override
         public Map<CodeBlockInfo, Set<CodeBlockInfo>> copyPasteFrom() {

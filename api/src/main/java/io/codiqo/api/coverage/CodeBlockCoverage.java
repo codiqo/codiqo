@@ -1,9 +1,8 @@
 package io.codiqo.api.coverage;
 
 import java.util.Locale;
-import java.util.Map;
 
-import org.apache.commons.collections4.MapUtils;
+import org.eclipse.collections.api.map.primitive.IntObjectMap;
 import org.jacoco.core.analysis.ICounter;
 import org.jacoco.core.analysis.ILine;
 
@@ -88,8 +87,8 @@ public class CodeBlockCoverage {
 
         return sb.toString();
     }
-    public static CodeBlockCoverage from(Map<Integer, ILine> coverageByLine) {
-        if (MapUtils.isEmpty(coverageByLine)) {
+    public static CodeBlockCoverage from(IntObjectMap<ILine> coverageByLine) {
+        if (coverageByLine.isEmpty()) {
             return NONE;
         }
 

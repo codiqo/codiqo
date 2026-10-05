@@ -83,10 +83,19 @@ public class RunArgs {
     public static final String DEFAULT_AUTH_URL = "https://codiqo.io";
 
     public static final int DEFAULT_NUM_CTX = 256 * 1024;
-    // head room reserved on top of the request JSON for the system prompt (~25k) + completion (~33k) + margin
+    /**
+     * Tokens of the context window held back from the request JSON when the prompt budget is derived from the window
+     * ({@link #llmPromptTokenBudget} unset): they pay for the system prompt (about 25k), the completion (about 33k)
+     * and a margin. Shrinking it lets the request JSON grow into the space the system prompt and the response need,
+     * so a large commit overflows the model's context window instead of having its callers trimmed.
+     */
     public static final int PROMPT_TOKEN_RESERVE = 72 * 1024;
     public static final int DEFAULT_MAX_CALLERS_PER_BLOCK = 64;
-    // sized above a single large instruction file (observed 40-75 KB) so enabling the feature does not fail on its own default
+    /**
+     * Default ceiling on the assembled agent-instruction text, sized above a single large instruction file (observed
+     * 40-75 KB). Exceeding {@link #llmConventionFilesMaxChars} fails the analysis rather than trimming, so a default
+     * below one such file would make merely enabling the feature fail every run on that repository.
+     */
     public static final int DEFAULT_CONVENTION_FILES_MAX_CHARS = 64 * 1024;
     public static final int DEFAULT_SEED = 42;
     public static final Duration PER_TEST_TIMEOUT_MAX = Duration.ofMinutes(15);
@@ -225,6 +234,15 @@ public class RunArgs {
      */
     private boolean ignoreDiagnostics = false;
 
+    /** Rank the most important classes and the hotspots, for the {@link #hotspotsCommitId} commit only. */
+    private boolean hotspotsEnabled = true;
+
+    /**
+     * The tip the run started on. A caller that checks out every commit before analysing it (codiqo-action's Gradle
+     * loop) must pass it, because by then HEAD is the analysed commit itself.
+     */
+    private String hotspotsCommitId;
+
     /**
      * Fail the analysis when a language-server call-hierarchy query errors, instead of continuing with an incomplete
      * call graph. Off by default so a flaky JDT query cannot lose a whole commit — with the consequence that a
@@ -261,7 +279,7 @@ public class RunArgs {
     private boolean excludeRevertedCommits = true;
 
     /**
-     * transient so the reflective CLI builder skips it: this is a server-side policy read from the scoring
+     * Transient so the reflective CLI builder skips it: this is a server-side policy read from the scoring
      * config, and the engine has no consumer for it. Left non-transient it generates a
      * {@code --honor-skip-requests} option that is accepted, never transmitted, and silently ignored.
      */
@@ -360,9 +378,9 @@ public class RunArgs {
     private int diffContextLines = 10;
 
     /**
-     * Threshold ratio (0.0-1.0) for determining if a clone was "introduced" in the commit.
-     * A clone is considered "introduced" only if this percentage of its lines overlap with added lines.
-     * Default: 0.4 (40%) - just modifying 1 line of a pre-existing clone doesn't mean the duplication was introduced.
+     * Share (0.0-1.0) of a clone's lines that must overlap the commit's added lines for the commit to count as
+     * having introduced the clone. Set well above zero because modifying one line of a pre-existing clone does not
+     * mean the commit introduced the duplication.
      */
     private double cpdIntroducedThreshold = 0.4;
 
@@ -449,7 +467,7 @@ public class RunArgs {
      *
      * <p>
      * Unset means "whatever the window allows" — {@code llmNumCtx} less {@link #PROMPT_TOKEN_RESERVE}.
-     * It previously defaulted to a constant derived from a 256K window, which silently bound every model
+     * A fixed default derived from a 256K window silently bound every model
      * with a larger one: an org running a 1M-context model still had its request trimmed to 188K, the
      * caller cap descended the whole ladder to zero, and large commits were scored with no call graph at
      * all (observed: the LLM reporting a blast radius of 193 against a persisted 586). Set this only to
@@ -657,22 +675,22 @@ public class RunArgs {
     private double addMultiplierScale = 0.1;
 
     /**
-     * fraction of an equivalent in-place modify that a deletion-only file earns (delete effort ÷ the
-     * same-size true_modify effort). only applies to surviving files whose change is purely deletion.
-     * clamped to [0, 0.20] in validate() — a removal is worth at most ~20% of changing the same lines.
+     * Fraction of an equivalent in-place modify that a deletion-only file earns (delete effort ÷ the
+     * same-size true_modify effort). Only applies to surviving files whose change is purely deletion.
+     * Clamped to [0, 0.20] in {@link #validate()}: a removal is worth at most ~20% of changing the same lines.
      */
     private double deleteRewardWeight = 0.2;
 
     /**
-     * absolute ceiling on a commit's total deletion reward, expressed in bucket-quantile units:
-     * K × methodCapQuantile × modifyMult × deleteRewardWeight. the per-block global cap cannot bound a
+     * Absolute ceiling on a commit's total deletion reward, expressed in bucket-quantile units:
+     * K × methodCapQuantile × modifyMult × deleteRewardWeight. The per-block global cap cannot bound a
      * deletion sweep — a mass removal is broad and shallow (thousands of lines over dozens of files), so
      * its cap budget grows with file count exactly as fast as its effort does and the cap never binds.
-     * measured over 2105 analyses, K=10 leaves the median reward untouched (+2.1) and clips 12 commits,
+     * Measured over 2105 analyses, K=10 leaves the median reward untouched (+2.1) and clips 12 commits,
      * pulling the worst case from +172 down to +46 — a large cleanup earns a medium commit, never a huge
-     * one. 0 disables the ceiling. clamped to ≥ 0 in validate().
+     * one. 0 disables the ceiling. Clamped to ≥ 0 in {@link #validate()}.
      *
-     * those figures predate deletion blocks carrying the MECHANICAL coefficient. The clip is computed in
+     * <p>Those figures predate deletion blocks carrying the MECHANICAL coefficient. The clip is computed in
      * driver units, before the coefficient is applied in recompute, so the delivered reward — and hence the
      * effective ceiling — is 0.7x the numbers quoted above. The mechanism is unchanged; only the calibration
      * is now conservative, and re-measuring would be needed before treating +46 as the real worst case.
@@ -890,9 +908,10 @@ public class RunArgs {
     private boolean timeMachineEnabled = true;
 
     /**
-     * threshold on multiset containment |tokens(A)∩tokens(B)| / min(|A|,|B|) — NOT Dice/Jaccard.
+     * Threshold on multiset containment |tokens(A)∩tokens(B)| / min(|A|,|B|) — NOT Dice/Jaccard.
      * Relocation typically only adds tokens (e.g. re-qualified receivers: props.X → channel.props.X),
-     * so genuine moves score 1.0 under containment while symmetric metrics drop below 0.95
+     * so genuine moves score 1.0 under containment while symmetric metrics drop below 0.95; switching to a
+     * symmetric metric would stop such moves matching and charge them at full weight.
      */
     private double moveSimilarityThreshold = 0.95;
 
@@ -1291,22 +1310,21 @@ public class RunArgs {
         if (Objects.isNull(this.perTestTimeout)) {
             this.perTestTimeout = this.testTimeout.dividedBy(2);
         }
-        // hard ceiling: neither the testTimeout/2 derivation nor an explicit value may exceed PER_TEST_TIMEOUT_MAX (a 0/negative value stays disabled)
         if (this.perTestTimeout.compareTo(PER_TEST_TIMEOUT_MAX) > 0) {
             this.perTestTimeout = PER_TEST_TIMEOUT_MAX;
         }
         /**
-         * canonicalise here rather than at the PMD call site: the natural spellings "medium-high"/"Medium High" are
+         * Canonicalise here rather than at the PMD call site: the natural spellings "medium-high"/"Medium High" are
          * not constant names, so they would otherwise reach RulePriority.valueOf and throw deep inside a parallel
-         * stream, after the whole fork build has already been paid for. rejecting an unknown value now also keeps
+         * stream, after the whole fork build has already been paid for. Rejecting an unknown value now also keeps
          * the persisted scoring config canonical.
          */
         this.pmdMinPriority = pmdRulePriority(this.pmdMinPriority).name();
 
         /**
-         * clamping alone cannot reject a non-finite value — Math.min/max propagate NaN rather than replacing
+         * Clamping alone cannot reject a non-finite value — Math.min/max propagate NaN rather than replacing
          * it — and a NaN that reaches the scoring math poisons every product it touches all the way to the
-         * persisted score, silently and without an exception at the point of miss configuration
+         * persisted score, silently and without an exception at the point of misconfiguration.
          */
         this.statsQuantile = Math.max(0.85, requireFinite(this.statsQuantile, "statsQuantile"));
         this.deleteRewardWeight = Math.min(0.20, Math.max(0.0, requireFinite(this.deleteRewardWeight, "deleteRewardWeight")));
@@ -1316,7 +1334,7 @@ public class RunArgs {
         this.llmConventionFilesMaxChars = Math.max(0, this.llmConventionFilesMaxChars);
     }
     /**
-     * resolves the spellings people actually write — the constant name, the hyphenated "medium-high", and PMD's own
+     * Resolves the spellings people actually write — the constant name, the hyphenated "medium-high", and PMD's own
      * display name "Medium High" — to a {@link RulePriority}. The comparison is per-character case-insensitive rather
      * than an uppercase-then-valueOf: under a Turkish locale {@code "medium-high".toUpperCase()} yields
      * {@code "MEDİUM-HİGH"}, so uppercasing threw on exactly the input it was meant to accept.
@@ -1350,6 +1368,14 @@ public class RunArgs {
             toReturn.addOption(builder.get());
         }
         return toReturn;
+    }
+    public boolean isHotspotsCommit() {
+        /**
+         * An uncommitted-changes run has no commit, so both ids can be null there. The explicit null check keeps
+         * null from matching null: a plain Objects.equals would treat a working-tree run as the hotspots commit and
+         * rank hotspots for code that was never committed.
+         */
+        return hotspotsEnabled && Objects.nonNull(hotspotsCommitId) && hotspotsCommitId.equals(commitId);
     }
     public static RunArgs from(CommandLine cmd) throws Exception {
         RunArgs toReturn = new RunArgs();

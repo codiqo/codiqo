@@ -11,7 +11,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -39,6 +38,7 @@ import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.ClientInfoModel;
 import io.codiqo.client.model.ClientInfoModel.BuildToolEnum;
 import io.codiqo.client.model.FileChangeModel;
+import io.codiqo.client.model.HotspotSnapshotModel;
 import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.core.ClassGraphWrapper;
 import io.codiqo.core.DefaultLanguageProcessors;
@@ -51,6 +51,7 @@ import io.codiqo.submit.CommitExclusions.Exclusion;
 import io.codiqo.submit.OutputSerializer;
 import io.codiqo.submit.SubmissionAssembly;
 import io.codiqo.submit.SubmissionContext;
+import io.codiqo.submit.hotspots.HotspotSnapshots;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
 import io.codiqo.util.ProgressStage;
@@ -65,9 +66,10 @@ import lombok.experimental.UtilityClass;
 @UtilityClass
 public class AnalysisEngine {
     /**
-     * declared on the worker side, not on the Gradle-typed helper that also uses it: the worker runs on a bare
+     * Declared on the worker side, not on the Gradle-typed helper that also uses it. The worker runs on a bare
      * classpath with no gradle-api, so it must not reference a class that imports Gradle types. Reading the constant
-     * from {@code GradleBuildSupport} only appeared to work because javac folds a compile-time String constant.
+     * from {@code GradleBuildSupport} only appeared to work because javac folds a compile-time String constant; moving
+     * it there, or making it non-constant, would load a Gradle-typed class in the worker and fail it.
      */
     public static final String EXEC_PART_PREFIX = "codiqo-";
 
@@ -88,6 +90,7 @@ public class AnalysisEngine {
         Optional.ofNullable(request.getExcludeAuthorEmails()).ifPresent(args::setExcludeAuthorEmails);
         args.setIgnoreDiagnostics(request.isIgnoreDiagnostics());
         args.setIgnoreComplexity(request.isIgnoreComplexity());
+        args.setHotspotsEnabled(request.isHotspots());
         args.setFailOnJdtlsError(request.isFailOnJdtlsError());
         args.setFailOnUninstrumentedModule(request.isFailOnUninstrumentedModule());
         args.setJavaHome(new File(request.getJavaHome()));
@@ -108,8 +111,12 @@ public class AnalysisEngine {
             args.setGit(git);
             args.setDefaultBranch(JGit.currentBranchOrDefault(git));
             args.setCommitId(resolveCommitId(request, git));
+            args.setHotspotsCommitId(JGit.resolveCommit(git, Optional.ofNullable(request.getHotspotsCommitId()).orElse(Constants.HEAD)));
 
-            // gate before the ClassGraph scan and the JDT import: an excluded commit costs a git walk, not an analysis
+            /**
+             * The exclusion gate runs before the ClassGraph scan and the JDT import, so an excluded commit costs a git
+             * walk rather than a full analysis.
+             */
             Optional<Exclusion> excluded = CommitExclusions.beforeAnalysis(args);
             if (excluded.isPresent()) {
                 reportExclusion(request, args, args.getCommitId(), excluded.get(), List.of(), log);
@@ -117,8 +124,9 @@ public class AnalysisEngine {
             }
 
             /**
-             * a failed build leaves no trustworthy class output, so the normal pipeline cannot run: no ClassGraph
-             * scan, no JDT import, no coverage. The same fork in the road the Maven side takes.
+             * A failed build leaves no trustworthy class output, so the normal pipeline cannot run: no ClassGraph
+             * scan, no JDT import, no coverage. The Maven side takes the same fork, and both must stay aligned so a
+             * build-failed commit is treated the same whichever plugin analysed it.
              */
             if (StringUtils.isNotBlank(request.getBuildFailureDetail())) {
                 runDegraded(request, args, logFactory, log);
@@ -126,8 +134,9 @@ public class AnalysisEngine {
             }
 
             /**
-             * after the gate: merging is pointless work for an excluded commit, and its staleness stamp can fail the
-             * run outright
+             * Coverage is merged only after the exclusion gate: merging is pointless work for an excluded commit, and
+             * mergeCoverageParts throws when it cannot stamp the merged file, which would fail a run that should
+             * have ended as an exclusion.
              */
             if (BooleanUtils.negate(request.isIgnoreCoverage())) {
                 for (ModuleData module : request.getModules()) {
@@ -149,7 +158,7 @@ public class AnalysisEngine {
         }
     }
     /**
-     * an excluded commit is reported to the backend rather than scored, so its files are still recorded and it is not
+     * An excluded commit is reported to the backend rather than scored, so its files are still recorded and it is not
      * re-offered as missing on the next run. A dump-only caller has nowhere to put an exclusion, so the reason is
      * logged and the run ends.
      */
@@ -174,9 +183,9 @@ public class AnalysisEngine {
         }
     }
     /**
-     * fold every Test task's exec part into the single per-module file the analysis reads. Gradle deletes a Test
+     * Folds every Test task's exec part into the single per-module file the analysis reads. Gradle deletes a Test
      * task's jacoco destination file before the task runs, so the parts cannot share one path (see
-     * {@link GradleBuildSupport#jacocoExecPart}).
+     * {@link GradleBuildSupport#jacocoExecPart}); a shared path would keep only the last Test task's coverage.
      */
     static void mergeCoverageParts(ModuleData module, Log log) throws IOException {
         File merged = new File(module.getCoveragePath());
@@ -191,7 +200,7 @@ public class AnalysisEngine {
             loader.save(merged, false);
 
             /**
-             * the merged file carries the OLDEST contributing part's timestamp, not the merge's own. A part left
+             * The merged file carries the OLDEST contributing part's timestamp, not the merge's own. A part left
              * behind by a PREVIOUS checkout is stale and only its age can say so, while a part whose Test task was
              * up-to-date this build is still valid. A fresh timestamp would hand
              * JavaLanguageSpec.captureJacocoCoverage a file that always looks newer than the sources, permanently
@@ -276,17 +285,18 @@ public class AnalysisEngine {
     private static SubmissionContext sourceOnlySubmission(AnalysisRequest request, RunArgs args, LogFactory logFactory) throws Exception {
         Path workTree = args.getGit().getWorkTree().toPath().normalize();
         CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
-        IndexingSummary index = DefaultLanguageProcessors.sourceOnlyIndex(args, analysis, logFactory);
 
-        SubmissionContext toReturn = SubmissionContext.create(
-                args, index, analysis, workTree, logFactory, request.getRootCode(), request.getRootName(), clientInfo(request));
+        return DefaultLanguageProcessors.sourceOnlyIndex(args, analysis, logFactory, index -> {
+            SubmissionContext toReturn = SubmissionContext.create(
+                    args, index, analysis, workTree, logFactory, request.getRootCode(), request.getRootName(), clientInfo(request));
 
-        new GradleProjectModelPopulator(logFactory.getLogger(GradleProjectModelPopulator.class)).accept(toReturn);
-        SubmissionAssembly.degraded(toReturn);
-        return toReturn;
+            new GradleProjectModelPopulator(logFactory.getLogger(GradleProjectModelPopulator.class)).accept(toReturn);
+            SubmissionAssembly.degraded(toReturn);
+            return toReturn;
+        });
     }
     /**
-     * git diff and commit metadata only: no code units, no metrics. The degraded score is derived from the diff alone.
+     * Git diff and commit metadata only: no code units, no metrics. The degraded score is derived from the diff alone.
      */
     private static SubmissionContext diffOnlySubmission(AnalysisRequest request, RunArgs args, LogFactory logFactory) throws Exception {
         Path workTree = args.getGit().getWorkTree().toPath().normalize();
@@ -306,8 +316,9 @@ public class AnalysisEngine {
         return toReturn;
     }
     /**
-     * the revert itself is excluded unconditionally, and with excludeRevertedCommits the original is retroactively
-     * excluded too, so reverted work stops counting. 404 means the original predates the indexing window.
+     * The revert itself is excluded unconditionally, and with excludeRevertedCommits the original is retroactively
+     * excluded too, so reverted work stops counting. A 404 means the original predates the indexing window; it is
+     * logged rather than thrown so an old revert target does not fail the run.
      */
     private static void reportRevert(AnalysisRequest request, RunArgs args, SubmissionContext ctx, Log log) throws Exception {
         reportExclusion(request, args, args.getCommitId(),
@@ -408,11 +419,32 @@ public class AnalysisEngine {
         });
         return graphSpec;
     }
-    private static String resolveCommitId(AnalysisRequest request, Repository git) throws Exception {
-        if (Objects.nonNull(request.getCommitId())) {
-            return request.getCommitId();
+    /**
+     * Runs after the commit's own outcome is settled and swallows its failure into a warning, so a failure costs only
+     * the snapshot (the previous one stays), never the analysis.
+     */
+    private static void reportHotspots(AnalysisRequest request, SubmissionContext ctx, Log log) {
+        try {
+            Optional<HotspotSnapshotModel> snapshot = HotspotSnapshots.build(ctx, log);
+            if (snapshot.isPresent()) {
+                HotspotSnapshots.write(ctx, snapshot.get(), log);
+                if (request.isSubmit()) {
+                    HotspotSnapshots.submit(
+                            request.getApiUrl(),
+                            request.getApiKey(),
+                            request.getConnectTimeoutSeconds(),
+                            request.getReadTimeoutSeconds(),
+                            request.getRootCode(),
+                            snapshot.get(),
+                            log);
+                }
+            }
+        } catch (Exception err) {
+            log.warn("hotspot snapshot for %s not produced, the previous one stays: %s", ctx.getArgs().getCommitId(), err);
         }
-        return git.resolve(Constants.HEAD).name();
+    }
+    private static String resolveCommitId(AnalysisRequest request, Repository git) throws Exception {
+        return JGit.resolveCommit(git, Optional.ofNullable(request.getCommitId()).orElse(Constants.HEAD));
     }
     private static void runEngine(AnalysisRequest request, RunArgs args, LogFactory logFactory) throws Exception {
         Log log = logFactory.getLogger(AnalysisEngine.class);
@@ -432,8 +464,8 @@ public class AnalysisEngine {
                 Optional<Exclusion> excluded = CommitExclusions.afterDelta(args, analysis, registry.extensions(), changedFiles);
                 if (excluded.isPresent()) {
                     /**
-                     * an excluded commit still carries the raw git diff so the backend persists per-file changes;
-                     * indexing has not run, so the populator emits diff-only file models with no code units
+                     * An excluded commit still carries the raw git diff so the backend persists per-file changes.
+                     * Indexing has not run, so the populator emits diff-only file models with no code units.
                      */
                     SubmissionContext excludeCtx = SubmissionContext.create(
                             args, null, analysis, workTree, logFactory, request.getRootCode(), request.getRootName(), clientInfo);
@@ -461,13 +493,10 @@ public class AnalysisEngine {
 
                 new OutputSerializer(true, logFactory.getLogger(OutputSerializer.class)).accept(ctx);
 
-                // the dump is written first, so a submission the backend rejects still leaves the YAML to inspect
+                /** The dump is written first, so a submission the backend rejects still leaves the YAML to inspect. */
                 if (analysis.isRevertCommit()) {
                     reportRevert(request, args, ctx, log);
-                    return;
-                }
-
-                if (request.isSubmit()) {
+                } else if (request.isSubmit()) {
                     try (ProgressStage stage = ProgressStage.start(args, "submit")) {
                         AnalysisAcceptedModel accepted = AnalysisSubmitter.submit(
                                 request.getApiUrl(),
@@ -480,6 +509,7 @@ public class AnalysisEngine {
                         stage.succeeded();
                     }
                 }
+                reportHotspots(request, ctx, log);
             }
         }
     }

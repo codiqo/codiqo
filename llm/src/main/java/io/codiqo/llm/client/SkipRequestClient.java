@@ -11,6 +11,7 @@ import java.util.concurrent.ExecutorService;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.thymeleaf.context.Context;
 
 import io.codiqo.api.RunArgs;
@@ -18,16 +19,15 @@ import io.codiqo.api.logging.Log;
 import io.codiqo.llm.PromptFences;
 import io.codiqo.llm.PromptTemplates;
 import io.codiqo.llm.schema.SkipRequestResponse;
-import lombok.Value;
 
 /**
- * decides whether a commit message asks, in prose, that codiqo not count the commit.
+ * Decides whether a commit message asks, in prose, that codiqo not count the commit.
  *
- * this runs as its own call with the message as its only input, deliberately NOT as a field on the scoring
- * response: the scoring prompt must never be the place where author-controlled text can request an outcome.
- * because the output schema carries nothing but "exclude yes/no" plus a quote, the most a crafted message can
- * achieve here is the exclusion it is asking for — which is the feature — and the quote is verified against the
- * message afterwards, so a hallucinated or paraphrased justification cannot exclude anything
+ * <p>This runs as its own call with the message as its only input, deliberately not as a field on the scoring
+ * response: the scoring prompt must never be the place where author-controlled text can request an outcome. Because
+ * the output schema carries nothing but "exclude yes/no" plus a quote, the most a crafted message can achieve here is
+ * the exclusion it is asking for, which is the feature. The quote is verified against the message afterwards, so a
+ * hallucinated or paraphrased justification cannot exclude anything.
  */
 public class SkipRequestClient implements LlmClient {
     private static final String TEMPLATE_SKIP_REQUEST = "skip-request-prompt";
@@ -46,17 +46,17 @@ public class SkipRequestClient implements LlmClient {
             Character.UnicodeScript.MYANMAR);
 
     /**
-     * a squash-merge or release commit can carry a few hundred KB of concatenated changelog, which overflows a
-     * narrow provider's window outright and bills six figures of prompt tokens on every commit to answer one
-     * yes/no question. the cap sits far above any hand-written message, and grounding still runs against the
-     * full text, so a quote taken from beyond it simply fails to verify rather than excluding anything
+     * A squash-merge or release commit can carry a few hundred KB of concatenated changelog, which overflows a narrow
+     * provider's window outright and bills six figures of prompt tokens on every commit to answer one yes/no question.
+     * The cap sits far above any hand-written message, and grounding still runs against the full text, so a quote taken
+     * from beyond it simply fails to verify rather than excluding anything.
      */
     private static final int MAX_COMMIT_MESSAGE_CHARS = 16 * 1024;
 
     /**
-     * the answer is two fields, but reasoning models spend real tokens before emitting it — Kimi was observed
-     * at ~2100 completion tokens on one classification, so this leaves headroom over that while staying far
-     * below the scoring allowance, which a narrow-window provider would reject alongside the prompt
+     * The answer is two fields, but reasoning models spend real tokens before emitting it: Kimi was observed at ~2100
+     * completion tokens on one classification. This leaves headroom over that while staying far below the scoring
+     * allowance, which a narrow-window provider would reject alongside the prompt.
      */
     private static final int MAX_COMPLETION_TOKENS = 8 * 1024;
 
@@ -68,22 +68,21 @@ public class SkipRequestClient implements LlmClient {
         this.completions = new JsonCompletionClient(args, executor, log, additionalHeaders, MAX_COMPLETION_TOKENS);
     }
     /**
-     * the grounded skip reason plus what the classification cost. usage is returned even when no request was
-     * found — the tokens were spent either way and every LLM operation is billed, so dropping them here would
-     * silently under-report the ledger on the overwhelmingly common negative answer
+     * Returns the grounded skip reason plus what the classification cost. Usage is returned even when no request was
+     * found: the tokens were spent either way and every LLM operation is billed, so dropping them here would silently
+     * under-report the ledger on the overwhelmingly common negative answer.
      */
     public Detection detect(String commitMessage) throws Exception {
         /**
-         * the message is author-controlled and the prompt fences it as untrusted data, so a message carrying
-         * the closing marker would end that fence early and have its remainder read as prompt — in the one
-         * call whose entire purpose is resisting author-controlled text. grounding still runs against the
-         * original, so a quote spanning a stripped marker simply fails to verify
-         */
-        /**
-         * truncate BEFORE stripping, never after: strip repeats until the text stops shrinking, so running it
-         * over the whole message first makes a defence against nested markers quadratic in an input the author
-         * controls and git does not bound. Cutting on a code point keeps a supplementary-plane character from
-         * being halved into an unpaired surrogate, which serializes as invalid JSON string content
+         * The message is author-controlled and the prompt fences it as untrusted data, so a message carrying the
+         * closing marker would end that fence early and have its remainder read as prompt, in the one call whose
+         * entire purpose is resisting author-controlled text. Grounding still runs against the original, so a quote
+         * spanning a stripped marker simply fails to verify.
+         *
+         * <p>Truncation happens before stripping, never after: strip repeats until the text stops shrinking, so running
+         * it over the whole message first makes a defence against nested markers quadratic in an input the author
+         * controls and git does not bound. Cutting on a code point keeps a supplementary-plane character from being
+         * halved into an unpaired surrogate, which serializes as invalid JSON string content.
          */
         String classified = PromptFences.stripBounded(commitMessage, MAX_COMMIT_MESSAGE_CHARS);
         if (classified.length() < commitMessage.length()) {
@@ -101,16 +100,16 @@ public class SkipRequestClient implements LlmClient {
         completions.close();
     }
     /**
-     * the verification step that makes a non-deterministic classifier safe to act on: the model must point at
-     * the words that carry the request, and those words must really be in the message. whitespace is normalised
-     * because a wrapped message re-flows, but nothing else is — a paraphrase is treated as no request at all
+     * The verification step that makes a non-deterministic classifier safe to act on: the model must point at the words
+     * that carry the request, and those words must really be in the message. Whitespace is normalised because a wrapped
+     * message re-flows, but nothing else is, so a paraphrase is treated as no request at all.
      */
     static Optional<String> groundedQuote(String commitMessage, SkipRequestResponse response, Log log) {
         if (response.isExcludeRequested()) {
             /**
-             * the schema asks for an empty string when nothing is cited, but a model that simply omits the
-             * field leaves it null — and a null quote must read as "no evidence", not blow up the whole
-             * detection and get swallowed into "scoring normally", which silently ignores the author
+             * The schema asks for an empty string when nothing is cited, but a model that simply omits the field
+             * leaves it null. A null quote must read as "no evidence"; an NPE here would fail the whole detection,
+             * which the caller swallows into "scoring normally" and so silently ignores the author.
              */
             String quote = StringUtils.normalizeSpace(StringUtils.defaultString(response.getQuote()));
             if (citesNoRequest(quote)) {
@@ -125,13 +124,13 @@ public class SkipRequestClient implements LlmClient {
         return Optional.empty();
     }
     /**
-     * grounding proves the cited words are the author's; this proves they are evidence of anything. a message
-     * that names the tool contains that word wherever the model looks, so citing only it passes the substring
-     * check while carrying no request — which is exactly what a jail broken model was observed to produce. one
-     * ordinary word lifted from anywhere in the message passes just as easily, so the quote has to read as a
-     * clause once the tool's own name is removed. this errs toward scoring: a request phrased in fewer words
-     * than that is counted normally, which is the recoverable direction — silently dropping the author's work
-     * is not. counting is over code points because a letter above U+FFFF is two chars and neither is a letter
+     * Grounding proves the cited words are the author's; this proves they are evidence of anything. A message that
+     * names the tool contains that word wherever the model looks, so citing only it passes the substring check while
+     * carrying no request, which is exactly what a jailbroken model was observed to produce. One ordinary word lifted
+     * from anywhere in the message passes just as easily, so the quote has to read as a clause once the tool's own name
+     * is removed. This errs toward scoring: a request phrased in fewer words than that is counted normally, which is
+     * the recoverable direction, whereas silently dropping the author's work is not. Counting is over code points
+     * because a letter above U+FFFF is two chars and neither is a letter.
      */
     private static boolean citesNoRequest(String quote) {
         String cited = Strings.CI.remove(quote, TOOL_MENTION);
@@ -159,9 +158,15 @@ public class SkipRequestClient implements LlmClient {
                 .count();
     }
 
-    @Value
-    public static class Detection {
-        Optional<String> skipReason;
-        LlmUsage usage;
+    public static final class Detection extends ImmutablePair<Optional<String>, LlmUsage> {
+        public Detection(Optional<String> skipReason, LlmUsage usage) {
+            super(skipReason, usage);
+        }
+        public Optional<String> getSkipReason() {
+            return getLeft();
+        }
+        public LlmUsage getUsage() {
+            return getRight();
+        }
     }
 }

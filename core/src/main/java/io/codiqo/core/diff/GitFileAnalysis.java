@@ -1,15 +1,15 @@
 package io.codiqo.core.diff;
 
 import java.io.File;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.LinkedHashSet;
-import java.util.HashMap;
 
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.builder.EqualsBuilder;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
+import org.eclipse.collections.api.map.primitive.MutableIntObjectMap;
+import org.eclipse.collections.impl.map.mutable.primitive.IntObjectHashMap;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.jacoco.core.analysis.ILine;
 
@@ -45,7 +45,7 @@ public class GitFileAnalysis implements FileAnalysis {
     @ToString.Exclude
     private Set<CodeBlockInfo> removedCodeBlocks = new LinkedHashSet<>();
     @ToString.Exclude
-    private Map<Integer, ILine> lineCoverage = new HashMap<>();
+    private MutableIntObjectMap<ILine> lineCoverage = new IntObjectHashMap<>();
     private boolean testFile;
     @Getter(AccessLevel.NONE)
     private Optional<ProjectSpec> project = Optional.empty();

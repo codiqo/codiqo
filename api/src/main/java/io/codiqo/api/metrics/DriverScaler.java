@@ -3,13 +3,13 @@ package io.codiqo.api.metrics;
 import java.util.Collection;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.tuple.ImmutableTriple;
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics;
 
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
-import lombok.Value;
 import lombok.experimental.Accessors;
 
 @Getter
@@ -106,11 +106,18 @@ public final class DriverScaler {
         }
     }
 
-    @Value
-    @Accessors(fluent = true)
-    public static final class Sample {
-        int lines;
-        int ncss;
-        int invocations;
+    public static final class Sample extends ImmutableTriple<Integer, Integer, Integer> {
+        public Sample(int lines, int ncss, int invocations) {
+            super(lines, ncss, invocations);
+        }
+        public int lines() {
+            return getLeft();
+        }
+        public int ncss() {
+            return getMiddle();
+        }
+        public int invocations() {
+            return getRight();
+        }
     }
 }

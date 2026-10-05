@@ -8,13 +8,8 @@ import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 
 import org.apache.commons.collections4.MapUtils;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 
-import tools.jackson.databind.DeserializationFeature;
-import tools.jackson.databind.MapperFeature;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.PropertyNamingStrategies;
-import tools.jackson.databind.cfg.EnumFeature;
-import tools.jackson.databind.json.JsonMapper;
 import com.openai.client.OpenAIClient;
 import com.openai.core.JsonValue;
 import com.openai.models.ResponseFormatJsonObject;
@@ -24,7 +19,6 @@ import com.openai.models.chat.completions.ChatCompletionStreamOptions;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.llm.client.OpenAIClientWrapper.StreamingResult;
-import lombok.Value;
 
 /**
  * one prompt in, one JSON object out, with the sampling knobs and retry policy the module has settled on: the
@@ -38,7 +32,6 @@ public class JsonCompletionClient implements LlmClient {
     private final Log log;
     private final OpenAIClient client;
     private final OpenAIClientWrapper wrapper;
-    private final ObjectMapper objectMapper;
     private final String model;
     private final Double temperature;
     private final Double topP;
@@ -72,12 +65,6 @@ public class JsonCompletionClient implements LlmClient {
         this.numCtx = args.getLlmNumCtx();
         this.maxRetries = args.getLlmMaxRetries();
 
-        this.objectMapper = JsonMapper.builder()
-                .propertyNamingStrategy(PropertyNamingStrategies.LOWER_CAMEL_CASE)
-                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-                .enable(EnumFeature.READ_UNKNOWN_ENUM_VALUES_AS_NULL)
-                .enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_ENUMS)
-                .build();
     }
     public <T> Result<T> complete(String label, String prompt, Class<T> responseType) throws Exception {
         ChatCompletionCreateParams.Builder paramsBuilder = ChatCompletionCreateParams.builder();
@@ -130,7 +117,7 @@ public class JsonCompletionClient implements LlmClient {
                 StreamingResult result = wrapper.stream(paramsBuilder.build(), new OpenAIClientWrapper.StreamingHandler() {});
                 usage = usage.plus(LlmUsage.of(result));
                 if (FINISH_REASON_STOP.equals(result.getFinishReason())) {
-                    T response = objectMapper.readValue(LlmScoringClient.stripMarkdownFences(result.getContent().toString()), responseType);
+                    T response = LlmJson.readAnswer(result.getContent().toString(), responseType);
                     return new Result<>(response, usage);
                 }
                 lastError = new IOException("unexpected finishReason: " + result.getFinishReason());
@@ -150,9 +137,15 @@ public class JsonCompletionClient implements LlmClient {
         }
     }
 
-    @Value
-    public static class Result<T> {
-        T response;
-        LlmUsage usage;
+    public static final class Result<T> extends ImmutablePair<T, LlmUsage> {
+        public Result(T response, LlmUsage usage) {
+            super(response, usage);
+        }
+        public T getResponse() {
+            return getLeft();
+        }
+        public LlmUsage getUsage() {
+            return getRight();
+        }
     }
 }

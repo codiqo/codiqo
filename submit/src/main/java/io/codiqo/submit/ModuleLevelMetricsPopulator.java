@@ -2,12 +2,12 @@ package io.codiqo.submit;
 
 import java.io.File;
 import java.util.Collection;
-import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
 
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
+import org.eclipse.collections.api.map.primitive.IntObjectMap;
 import org.jacoco.core.analysis.ICounter;
 import org.jacoco.core.analysis.ILine;
 
@@ -35,7 +35,7 @@ public class ModuleLevelMetricsPopulator implements SubmissionPopulator {
                     if (block instanceof JavaCodeBlockInfo) {
                         JavaCodeBlockInfo javaBlock = (JavaCodeBlockInfo) block;
 
-                        Map<Integer, ILine> lineCoverage = javaBlock.getLineCoverage();
+                        IntObjectMap<ILine> lineCoverage = javaBlock.getLineCoverage();
                         int coveredLines = 0;
                         int missedLines = 0;
                         int coveredBranches = 0;

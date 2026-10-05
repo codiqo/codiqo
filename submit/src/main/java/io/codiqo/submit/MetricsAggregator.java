@@ -7,8 +7,8 @@ import java.util.Objects;
 import java.util.OptionalDouble;
 import java.util.function.Function;
 
-import lombok.Value;
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.math3.stat.descriptive.rank.Percentile;
 
 import io.codiqo.api.cpd.CopyPasteDetectionSummary;
@@ -64,7 +64,6 @@ public class MetricsAggregator implements SubmissionPopulator {
             qualityModel.setPmdViolations(tracker.affectedPmdViolations().intValue());
             qualityModel.setSpotbugsIssues(tracker.affectedSpotbugsIssues().intValue());
 
-            // module-level violations (all code, not just changed)
             qualityModel.setTotalPmdViolationsInModule(tracker.moduleTotalPmdViolations().intValue());
             qualityModel.setTotalSpotbugsIssuesInModule(tracker.moduleTotalSpotbugsIssues().intValue());
             qualityModel.setCriticalViolations(tracker.criticalViolations());
@@ -179,12 +178,11 @@ public class MetricsAggregator implements SubmissionPopulator {
         populateDriverMetrics(ctx);
     }
     /**
-     * project totals + driver-score statistics (scalers, cap quantiles) derived from the whole-project
-     * index. kept separate from the coverage/quality aggregates so the source-only degraded path can
-     * price code volume without emitting a fabricated 0% coverage or an all-zero quality summary.
+     * Project totals and driver-score statistics (scalers, cap quantiles) derived from the whole-project index. Kept
+     * separate from the coverage/quality aggregates so the source-only degraded path can price code volume without
+     * emitting a fabricated 0% coverage or an all-zero quality summary.
      */
     public static void populateDriverMetrics(SubmissionContext ctx) {
-        // resolved once: every aggregation below reads it
         List<TrackedModule> tracked = trackedModules(ctx);
 
         int fullTotalStatementsInProject = 0;
@@ -267,11 +265,12 @@ public class MetricsAggregator implements SubmissionPopulator {
         projectMetricsModel.setDriverScalers(scalersModel);
     }
     /**
-     * share of everything the detector read that sits inside a clone: distinct duplicated lines over the lines of the
+     * Share of everything the detector read that sits inside a clone: distinct duplicated lines over the lines of the
      * files it scanned, both sides from the same run.
      *
-     * empty only when CPD never ran — switched off via ignoreCpd, or unsupported for every indexed language. A run
-     * that read code and found no clones is 0%, not unknown, which downstream has to be able to tell apart.
+     * <p>Empty only when CPD never ran, because it was switched off via ignoreCpd or is unsupported for every indexed
+     * language. A run that read code and found no clones is 0%, not unknown, which downstream has to be able to tell
+     * apart.
      */
     static OptionalDouble cpdDuplicationPercent(Collection<CopyPasteDetectionSummary> cpd) {
         if (CollectionUtils.isEmpty(cpd)) {
@@ -324,8 +323,8 @@ public class MetricsAggregator implements SubmissionPopulator {
         model.setTrivialConstructorsTestExcluded(ctorTest);
     }
     /**
-     * every module that produced a quality tracker, paired with its model. A module can be present in the project
-     * model without a tracker — nothing indexed under it — and every aggregation here has to skip those
+     * Every module that produced a quality tracker, paired with its model. A module can be present in the project model
+     * without a tracker when nothing was indexed under it, and every aggregation here has to skip those.
      */
     private static List<TrackedModule> trackedModules(SubmissionContext ctx) {
         List<TrackedModule> toReturn = new ArrayList<>();
@@ -368,9 +367,15 @@ public class MetricsAggregator implements SubmissionPopulator {
         return (int) new Percentile().evaluate(values, quantileLevel);
     }
 
-    @Value
-    private static class TrackedModule {
-        ModuleModel moduleModel;
-        ModuleQualityTracker tracker;
+    private static final class TrackedModule extends ImmutablePair<ModuleModel, ModuleQualityTracker> {
+        public TrackedModule(ModuleModel moduleModel, ModuleQualityTracker tracker) {
+            super(moduleModel, tracker);
+        }
+        public ModuleModel getModuleModel() {
+            return getLeft();
+        }
+        public ModuleQualityTracker getTracker() {
+            return getRight();
+        }
     }
 }

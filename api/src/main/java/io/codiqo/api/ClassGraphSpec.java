@@ -6,7 +6,7 @@ import java.util.Map;
 
 import io.github.classgraph.ClassInfo;
 import io.github.classgraph.ClassInfoList;
-import lombok.Value;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 
 public interface ClassGraphSpec extends AutoCloseable {
     List<URL> getClasspathURLs();
@@ -27,15 +27,27 @@ public interface ClassGraphSpec extends AutoCloseable {
     Map<MethodKey, MethodEntry> getMethods(ClassInfo fqn);
     Map<MethodKey, MethodEntry> getConstructors(ClassInfo fqn);
 
-    @Value
-    public static class MethodKey {
-        String name;
-        String descriptor;
+    public static final class MethodKey extends ImmutablePair<String, String> {
+        public MethodKey(String name, String descriptor) {
+            super(name, descriptor);
+        }
+        public String getName() {
+            return getLeft();
+        }
+        public String getDescriptor() {
+            return getRight();
+        }
     }
 
-    @Value
-    public static class MethodEntry {
-        String descriptor;
-        String signature;
+    public static final class MethodEntry extends ImmutablePair<String, String> {
+        public MethodEntry(String descriptor, String signature) {
+            super(descriptor, signature);
+        }
+        public String getDescriptor() {
+            return getLeft();
+        }
+        public String getSignature() {
+            return getRight();
+        }
     }
 }

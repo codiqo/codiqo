@@ -18,6 +18,8 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.apache.commons.lang3.tuple.ImmutableTriple;
 import org.apache.commons.math3.util.Precision;
 import org.slf4j.event.Level;
 
@@ -95,8 +97,10 @@ public class FinalScoreCalculator {
         }
 
         /**
-         * a diff-only degraded analysis (build failure) has no coverage/static-analysis/duplication data,
-         * so quality bonuses are non verifiable — and the commit broke the build. cap the multiplier at 1.0
+         * A commit that failed the build is scored as a diff-only degraded analysis, which carries no coverage,
+         * static-analysis or duplication data, so any quality bonus the LLM grants cannot be verified, and the
+         * commit broke the build besides. The multiplier is therefore capped at 1.0; lifting the cap would let a
+         * build-breaking commit score above its base effort on unverifiable quality claims.
          */
         double qualityMultiplierMax = args.getQualityMultiplierMax();
         if (Objects.nonNull(request) && Objects.nonNull(request.getBuildFailure())) {
@@ -113,11 +117,11 @@ public class FinalScoreCalculator {
         }
 
         /**
-         * the architecture bonus rewards effort on actual code — a commit that touches only
-         * build/config descriptors (e.g. pom.xml, .proto) produces no code blocks and must not
-         * earn it. language-agnostic: any structured language contributes codeBlockChanges, so a
-         * mechanical pom-only version bump scores zero here regardless of what the LLM returned.
-         * a null request (test-only overload) preserves legacy behaviour
+         * The architecture bonus rewards effort on actual code. A commit that touches only build or config
+         * descriptors (for example pom.xml or .proto) produces no code blocks and must not earn it, whatever the
+         * LLM returned; otherwise a mechanical pom-only version bump would collect a bonus. The check is
+         * language-agnostic because every structured language contributes codeBlockChanges. A null request comes
+         * only from the two-argument overload, which keeps the bonus ungated.
          */
         boolean hasCodeChanges = Objects.isNull(request) || CollectionUtils.isNotEmpty(request.getCodeBlockChanges());
 
@@ -167,10 +171,10 @@ public class FinalScoreCalculator {
         response.setScoreCalculation(scoreCalculation);
     }
     /**
-     * moveDetectionEnabled=false must be a full off switch for relocation discounts: a disabled
-     * detector offers no candidates (so confirmed ids resolve to nothing), but the LLM knows the
-     * movedPairs contract from the system prompt and may still cite pairs — the deriver sanitizes
-     * pairs only against effective lines, so they must be stripped here before derivation.
+     * moveDetectionEnabled=false must be a full off switch for relocation discounts. A disabled detector offers no
+     * candidates, so confirmed ids resolve to nothing, but the LLM knows the movedPairs contract from the system
+     * prompt and may still cite pairs. The deriver sanitizes pairs only against effective lines, so unless they are
+     * stripped here before derivation, a disabled detector would still discount moved lines.
      */
     private void dropMovedPairsWhenDetectionDisabled(LlmScoringResponse response) {
         if (args.isMoveDetectionEnabled()) {
@@ -241,8 +245,9 @@ public class FinalScoreCalculator {
                 Integer anchor = diffLines.getCandidateDeletedAnchor().get(line);
                 String content = diffLines.getCandidateDeletedContent().get(line);
                 /**
-                 * deleted lines are billed only to MODIFY units (EffectiveChangePopulator), with
-                 * the anchor allowed to sit one line past the body end — mirror both rules here
+                 * EffectiveChangePopulator bills deleted lines only to MODIFY units and lets the anchor sit one
+                 * line past the body end. Both rules are mirrored here (modifyOnly, end slack of 1); diverging from
+                 * them would remove moved invocations from a block that was never billed for them.
                  */
                 if (Objects.nonNull(anchor) && Objects.nonNull(content)) {
                     int idx = innermostBlockForLine(blocks, anchor, 1, true);
@@ -306,11 +311,11 @@ public class FinalScoreCalculator {
         }
 
         /**
-         * a category the model echoed against a key no block carries is indistinguishable, downstream, from a
-         * block it never categorized — both leave the floor to apply. Now that the floor covers MODIFY as
-         * well as NEW, systematic drift in what the model echoes back (a leading "./", a differently rendered
-         * generic or varargs signature) would silently discount an entire commit to MECHANICAL, so the miss
-         * is counted and reported rather than absorbed
+         * A category the model echoed against a key no block carries is indistinguishable, downstream, from a
+         * block it never categorized: both leave the floor to apply. Because the floor covers MODIFY as well as
+         * NEW, systematic drift in what the model echoes back (a leading "./", a differently rendered generic or
+         * varargs signature) would silently discount an entire commit to MECHANICAL, so the miss is counted and
+         * reported rather than absorbed.
          */
         if (unmatched > 0) {
             log.warn("block categories: %d label(s) did not match any pre-computed block key and were dropped — those blocks fall back to the floor; suspect signature drift between the prompt and the response",
@@ -341,8 +346,9 @@ public class FinalScoreCalculator {
                 boolean floored = Objects.isNull(
                         toReturn.putIfAbsent(VolumeScoreCalculator.blockKey(cbe.getFile(), cbe.getSignature()), mechanicalCoeff));
                 /**
-                 * only signature-bearing blocks were ever offered to the model, so only they belong in the
-                 * coverage figure — a synthetic file-level block can never carry a label
+                 * Only signature-bearing blocks were ever offered to the model, so only they belong in the
+                 * coverage figure. A synthetic file-level block can never carry a label, and counting it would
+                 * report the model as omitting labels it was never asked for.
                  */
                 if (StringUtils.isNotBlank(cbe.getSignature())) {
                     categorizable++;
@@ -356,8 +362,9 @@ public class FinalScoreCalculator {
         return toReturn;
     }
     /**
-     * coverage is otherwise invisible — the label is not persisted per block, so a commit whose
-     * categories were mostly omitted is indistinguishable from one the model judged mechanical throughout
+     * This log line is the only place category coverage is visible. The label is not persisted per block, so
+     * afterwards a commit whose categories were mostly omitted is indistinguishable from one the model judged
+     * mechanical throughout.
      */
     private void logCategoryCoverage(int categorizable, int uncategorized) {
         if (categorizable > 0) {
@@ -432,9 +439,10 @@ public class FinalScoreCalculator {
             int deletedTotal = cosmeticDeletedSize + inPlacePairs + trueModifyPairs + pureDeleteSize + movedDeletedSize;
 
             /**
-             * entries are server-derived from the diff (DiffClassificationDeriver), so totals match
-             * the effective targets by construction — a mismatch means candidate filtering drifted
-             * from DiffStats.categorize and the file's factor can't be trusted
+             * The entries are derived on the server from the diff (DiffClassificationDeriver), so their totals match
+             * the effective line targets by construction. A mismatch means candidate filtering drifted from
+             * DiffStats.categorize; the file's factor cannot be trusted then, so the file is skipped and keeps its
+             * unadjusted effort.
              */
             if (addedTotal != fc.getLinesAdded()) {
                 log.warn("diffClassification.skipReason=addedTotalMismatch file='%s' addedTotal=%d linesAdded=%d",
@@ -457,9 +465,10 @@ public class FinalScoreCalculator {
             }
 
             /**
-             * each side of a moved pair charges movedLineCoefficient/2 to its own file — a
-             * same-file move costs the full coefficient, a cross-file move splits it between the
-             * source and destination files, and the sum over files is pairs × coefficient either way
+             * Each side of a moved pair charges movedLineCoefficient/2 to its own file. A same-file move therefore
+             * costs the full coefficient, a cross-file move splits it between the source and destination files, and
+             * the sum over files is pairs × coefficient either way. Charging the full coefficient per side would bill
+             * every move twice.
              */
             int pairsCount = inPlacePairs + trueModifyPairs;
             double effectiveLines = pairsCount + pureAddSize + pureDeleteSize
@@ -468,10 +477,10 @@ public class FinalScoreCalculator {
             perFileFactor.put(entry.getFile(), factor);
 
             /**
-             * deletion-reward blocks are credited only for genuine removals: moved-out lines are
-             * already scored on the added side (commit-wide move detection), so they contribute 0 here
-             * rather than the movedLineCoefficient/2 the general factor charges — a method relocated to
-             * another file earns nothing on the deleted side
+             * Deletion-reward blocks are credited only for genuine removals. Moved-out lines are already scored on
+             * the added side by commit-wide move detection, so they contribute 0 here rather than the
+             * movedLineCoefficient/2 the general factor charges; a method relocated to another file earns nothing
+             * on the deleted side, and crediting it here would reward the move twice.
              */
             double deletionFactor = pureDeleteSize / (double) rawLines;
             perFileDeletionFactor.put(entry.getFile(), deletionFactor);
@@ -488,9 +497,9 @@ public class FinalScoreCalculator {
         }
 
         /**
-         * a moved-only commit yields a fractional adjusted total below 0.5 (e.g. one pair at the
-         * default coefficient = 0.25) — reporting 0 effective lines for a non-empty change would
-         * mislead API consumers, so clamp any positive fraction to at least 1
+         * A moved-only commit can yield a fractional adjusted total below 0.5 (for example one pair at the default
+         * coefficient gives 0.25), which rounds to 0. Reporting 0 effective lines for a non-empty change would
+         * mislead API consumers, so any positive fraction is clamped to at least 1.
          */
         int adjustedLines = (int) Math.round(totalAdjustedLines);
         if (totalAdjustedLines > 0) {
@@ -524,8 +533,9 @@ public class FinalScoreCalculator {
         classification.setMovedLines(classification.getPerFile().stream().mapToInt(FileDiffClassification::getMovedLines).sum());
     }
     /**
-     * the classification the whole diff-adjustment path reads, resolved in one place. Both hops are optional on the
-     * wire: a response may omit the breakdown entirely, or carry one with no classification
+     * Both hops are optional on the wire: an LLM response may omit the breakdown entirely, or carry one with no
+     * classification. Every reader on the diff-adjustment path goes through this accessor so none of them can
+     * dereference a missing hop.
      */
     private static Optional<DiffClassification> diffClassification(LlmScoringResponse response) {
         return Optional.ofNullable(response.getEffortBreakdown()).map(EffortBreakdown::getDiffClassification);
@@ -645,7 +655,10 @@ public class FinalScoreCalculator {
         }
         return toReturn;
     }
-    /** A pair inside a nested block also falls within the enclosing block's body range — only the innermost block may collapse it. */
+    /**
+     * A pair inside a nested block also falls within the enclosing block's body range, so only the innermost block
+     * may collapse it; crediting every enclosing block would collapse the same line more than once.
+     */
     private static void assignPairsToInnermostBlock(List<LinePair> pairs, List<CodeBlockEffort> blocks, int[] counts) {
         for (LinePair pair : CollectionUtils.emptyIfNull(pairs)) {
             int innermost = -1;
@@ -726,9 +739,9 @@ public class FinalScoreCalculator {
      * Validates the LLM's semantic labels against the diff's change blocks: every cited block id
      * must exist, every cosmetic line number must be an effective changed line, every confirmed
      * move id must be a server-offered candidate, and every moved pair must cite effective lines
-     * not already claimed. Pairing and pure buckets are server-derived
-     * ({@link DiffClassificationDeriver}), so the old count and duplicate invariants cannot be
-     * violated and are no longer checked.
+     * not already claimed. Pairing and pure buckets are derived on the server
+     * ({@link DiffClassificationDeriver}), so count and duplicate invariants cannot be violated and
+     * are not checked here.
      */
     public ValidationReport validate(LlmScoringResponse response, LlmScoringRequest request) {
         List<ValidationFailure> failures = new ArrayList<>();
@@ -744,12 +757,15 @@ public class FinalScoreCalculator {
         DiffClassification classification = opt.get();
         List<MoveCandidate> moveCandidates = movedLineDetector.detect(request);
         validateConfirmedMoveIds(classification, moveCandidates, failures);
-        // when detection is disabled, apply() strips movedPairs — don't burn retries on them here
+        /**
+         * When detection is disabled, apply() strips movedPairs before they are used, so pairs the LLM cites anyway
+         * are harmless; validating them would spend LLM retries on output that is discarded.
+         */
         if (args.isMoveDetectionEnabled()) {
             validateMovedPairs(classification, request, moveCandidates, failures);
         }
 
-        // explicit "perFile": null from the LLM bypasses the @Builder.Default empty list
+        /** An explicit "perFile": null from the LLM bypasses the @Builder.Default empty list, so null is possible. */
         if (CollectionUtils.isEmpty(classification.getPerFile())) {
             return new ValidationReport(failures);
         }
@@ -897,8 +913,11 @@ public class FinalScoreCalculator {
     public static class ValidationFailure {
         String filePath;
         FailureReason reason;
-        // what the LLM cited that does not exist (block ids or line numbers, as strings), and the
-        // complete valid set for that dimension — both rendered into the retry feedback
+        /**
+         * What the LLM cited that does not exist (block ids or line numbers, as strings), and the complete valid set
+         * for that dimension. Both are rendered into the retry feedback, so the model sees its mistake and the
+         * values it may use instead.
+         */
         List<String> offending;
         List<String> valid;
     }
@@ -912,22 +931,34 @@ public class FinalScoreCalculator {
         }
     }
 
-    @Value
-    private static class PerFileResult {
-        Map<String, Double> factors;
-        Map<String, Double> deletionFactors;
-        DiffBookkeeping bookkeeping;
-
+    private static final class PerFileResult extends ImmutableTriple<Map<String, Double>, Map<String, Double>, DiffBookkeeping> {
+        PerFileResult(Map<String, Double> factors, Map<String, Double> deletionFactors, DiffBookkeeping bookkeeping) {
+            super(factors, deletionFactors, bookkeeping);
+        }
+        Map<String, Double> getFactors() {
+            return getLeft();
+        }
+        Map<String, Double> getDeletionFactors() {
+            return getMiddle();
+        }
+        DiffBookkeeping getBookkeeping() {
+            return getRight();
+        }
         static PerFileResult empty() {
             return new PerFileResult(new HashMap<>(), new HashMap<>(), DiffBookkeeping.zero());
         }
     }
 
-    @Value
-    private static class DiffAdjustment {
-        PreComputedScores scores;
-        DiffBookkeeping bookkeeping;
-
+    private static final class DiffAdjustment extends ImmutablePair<PreComputedScores, DiffBookkeeping> {
+        DiffAdjustment(PreComputedScores scores, DiffBookkeeping bookkeeping) {
+            super(scores, bookkeeping);
+        }
+        PreComputedScores getScores() {
+            return getLeft();
+        }
+        DiffBookkeeping getBookkeeping() {
+            return getRight();
+        }
         static DiffAdjustment unchanged(PreComputedScores preComputed) {
             return new DiffAdjustment(preComputed, DiffBookkeeping.zero());
         }

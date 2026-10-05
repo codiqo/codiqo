@@ -72,6 +72,8 @@ public class GradleModelCollector {
         request.setExcludePaths(stringProp(root, "codiqo.excludePaths", ext.getExcludePaths()));
         request.setIgnoreDiagnostics(boolProp(root, "codiqo.ignoreDiagnostics", ext.isIgnoreDiagnostics()));
         request.setIgnoreComplexity(boolProp(root, "codiqo.ignoreComplexity", ext.isIgnoreComplexity()));
+        request.setHotspots(boolProp(root, "codiqo.hotspots", ext.isHotspots()));
+        request.setHotspotsCommitId(stringProp(root, "codiqo.hotspotsCommitId", null));
         request.setFailOnJdtlsError(boolProp(root, "codiqo.failOnJdtlsError", ext.isFailOnJdtlsError()));
         request.setFailOnUninstrumentedModule(boolProp(root, "codiqo.failOnUninstrumentedModule", ext.isFailOnUninstrumentedModule()));
 
@@ -88,7 +90,7 @@ public class GradleModelCollector {
         return request;
     }
     /**
-     * empty for anything that is not an analysable leaf. Container projects are skipped (Maven parity: an empty
+     * Empty for anything that is not an analysable leaf. Container projects are skipped (Maven parity: an empty
      * reactor.getModules()) because an ancestor whose directory contains a subproject's sources would otherwise
      * become that file's owner through RunArgs.owner()'s containment lookup.
      */
@@ -135,8 +137,8 @@ public class GradleModelCollector {
         }
 
         /**
-         * every Test task, not just `test`: an integrationTest task writes its own report directory, and a module
-         * whose only executed tests live there must still count as a module whose test fork ran
+         * Every Test task, not just {@code test}: an integrationTest task writes its own report directory, and a module
+         * whose only executed tests live there must still count as a module whose test fork ran.
          */
         for (Test testTask : project.getTasks().withType(Test.class)) {
             toReturn.getTestReportDirectories().add(GradleBuildSupport.junitXmlDir(testTask).getAbsolutePath());
@@ -146,7 +148,7 @@ public class GradleModelCollector {
         return Optional.of(toReturn);
     }
     /**
-     * the ClassGraph scan uses compile and test classpaths alike, so coordinates are resolved for all of them —
+     * The ClassGraph scan uses compile and test classpaths alike, so coordinates are resolved for all of them —
      * runtimeClasspath alone drops compileOnly/provided and test-only dependencies whose classes are scanned, losing
      * their artifact attribution.
      */
@@ -177,7 +179,7 @@ public class GradleModelCollector {
         return toReturn;
     }
     /**
-     * resolved in the daemon so the worker never has to know about the {@code env:VAR} form, and so a key naming an
+     * Resolved in the daemon so the worker never has to know about the {@code env:VAR} form, and so a key naming an
      * unset variable fails here with a clear message rather than as a 401 after a full analysis. A configured key
      * that resolves to nothing is a misconfiguration, never an invitation to continue unauthenticated.
      */
