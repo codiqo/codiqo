@@ -99,10 +99,6 @@ class CpdDuplicationDensityTest {
         assertEquals(2, classes.size(), "[A,B] with its prefix, and the tail all three files share");
         assertTrue(classes.stream().anyMatch(marks -> marks.size() == THREE_COPIES));
     }
-    /**
-     * calls tokenizeAndCollect directly rather than detectCopyPaste: a crash must fail the test, not be absorbed by
-     * the batched retry
-     */
     private static CopyPasteDetectionSummary run(List<Path> files) throws IOException {
         LogFactory logFactory = new SlfLogFactory();
         RunArgs args = new RunArgs();
