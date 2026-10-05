@@ -134,15 +134,9 @@ public class HotspotFindings {
         Map<Pair<Integer, Integer>, HotspotFindingModel> byFragment = new LinkedHashMap<>();
         Map<Pair<Integer, Integer>, Integer> copies = new HashMap<>();
         for (CloneLocations clone : clones) {
-            Span here = null;
-            List<Span> others = new ArrayList<>();
-            for (Span span : clone.getSpans()) {
-                if (Objects.isNull(here) && span.getFile().equals(file)) {
-                    here = span;
-                } else {
-                    others.add(span);
-                }
-            }
+            /** every clone here was selected for having a span in this file, so the first such span always exists */
+            Span here = clone.getSpans().stream().filter(span -> span.getFile().equals(file)).findFirst().orElseThrow();
+            List<Span> others = clone.getSpans().stream().filter(span -> span != here).toList();
             if (CollectionUtils.isNotEmpty(others)) {
                 Pair<Integer, Integer> fragment = Pair.of(here.getStartLine(), here.getEndLine());
                 copies.merge(fragment, others.size(), Integer::sum);
