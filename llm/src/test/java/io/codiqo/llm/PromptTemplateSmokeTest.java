@@ -3,6 +3,7 @@ package io.codiqo.llm;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
@@ -401,6 +402,53 @@ class PromptTemplateSmokeTest {
         String rendered = builder.buildUserMessageWithScores(request, PromptContext.builder().args(args).build()).getMessage();
 
         assertEquals(0, countOccurrences(rendered, "SIG_MARKER"), "a window at or below the reserve must trim all callers");
+    }
+    @Test
+    void requestLargerThanTheWholeWindowIsNotSent() {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+
+        String diff = "@@ -1 +1 @@\n" + "+String s = \"a large added line that no caller cap can shrink\";\n".repeat(400);
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder()
+                        .linesAdded(400).linesDeleted(0).totalLinesChanged(400).totalFilesChanged(1).build())
+                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                        .path("Big.java").changeType(FileChangeType.MODIFIED).language("java")
+                        .linesAdded(400).linesDeleted(0).linesJustificationRequired(true).diff(diff).build())))
+                .codeBlockChanges(Collections.emptyList())
+                .build();
+
+        RunArgs args = new RunArgs();
+        args.setLlmNumCtx(1024);
+        PromptContext context = PromptContext.builder().args(args).build();
+
+        /**
+         * a BufferOverflowException subtype, so the backend scheduler keeps classifying the refusal as a terminal LLM
+         * failure instead of retrying it and marking it INFRA
+         */
+        PromptOverflowException err = assertThrows(PromptOverflowException.class, () -> builder.buildUserMessageWithScores(request, context));
+        assertTrue(err.getMessage().contains("> 1024 tokens"), "the refusal must name the window it exceeded");
+        assertEquals(1024, err.getContextWindow());
+        assertEquals(diff, request.getFileChanges().get(0).getDiff(), "the annotated diff must be restored even when the request is refused");
+    }
+    @Test
+    void nonPositiveWindowFallsBackToTheDefault() {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+
+        String diff = "@@ -1 +1 @@\n" + "+String s = \"a large added line that no caller cap can shrink\";\n".repeat(400);
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder()
+                        .linesAdded(400).linesDeleted(0).totalLinesChanged(400).totalFilesChanged(1).build())
+                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                        .path("Big.java").changeType(FileChangeType.MODIFIED).language("java")
+                        .linesAdded(400).linesDeleted(0).linesJustificationRequired(true).diff(diff).build())))
+                .codeBlockChanges(Collections.emptyList())
+                .build();
+
+        RunArgs args = new RunArgs();
+        args.setLlmNumCtx(0);
+        String rendered = builder.buildUserMessageWithScores(request, PromptContext.builder().args(args).build()).getMessage();
+
+        assertTrue(rendered.contains("Big.java"), "llmNumCtx=0 must fall back to the default window, not refuse the request");
     }
     @Test
     void userPromptGroundsChangedLineCoverageAndCpdSplit() {

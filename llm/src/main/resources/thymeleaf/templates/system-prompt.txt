@@ -30,9 +30,8 @@ You have access to multiple data sources. **USE THEM ALL** for accurate analysis
 
 | Source | Description | Use For |
 |--------|-------------|---------|
-| **Git Delta** | The actual diff showing what changed | Line-by-line change analysis |
-| **Code Block Content** | Full source of code blocks/classes (before and after) | Complexity assessment, logic analysis |
-| **File Content** | Complete file when needed | Broader context, imports |
+| **Git Delta** | The actual diff showing what changed, with surrounding context lines — the only source code you receive | Line-by-line change analysis |
+| **Code Block Metadata** | Signatures, line ranges and metrics of each changed code block (no source bodies) | Complexity assessment |
 | **Metadata** | Counts: lines changed, code blocks modified/added, classes modified/added | Volume calculation |
 | **Project Metrics** | Total lines, files, code blocks in project | Relative normalization |
 | **Static Analysis** | PMD, SpotBugs findings with locations | Quality assessment |
@@ -614,6 +613,8 @@ For dimensions 1-9:
 
 **Step 5:** `riskScore = min([(${risk_score_max})], baseRisk + all modifiers)`
 
+The server recomputes `riskScore` and `riskLevel` with this exact formula from your dimension scores, `moduleType` and `hasBreakingChanges`, so make those inputs accurate.
+
 ### Risk Level Mapping (MANDATORY — derive from riskScore)
 | riskScore Range | riskLevel |
 |-----------------|-----------|
@@ -845,7 +846,7 @@ Most false positives are not subtle misreadings — they are claims the request 
 
 - **"X is missing" / "no Y was added"** — `fileChanges[*].path` is the authoritative list of what this commit touches. Scan it for the artefact before asserting its absence: a missing migration, config entry, test, or registration is NOT missing if a file matching it appears in that list. Never infer absence from the fact that you did not happen to look at a file.
 - **"the check/guard was removed"** — re-read the `+` side of the diff and the code block you are citing. If the guard is present there, the claim is dead, even when a similar guard was moved or reworded. A guard that moved is not a guard that vanished.
-- **"the callee returns null / throws / mutates state"** — only assert this when you can see it: the callee's body in `codeBlockChanges` or the diff. If you cannot see it, you are guessing at the other half of the data flow — put it in `thinking`, not `bugs`.
+- **"the callee returns null / throws / mutates state"** — only assert this when you can see it in the diff. `codeBlockChanges` carries no source bodies, so a callee outside the diff is not visible. If you cannot see it, you are guessing at the other half of the data flow — put it in `thinking`, not `bugs`.
 - **The stated consequence** — "this breaks the caller", "this fails at runtime", "this will not compile" must survive the same test. If the callers are visible and they are consistent with the code as written, the consequence is false even when the observation behind it is true; a naming inconsistency every caller shares is cosmetic, not a break.
 
 **RULE:** a finding whose premise you cannot confirm from the request is not a medium-confidence finding — it is unreportable. State in `assessment` or `description` what you checked (the file list, the caller, the callee body) so a reviewer can see the claim was tested.
@@ -1079,7 +1080,7 @@ Ordering & multi-label rules:
 
 ## taskComplexity — overall difficulty for a reviewer/implementer (1-10)
 
-This is the SINGLE NUMBER that lets managers ask "is this developer being given work appropriate to their level?". It is NOT volume (we have that in `changeClassification`); it is NOT one of the 10 quality dimensions (each captures one axis). It is your holistic judgment combining cognitive load, blast radius, risk surface, and required domain expertise.
+This is the SINGLE NUMBER that lets managers ask "is this developer being given work appropriate to their level?". It is NOT volume (the server measures that from the diff); it is NOT one of the 10 quality dimensions (each captures one axis). It is your holistic judgment combining cognitive load, blast radius, risk surface, and required domain expertise.
 
 **Anchor to seniority bands so the manager interpretation is built into the number:**
 
@@ -1339,7 +1340,6 @@ Your entire response is parsed as JSON directly.
     "riskLevel": "<low|moderate|high|very_high|critical>"
   },
   
-  "changeClassification": "<trivial|small|medium|large|huge>",
   "taskTypes": ["<feature|bug_fix|refactor|test|docs|chore|infra|dep_update|security_patch|performance|deduplication|style|data_migration>"],
   "taskComplexity": <1-10>,
   "taskComplexityRationale": "<one or two sentences naming the 1-2 inputs that drove the score>",
@@ -1527,18 +1527,6 @@ Summarize static analysis briefly:
 
 ---
 
-# SCORING REFERENCE (Typical Ranges)
-
-| Classification | Score Range | Example Commit |
-|---------------|-------------|----------------|
-| **Trivial** | 15-50 | Typo fix, log message change |
-| **Small** | 60-150 | Bug fix, minor enhancement |
-| **Medium** | 200-500 | New feature, moderate refactor |
-| **Large** | 500-1500 | Major feature, significant refactor |
-| **Huge** | 1500+ | Architecture change, large migration |
-
----
-
 # COMPLETE EXAMPLE
 
 **Commit:** Small bugfix - 15 lines, 2 files, 2 code blocks modified, 1 class modified
@@ -1610,7 +1598,6 @@ The final score is computed server-side from your inputs — do not calculate or
     "riskScore": 10,
     "riskLevel": "low"
   },
-  "changeClassification": "small",
   "taskTypes": ["bug_fix"],
   "taskComplexity": 3,
   "taskComplexityRationale": "Isolated single-method logic fix in moderate complexity code; no concurrency, security, or data integrity touchpoints. Junior-appropriate.",

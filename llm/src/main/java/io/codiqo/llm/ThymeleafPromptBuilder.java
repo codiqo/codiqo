@@ -70,9 +70,13 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
 
         Map<LlmScoringRequest.DuplicationInfo.CloneLocation, String> savedSlices = stripSourceSlices(request);
         Map<LlmScoringRequest.FileChange, String> savedDiffs = annotateDiffs(request);
-        BudgetedRequest budgeted = enforceCallerBudget(context.getArgs(), request, guidanceTokens);
-        restoreDiffs(savedDiffs);
-        restoreSourceSlices(savedSlices);
+        BudgetedRequest budgeted;
+        try {
+            budgeted = enforceCallerBudget(context.getArgs(), request, guidanceTokens);
+        } finally {
+            restoreDiffs(savedDiffs);
+            restoreSourceSlices(savedSlices);
+        }
 
         ctx.setVariable("requestJson", budgeted.getJson());
         ctx.setVariable("moveCandidates", movedLineDetector.detect(request));
@@ -178,6 +182,22 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
                 }
             }
             if (tokens > budget) {
+                int numCtx = contextWindow(args);
+                if (tokens > numCtx) {
+                    /**
+                     * The request alone is larger than the whole context window, so the model is certain to reject it
+                     * and sending it would only pay for a failed call. The exception message carries the token count
+                     * and the window because it is what the failure record stores; a bare exception left that record
+                     * with no reason at all.
+                     */
+                    logSectionTokens(model, request, tokens);
+                    restoreCallerLists(originals);
+                    throw new PromptOverflowException(tokens, numCtx, String.format(Locale.ROOT,
+                            "prompt exceeds the model's context window (%d > %d tokens) after capping callers to %d per block; the diff dominates the prompt",
+                            tokens,
+                            numCtx,
+                            appliedCap));
+                }
                 log.warn("prompt still over budget (%d > %d tokens, %d reserved for agent instructions) after capping callers to %d per block; the diff dominates the prompt and the request may be rejected by the model",
                         tokens,
                         budget,
@@ -191,17 +211,53 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
             }
         }
 
+        logSectionTokens(model, request, tokens);
         restoreCallerLists(originals);
         return new BudgetedRequest(requestJson, tokens);
     }
+    /**
+     * Where the request's tokens go, measured on the request as sent (annotated diffs, capped callers), so a change to
+     * one part of the prompt can be judged by what it saves.
+     */
+    private void logSectionTokens(String model, LlmScoringRequest request, int requestTokens) {
+        List<List<LlmScoringRequest.CallerInfo>> callers = new ArrayList<>();
+        for (LlmScoringRequest.CodeBlockChange block : CollectionUtils.emptyIfNull(request.getCodeBlockChanges())) {
+            callers.add(CollectionUtils.isEmpty(block.getCallers()) ? Collections.emptyList() : block.getCallers());
+        }
+
+        int diffs = estimateTokens(model, MAPPER.writeValueAsString(request.getFileChanges()));
+        int callerTokens = estimateTokens(model, MAPPER.writeValueAsString(callers));
+        int blocks = Math.max(0, estimateTokens(model, MAPPER.writeValueAsString(request.getCodeBlockChanges())) - callerTokens);
+        int duplication = estimateTokens(model, MAPPER.writeValueAsString(request.getDuplication()));
+        int buildFailure = estimateTokens(model, MAPPER.writeValueAsString(request.getBuildFailure()));
+        int other = Math.max(0, requestTokens - diffs - callerTokens - blocks - duplication - buildFailure);
+
+        log.info("prompt sections (~tokens): fileChanges=%d, codeBlocks=%d, callers=%d, duplication=%d, buildFailure=%d, other=%d, total=%d",
+                diffs,
+                blocks,
+                callerTokens,
+                duplication,
+                buildFailure,
+                other,
+                requestTokens);
+    }
     private static int effectivePromptTokenBudget(RunArgs args) {
-        int numCtx = Optional.ofNullable(args.getLlmNumCtx()).orElse(RunArgs.DEFAULT_NUM_CTX);
+        int numCtx = contextWindow(args);
         /**
          * A window at or below the reserve cannot fit any request. It is clamped to 0 so callers are fully trimmed,
          * rather than leaving a negative budget.
          */
         int window = Math.max(0, numCtx - RunArgs.PROMPT_TOKEN_RESERVE);
         return Optional.ofNullable(args.getLlmPromptTokenBudget()).map(cap -> Math.min(cap, window)).orElse(window);
+    }
+    /**
+     * The window the model actually runs with. {@link RunArgs#getLlmNumCtx()} documents that an unset or non-positive
+     * value falls back to {@link RunArgs#DEFAULT_NUM_CTX}, and {@code LlmScoringClient} sends that fallback to the
+     * model. Reading the raw value here instead made {@code llmNumCtx=0} a zero-token window, which refused every
+     * request as larger than the window.
+     */
+    private static int contextWindow(RunArgs args) {
+        return Optional.ofNullable(args.getLlmNumCtx()).filter(numCtx -> numCtx > 0).orElse(RunArgs.DEFAULT_NUM_CTX);
     }
     /**
      * Per-block caller caps to try when the prompt is over budget, descending along the Fibonacci

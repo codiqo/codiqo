@@ -1188,6 +1188,68 @@ class FinalScoreCalculatorTest {
                         .build())
                 .build();
     }
+    @Test
+    void riskScoreFollowsTheFormulaIncludingTheLibraryModifierTheLlmLeftOut() {
+        LlmScoringResponse response = new LlmScoringResponse();
+        response.setQualityDimensions(LlmScoringResponse.QualityDimensions.builder()
+                .architectureImpact(dimension(8))
+                .concurrencyRisk(dimension(7))
+                .observability(dimension(3))
+                .testingCoverage(dimension(10))
+                .build());
+        response.setBlastRadiusAnalysis(LlmScoringResponse.BlastRadiusAnalysis.builder().moduleType(LlmScoringResponse.ModuleType.CORE_LIBRARY).build());
+        response.setRiskAssessment(LlmScoringResponse.RiskAssessment.builder().riskScore(61).riskLevel(LlmScoringResponse.RiskLevel.HIGH).build());
+
+        new FinalScoreCalculator(new RunArgs(), NoopLog.INSTANCE).apply(response, baseScores(100.0));
+
+        // 8 × 7 + one extra high dimension × 5 + library × 10; testingCoverage is not a risk axis
+        assertEquals(71, response.getRiskAssessment().getRiskScore());
+        assertEquals(LlmScoringResponse.RiskLevel.HIGH, response.getRiskAssessment().getRiskLevel());
+    }
+    @Test
+    void riskScoreIsCappedAndMapsToCritical() {
+        LlmScoringResponse response = new LlmScoringResponse();
+        response.setQualityDimensions(LlmScoringResponse.QualityDimensions.builder()
+                .architectureImpact(dimension(10))
+                .securitySensitivity(dimension(9))
+                .dataIntegrity(dimension(8))
+                .build());
+        response.setBlastRadiusAnalysis(LlmScoringResponse.BlastRadiusAnalysis.builder()
+                .moduleType(LlmScoringResponse.ModuleType.SHARED_UTILITY)
+                .signatureChanges(LlmScoringResponse.SignatureChanges.builder().hasBreakingChanges(true).build())
+                .build());
+
+        new FinalScoreCalculator(new RunArgs(), NoopLog.INSTANCE).apply(response, baseScores(100.0));
+
+        assertEquals(100, response.getRiskAssessment().getRiskScore(), "70 + 2 × 5 + 10 + 10 = 100, the cap");
+        assertEquals(LlmScoringResponse.RiskLevel.CRITICAL, response.getRiskAssessment().getRiskLevel());
+    }
+    @Test
+    void riskScoreWithoutDimensionsIsLow() {
+        LlmScoringResponse response = new LlmScoringResponse();
+        response.setRiskAssessment(LlmScoringResponse.RiskAssessment.builder().riskScore(40).riskLevel(LlmScoringResponse.RiskLevel.MODERATE).build());
+
+        new FinalScoreCalculator(new RunArgs(), NoopLog.INSTANCE).apply(response, baseScores(100.0));
+
+        assertEquals(0, response.getRiskAssessment().getRiskScore());
+        assertEquals(LlmScoringResponse.RiskLevel.LOW, response.getRiskAssessment().getRiskLevel());
+    }
+    @Test
+    void changeClassificationFollowsTheFinalScoreBands() {
+        RunArgs args = new RunArgs();
+
+        LlmScoringResponse large = new LlmScoringResponse();
+        large.setChangeClassification(LlmScoringResponse.ChangeClassification.HUGE);
+        new FinalScoreCalculator(args, NoopLog.INSTANCE).apply(large, baseScores(100.0));
+        assertEquals(LlmScoringResponse.ChangeClassification.LARGE, large.getChangeClassification(), "100 is at least the large floor (90) and below huge (150)");
+
+        LlmScoringResponse trivial = new LlmScoringResponse();
+        new FinalScoreCalculator(args, NoopLog.INSTANCE).apply(trivial, baseScores(10.0));
+        assertEquals(LlmScoringResponse.ChangeClassification.TRIVIAL, trivial.getChangeClassification(), "10 is below the small floor (20)");
+    }
+    private static LlmScoringResponse.DimensionScore dimension(int score) {
+        return LlmScoringResponse.DimensionScore.builder().score(score).build();
+    }
     private static PreComputedScores baseScores(double volumeAndBaseEffort) {
         return PreComputedScores.builder()
                 .volumeScore(volumeAndBaseEffort)
