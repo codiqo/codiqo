@@ -45,6 +45,7 @@ public class GitFileAnalysis implements FileAnalysis {
     @ToString.Exclude
     private Set<CodeBlockInfo> removedCodeBlocks = new LinkedHashSet<>();
     @ToString.Exclude
+    @Getter(onMethod_ = @Override)
     private MutableIntObjectMap<ILine> lineCoverage = new IntObjectHashMap<>();
     private boolean testFile;
     @Getter(AccessLevel.NONE)
