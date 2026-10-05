@@ -32,6 +32,7 @@ public class PMDCopyPasteDetectionSummary implements CopyPasteDetectionSummary {
     private final Map<CodeBlockInfo, Set<CodeBlockInfo>> copyPasteFrom = new LinkedHashMap<>();
     private final Set<Set<CodeBlockInfo>> copyPasteNew = new LinkedHashSet<>();
     private final Set<DuplicationMatch> affected = new LinkedHashSet<>();
+    @Getter(onMethod_ = @Override)
     private final List<CloneLocations> clones;
     private final Map<File, Integer> tokensPerFile;
     private static final int READ_BUFFER_BYTES = 64 * 1024;

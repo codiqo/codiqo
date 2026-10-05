@@ -58,6 +58,7 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
     @Builder.Default
     private List<BugInstance> spotbugs = new ArrayList<>();
     @Builder.Default
+    @Getter(onMethod_ = @Override)
     private MutableIntObjectMap<ILine> lineCoverage = new IntObjectHashMap<>();
     @Builder.Default
     private Optional<AffectedSymbolInfo> affectedSymbol = Optional.empty();
