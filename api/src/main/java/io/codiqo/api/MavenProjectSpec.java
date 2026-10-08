@@ -2,9 +2,10 @@ package io.codiqo.api;
 
 import java.io.File;
 
-import org.apache.commons.collections4.BidiMap;
 import org.apache.maven.artifact.Artifact;
 
+import com.google.common.collect.BiMap;
+
 public interface MavenProjectSpec extends JvmProjectSpec {
-    BidiMap<Artifact, File> getArtifacts();
+    BiMap<Artifact, File> getArtifacts();
 }

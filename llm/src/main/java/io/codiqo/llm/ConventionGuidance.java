@@ -6,7 +6,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -21,6 +20,11 @@ import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.thymeleaf.context.Context;
+
+import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
@@ -33,6 +37,8 @@ import lombok.experimental.UtilityClass;
  */
 @UtilityClass
 public class ConventionGuidance {
+    private static final String TEMPLATE = "convention-guidance";
+
     /**
      * Agent instruction locations resolved against the repository root when auto-discovery is on, in this
      * order. An entry that is a directory contributes its text files sorted by path, so multi-file rule
@@ -81,10 +87,13 @@ public class ConventionGuidance {
 
         rejectByFileSize(sources, cap);
 
-        StringBuilder toReturn = new StringBuilder();
+        List<GuidanceFile> files = Lists.newArrayList();
         for (Path file : sources) {
-            append(toReturn, root, file, log);
+            read(root, file, log).ifPresent(files::add);
         }
+        Context ctx = new Context();
+        ctx.setVariable("files", files);
+        String toReturn = PromptTemplates.process(TEMPLATE, ctx);
 
         /**
          * over-budget instructions fail the analysis rather than being silently trimmed: a truncated rule
@@ -95,7 +104,7 @@ public class ConventionGuidance {
         }
 
         log.info("agent instructions attached: %d file(s), %d of %d chars — %s", sources.size(), toReturn.length(), cap, describe(root, sources));
-        return StringUtils.strip(toReturn.toString());
+        return StringUtils.strip(toReturn);
     }
     /**
      * Rejects on file metadata alone before anything is read, so a generated multi-hundred-megabyte file
@@ -111,7 +120,7 @@ public class ConventionGuidance {
         }
     }
     private static Collection<Path> resolveSources(RunArgs args, Path root, Log log) {
-        Set<Path> toReturn = new LinkedHashSet<>();
+        Set<Path> toReturn = Sets.newLinkedHashSet();
         for (String name : args.getLlmConventionFiles()) {
             collectSource(root, name, true, toReturn, log);
         }
@@ -168,7 +177,7 @@ public class ConventionGuidance {
         }
         return Optional.empty();
     }
-    private static void append(StringBuilder buffer, Path root, Path file, Log log) {
+    private static Optional<GuidanceFile> read(Path root, Path file, Log log) {
         try {
             String content = StringUtils.strip(PromptFences.strip(FileUtils.readFileToString(file.toFile(), StandardCharsets.UTF_8)));
             if (StringUtils.isNotBlank(content)) {
@@ -178,13 +187,13 @@ public class ConventionGuidance {
                  * closing marker is legal on POSIX and would end the fence from inside the heading, handing the
                  * rest of the region (and the request JSON after it) to the model as prompt
                  */
-                buffer.append("### ").append(PromptFences.strip(root.relativize(file).toString()))
-                        .append("\n\n").append(content).append("\n\n");
+                return Optional.of(new GuidanceFile(PromptFences.strip(root.relativize(file).toString()), content));
             }
         } catch (IOException err) {
             // advisory input: an unreadable instruction file degrades bug triage, it does not invalidate the score
             log.error("could not read agent instruction file %s (%s)", file, ExceptionUtils.getRootCauseMessage(err));
         }
+        return Optional.empty();
     }
     private static String describe(Path root, Collection<Path> sources) {
         return sources.stream().map(file -> root.relativize(file).toString()).collect(Collectors.joining(", "));
@@ -197,5 +206,18 @@ public class ConventionGuidance {
                 "agent instructions are %s, over the %d char budget — raise codiqo.llm.conventionFilesMaxChars, "
                         + "narrow codiqo.llm.conventionFiles, or turn off codiqo.llm.autoDiscoveryAgentInstructions",
                 measured, cap));
+    }
+
+    /** one instruction file as the prompt shows it: its repository path as the heading, then its text */
+    public static final class GuidanceFile extends ImmutablePair<String, String> {
+        public GuidanceFile(String heading, String content) {
+            super(heading, content);
+        }
+        public String getHeading() {
+            return getLeft();
+        }
+        public String getContent() {
+            return getRight();
+        }
     }
 }

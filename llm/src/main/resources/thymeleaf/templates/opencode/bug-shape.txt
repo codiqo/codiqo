@@ -1,0 +1,1 @@
+/*[- what a BUG in the answer looks like, inserted on its own line: the file ends without a newline -]*/BUG is [(${bugShape})]. blocking = will break production or corrupt data; major = real defect with limited impact; minor = small real defect. Empty arrays are the right answer when nothing is wrong.

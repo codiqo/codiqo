@@ -19,6 +19,6 @@ public class RepositoryUrls {
         }
 
         String path = Strings.CS.removeStart(uriIsh.getPath(), "/");
-        return URI.create(String.format("https://%s/%s", uriIsh.getHost(), path));
+        return new URI("https", uriIsh.getHost(), "/" + path, null);
     }
 }

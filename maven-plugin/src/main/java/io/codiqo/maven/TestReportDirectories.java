@@ -2,7 +2,6 @@ package io.codiqo.maven;
 
 import java.io.File;
 import java.util.Collection;
-import java.util.LinkedHashSet;
 import java.util.Optional;
 import java.util.Set;
 
@@ -14,6 +13,8 @@ import org.apache.maven.model.PluginExecution;
 import org.apache.maven.model.PluginManagement;
 import org.apache.maven.project.MavenProject;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
+
+import com.google.common.collect.Sets;
 
 import lombok.experimental.UtilityClass;
 
@@ -38,13 +39,13 @@ public class TestReportDirectories {
      * not exist, so offering all of them cannot mistake an unwritten location for a written one.
      */
     public Collection<File> resolve(MavenProject project) {
-        Set<File> toReturn = new LinkedHashSet<>();
+        Set<File> toReturn = Sets.newLinkedHashSet();
         toReturn.addAll(candidates(project, SUREFIRE_ARTIFACT_ID, SUREFIRE_DEFAULT_DIRECTORY));
         toReturn.addAll(candidates(project, FAILSAFE_ARTIFACT_ID, FAILSAFE_DEFAULT_DIRECTORY));
         return toReturn;
     }
     private static Collection<File> candidates(MavenProject project, String artifactId, String defaultDirectoryName) {
-        Set<File> toReturn = new LinkedHashSet<>();
+        Set<File> toReturn = Sets.newLinkedHashSet();
 
         findDeclared(project, artifactId).ifPresent(plugin -> {
             reportsDirectory(project, plugin.getConfiguration()).ifPresent(toReturn::add);

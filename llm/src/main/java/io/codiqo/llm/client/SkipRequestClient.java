@@ -14,6 +14,8 @@ import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.thymeleaf.context.Context;
 
+import com.google.common.annotations.VisibleForTesting;
+
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.llm.PromptFences;
@@ -104,7 +106,8 @@ public class SkipRequestClient implements LlmClient {
      * that carry the request, and those words must really be in the message. Whitespace is normalised because a wrapped
      * message re-flows, but nothing else is, so a paraphrase is treated as no request at all.
      */
-    static Optional<String> groundedQuote(String commitMessage, SkipRequestResponse response, Log log) {
+    @VisibleForTesting
+    public static Optional<String> groundedQuote(String commitMessage, SkipRequestResponse response, Log log) {
         if (response.isExcludeRequested()) {
             /**
              * The schema asks for an empty string when nothing is cited, but a model that simply omits the field

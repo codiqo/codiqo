@@ -1,7 +1,6 @@
 package io.codiqo.gradle;
 
 import java.io.File;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -18,6 +17,9 @@ import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.SourceSetContainer;
 import org.gradle.api.tasks.testing.Test;
+
+import com.google.common.base.Joiner;
+import com.google.common.collect.Sets;
 
 import io.codiqo.gradle.model.AnalysisRequest;
 import io.codiqo.gradle.model.DependencyData;
@@ -54,6 +56,8 @@ public class GradleModelCollector {
 
         request.setApiUrl(stringProp(root, "codiqo.apiUrl", ext.getApiUrl()));
         resolveApiKey(root, ext).ifPresent(request::setApiKey);
+        request.setAuthUrl(stringProp(root, "codiqo.authUrl", ext.getAuthUrl()));
+        request.setResourceUrl(stringProp(root, "codiqo.resourceUrl", ext.getResourceUrl()));
         request.setConnectTimeoutSeconds(longProp(root, "codiqo.connectTimeoutSeconds", ext.getConnectTimeoutSeconds()));
         request.setReadTimeoutSeconds(longProp(root, "codiqo.readTimeoutSeconds", ext.getReadTimeoutSeconds()));
 
@@ -153,7 +157,7 @@ public class GradleModelCollector {
      * their artifact attribution.
      */
     private static void collectDependencies(Project project, ModuleData module) {
-        Set<String> seenFiles = new HashSet<>();
+        Set<String> seenFiles = Sets.newHashSet();
         for (String configName : DEPENDENCY_CONFIGURATIONS) {
             Configuration config = project.getConfigurations().findByName(configName);
             if (Objects.nonNull(config) && config.isCanBeResolved()) {
@@ -175,7 +179,7 @@ public class GradleModelCollector {
         toReturn.setVersion(component.getVersion());
         toReturn.setType(JAR_PACKAGING);
         toReturn.setFilePath(filePath);
-        toReturn.setCoordinate(StringUtils.joinWith(":", component.getGroup(), component.getModule(), JAR_PACKAGING, component.getVersion()));
+        toReturn.setCoordinate(Joiner.on(':').join(component.getGroup(), component.getModule(), JAR_PACKAGING, component.getVersion()));
         return toReturn;
     }
     /**

@@ -1,0 +1,21 @@
+The build has finished. PMD and SpotBugs reported the findings below on lines this commit added. You already read the commit: decide, for each finding, whether it is a real defect. Read the cited code with read-only tools where your earlier reading does not settle it. Do not start subagents.
+
+- "defect": the code behaves incorrectly where the rule points. Give it a severity and a bug type.
+- "harmless": the rule matched, but nothing goes wrong: a naming or style convention, a deliberate idiom, a requirement imposed from outside (for example a provider that mandates an algorithm).
+- "false_positive": the rule's premise does not hold for this code (for example a "collection" rule on a byte array or on a deliberate null sentinel).
+
+A finding is not a defect because a rule names it, nor harmless because the code looks intentional: judge what the code actually does. Severity follows certainty and harm, as Codiqo's scoring has always graded it. "blocking": you traced the defect through the code and it will cause incorrect behaviour in normal use: a security hole, data loss or corruption, a race or deadlock, a crash or failed start on a normal path, a build that no longer compiles, a wrong amount of money or a wrong business result. "major": a real defect that needs particular conditions to show, or whose effect is limited and recoverable, or one you strongly suspect but cannot fully confirm because context is missing. "minor": a low-impact edge case. Never lower a traced, certain defect to major because the fix looks small.
+
+Answer with one JSON object and nothing else, one verdict per finding in the order given:
+{"verdicts":[{"tool":"...","rule":"...","file":"...","line":<number>,"verdict":"defect|harmless|false_positive","severity":"blocking|major|minor, or null unless a defect","type":"SECURITY|CONCURRENCY|DATA_CORRUPTION|LOGIC|RESOURCE_LEAK|NULL_POINTER|ARCHITECTURE|OTHER, or null unless a defect","reason":"one or two sentences citing the code you checked","suggestedFix":"one line, or null"}]}
+
+JSON RULES: the answer is read by a program, and malformed JSON loses the whole review.
+1. The answer is one JSON object and nothing else: no markdown code fences, no text before or after it.
+2. Every field name is double-quoted; no trailing commas; every array element is a complete object, never null.
+3. Leave an optional field out rather than writing null; an empty array is the right value when nothing was found.
+4. Inside strings a backslash may only come before one of " \ / n r t b f u. Write a newline as \n, a quote in code as \", a backslash in code as \; a regex such as \s is written \\s.
+5. Describe a fix in words rather than quoting code that contains quotes or backslashes.
+6. Write all text in English.
+
+Findings:
+[{"tool":"pmd","rule":"GodClass"}]

@@ -6,13 +6,12 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.HashMap;
-import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 
-
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import io.codiqo.api.diff.IneffectiveLineFilter;
 import io.codiqo.api.metrics.DriverScaler;
@@ -38,9 +37,9 @@ public class LlmScoringRequest {
 
     private ChangeSummary changeSummary;
     @Builder.Default
-    private List<FileChange> fileChanges = new ArrayList<>();
+    private List<FileChange> fileChanges = Lists.newArrayList();
     @Builder.Default
-    private List<CodeBlockChange> codeBlockChanges = new ArrayList<>();
+    private List<CodeBlockChange> codeBlockChanges = Lists.newArrayList();
     private CoverageInfo coverage;
     private ComplexityMetrics complexity;
     private DuplicationInfo duplication;
@@ -126,7 +125,7 @@ public class LlmScoringRequest {
         private int testFilesChanged;
 
         @Builder.Default
-        private List<String> packagesAffected = new ArrayList<>();
+        private List<String> packagesAffected = Lists.newArrayList();
         private ChangeType changeType;
     }
 
@@ -216,7 +215,7 @@ public class LlmScoringRequest {
         private boolean isTest;
 
         @Builder.Default
-        private List<CallerInfo> callers = new ArrayList<>();
+        private List<CallerInfo> callers = Lists.newArrayList();
 
         /**
          * How many caller entries were omitted when {@code callers} was capped for the prompt. The caller counts
@@ -227,7 +226,7 @@ public class LlmScoringRequest {
 
         /** PMD and SpotBugs diagnostics for this method */
         @Builder.Default
-        private List<DiagnosticInfo> diagnostics = new ArrayList<>();
+        private List<DiagnosticInfo> diagnostics = Lists.newArrayList();
 
         /**
          * For MODIFY: coverage of the lines this block changed — post-change JaCoCo per-line status
@@ -239,7 +238,7 @@ public class LlmScoringRequest {
         private int changedLinesPartiallyCovered;
 
         @Builder.Default
-        private List<Integer> uncoveredChangedLines = new ArrayList<>();
+        private List<Integer> uncoveredChangedLines = Lists.newArrayList();
 
         public boolean isNew() {
             return operation == Operation.NEW;
@@ -314,9 +313,9 @@ public class LlmScoringRequest {
         private double projectBranchCoverage;
 
         @Builder.Default
-        private Map<String, MethodCoverage> methodCoverages = new HashMap<>();
+        private Map<String, MethodCoverage> methodCoverages = Maps.newHashMap();
         @Builder.Default
-        private List<UncoveredPath> uncoveredPaths = new ArrayList<>();
+        private List<UncoveredPath> uncoveredPaths = Lists.newArrayList();
 
         @Data
         @Builder
@@ -383,11 +382,11 @@ public class LlmScoringRequest {
         private Double modifiedLineCpdPercent;
 
         @Builder.Default
-        private List<CloneDetail> cloneDetails = new ArrayList<>();
+        private List<CloneDetail> cloneDetails = Lists.newArrayList();
         @Builder.Default
-        private List<CloneFromExisting> clonesFromExisting = new ArrayList<>();
+        private List<CloneFromExisting> clonesFromExisting = Lists.newArrayList();
         @Builder.Default
-        private List<NewCloneGroup> newClones = new ArrayList<>();
+        private List<NewCloneGroup> newClones = Lists.newArrayList();
 
         @Data
         @Builder
@@ -401,7 +400,7 @@ public class LlmScoringRequest {
             private boolean allTestCode;
             private boolean introducedInCommit;
             @Builder.Default
-            private List<CloneLocation> locations = new ArrayList<>();
+            private List<CloneLocation> locations = Lists.newArrayList();
         }
 
         @Data
@@ -426,7 +425,7 @@ public class LlmScoringRequest {
         public static class CloneFromExisting {
             private String affectedSignature;
             @Builder.Default
-            private List<String> sourceSignatures = new ArrayList<>();
+            private List<String> sourceSignatures = Lists.newArrayList();
         }
 
         @Data
@@ -435,7 +434,7 @@ public class LlmScoringRequest {
         @AllArgsConstructor
         public static class NewCloneGroup {
             @Builder.Default
-            private List<String> memberSignatures = new ArrayList<>();
+            private List<String> memberSignatures = Lists.newArrayList();
         }
     }
 }

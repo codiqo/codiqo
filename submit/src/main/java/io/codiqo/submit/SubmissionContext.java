@@ -3,9 +3,9 @@ package io.codiqo.submit;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
-import java.util.HashMap;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
+
+import com.google.common.collect.Maps;
 
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.RunArgs;
@@ -41,9 +41,9 @@ public class SubmissionContext {
     private final ProjectModel projectModel;
 
     @Builder.Default
-    private final Map<String, ModuleQualityTracker> qualityTrackers = new ConcurrentHashMap<>();
+    private final Map<String, ModuleQualityTracker> qualityTrackers = Maps.newConcurrentMap();
     @Builder.Default
-    private final Map<String, ModuleFullCoverageModel> moduleFullCoverages = new HashMap<>();
+    private final Map<String, ModuleFullCoverageModel> moduleFullCoverages = Maps.newHashMap();
 
     @Setter
     private int methodCapQuantileProd;

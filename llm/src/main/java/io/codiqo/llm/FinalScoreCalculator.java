@@ -1,12 +1,9 @@
 package io.codiqo.llm;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.EnumSet;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -18,11 +15,18 @@ import java.util.stream.Collectors;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.Range;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.ImmutableTriple;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.math3.util.Precision;
 import org.slf4j.event.Level;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.JavaInvocationCounter;
@@ -48,8 +52,7 @@ import io.codiqo.llm.schema.LlmScoringResponse.VolumeScore;
 import lombok.Value;
 
 public class FinalScoreCalculator {
-    private static final int ROUNDING_PRECISION = 2;
-    private static final int MAX_ARCHITECTURE_IMPACT = 10;
+    private static final Range<Double> QUALITY_FACTOR = Range.of(0.0, 1.0);
     private static final String COMMIT_SCOPE = "(commit)";
     private static final double DEGRADED_QUALITY_MULTIPLIER_MAX = 1.0;
     private static final double LOW_CATEGORY_COVERAGE_RATIO = 0.5;
@@ -61,6 +64,7 @@ public class FinalScoreCalculator {
     private final RunArgs args;
     private final VolumeScoreCalculator volumeScoreCalculator;
     private final MovedLineDetector movedLineDetector;
+    private final QualityRules qualityRules;
     private final Log log;
 
     public FinalScoreCalculator(RunArgs args, Log log) {
@@ -68,15 +72,89 @@ public class FinalScoreCalculator {
         this.log = log;
         this.volumeScoreCalculator = new VolumeScoreCalculator(args);
         this.movedLineDetector = new MovedLineDetector(args);
+        this.qualityRules = new QualityRules(args);
     }
 
     public void apply(LlmScoringResponse response, PreComputedScores preComputed) {
         apply(response, preComputed, null);
     }
     public void apply(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
+        List<MoveCandidate> candidates = Collections.emptyList();
+        if (Objects.nonNull(request)) {
+            candidates = movedLineDetector.detect(request);
+        }
+        apply(response, preComputed, request, candidates);
+    }
+    /**
+     * Scores a response that no scoring prompt produced: the judgment (labels, dimensions, findings) came from the
+     * local assessment, and everything the prompt used to compute follows from rules. A move candidate is confirmed
+     * when it is a relocation by {@link #relocations} (the prompt's cosmetic and collapsed lines were 0.2% of changed
+     * lines and are dropped); the quality multiplier and the bonus inputs come from {@link QualityRules}, given the
+     * local review's bugs.
+     */
+    public void applyRules(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request, LlmScoringResponse.Bugs reviewBugs) {
+        List<MoveCandidate> candidates = movedLineDetector.detect(request);
+        Set<String> testFiles = CollectionUtils.emptyIfNull(request.getFileChanges()).stream().filter(FileChange::isTest).map(FileChange::getPath).collect(Collectors.toSet());
+        EffortBreakdown breakdown = Optional.ofNullable(response.getEffortBreakdown()).orElseGet(() -> EffortBreakdown.builder().build());
+        breakdown.setDiffClassification(DiffClassification.builder()
+                .confirmedMoveIds(candidates.stream().map(MoveCandidate::getId).filter(relocations(candidates, testFiles)::contains).collect(Collectors.toList()))
+                .build());
+        response.setEffortBreakdown(breakdown);
+
+        qualityRules.apply(response, preComputed, request, reviewBugs);
+        apply(response, preComputed, request, candidates);
+    }
+    /**
+     * The ids of the candidates that relocate a body rather than match one line: a candidate between two production
+     * (or two test) files, or one moving together with a neighbour. A lone line within one file is a repeated
+     * fragment, and a lone line between a test and production code is nearly always new code that happens to repeat a
+     * deleted test line (a field, a setup statement) rather than test code promoted into production; the scoring
+     * prompt rejected both. A neighbour moves between the same two files, so the candidates are grouped by that pair
+     * and sorted by source line: a reformat inside one file yields thousands of candidates, and each looks only at the
+     * ones within the gap instead of at all of them.
+     */
+    @VisibleForTesting
+    public Set<String> relocations(List<MoveCandidate> candidates, Set<String> testFiles) {
+        Map<Pair<String, String>, List<MoveCandidate>> byFiles = candidates.stream()
+                .sorted(Comparator.comparingInt(MoveCandidate::getFromLine))
+                .collect(Collectors.groupingBy(candidate -> Pair.of(candidate.getFromFile(), candidate.getToFile())));
+
+        Set<String> toReturn = Sets.newHashSet();
+        for (List<MoveCandidate> run : byFiles.values()) {
+            for (int index = 0; index < run.size(); index++) {
+                MoveCandidate candidate = run.get(index);
+                boolean sameFile = candidate.getFromFile().equals(candidate.getToFile());
+                boolean crossesTests = testFiles.contains(candidate.getFromFile()) != testFiles.contains(candidate.getToFile());
+                boolean relocation = true;
+                if (BooleanUtils.or(new boolean[] { sameFile, crossesTests })) {
+                    relocation = hasNeighbour(run, index, -1) || hasNeighbour(run, index, 1);
+                }
+                if (relocation) {
+                    toReturn.add(candidate.getId());
+                }
+            }
+        }
+        return toReturn;
+    }
+    /** the run is sorted by source line, so the walk stops at the first candidate further away than the gap */
+    private boolean hasNeighbour(List<MoveCandidate> run, int index, int step) {
+        MoveCandidate candidate = run.get(index);
+        int gap = args.getMovedRunMaxGap();
+        for (int other = index + step; other >= 0 && other < run.size(); other += step) {
+            MoveCandidate neighbour = run.get(other);
+            if (Math.abs(neighbour.getFromLine() - candidate.getFromLine()) > gap) {
+                break;
+            }
+            if (Math.abs(neighbour.getToLine() - candidate.getToLine()) <= gap) {
+                return true;
+            }
+        }
+        return false;
+    }
+    private void apply(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request, List<MoveCandidate> candidates) {
         dropMovedPairsWhenDetectionDisabled(response);
         if (Objects.nonNull(request)) {
-            new DiffClassificationDeriver(log).derive(response, request, movedLineDetector.detect(request));
+            new DiffClassificationDeriver(log).derive(response, request, candidates);
         }
         DiffAdjustment adjustment = computeDiffAdjustment(response, preComputed, request);
         PreComputedScores effective = adjustment.getScores();
@@ -85,7 +163,7 @@ public class FinalScoreCalculator {
         double baseEffort = effective.getBaseEffort();
         EffortBreakdown breakdown = response.getEffortBreakdown();
         if (Objects.nonNull(breakdown)) {
-            breakdown.setBaseEffortScore(Precision.round(baseEffort, ROUNDING_PRECISION));
+            breakdown.setBaseEffortScore(Precision.round(baseEffort, RunArgs.SCORE_PRECISION));
             breakdown.setVolumeScore(toVolumeScore(effective, adjustment));
             breakdown.setFileEfforts(
                     effective.getFileEfforts().stream()
@@ -132,12 +210,12 @@ public class FinalScoreCalculator {
         int architectureImpactScore = 0;
         double qualityFactor = 1.0;
         if (hasCodeChanges && Objects.nonNull(bonus)) {
-            architectureImpactScore = Math.max(0, Math.min(MAX_ARCHITECTURE_IMPACT, bonus.getArchitectureImpactScore()));
-            qualityFactor = Math.max(0.0, Math.min(1.0, bonus.getQualityFactor()));
+            architectureImpactScore = RunArgs.SCORE_SCALE.fit(bonus.getArchitectureImpactScore());
+            qualityFactor = QUALITY_FACTOR.fit(bonus.getQualityFactor());
         }
 
         double architectureBonus = architectureImpactScore * baseEffort * args.getArchitectureBonusFactor() * qualityFactor;
-        architectureBonus = Precision.round(architectureBonus, ROUNDING_PRECISION);
+        architectureBonus = Precision.round(architectureBonus, RunArgs.SCORE_PRECISION);
         String bonusCalculation = String.format(Locale.ROOT,
                 "Impact Score (%d/10) × Base Effort (%.2f) × Bonus Factor (%.3f) × Quality Factor (%.2f) = +%.2f",
                 architectureImpactScore,
@@ -150,14 +228,14 @@ public class FinalScoreCalculator {
             response.setArchitectureEffortBonus(ArchitectureEffortBonus.builder()
                     .architectureImpactScore(architectureImpactScore)
                     .qualityFactor(qualityFactor)
-                    .baseEffort(Precision.round(baseEffort, ROUNDING_PRECISION))
+                    .baseEffort(Precision.round(baseEffort, RunArgs.SCORE_PRECISION))
                     .bonusCalculation(bonusCalculation)
                     .bonusPoints(architectureBonus)
                     .build());
         } else {
             bonus.setArchitectureImpactScore(architectureImpactScore);
             bonus.setQualityFactor(qualityFactor);
-            bonus.setBaseEffort(Precision.round(baseEffort, ROUNDING_PRECISION));
+            bonus.setBaseEffort(Precision.round(baseEffort, RunArgs.SCORE_PRECISION));
             bonus.setBonusCalculation(bonusCalculation);
             bonus.setBonusPoints(architectureBonus);
         }
@@ -182,7 +260,7 @@ public class FinalScoreCalculator {
      * to the LLM's own inputs; the risk level, and with it the risk grade, follows from the score.
      */
     private void applyRiskFormula(LlmScoringResponse response) {
-        List<Integer> dimensionScores = new ArrayList<>();
+        List<Integer> dimensionScores = Lists.newArrayList();
         LlmScoringResponse.QualityDimensions dimensions = response.getQualityDimensions();
         if (Objects.nonNull(dimensions)) {
             /**
@@ -270,13 +348,13 @@ public class FinalScoreCalculator {
                 .ifPresent(classification -> {
                     log.warn("diffClassification.droppedMovedPairs count=%d — move detection is disabled",
                             classification.getMovedPairs().size());
-                    classification.setMovedPairs(new ArrayList<>());
+                    classification.setMovedPairs(Lists.newArrayList());
                 });
     }
     private DiffAdjustment computeDiffAdjustment(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
         PerFileResult perFile = computePerFileFactors(response, request);
-        Map<String, Double> perBlockCoeff = buildPerBlockCoeff(response, preComputed);
-        Map<String, Double> perBlockMovedFactor = buildPerBlockMovedFactor(response, preComputed, request);
+        Map<Pair<String, String>, Double> perBlockCoeff = buildPerBlockCoeff(response, preComputed);
+        Map<Pair<String, String>, Double> perBlockMovedFactor = buildPerBlockMovedFactor(response, preComputed, request);
 
         if (perFile.getFactors().isEmpty() && perBlockCoeff.isEmpty() && perBlockMovedFactor.isEmpty()) {
             return DiffAdjustment.unchanged(preComputed);
@@ -293,8 +371,8 @@ public class FinalScoreCalculator {
      * term of the driver score is uncapped — this factor removes each block's moved invocation
      * share at movedLineCoefficient/2, mirroring the per-line relocation charge.
      */
-    private Map<String, Double> buildPerBlockMovedFactor(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
-        Map<String, Double> toReturn = new HashMap<>();
+    private Map<Pair<String, String>, Double> buildPerBlockMovedFactor(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
+        Map<Pair<String, String>, Double> toReturn = Maps.newHashMap();
         if (Objects.isNull(request) || CollectionUtils.isEmpty(request.getFileChanges()) || CollectionUtils.isEmpty(preComputed.getCodeBlockEfforts())) {
             return toReturn;
         }
@@ -303,14 +381,14 @@ public class FinalScoreCalculator {
             return toReturn;
         }
 
-        Map<String, List<CodeBlockEffort>> blocksByFile = new HashMap<>();
+        Map<String, List<CodeBlockEffort>> blocksByFile = Maps.newHashMap();
         for (CodeBlockEffort cbe : preComputed.getCodeBlockEfforts()) {
             if (BooleanUtils.negate(cbe.isConfig())) {
-                blocksByFile.computeIfAbsent(cbe.getFile(), k -> new ArrayList<>()).add(cbe);
+                blocksByFile.computeIfAbsent(cbe.getFile(), k -> Lists.newArrayList()).add(cbe);
             }
         }
 
-        Map<String, FileChange> fileChangesByPath = new HashMap<>(request.getFileChanges().size());
+        Map<String, FileChange> fileChangesByPath = Maps.newHashMapWithExpectedSize(request.getFileChanges().size());
         for (FileChange fc : request.getFileChanges()) {
             fileChangesByPath.put(fc.getPath(), fc);
         }
@@ -376,18 +454,18 @@ public class FinalScoreCalculator {
      * well: a file the index could not parse is the least understood work in the commit. Config units
      * keep the neutral default because they are not code; deletion blocks are handled separately below.
      */
-    private Map<String, Double> buildPerBlockCoeff(LlmScoringResponse response, PreComputedScores preComputed) {
-        Set<String> knownBlocks = preComputed.getCodeBlockEfforts().stream()
+    private Map<Pair<String, String>, Double> buildPerBlockCoeff(LlmScoringResponse response, PreComputedScores preComputed) {
+        Set<Pair<String, String>> knownBlocks = preComputed.getCodeBlockEfforts().stream()
                 .map(cbe -> VolumeScoreCalculator.blockKey(cbe.getFile(), cbe.getSignature()))
                 .collect(Collectors.toSet());
 
-        Map<String, Double> toReturn = new HashMap<>();
+        Map<Pair<String, String>, Double> toReturn = Maps.newHashMap();
         int unmatched = 0;
         for (CodeBlockCategoryView view : CollectionUtils.emptyIfNull(response.getBlockCategories())) {
             if (Objects.isNull(view.getCategory()) || StringUtils.isBlank(view.getSignature())) {
                 continue;
             }
-            String key = VolumeScoreCalculator.blockKey(view.getFile(), view.getSignature());
+            Pair<String, String> key = VolumeScoreCalculator.blockKey(view.getFile(), view.getSignature());
             if (knownBlocks.contains(key)) {
                 toReturn.put(key, categoryCoeff(view.getCategory()));
                 continue;
@@ -485,15 +563,15 @@ public class FinalScoreCalculator {
             return PerFileResult.empty();
         }
 
-        Map<String, FileChange> fileChangesByPath = new HashMap<>(request.getFileChanges().size());
+        Map<String, FileChange> fileChangesByPath = Maps.newHashMapWithExpectedSize(request.getFileChanges().size());
         for (FileChange fc : request.getFileChanges()) {
             fileChangesByPath.put(fc.getPath(), fc);
         }
 
         populatePerFileScalars(classification);
 
-        Map<String, Double> perFileFactor = new HashMap<>();
-        Map<String, Double> perFileDeletionFactor = new HashMap<>();
+        Map<String, Double> perFileFactor = Maps.newHashMap();
+        Map<String, Double> perFileDeletionFactor = Maps.newHashMap();
         int totalCosmetic = 0;
         int totalPairsCollapsed = 0;
         int totalMovedLines = 0;
@@ -628,13 +706,13 @@ public class FinalScoreCalculator {
     private static Map<String, FileDiffClassification> buildClassificationByFile(LlmScoringResponse response) {
         Optional<DiffClassification> classification = diffClassification(response);
         if (classification.isEmpty()) {
-            return new HashMap<>();
+            return Maps.newHashMap();
         }
         List<FileDiffClassification> perFile = classification.get().getPerFile();
         if (CollectionUtils.isEmpty(perFile)) {
-            return new HashMap<>();
+            return Maps.newHashMap();
         }
-        Map<String, FileDiffClassification> toReturn = new HashMap<>(perFile.size());
+        Map<String, FileDiffClassification> toReturn = Maps.newHashMapWithExpectedSize(perFile.size());
         for (FileDiffClassification entry : perFile) {
             toReturn.put(entry.getFile(), entry);
         }
@@ -646,21 +724,21 @@ public class FinalScoreCalculator {
                 .linesNew(effective.getLinesNew())
                 .linesModified(effective.getLinesModified())
                 .filesChanged(effective.getFilesChanged())
-                .filesScopeMultiplier(Precision.round(effective.getFilesScopeMultiplier(), ROUNDING_PRECISION))
+                .filesScopeMultiplier(Precision.round(effective.getFilesScopeMultiplier(), RunArgs.SCORE_PRECISION))
                 .codeBlocksModified(effective.getCodeBlocksModified())
                 .codeBlocksAdded(effective.getCodeBlocksAdded())
                 .classesModified(effective.getClassesModified())
                 .classesAdded(effective.getClassesAdded())
-                .blockEffortSum(Precision.round(effective.getBlockEffortSum(), ROUNDING_PRECISION))
-                .totalEffortRaw(Precision.round(effective.getTotalEffortRaw(), ROUNDING_PRECISION))
-                .totalBaseline(Precision.round(effective.getTotalBaseline(), ROUNDING_PRECISION))
-                .globalCap(Precision.round(effective.getGlobalCap(), ROUNDING_PRECISION))
+                .blockEffortSum(Precision.round(effective.getBlockEffortSum(), RunArgs.SCORE_PRECISION))
+                .totalEffortRaw(Precision.round(effective.getTotalEffortRaw(), RunArgs.SCORE_PRECISION))
+                .totalBaseline(Precision.round(effective.getTotalBaseline(), RunArgs.SCORE_PRECISION))
+                .globalCap(Precision.round(effective.getGlobalCap(), RunArgs.SCORE_PRECISION))
                 .globalCapApplied(effective.isGlobalCapApplied())
                 .globalCapDryRun(effective.isGlobalCapDryRun())
-                .sizeFactor(Precision.round(effective.getSizeFactor(), ROUNDING_PRECISION))
-                .modifyMultiplier(Precision.round(effective.getModifyMult(), ROUNDING_PRECISION))
-                .addMultiplier(Precision.round(effective.getAddMult(), ROUNDING_PRECISION))
-                .totalVolumeScore(Precision.round(effective.getVolumeScore(), ROUNDING_PRECISION))
+                .sizeFactor(Precision.round(effective.getSizeFactor(), RunArgs.SCORE_PRECISION))
+                .modifyMultiplier(Precision.round(effective.getModifyMult(), RunArgs.SCORE_PRECISION))
+                .addMultiplier(Precision.round(effective.getAddMult(), RunArgs.SCORE_PRECISION))
+                .totalVolumeScore(Precision.round(effective.getVolumeScore(), RunArgs.SCORE_PRECISION))
                 .build();
         DiffBookkeeping bookkeeping = adjustment.getBookkeeping();
         toReturn.setLinesChangedRaw(bookkeeping.getLinesChangedRaw());
@@ -675,20 +753,20 @@ public class FinalScoreCalculator {
         List<CodeBlockEffort> blocks = fe.getCodeBlockEfforts();
         int[] collapsed = collapsedLinesPerBlock(fileClassification, blocks);
 
-        List<CodeBlockEffortView> blockViews = new ArrayList<>(blocks.size());
+        List<CodeBlockEffortView> blockViews = Lists.newArrayListWithCapacity(blocks.size());
         for (int i = 0; i < blocks.size(); i++) {
             blockViews.add(toCodeBlockEffortView(blocks.get(i), collapsed[i]));
         }
 
         return FileEffortView.builder()
                 .file(fe.getFile())
-                .totalEffort(Precision.round(fe.getTotalEffort(), ROUNDING_PRECISION))
+                .totalEffort(Precision.round(fe.getTotalEffort(), RunArgs.SCORE_PRECISION))
                 .isTest(fe.isTest())
                 .codeBlockEfforts(blockViews)
                 .blocksFlaggedAsRatioOutlier(fe.getBlocksFlaggedAsRatioOutlier())
                 .blocksFlaggedAsGlobalCapDriver(fe.getBlocksFlaggedAsGlobalCapDriver())
-                .maxBlockRatioDeviationNcss(Precision.round(fe.getMaxBlockRatioDeviationNcss(), ROUNDING_PRECISION))
-                .maxBlockRatioDeviationInvocations(Precision.round(fe.getMaxBlockRatioDeviationInvocations(), ROUNDING_PRECISION))
+                .maxBlockRatioDeviationNcss(Precision.round(fe.getMaxBlockRatioDeviationNcss(), RunArgs.SCORE_PRECISION))
+                .maxBlockRatioDeviationInvocations(Precision.round(fe.getMaxBlockRatioDeviationInvocations(), RunArgs.SCORE_PRECISION))
                 .fileFlaggedAsAbusive(fe.isFileFlaggedAsAbusive())
                 .build();
     }
@@ -697,7 +775,7 @@ public class FinalScoreCalculator {
         double changeRatio = cbe.getChangeRatio();
         if (collapsed > 0 && cbe.getBodyCodeLines() > 0) {
             changeRatio = Math.min(1.0, (double) effectiveLinesChanged / cbe.getBodyCodeLines());
-            changeRatio = Precision.round(changeRatio, ROUNDING_PRECISION);
+            changeRatio = Precision.round(changeRatio, RunArgs.SCORE_PRECISION);
         }
         return CodeBlockEffortView.builder()
                 .name(cbe.getName())
@@ -713,14 +791,14 @@ public class FinalScoreCalculator {
                 .scaledLines(cbe.getScaledLines())
                 .scaledNcss(cbe.getScaledNcss())
                 .scaledInvocations(cbe.getScaledInvocations())
-                .driverScore(Precision.round(cbe.getDriverScore(), ROUNDING_PRECISION))
+                .driverScore(Precision.round(cbe.getDriverScore(), RunArgs.SCORE_PRECISION))
                 .cappedStatements(cbe.getCappedStatements())
-                .effort(Precision.round(cbe.getEffort(), ROUNDING_PRECISION))
+                .effort(Precision.round(cbe.getEffort(), RunArgs.SCORE_PRECISION))
                 .isTest(cbe.isTest())
                 .blockRatioDeviationNcss(cbe.getBlockRatioDeviationNcss())
                 .blockRatioDeviationInvocations(cbe.getBlockRatioDeviationInvocations())
                 .blockRatioOutlier(cbe.isBlockRatioOutlier())
-                .effortShare(Precision.round(cbe.getEffortShare(), ROUNDING_PRECISION))
+                .effortShare(Precision.round(cbe.getEffortShare(), RunArgs.SCORE_PRECISION))
                 .globalCapDriver(cbe.isGlobalCapDriver())
                 .build();
     }
@@ -829,7 +907,7 @@ public class FinalScoreCalculator {
      * are not checked here.
      */
     public ValidationReport validate(LlmScoringResponse response, LlmScoringRequest request) {
-        List<ValidationFailure> failures = new ArrayList<>();
+        List<ValidationFailure> failures = Lists.newArrayList();
 
         Optional<DiffClassification> opt = diffClassification(response);
         if (opt.isEmpty()) {
@@ -855,7 +933,7 @@ public class FinalScoreCalculator {
             return new ValidationReport(failures);
         }
 
-        Map<String, FileChange> fileChangesByPath = new HashMap<>(request.getFileChanges().size());
+        Map<String, FileChange> fileChangesByPath = Maps.newHashMapWithExpectedSize(request.getFileChanges().size());
         for (FileChange fc : request.getFileChanges()) {
             fileChangesByPath.put(fc.getPath(), fc);
         }
@@ -868,11 +946,11 @@ public class FinalScoreCalculator {
 
             UnifiedDiffLines diffLines = UnifiedDiffLines.parse(fc.getDiff(), fc.getLineFilter());
 
-            Set<String> validBlockIds = new LinkedHashSet<>();
+            Set<String> validBlockIds = Sets.newLinkedHashSet();
             for (UnifiedDiffLines.ChangeBlock block : diffLines.getBlocks()) {
                 validBlockIds.add(block.getId());
             }
-            List<String> unknownBlocks = new ArrayList<>();
+            List<String> unknownBlocks = Lists.newArrayList();
             if (MapUtils.isNotEmpty(entry.getBlockKinds())) {
                 for (String blockId : entry.getBlockKinds().keySet()) {
                     if (BooleanUtils.negate(validBlockIds.contains(blockId))) {
@@ -882,7 +960,7 @@ public class FinalScoreCalculator {
             }
             if (CollectionUtils.isNotEmpty(unknownBlocks)) {
                 failures.add(new ValidationFailure(entry.getFile(), FailureReason.UNKNOWN_BLOCK,
-                        unknownBlocks, new ArrayList<>(validBlockIds)));
+                        unknownBlocks, Lists.newArrayList(validBlockIds)));
             }
 
             List<String> unknownAdded = unknownLines(entry.getCosmeticAdded(), diffLines.getCandidateAddedLines());
@@ -906,9 +984,9 @@ public class FinalScoreCalculator {
     private static void validateConfirmedMoveIds(DiffClassification classification, List<MoveCandidate> moveCandidates, List<ValidationFailure> failures) {
         if (CollectionUtils.isNotEmpty(classification.getConfirmedMoveIds())) {
             List<String> validIds = moveCandidates.stream().map(MoveCandidate::getId).toList();
-            Set<String> validSet = new HashSet<>(validIds);
+            Set<String> validSet = Sets.newHashSet(validIds);
 
-            List<String> unknownIds = new ArrayList<>();
+            List<String> unknownIds = Lists.newArrayList();
             for (String id : classification.getConfirmedMoveIds()) {
                 if (Objects.isNull(id) || BooleanUtils.negate(validSet.contains(id))) {
                     unknownIds.add(String.valueOf(id));
@@ -926,28 +1004,28 @@ public class FinalScoreCalculator {
      */
     private static void validateMovedPairs(DiffClassification classification, LlmScoringRequest request, List<MoveCandidate> moveCandidates, List<ValidationFailure> failures) {
         if (CollectionUtils.isNotEmpty(classification.getMovedPairs())) {
-            Map<String, UnifiedDiffLines> diffLinesByFile = new HashMap<>();
+            Map<String, UnifiedDiffLines> diffLinesByFile = Maps.newHashMap();
             for (FileChange fc : request.getFileChanges()) {
                 if (fc.isLinesJustificationRequired() && StringUtils.isNotBlank(fc.getDiff())) {
                     diffLinesByFile.put(fc.getPath(), UnifiedDiffLines.parse(fc.getDiff(), fc.getLineFilter()));
                 }
             }
 
-            Map<String, MoveCandidate> candidatesById = new HashMap<>();
+            Map<String, MoveCandidate> candidatesById = Maps.newHashMap();
             for (MoveCandidate candidate : moveCandidates) {
                 candidatesById.put(candidate.getId(), candidate);
             }
-            Set<String> claimedDeleted = new HashSet<>();
-            Set<String> claimedAdded = new HashSet<>();
+            Set<Pair<String, Integer>> claimedDeleted = Sets.newHashSet();
+            Set<Pair<String, Integer>> claimedAdded = Sets.newHashSet();
             for (String id : CollectionUtils.emptyIfNull(classification.getConfirmedMoveIds())) {
                 MoveCandidate candidate = candidatesById.get(id);
                 if (Objects.nonNull(candidate)) {
-                    claimedDeleted.add(candidate.getFromFile() + ":" + candidate.getFromLine());
-                    claimedAdded.add(candidate.getToFile() + ":" + candidate.getToLine());
+                    claimedDeleted.add(Pair.of(candidate.getFromFile(), candidate.getFromLine()));
+                    claimedAdded.add(Pair.of(candidate.getToFile(), candidate.getToLine()));
                 }
             }
 
-            List<String> offending = new ArrayList<>();
+            List<String> offending = Lists.newArrayList();
             for (String raw : classification.getMovedPairs()) {
                 Optional<MovedPair> parsed = MovedPair.parse(raw);
                 if (parsed.isEmpty()) {
@@ -963,8 +1041,8 @@ public class FinalScoreCalculator {
                     offending.add(raw);
                     continue;
                 }
-                if (BooleanUtils.negate(claimedDeleted.add(pair.getFromFile() + ":" + pair.getFromLine()))
-                        || BooleanUtils.negate(claimedAdded.add(pair.getToFile() + ":" + pair.getToLine()))) {
+                if (BooleanUtils.negate(claimedDeleted.add(Pair.of(pair.getFromFile(), pair.getFromLine())))
+                        || BooleanUtils.negate(claimedAdded.add(Pair.of(pair.getToFile(), pair.getToLine())))) {
                     offending.add(raw);
                 }
             }
@@ -974,7 +1052,7 @@ public class FinalScoreCalculator {
         }
     }
     private static List<String> unknownLines(List<Integer> cited, Set<Integer> valid) {
-        List<String> unknown = new ArrayList<>();
+        List<String> unknown = Lists.newArrayList();
         for (Integer line : CollectionUtils.emptyIfNull(cited)) {
             if (Objects.isNull(line) || BooleanUtils.negate(valid.contains(line))) {
                 unknown.add(String.valueOf(line));
@@ -1017,37 +1095,37 @@ public class FinalScoreCalculator {
     }
 
     private static final class PerFileResult extends ImmutableTriple<Map<String, Double>, Map<String, Double>, DiffBookkeeping> {
-        PerFileResult(Map<String, Double> factors, Map<String, Double> deletionFactors, DiffBookkeeping bookkeeping) {
+        private PerFileResult(Map<String, Double> factors, Map<String, Double> deletionFactors, DiffBookkeeping bookkeeping) {
             super(factors, deletionFactors, bookkeeping);
         }
-        Map<String, Double> getFactors() {
+        private Map<String, Double> getFactors() {
             return getLeft();
         }
-        Map<String, Double> getDeletionFactors() {
+        private Map<String, Double> getDeletionFactors() {
             return getMiddle();
         }
-        DiffBookkeeping getBookkeeping() {
+        private DiffBookkeeping getBookkeeping() {
             return getRight();
         }
-        static PerFileResult empty() {
-            return new PerFileResult(new HashMap<>(), new HashMap<>(), DiffBookkeeping.zero());
+        private static PerFileResult empty() {
+            return new PerFileResult(Maps.newHashMap(), Maps.newHashMap(), DiffBookkeeping.zero());
         }
     }
 
     private static final class DiffAdjustment extends ImmutablePair<PreComputedScores, DiffBookkeeping> {
-        DiffAdjustment(PreComputedScores scores, DiffBookkeeping bookkeeping) {
+        private DiffAdjustment(PreComputedScores scores, DiffBookkeeping bookkeeping) {
             super(scores, bookkeeping);
         }
-        PreComputedScores getScores() {
+        private PreComputedScores getScores() {
             return getLeft();
         }
-        DiffBookkeeping getBookkeeping() {
+        private DiffBookkeeping getBookkeeping() {
             return getRight();
         }
-        static DiffAdjustment unchanged(PreComputedScores preComputed) {
+        private static DiffAdjustment unchanged(PreComputedScores preComputed) {
             return new DiffAdjustment(preComputed, DiffBookkeeping.zero());
         }
-        static DiffAdjustment applied(PreComputedScores adjusted, DiffBookkeeping bookkeeping) {
+        private static DiffAdjustment applied(PreComputedScores adjusted, DiffBookkeeping bookkeeping) {
             return new DiffAdjustment(adjusted, bookkeeping);
         }
     }
@@ -1060,7 +1138,7 @@ public class FinalScoreCalculator {
         int inPlaceLinesCollapsed;
         int movedLinesDiscounted;
 
-        static DiffBookkeeping zero() {
+        private static DiffBookkeeping zero() {
             return new DiffBookkeeping(0, 0, 0, 0, 0);
         }
     }

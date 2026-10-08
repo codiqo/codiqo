@@ -6,13 +6,13 @@ import java.util.Collection;
 import java.util.Date;
 import java.util.Map;
 import java.util.Optional;
-import java.util.HashMap;
-import java.util.ArrayList;
 
 import org.apache.maven.artifact.Artifact;
 
-import org.apache.commons.collections4.BidiMap;
-import org.apache.commons.collections4.bidimap.DualHashBidiMap;
+import com.google.common.collect.BiMap;
+import com.google.common.collect.HashBiMap;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.MavenProjectSpec;
@@ -45,16 +45,16 @@ public class MavenProjectWrapper implements MavenProjectSpec {
     private String version;
     private File baseDirectory;
     private File outputDirectory;
-    private Map<String, String> properties = new HashMap<>();
+    private Map<String, String> properties = Maps.newHashMap();
     private Optional<File> coverage = Optional.empty();
-    private Collection<File> compileSourceRoots = new ArrayList<>();
-    private Collection<File> compileClasspathElements = new ArrayList<>();
-    private Collection<File> testCompileSourceRoots = new ArrayList<>();
-    private Collection<File> testClasspathElements = new ArrayList<>();
-    private Collection<File> declaredSourceRoots = new ArrayList<>();
-    private Collection<File> declaredTestSourceRoots = new ArrayList<>();
-    private Collection<File> testReportDirectories = new ArrayList<>();
-    private BidiMap<Artifact, File> artifacts = new DualHashBidiMap<>();
+    private Collection<File> compileSourceRoots = Lists.newArrayList();
+    private Collection<File> compileClasspathElements = Lists.newArrayList();
+    private Collection<File> testCompileSourceRoots = Lists.newArrayList();
+    private Collection<File> testClasspathElements = Lists.newArrayList();
+    private Collection<File> declaredSourceRoots = Lists.newArrayList();
+    private Collection<File> declaredTestSourceRoots = Lists.newArrayList();
+    private Collection<File> testReportDirectories = Lists.newArrayList();
+    private BiMap<Artifact, File> artifacts = HashBiMap.create();
     @Delegate
     private ClassGraphSpec scan;
 
@@ -88,7 +88,7 @@ public class MavenProjectWrapper implements MavenProjectSpec {
     }
     @Override
     public Optional<String> artifactCoordinate(File classpathFile) {
-        return Optional.ofNullable(artifacts.getKey(classpathFile)).map(Artifact::getId);
+        return Optional.ofNullable(artifacts.inverse().get(classpathFile)).map(Artifact::getId);
     }
     @Override
     public String toString() {

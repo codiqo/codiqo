@@ -7,13 +7,14 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 
 import java.io.File;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 
-import org.apache.commons.collections4.MultiValuedMap;
-import org.apache.commons.collections4.multimap.HashSetValuedHashMap;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+
+import com.google.common.collect.HashMultimap;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Multimap;
 
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.RunArgs;
@@ -37,7 +38,7 @@ class MetricsAggregatorAggregationTest {
                 args, index(), new StubAnalysis(), Path.of("."), StubAnalysis.LOGS,
                 "group:artifact", "test", new ClientInfoModel());
 
-        ctx.getProjectModel().setModules(new ArrayList<>(List.of(module("a"), module("b"))));
+        ctx.getProjectModel().setModules(Lists.newArrayList(List.of(module("a"), module("b"))));
 
         ModuleQualityTracker a = ctx.trackerFor("a");
         a.incrementFilesChanged();
@@ -167,7 +168,7 @@ class MetricsAggregatorAggregationTest {
         return toReturn;
     }
     private static IndexingSummary index() {
-        MultiValuedMap<File, CodeBlockInfo> blocks = new HashSetValuedHashMap<>();
+        Multimap<File, CodeBlockInfo> blocks = HashMultimap.create();
         return IndexingSummary.builder()
                 .projectRoot(new File("."))
                 .projects(List.of())

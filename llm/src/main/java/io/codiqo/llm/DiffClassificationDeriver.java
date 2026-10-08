@@ -2,23 +2,23 @@ package io.codiqo.llm;
 
 import static java.util.function.Predicate.not;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.TreeSet;
 import java.util.regex.Pattern;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
+
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.logging.Log;
 import io.codiqo.llm.MovedLineDetector.MoveCandidate;
@@ -68,18 +68,18 @@ public class DiffClassificationDeriver {
         }
 
         DiffClassification classification = ensureClassification(response);
-        Map<String, UnifiedDiffLines> diffLinesByFile = new LinkedHashMap<>();
+        Map<String, UnifiedDiffLines> diffLinesByFile = Maps.newLinkedHashMap();
         for (FileChange fc : eligible) {
             diffLinesByFile.put(fc.getPath(), UnifiedDiffLines.parse(fc.getDiff(), fc.getLineFilter()));
         }
 
         ConfirmedMoves confirmed = resolveConfirmedMoves(classification, moveCandidates, diffLinesByFile);
-        Map<String, FileDiffClassification> llmByFile = new HashMap<>();
+        Map<String, FileDiffClassification> llmByFile = Maps.newHashMap();
         for (FileDiffClassification entry : CollectionUtils.emptyIfNull(classification.getPerFile())) {
             llmByFile.put(entry.getFile(), entry);
         }
 
-        List<FileDiffClassification> derived = new ArrayList<>(eligible.size());
+        List<FileDiffClassification> derived = Lists.newArrayListWithCapacity(eligible.size());
         int totalAdded = 0;
         int totalDeleted = 0;
         for (FileChange fc : eligible) {
@@ -97,12 +97,12 @@ public class DiffClassificationDeriver {
         Collection<Integer> citedCosmeticAdded = Collections.emptyList();
         Collection<Integer> citedCosmeticDeleted = Collections.emptyList();
         Collection<Integer> citedInPlaceCollapsedAdded = Collections.emptyList();
-        Map<String, String> blockKinds = new HashMap<>();
+        Map<String, String> blockKinds = Maps.newHashMap();
         if (Objects.nonNull(llm)) {
             citedCosmeticAdded = CollectionUtils.emptyIfNull(llm.getCosmeticAdded());
             citedCosmeticDeleted = CollectionUtils.emptyIfNull(llm.getCosmeticDeleted());
             citedInPlaceCollapsedAdded = CollectionUtils.emptyIfNull(llm.getInPlaceCollapsedAdded());
-            blockKinds = Optional.ofNullable(llm.getBlockKinds()).orElse(new HashMap<>());
+            blockKinds = Optional.ofNullable(llm.getBlockKinds()).orElse(Maps.newHashMap());
         }
 
         Set<Integer> cosmeticAdded = sanitizeCitedLines(citedCosmeticAdded, diffLines.getCandidateAddedLines(), fc.getPath(), "cosmeticAdded");
@@ -122,10 +122,10 @@ public class DiffClassificationDeriver {
         dropMovedLines(inPlaceCollapsedAdded, movedAdded, fc.getPath(), "inPlaceCollapsedAdded");
         inPlaceCollapsedAdded.removeAll(cosmeticAdded);
 
-        List<LinePair> inPlacePairs = new ArrayList<>();
-        List<LinePair> trueModifyPairs = new ArrayList<>();
-        List<Integer> pureAdd = new ArrayList<>();
-        List<Integer> pureDelete = new ArrayList<>();
+        List<LinePair> inPlacePairs = Lists.newArrayList();
+        List<LinePair> trueModifyPairs = Lists.newArrayList();
+        List<Integer> pureAdd = Lists.newArrayList();
+        List<Integer> pureDelete = Lists.newArrayList();
         for (ChangeBlock block : diffLines.getBlocks()) {
             List<Integer> deleted = block.getDeletedLines().stream()
                     .filter(not(cosmeticDeleted::contains))
@@ -150,15 +150,15 @@ public class DiffClassificationDeriver {
         return FileDiffClassification.builder()
                 .file(fc.getPath())
                 .blockKinds(blockKinds)
-                .cosmeticAdded(new ArrayList<>(cosmeticAdded))
-                .cosmeticDeleted(new ArrayList<>(cosmeticDeleted))
+                .cosmeticAdded(Lists.newArrayList(cosmeticAdded))
+                .cosmeticDeleted(Lists.newArrayList(cosmeticDeleted))
                 .inPlaceModifyPairs(inPlacePairs)
                 .trueModifyPairs(trueModifyPairs)
                 .pureAdd(pureAdd)
                 .pureDelete(pureDelete)
-                .inPlaceCollapsedAdded(new ArrayList<>(inPlaceCollapsedAdded))
-                .movedAdded(new ArrayList<>(movedAdded))
-                .movedDeleted(new ArrayList<>(movedDeleted))
+                .inPlaceCollapsedAdded(Lists.newArrayList(inPlaceCollapsedAdded))
+                .movedAdded(Lists.newArrayList(movedAdded))
+                .movedDeleted(Lists.newArrayList(movedDeleted))
                 .build();
     }
     /**
@@ -170,22 +170,22 @@ public class DiffClassificationDeriver {
      * written back to the response is the complete persisted linkage.
      */
     private ConfirmedMoves resolveConfirmedMoves(DiffClassification classification, List<MoveCandidate> moveCandidates, Map<String, UnifiedDiffLines> diffLinesByFile) {
-        Map<String, MoveCandidate> byId = new HashMap<>();
+        Map<String, MoveCandidate> byId = Maps.newHashMap();
         for (MoveCandidate candidate : moveCandidates) {
             byId.put(candidate.getId(), candidate);
         }
 
-        List<String> ids = new ArrayList<>();
-        List<String> pairs = new ArrayList<>();
-        Map<String, Set<Integer>> deletedByFile = new HashMap<>();
-        Map<String, Set<Integer>> addedByFile = new HashMap<>();
+        List<String> ids = Lists.newArrayList();
+        List<String> pairs = Lists.newArrayList();
+        Map<String, Set<Integer>> deletedByFile = Maps.newHashMap();
+        Map<String, Set<Integer>> addedByFile = Maps.newHashMap();
         for (String id : CollectionUtils.emptyIfNull(classification.getConfirmedMoveIds())) {
             MoveCandidate candidate = byId.get(id);
             if (Objects.nonNull(candidate)) {
                 ids.add(candidate.getId());
                 pairs.add(new MovedPair(candidate.getFromFile(), candidate.getFromLine(), candidate.getToFile(), candidate.getToLine()).format());
-                deletedByFile.computeIfAbsent(candidate.getFromFile(), k -> new TreeSet<>()).add(candidate.getFromLine());
-                addedByFile.computeIfAbsent(candidate.getToFile(), k -> new TreeSet<>()).add(candidate.getToLine());
+                deletedByFile.computeIfAbsent(candidate.getFromFile(), k -> Sets.newTreeSet()).add(candidate.getFromLine());
+                addedByFile.computeIfAbsent(candidate.getToFile(), k -> Sets.newTreeSet()).add(candidate.getToLine());
             } else {
                 log.warn("diffClassification.droppedMoveId id='%s' — not a server-offered move candidate", id);
             }
@@ -204,8 +204,8 @@ public class DiffClassificationDeriver {
             boolean fromSideEffective = Objects.nonNull(fromDiff) && fromDiff.getCandidateDeletedLines().contains(pair.getFromLine());
             boolean toSideEffective = Objects.nonNull(toDiff) && toDiff.getCandidateAddedLines().contains(pair.getToLine());
             if (BooleanUtils.and(new boolean[] { fromSideEffective, toSideEffective })) {
-                Set<Integer> deletedSet = deletedByFile.computeIfAbsent(pair.getFromFile(), k -> new TreeSet<>());
-                Set<Integer> addedSet = addedByFile.computeIfAbsent(pair.getToFile(), k -> new TreeSet<>());
+                Set<Integer> deletedSet = deletedByFile.computeIfAbsent(pair.getFromFile(), k -> Sets.newTreeSet());
+                Set<Integer> addedSet = addedByFile.computeIfAbsent(pair.getToFile(), k -> Sets.newTreeSet());
                 if (BooleanUtils.or(new boolean[] { deletedSet.contains(pair.getFromLine()), addedSet.contains(pair.getToLine()) })) {
                     log.warn("diffClassification.droppedMovedPair pair='%s' — line already claimed by another confirmed relocation", raw);
                 } else {
@@ -232,7 +232,7 @@ public class DiffClassificationDeriver {
      * here so persisted coordinates stay correct.
      */
     private Set<Integer> sanitizeCitedLines(Collection<Integer> cited, Set<Integer> candidates, String file, String bucket) {
-        Set<Integer> toReturn = new TreeSet<>();
+        Set<Integer> toReturn = Sets.newTreeSet();
         for (Integer line : cited) {
             if (Objects.nonNull(line) && candidates.contains(line)) {
                 toReturn.add(line);
@@ -281,10 +281,10 @@ public class DiffClassificationDeriver {
         Map<String, Set<Integer>> deletedByFile;
         Map<String, Set<Integer>> addedByFile;
 
-        Set<Integer> deletedFor(String file) {
+        private Set<Integer> deletedFor(String file) {
             return deletedByFile.getOrDefault(file, Collections.emptySet());
         }
-        Set<Integer> addedFor(String file) {
+        private Set<Integer> addedFor(String file) {
             return addedByFile.getOrDefault(file, Collections.emptySet());
         }
     }

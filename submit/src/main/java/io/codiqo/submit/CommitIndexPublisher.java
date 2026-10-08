@@ -3,10 +3,7 @@ package io.codiqo.submit;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.time.Duration;
-import java.util.ArrayList;
 import java.util.Collections;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -16,7 +13,6 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.ListUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.tuple.ImmutableTriple;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectReader;
@@ -24,8 +20,11 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 
+import com.google.common.base.Joiner;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
+
 import io.codiqo.api.logging.Log;
-import io.codiqo.client.ApiClient;
 import io.codiqo.client.ApiException;
 import io.codiqo.client.api.CommitIndexApi;
 import io.codiqo.client.model.CommitIndexBatchModel;
@@ -33,6 +32,8 @@ import io.codiqo.client.model.CommitIndexBatchResultModel;
 import io.codiqo.client.model.CommitModel;
 import io.codiqo.client.model.MissingAnalysesModel;
 import io.codiqo.client.model.ProjectModel;
+import io.codiqo.submit.auth.CodiqoApiClients;
+import io.codiqo.submit.auth.CodiqoCredential;
 import io.codiqo.util.JGit;
 import io.codiqo.util.RepositoryUrls;
 import lombok.experimental.UtilityClass;
@@ -44,16 +45,10 @@ import lombok.experimental.UtilityClass;
  */
 @UtilityClass
 public class CommitIndexPublisher {
-    private static final String API_KEY_HEADER = "X-API-Key";
     private static final int UNKNOWN_PARENTS_SAMPLE_LIMIT = 10;
 
-    public static CommitIndexApi buildClient(String apiUrl, String apiKey, long connectTimeoutSeconds, long readTimeoutSeconds) {
-        ApiClient apiClient = new ApiClient();
-        apiClient.updateBaseUri(Strings.CS.removeEnd(apiUrl, "/"));
-        apiClient.setConnectTimeout(Duration.ofSeconds(connectTimeoutSeconds));
-        apiClient.setReadTimeout(Duration.ofSeconds(readTimeoutSeconds));
-        apiClient.setRequestInterceptor(builder -> builder.header(API_KEY_HEADER, apiKey));
-        return new CommitIndexApi(apiClient);
+    public static CommitIndexApi buildClient(String apiUrl, CodiqoCredential credential, long connectTimeoutSeconds, long readTimeoutSeconds) {
+        return new CommitIndexApi(CodiqoApiClients.newApiClient(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds));
     }
     public static void indexBatches(
             Log log,
@@ -64,7 +59,7 @@ public class CommitIndexPublisher {
             List<CommitModel> commits,
             int batchSize) throws ApiException {
         int totalAccepted = 0;
-        Set<String> unknownParents = new LinkedHashSet<>();
+        Set<String> unknownParents = Sets.newLinkedHashSet();
 
         for (List<CommitModel> chunk : ListUtils.partition(commits, batchSize)) {
             CommitIndexBatchModel batch = new CommitIndexBatchModel().commits(chunk).project(projectMetadata);
@@ -77,7 +72,7 @@ public class CommitIndexPublisher {
         log.info("indexed " + totalAccepted + "/" + commits.size() + " commits");
 
         if (CollectionUtils.isNotEmpty(unknownParents)) {
-            String sample = StringUtils.join(unknownParents.stream().limit(UNKNOWN_PARENTS_SAMPLE_LIMIT).toList(), ", ");
+            String sample = Joiner.on(", ").join(unknownParents.stream().limit(UNKNOWN_PARENTS_SAMPLE_LIMIT).toList());
             String suffix = unknownParents.size() > UNKNOWN_PARENTS_SAMPLE_LIMIT ? " ..." : StringUtils.EMPTY;
             log.warn("server reported " + unknownParents.size() + " unknown parent SHAs (re-run with a wider commit window): " + sample + suffix);
         }
@@ -98,7 +93,7 @@ public class CommitIndexPublisher {
      * fallback the caller layers on when this comes back empty.
      */
     public static List<URI> repositoryUrls(Log log, Repository repo) {
-        List<URI> toReturn = new ArrayList<>();
+        List<URI> toReturn = Lists.newArrayList();
         JGit.detectRemoteUrls(repo).forEach(rawUrl -> addRepositoryUri(log, toReturn, rawUrl, "git remote"));
         return toReturn;
     }
@@ -117,7 +112,7 @@ public class CommitIndexPublisher {
      * partial clone may not hold the commit itself, and a commit whose first parent is absent has no diff to compute.
      */
     public static MissingAnalysesSelection selectAnalyzable(Repository repo, List<String> shas) throws IOException {
-        List<String> analyzable = new ArrayList<>(shas.size());
+        List<String> analyzable = Lists.newArrayListWithCapacity(shas.size());
         int skippedMissingCommit = 0;
         int skippedMissingParent = 0;
 

@@ -1,6 +1,7 @@
 package io.codiqo.submit;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.Locale;
 import java.util.Objects;
@@ -15,6 +16,9 @@ import dev.failsafe.FailsafeException;
 import dev.failsafe.RetryPolicy;
 import io.codiqo.api.logging.Log;
 import io.codiqo.client.ApiException;
+import io.codiqo.submit.auth.OAuthException;
+import io.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.handler.codec.http.HttpStatusClass;
 import lombok.experimental.UtilityClass;
 
 @UtilityClass
@@ -26,8 +30,6 @@ public class ApiRetry {
     private static final double JITTER_FACTOR = 0.3;
 
     private static final int NO_HTTP_STATUS = 0;
-    private static final int HTTP_TOO_MANY_REQUESTS = 429;
-    private static final int LOWEST_SERVER_ERROR = 500;
 
     /**
      * takes a {@link Callable} rather than Failsafe's own CheckedSupplier: the supplier type is part of this
@@ -46,6 +48,8 @@ public class ApiRetry {
                 .build();
         try {
             return Failsafe.with(policy).get(supplier::call);
+        } catch (UncheckedIOException err) {
+            throw new ApiException(err.getMessage(), err.getCause(), NO_HTTP_STATUS, null);
         } catch (FailsafeException err) {
             if (err.getCause() instanceof ApiException apiErr) {
                 throw apiErr;
@@ -57,11 +61,19 @@ public class ApiRetry {
         if (err instanceof IOException) {
             return true;
         }
+        /**
+         * A credential that could not be refreshed, thrown from the request interceptor (CodiqoApiClients). A network
+         * failure on the way to the auth server is as transient as one on the way to the API; an OAuth error answer is
+         * the server's decision (the login has ended) and retrying it only delays the failure.
+         */
+        if (err instanceof UncheckedIOException unchecked) {
+            return BooleanUtils.negate(unchecked.getCause() instanceof OAuthException);
+        }
         if (err instanceof ApiException apiErr) {
             return BooleanUtils.or(new boolean[]{
                     apiErr.getCode() == NO_HTTP_STATUS,
-                    apiErr.getCode() == HTTP_TOO_MANY_REQUESTS,
-                    apiErr.getCode() >= LOWEST_SERVER_ERROR});
+                    apiErr.getCode() == HttpResponseStatus.TOO_MANY_REQUESTS.code(),
+                    HttpStatusClass.valueOf(apiErr.getCode()) == HttpStatusClass.SERVER_ERROR});
         }
         return false;
     }

@@ -31,11 +31,12 @@ import io.codiqo.client.ApiException;
 import io.codiqo.client.api.CommitIndexApi;
 import io.codiqo.client.model.CommitModel;
 import io.codiqo.client.model.ProjectModel;
-import io.codiqo.maven.auth.BrowserLogin;
+import io.codiqo.maven.auth.MavenCredentials;
 import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.submit.CommitIndexPublisher;
 import io.codiqo.submit.CommitIndexPublisher.MissingAnalysesSelection;
 import io.codiqo.submit.CommitIndexer;
+import io.codiqo.submit.auth.CodiqoCredential;
 import io.codiqo.util.JGit;
 
 @Mojo(name = "index-commits",
@@ -54,6 +55,9 @@ public class IndexCommitsMojo extends AbstractMojo {
 
     @Parameter(property = "codiqo.authUrl", defaultValue = RunArgs.DEFAULT_AUTH_URL)
     private String authUrl;
+
+    @Parameter(property = "codiqo.resourceUrl", defaultValue = RunArgs.DEFAULT_RESOURCE_URL)
+    private String resourceUrl;
 
     @Parameter(property = "codiqo.indexRef", defaultValue = "HEAD")
     private String indexRef;
@@ -94,7 +98,7 @@ public class IndexCommitsMojo extends AbstractMojo {
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try (Repository repo = JGit.openRepository(project.getBasedir())) {
-            String resolvedApiKey = BrowserLogin.resolveApiKey(apiKey, authUrl, getLog());
+            CodiqoCredential credential = MavenCredentials.resolve(apiKey, authUrl, resourceUrl, getLog());
             String projectId = project.getGroupId() + ":" + project.getArtifactId();
             getLog().info("using projectId: " + projectId);
 
@@ -112,7 +116,7 @@ public class IndexCommitsMojo extends AbstractMojo {
             getLog().info("extracted " + commits.size() + " commits since " + cutoff + " (window=" + commitWindow
                     + ", selection=" + (firstParentOnly ? "first-parent/mainline" : "all-commits") + ")");
 
-            CommitIndexApi client = CommitIndexPublisher.buildClient(apiUrl, resolvedApiKey, connectTimeoutSeconds, readTimeoutSeconds);
+            CommitIndexApi client = CommitIndexPublisher.buildClient(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds);
             getLog().info("connecting to " + apiUrl);
 
             Log log = new MavenMessageReporter(getLog());

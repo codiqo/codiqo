@@ -9,17 +9,16 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
-import java.util.LinkedHashSet;
-import java.util.LinkedHashMap;
-import java.util.HashSet;
-import java.util.HashMap;
-import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.DuplicateMark;
 import io.codiqo.api.code.CodeBlockInfo;
@@ -45,8 +44,8 @@ public class DuplicationReportPopulator implements SubmissionPopulator {
 
         Path workTreeRealPath = resolveRealPath(ctx.getWorkTree());
         int totalDuplicatedTokens = 0;
-        Map<String, Set<String>> duplicateOfBySignature = new LinkedHashMap<>();
-        Map<String, Set<Integer>> duplicatedLinesByPath = new HashMap<>();
+        Map<String, Set<String>> duplicateOfBySignature = Maps.newLinkedHashMap();
+        Map<String, Set<Integer>> duplicatedLinesByPath = Maps.newHashMap();
 
         for (CopyPasteDetectionSummary cpd : ctx.getAnalysis().cpd()) {
             for (DuplicationMatch match : cpd.affected()) {
@@ -72,7 +71,7 @@ public class DuplicationReportPopulator implements SubmissionPopulator {
                     mark.block().map(CodeBlockInfo::getSignature).ifPresent(locationModel::setCodeUnitSignature);
                     cloneModel.getLocations().add(locationModel);
 
-                    Set<Integer> dupLines = duplicatedLinesByPath.computeIfAbsent(relativePath(workTreeRealPath, mark.getFile()), path -> new HashSet<>());
+                    Set<Integer> dupLines = duplicatedLinesByPath.computeIfAbsent(relativePath(workTreeRealPath, mark.getFile()), path -> Sets.newHashSet());
                     for (int line = loc.getStartLine(); line <= loc.getEndLine(); line++) {
                         dupLines.add(line);
                     }
@@ -87,7 +86,7 @@ public class DuplicationReportPopulator implements SubmissionPopulator {
                 fromModel.setSourceSignatures(sourceSignatures);
                 duplicationReportModel.getClonesFromExisting().add(fromModel);
 
-                duplicateOfBySignature.computeIfAbsent(targetBlock.getSignature(), signature -> new LinkedHashSet<>()).addAll(sourceSignatures);
+                duplicateOfBySignature.computeIfAbsent(targetBlock.getSignature(), signature -> Sets.newLinkedHashSet()).addAll(sourceSignatures);
             });
 
             cpd.copyPasteNew().forEach(newCloneSet -> {
@@ -98,9 +97,9 @@ public class DuplicationReportPopulator implements SubmissionPopulator {
                 duplicationReportModel.getNewClones().add(newModel);
 
                 for (String memberSignature : memberSignatures) {
-                    Set<String> others = new LinkedHashSet<>(memberSignatures);
+                    Set<String> others = Sets.newLinkedHashSet(memberSignatures);
                     others.remove(memberSignature);
-                    duplicateOfBySignature.computeIfAbsent(memberSignature, signature -> new LinkedHashSet<>()).addAll(others);
+                    duplicateOfBySignature.computeIfAbsent(memberSignature, signature -> Sets.newLinkedHashSet()).addAll(others);
                 }
             });
         }
@@ -122,7 +121,7 @@ public class DuplicationReportPopulator implements SubmissionPopulator {
         applyDuplicationToCodeUnits(ctx, duplicateOfBySignature, duplicatedLinesByPath, changedByPath);
     }
     private static Map<String, ChangedLines> classifyChangedFiles(SubmissionContext ctx) {
-        Map<String, ChangedLines> toReturn = new HashMap<>();
+        Map<String, ChangedLines> toReturn = Maps.newHashMap();
         for (FileChangeModel fileChangeModel : ctx.getSubmissionModel().getFiles()) {
             toReturn.put(fileChangeModel.getPath(),
                     ChangedLineClassifier.classify(fileChangeModel.getDiff(), LanguageCapabilities.filterFor(fileChangeModel)));
@@ -163,7 +162,8 @@ public class DuplicationReportPopulator implements SubmissionPopulator {
             duplicationReportModel.setChangedLineCpdPercent((addedDuplicated + modifiedDuplicated) * 100.0 / changedTotal);
         }
     }
-    static void applyDuplicationToCodeUnits(SubmissionContext ctx, Map<String, Set<String>> duplicateOfBySignature,
+    @VisibleForTesting
+    public static void applyDuplicationToCodeUnits(SubmissionContext ctx, Map<String, Set<String>> duplicateOfBySignature,
             Map<String, Set<Integer>> duplicatedLinesByPath, Map<String, ChangedLines> changedByPath) {
         for (FileChangeModel fileChangeModel : ctx.getSubmissionModel().getFiles()) {
             Set<Integer> duplicatedLines = duplicatedLinesByPath.getOrDefault(fileChangeModel.getPath(), Collections.emptySet());
@@ -174,7 +174,7 @@ public class DuplicationReportPopulator implements SubmissionPopulator {
                 if (BooleanUtils.and(new boolean[] { codeUnitModel.getOperation() != CodeUnitModel.OperationEnum.DELETE, CollectionUtils.isNotEmpty(duplicateOf) })) {
                     CodeUnitDuplicationModel duplicationModel = new CodeUnitDuplicationModel();
                     duplicationModel.setIsDuplicated(true);
-                    duplicationModel.setDuplicateOf(new ArrayList<>(duplicateOf));
+                    duplicationModel.setDuplicateOf(Lists.newArrayList(duplicateOf));
                     populateUnitDuplicationSpan(duplicationModel, codeUnitModel, duplicatedLines, changed);
                     codeUnitModel.setDuplication(duplicationModel);
                 }
@@ -214,7 +214,8 @@ public class DuplicationReportPopulator implements SubmissionPopulator {
      * joins the relative path's own name elements rather than rewriting separators in its string form: a backslash
      * is a legal filename character on POSIX, and separatorsToUnix would rewrite it out of the key
      */
-    static String relativePath(Path workTreeRealPath, File file) {
+    @VisibleForTesting
+    public static String relativePath(Path workTreeRealPath, File file) {
         return StringUtils.join(workTreeRealPath.relativize(resolveRealPath(file.toPath())).iterator(), '/');
     }
     private static Path resolveRealPath(Path path) {

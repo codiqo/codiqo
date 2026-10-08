@@ -9,8 +9,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.HashSet;
-import java.util.ArrayList;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.eclipse.jgit.diff.PatchIdDiffFormatter;
@@ -22,6 +20,8 @@ import org.eclipse.jgit.revwalk.RevSort;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.revwalk.filter.CommitTimeRevFilter;
 
+import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.CommitModel;
@@ -43,7 +43,7 @@ public class CommitIndexer {
     private static final Instant NO_UPPER_BOUND = Instant.ofEpochSecond(Integer.MAX_VALUE);
 
     public List<CommitModel> extractCommits(Repository repo, RunArgs filterArgs, String indexRef, Date cutoff, String branch) throws Exception {
-        List<CommitModel> toReturn = new ArrayList<>();
+        List<CommitModel> toReturn = Lists.newArrayList();
 
         ObjectId startId = repo.resolve(indexRef);
         if (Objects.isNull(startId)) {
@@ -51,7 +51,7 @@ public class CommitIndexer {
         }
 
         Map<String, List<String>> branchIndex = JGit.buildBranchIndex(repo);
-        Set<ObjectId> seenPatchIds = new HashSet<>();
+        Set<ObjectId> seenPatchIds = Sets.newHashSet();
 
         try (RevWalk walk = new RevWalk(repo)) {
             walk.sort(RevSort.TOPO);

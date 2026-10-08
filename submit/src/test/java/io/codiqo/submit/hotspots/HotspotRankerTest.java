@@ -5,14 +5,15 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
+
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import io.codiqo.api.code.DeclaredType;
 import io.codiqo.api.code.TypeKind;
@@ -69,9 +70,9 @@ class HotspotRankerTest {
     }
     @Test
     void rankingIsCappedAndDeterministic() {
-        List<DeclaredType> types = new ArrayList<>();
-        List<TypeReference> references = new ArrayList<>();
-        Map<String, FileChurn> churn = new HashMap<>();
+        List<DeclaredType> types = Lists.newArrayList();
+        List<TypeReference> references = Lists.newArrayList();
+        Map<String, FileChurn> churn = Maps.newHashMap();
         for (int i = 0; i < HotspotRanker.IMPORTANT_LIMIT * 2; i++) {
             types.add(type("T" + i, TypeKind.CLASS));
             churn.put("T" + i + ".java", new FileChurn(i, i % 7, i % 3));
@@ -90,8 +91,8 @@ class HotspotRankerTest {
     }
     @Test
     void tiedScoresDoNotRankByName() {
-        List<DeclaredType> types = new ArrayList<>();
-        Map<String, FileChurn> churn = new HashMap<>();
+        List<DeclaredType> types = Lists.newArrayList();
+        Map<String, FileChurn> churn = Maps.newHashMap();
         for (int i = 0; i < 200; i++) {
             types.add(type("T" + i, TypeKind.CLASS));
         }
@@ -107,7 +108,7 @@ class HotspotRankerTest {
     }
     @Test
     void tiedClassesShareARankAndATieAcrossTheLimitIsLeftOutWhole() {
-        List<DeclaredType> types = new ArrayList<>();
+        List<DeclaredType> types = Lists.newArrayList();
         types.add(new DeclaredType("Top1", new File("Top1.java"), TypeKind.CLASS, 10_000, false));
         types.add(new DeclaredType("Top2", new File("Top2.java"), TypeKind.CLASS, 10_000, false));
         for (int i = 0; i < HotspotRanker.IMPORTANT_LIMIT - 10; i++) {

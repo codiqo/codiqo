@@ -5,9 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.util.Map;
-import java.util.ArrayList;
 
 import org.junit.jupiter.api.Test;
+
+import com.google.common.collect.Lists;
 
 
 import io.codiqo.api.code.CodeBlockInfo;
@@ -95,7 +96,7 @@ class AbstractJavaPmdDeclarationInfoTest {
                     .file(new File("Test.java"))
                     .location(location)
                     .node(node)
-                    .invocations(new ArrayList<>())
+                    .invocations(Lists.newArrayList())
                     .body(node.getText().toString())
                     .build();
         }
@@ -103,7 +104,7 @@ class AbstractJavaPmdDeclarationInfoTest {
                 .file(new File("Test.java"))
                 .location(location)
                 .node(node)
-                .invocations(new ArrayList<>())
+                .invocations(Lists.newArrayList())
                 .body(node.getText().toString())
                 .build();
     }

@@ -7,7 +7,6 @@ import java.nio.file.Files;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
@@ -19,6 +18,8 @@ import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
+
+import com.google.common.collect.Lists;
 
 import io.codiqo.maven.timemachine.SnapshotMetadataStore;
 import lombok.experimental.UtilityClass;
@@ -51,7 +52,7 @@ public class TimeMachineBackoff {
      * legitimate state: the fork may have died before resolving anything.
      */
     public static List<Instant> readPickedDeploys(File metaDir) {
-        List<Instant> toReturn = new ArrayList<>();
+        List<Instant> toReturn = Lists.newArrayList();
         if (Objects.nonNull(metaDir) && metaDir.isDirectory()) {
             File[] files = metaDir.listFiles((dir, fileName) -> "properties".equals(FilenameUtils.getExtension(fileName)));
             if (ArrayUtils.isNotEmpty(files)) {

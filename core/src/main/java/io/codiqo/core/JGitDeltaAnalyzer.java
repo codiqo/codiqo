@@ -7,7 +7,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Objects;
@@ -40,6 +39,8 @@ import org.eclipse.jgit.treewalk.TreeWalk;
 import org.eclipse.jgit.treewalk.filter.PathFilter;
 import org.eclipse.jgit.util.io.DisabledOutputStream;
 import org.slf4j.event.Level;
+
+import com.google.common.collect.Lists;
 
 import io.codiqo.api.DeltaAnalyzer;
 import io.codiqo.api.RunArgs;
@@ -98,7 +99,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
     }
     @Override
     public List<FileRevisionInfo> getFileHistory(String filePath, int maxRevisions) throws Exception {
-        List<FileRevisionInfo> toReturn = new ArrayList<>();
+        List<FileRevisionInfo> toReturn = Lists.newArrayList();
 
         try (RevWalk revWalk = new RevWalk(args.getGit())) {
             ObjectId head = args.getGit().resolve("HEAD");

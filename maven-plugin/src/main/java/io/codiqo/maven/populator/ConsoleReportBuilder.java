@@ -3,8 +3,6 @@ package io.codiqo.maven.populator;
 import static java.util.function.Predicate.not;
 
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -21,10 +19,7 @@ import org.thymeleaf.context.Context;
 import org.thymeleaf.templatemode.TemplateMode;
 import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver;
 
-import com.github.freva.asciitable.AsciiTable;
-import com.github.freva.asciitable.Column;
-import com.github.freva.asciitable.ColumnData;
-import com.github.freva.asciitable.HorizontalAlign;
+import com.google.common.collect.Lists;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.ReportBuilder;
@@ -44,28 +39,22 @@ import lombok.Value;
 /**
  * Renders a commit analysis as an ASCII page for the console, mirroring the basic layout of the
  * web analysis view: identity, score with its calculation, the headline metrics, then the quality
- * dimensions, changed files and findings as tables.
- *
- * <p>Tables are rendered to strings here rather than looped in the template, because column widths
- * have to be measured across all rows before the first one can be emitted.
+ * dimensions, changed files and findings as tables. This class only gathers the values; the
+ * console-analysis template lays them out.
  */
 public class ConsoleReportBuilder implements ReportBuilder {
     private static final String TITLE = "Codiqo — Commit Analysis";
     private static final String TEMPLATE_NAME = "console-analysis";
     private static final int ROUNDING = 2;
     private static final int COMMIT_SHA_LENGTH = 8;
-    private static final int MESSAGE_MAX_CHARS = 100;
-    private static final int SUMMARY_WRAP_CHARS = 96;
     private static final int MAX_FILE_ROWS = 25;
     private static final int MAX_FINDING_ROWS = 15;
     private static final int PATH_MAX_CHARS = 62;
     private static final int TITLE_MAX_CHARS = 52;
-    private static final int MAX_BRANCHES = 2;
+    private static final String NONE = "-";
+    private static final String ELLIPSIS = "...";
 
     private static final TemplateEngine TEMPLATE_ENGINE;
-    private static final List<ColumnData<DimensionRow>> DIMENSION_COLUMNS;
-    private static final List<ColumnData<FileRow>> FILE_COLUMNS;
-    private static final List<ColumnData<FindingRow>> FINDING_COLUMNS;
 
     static {
         ClassLoaderTemplateResolver resolver = new ClassLoaderTemplateResolver();
@@ -76,25 +65,7 @@ public class ConsoleReportBuilder implements ReportBuilder {
 
         TEMPLATE_ENGINE = new TemplateEngine();
         TEMPLATE_ENGINE.setTemplateResolver(resolver);
-
-        DIMENSION_COLUMNS = Arrays.<ColumnData<DimensionRow>> asList(
-                new Column().header("Dimension").dataAlign(HorizontalAlign.LEFT).with(DimensionRow::getName),
-                new Column().header("Score").dataAlign(HorizontalAlign.RIGHT).with(DimensionRow::getScore),
-                new Column().header("Gate").dataAlign(HorizontalAlign.CENTER).with(DimensionRow::getGate));
-
-        FILE_COLUMNS = Arrays.<ColumnData<FileRow>> asList(
-                new Column().header("File").dataAlign(HorizontalAlign.LEFT).with(FileRow::getPath),
-                new Column().header("Type").dataAlign(HorizontalAlign.LEFT).with(FileRow::getChangeType),
-                new Column().header("+").dataAlign(HorizontalAlign.RIGHT).with(FileRow::getAdded),
-                new Column().header("-").dataAlign(HorizontalAlign.RIGHT).with(FileRow::getDeleted),
-                new Column().header("Blocks").dataAlign(HorizontalAlign.RIGHT).with(FileRow::getBlocks),
-                new Column().header("Scope").dataAlign(HorizontalAlign.LEFT).with(FileRow::getScope));
-
-        FINDING_COLUMNS = Arrays.<ColumnData<FindingRow>> asList(
-                new Column().header("Severity").dataAlign(HorizontalAlign.LEFT).with(FindingRow::getSeverity),
-                new Column().header("Finding").dataAlign(HorizontalAlign.LEFT).with(FindingRow::getTitle),
-                new Column().header("File").dataAlign(HorizontalAlign.LEFT).with(FindingRow::getFile),
-                new Column().header("Line").dataAlign(HorizontalAlign.RIGHT).with(FindingRow::getLine));
+        TEMPLATE_ENGINE.addDialect(new TextLayoutDialect());
     }
 
     private final RunArgs args;
@@ -108,20 +79,19 @@ public class ConsoleReportBuilder implements ReportBuilder {
         Context ctx = new Context(Locale.ENGLISH);
 
         ctx.setVariable("title", TITLE);
-        ctx.setVariable("separator", StringUtils.repeat('=', TITLE.length()));
 
         ctx.setVariable("commitSha", StringUtils.left(StringUtils.defaultString(reportContext.getCommitId()), COMMIT_SHA_LENGTH));
-        ctx.setVariable("branches", branchLabel(reportContext.getBranches()));
-        ctx.setVariable("author", StringUtils.defaultString(reportContext.getAuthor()));
-        ctx.setVariable("authorEmail", StringUtils.defaultString(reportContext.getAuthorEmail()));
-        ctx.setVariable("timestamp", StringUtils.defaultString(reportContext.getTimestamp()));
-        ctx.setVariable("project", StringUtils.defaultString(reportContext.getRepositoryName()));
-        ctx.setVariable("message", firstLine(reportContext.getCommitMessage()));
+        ctx.setVariable("branches", Optional.ofNullable(reportContext.getBranches()).orElse(Collections.emptyList()));
+        ctx.setVariable("author", reportContext.getAuthor());
+        ctx.setVariable("authorEmail", reportContext.getAuthorEmail());
+        ctx.setVariable("timestamp", reportContext.getTimestamp());
+        ctx.setVariable("project", reportContext.getRepositoryName());
+        ctx.setVariable("message", StringUtils.defaultString(StringUtils.substringBefore(reportContext.getCommitMessage(), StringUtils.LF)).trim());
 
-        ctx.setVariable("score", String.format(Locale.ROOT, "%.0f", Optional.ofNullable(response.getScore()).orElse(0.0)));
-        ctx.setVariable("classification", label(response.getChangeClassification()));
-        ctx.setVariable("scoreCalculation", StringUtils.defaultIfBlank(response.getScoreCalculation(), "-"));
-        ctx.setVariable("seniorReview", Optional.ofNullable(response.getRequiresSeniorReview()).orElse(0));
+        ctx.setVariable("score", response.getScore());
+        ctx.setVariable("classification", response.getChangeClassification());
+        ctx.setVariable("scoreCalculation", response.getScoreCalculation());
+        ctx.setVariable("seniorReview", response.getRequiresSeniorReview());
         ctx.setVariable("seniorReviewThreshold", args.getSeniorReviewThreshold());
 
         populateQuality(ctx, response);
@@ -129,18 +99,21 @@ public class ConsoleReportBuilder implements ReportBuilder {
         populateBlastRadius(ctx, request, response);
         populateVolume(ctx, request, response);
 
-        ctx.setVariable("dimensionTable", renderDimensions(response.getQualityDimensions()));
-        ctx.setVariable("fileTable", renderFiles(request));
-        ctx.setVariable("findingTable", renderFindings(response));
-        ctx.setVariable("findingCount", countFindings(response));
-        ctx.setVariable("fileOverflow", overflow(CollectionUtils.size(request.getFileChanges()), MAX_FILE_ROWS));
-        ctx.setVariable("findingOverflow", overflow(countFindings(response), MAX_FINDING_ROWS));
+        ctx.setVariable("dimensions", dimensionRows(response.getQualityDimensions()));
+        ctx.setVariable("files", fileRows(request));
+        ctx.setVariable("fileTotal", CollectionUtils.size(request.getFileChanges()));
+        ctx.setVariable("findings", findingRows(response));
+        ctx.setVariable("findingTotal", countFindings(response));
 
-        ctx.setVariable("technicalTags", tags(response, true));
-        ctx.setVariable("functionalTags", tags(response, false));
-        ctx.setVariable("summary", wrap(response.getSummary()));
+        ctx.setVariable("technicalTags", Collections.emptyList());
+        ctx.setVariable("functionalTags", Collections.emptyList());
+        if (Objects.nonNull(response.getTags())) {
+            ctx.setVariable("technicalTags", CollectionUtils.emptyIfNull(response.getTags().getTechnical()));
+            ctx.setVariable("functionalTags", CollectionUtils.emptyIfNull(response.getTags().getFunctional()));
+        }
+        ctx.setVariable("summary", StringUtils.defaultString(response.getSummary()));
 
-        ctx.setVariable("llmModel", StringUtils.defaultString(reportContext.getLlmModel()));
+        ctx.setVariable("llmModel", reportContext.getLlmModel());
         ctx.setVariable("promptTokens", result.getPromptTokens());
         ctx.setVariable("completionTokens", result.getCompletionTokens());
         ctx.setVariable("durationSeconds", reportContext.getAnalysisDuration().toSeconds());
@@ -158,10 +131,10 @@ public class ConsoleReportBuilder implements ReportBuilder {
     }
     private void populateRisk(Context ctx, LlmScoringResponse response) {
         ctx.setVariable("riskScore", 0);
-        ctx.setVariable("riskLevel", "-");
+        ctx.setVariable("riskLevel", null);
         if (Objects.nonNull(response.getRiskAssessment())) {
-            ctx.setVariable("riskScore", Optional.ofNullable(response.getRiskAssessment().getRiskScore()).orElse(0));
-            ctx.setVariable("riskLevel", label(response.getRiskAssessment().getRiskLevel()));
+            ctx.setVariable("riskScore", response.getRiskAssessment().getRiskScore());
+            ctx.setVariable("riskLevel", response.getRiskAssessment().getRiskLevel());
         }
         ctx.setVariable("riskScoreMax", args.getRiskScoreMax());
     }
@@ -181,9 +154,9 @@ public class ConsoleReportBuilder implements ReportBuilder {
         ctx.setVariable("callersProduction", production);
         ctx.setVariable("callersTest", test);
 
-        ctx.setVariable("blastRiskLevel", "-");
+        ctx.setVariable("blastRiskLevel", null);
         if (Objects.nonNull(response.getBlastRadiusAnalysis())) {
-            ctx.setVariable("blastRiskLevel", label(response.getBlastRadiusAnalysis().getRiskLevel()));
+            ctx.setVariable("blastRiskLevel", response.getBlastRadiusAnalysis().getRiskLevel());
         }
     }
     /**
@@ -198,7 +171,7 @@ public class ConsoleReportBuilder implements ReportBuilder {
         ctx.setVariable("blocksAdded", summary.getCodeBlocksAdded());
         ctx.setVariable("blocksModified", summary.getCodeBlocksModified());
 
-        List<FileChange> changes = new ArrayList<>(CollectionUtils.emptyIfNull(request.getFileChanges()));
+        List<FileChange> changes = Lists.newArrayList(CollectionUtils.emptyIfNull(request.getFileChanges()));
         long testFiles = changes.stream().filter(FileChange::isTest).count();
         long configFiles = changes.stream().filter(not(FileChange::isTest)).filter(FileChange::isConfig).count();
         ctx.setVariable("filesChanged", changes.size());
@@ -206,36 +179,31 @@ public class ConsoleReportBuilder implements ReportBuilder {
         ctx.setVariable("configFilesChanged", configFiles);
         ctx.setVariable("prodFilesChanged", changes.size() - testFiles - configFiles);
 
-        ctx.setVariable("baseEffort", "0.00");
-        ctx.setVariable("volumeScore", "0.00");
+        ctx.setVariable("baseEffort", 0.0);
+        ctx.setVariable("volumeScore", 0.0);
         EffortBreakdown breakdown = response.getEffortBreakdown();
         if (Objects.nonNull(breakdown)) {
-            ctx.setVariable("baseEffort", String.format(Locale.ROOT, "%.2f", breakdown.getBaseEffortScore()));
+            ctx.setVariable("baseEffort", breakdown.getBaseEffortScore());
             if (Objects.nonNull(breakdown.getVolumeScore())) {
-                ctx.setVariable("volumeScore", String.format(Locale.ROOT, "%.2f", breakdown.getVolumeScore().getTotalVolumeScore()));
+                ctx.setVariable("volumeScore", breakdown.getVolumeScore().getTotalVolumeScore());
             }
         }
     }
-    private static String renderDimensions(QualityDimensions dims) {
-        if (Objects.isNull(dims)) {
-            return "  (not assessed)";
+    private static List<DimensionRow> dimensionRows(QualityDimensions dims) {
+        List<DimensionRow> toReturn = Lists.newArrayList();
+        if (Objects.nonNull(dims)) {
+            addDimension(toReturn, "Architecture Impact", dims.getArchitectureImpact());
+            addDimension(toReturn, "Concurrency Risk", dims.getConcurrencyRisk());
+            addDimension(toReturn, "Integration Surface", dims.getIntegrationSurface());
+            addDimension(toReturn, "Data Integrity", dims.getDataIntegrity());
+            addDimension(toReturn, "Security Sensitivity", dims.getSecuritySensitivity());
+            addDimension(toReturn, "Scalability Impact", dims.getScalabilityImpact());
+            addDimension(toReturn, "Observability", dims.getObservability());
+            addDimension(toReturn, "Resilience", dims.getResilience());
+            addDimension(toReturn, "Performance", dims.getPerformance());
+            addDimension(toReturn, "Testing Coverage", dims.getTestingCoverage());
         }
-        List<DimensionRow> rows = new ArrayList<>();
-        addDimension(rows, "Architecture Impact", dims.getArchitectureImpact());
-        addDimension(rows, "Concurrency Risk", dims.getConcurrencyRisk());
-        addDimension(rows, "Integration Surface", dims.getIntegrationSurface());
-        addDimension(rows, "Data Integrity", dims.getDataIntegrity());
-        addDimension(rows, "Security Sensitivity", dims.getSecuritySensitivity());
-        addDimension(rows, "Scalability Impact", dims.getScalabilityImpact());
-        addDimension(rows, "Observability", dims.getObservability());
-        addDimension(rows, "Resilience", dims.getResilience());
-        addDimension(rows, "Performance", dims.getPerformance());
-        addDimension(rows, "Testing Coverage", dims.getTestingCoverage());
-
-        if (rows.isEmpty()) {
-            return "  (not assessed)";
-        }
-        return AsciiTable.getTable(AsciiTable.BASIC_ASCII_NO_DATA_SEPARATORS, rows, DIMENSION_COLUMNS);
+        return toReturn;
     }
     /**
      * A dimension the model scored null means "not touched by this change" rather than zero, so it is
@@ -243,55 +211,49 @@ public class ConsoleReportBuilder implements ReportBuilder {
      */
     private static void addDimension(List<DimensionRow> rows, String name, DimensionScore dim) {
         if (Objects.nonNull(dim)) {
-            boolean assessed = Objects.nonNull(dim.getScore());
-            String score = assessed ? String.valueOf(dim.getScore()) : "-";
-            String gate = "-";
-            if (assessed) {
+            String score = NONE;
+            String gate = NONE;
+            if (Objects.nonNull(dim.getScore())) {
+                score = String.valueOf(dim.getScore());
                 gate = dim.isQualityGateMet() ? "met" : "FAILED";
             }
             rows.add(new DimensionRow(name, score, gate));
         }
     }
-    private static String renderFiles(LlmScoringRequest request) {
-        List<FileChange> changes = new ArrayList<>(CollectionUtils.emptyIfNull(request.getFileChanges()));
-        if (changes.isEmpty()) {
-            return "  (none)";
-        }
+    private static List<FileRow> fileRows(LlmScoringRequest request) {
+        List<FileChange> changes = Lists.newArrayList(CollectionUtils.emptyIfNull(request.getFileChanges()));
         changes.sort((left, right) -> Integer.compare(
                 right.getLinesAdded() + right.getLinesDeleted(),
                 left.getLinesAdded() + left.getLinesDeleted()));
 
-        List<FileRow> rows = new ArrayList<>();
+        List<FileRow> toReturn = Lists.newArrayList();
         for (FileChange change : changes.subList(0, Math.min(changes.size(), MAX_FILE_ROWS))) {
-            rows.add(new FileRow(
-                    abbreviateLeft(change.getPath(), PATH_MAX_CHARS),
+            toReturn.add(new FileRow(
+                    tail(StringUtils.defaultString(change.getPath())),
                     String.valueOf(change.getChangeType()),
-                    String.valueOf(change.getLinesAdded()),
-                    String.valueOf(change.getLinesDeleted()),
-                    String.valueOf(countBlocks(request, change.getPath())),
+                    change.getLinesAdded(),
+                    change.getLinesDeleted(),
+                    countBlocks(request, change.getPath()),
                     scope(change)));
         }
-        return AsciiTable.getTable(AsciiTable.BASIC_ASCII_NO_DATA_SEPARATORS, rows, FILE_COLUMNS);
+        return toReturn;
     }
-    private static String renderFindings(LlmScoringResponse response) {
-        List<FindingRow> rows = new ArrayList<>();
+    private static List<FindingRow> findingRows(LlmScoringResponse response) {
+        List<FindingRow> toReturn = Lists.newArrayList();
         if (Objects.nonNull(response.getBugs())) {
-            addFindings(rows, response.getBugs().getBlocking(), "BLOCKING");
-            addFindings(rows, response.getBugs().getMajor(), "MAJOR");
-            addFindings(rows, response.getBugs().getMinor(), "MINOR");
+            addFindings(toReturn, response.getBugs().getBlocking(), "BLOCKING");
+            addFindings(toReturn, response.getBugs().getMajor(), "MAJOR");
+            addFindings(toReturn, response.getBugs().getMinor(), "MINOR");
         }
-        if (rows.isEmpty()) {
-            return "  (none)";
-        }
-        return AsciiTable.getTable(AsciiTable.BASIC_ASCII_NO_DATA_SEPARATORS, rows.subList(0, Math.min(rows.size(), MAX_FINDING_ROWS)), FINDING_COLUMNS);
+        return toReturn.subList(0, Math.min(toReturn.size(), MAX_FINDING_ROWS));
     }
     private static void addFindings(List<FindingRow> rows, List<Bug> bugs, String severity) {
         for (Bug bug : CollectionUtils.emptyIfNull(bugs)) {
             rows.add(new FindingRow(
                     severity,
                     StringUtils.abbreviate(StringUtils.defaultString(bug.getTitle()), TITLE_MAX_CHARS),
-                    abbreviateLeft(bug.getFile(), PATH_MAX_CHARS),
-                    Objects.nonNull(bug.getLine()) ? String.valueOf(bug.getLine()) : "-"));
+                    tail(StringUtils.defaultString(bug.getFile())),
+                    Objects.isNull(bug.getLine()) ? NONE : String.valueOf(bug.getLine())));
         }
     }
     private static int countFindings(LlmScoringResponse response) {
@@ -311,85 +273,25 @@ public class ConsoleReportBuilder implements ReportBuilder {
         }
         return toReturn;
     }
+    /**
+     * Paths are told apart by their tail (module and class), so an over-long one keeps its end and loses its head.
+     * StringUtils.abbreviate() does the opposite and would leave rows that differ only in the part it cut.
+     */
+    private static String tail(String path) {
+        if (path.length() <= PATH_MAX_CHARS) {
+            return path;
+        }
+        return ELLIPSIS + StringUtils.right(path, PATH_MAX_CHARS - ELLIPSIS.length());
+    }
     private static String scope(FileChange change) {
         if (change.isConfig()) {
             return "config";
         }
         return change.isTest() ? "test" : "prod";
     }
-    private static String tags(LlmScoringResponse response, boolean technical) {
-        if (Objects.isNull(response.getTags())) {
-            return "-";
-        }
-        List<String> values = technical ? response.getTags().getTechnical() : response.getTags().getFunctional();
-        if (CollectionUtils.isEmpty(values)) {
-            return "-";
-        }
-        return StringUtils.join(values, ", ");
-    }
-    /**
-     * A commit reachable from many refs carries all of them, which is unreadable on one console line,
-     * so only the first MAX_BRANCHES are listed and the rest are counted.
-     */
-    private static String branchLabel(List<String> branches) {
-        List<String> values = Optional.ofNullable(branches).orElse(Collections.emptyList());
-        if (values.isEmpty()) {
-            return StringUtils.EMPTY;
-        }
-        if (values.size() <= MAX_BRANCHES) {
-            return StringUtils.join(values, ", ");
-        }
-        return StringUtils.join(values.subList(0, MAX_BRANCHES), ", ") + " +" + (values.size() - MAX_BRANCHES) + " more";
-    }
-    /** An absent enum means "the model did not say", which a literal "null" would misrepresent as a value. */
-    private static String label(Object value) {
-        return Objects.isNull(value) ? "-" : String.valueOf(value);
-    }
-    private static String overflow(int total, int shown) {
-        if (total > shown) {
-            return String.format(Locale.ROOT, "  ... %d more (%d of %d shown)", total - shown, shown, total);
-        }
-        return StringUtils.EMPTY;
-    }
-    private static String firstLine(String message) {
-        return StringUtils.abbreviate(StringUtils.defaultString(StringUtils.substringBefore(message, StringUtils.LF)).trim(), MESSAGE_MAX_CHARS);
-    }
-    /**
-     * Paths are told apart by their tail (module and class), so an over-long one keeps its end and
-     * loses its head. StringUtils.abbreviate() does the opposite and would leave rows that all start
-     * with the same prefix and differ only in the part it cut.
-     */
-    private static String abbreviateLeft(String path, int max) {
-        String value = StringUtils.defaultString(path);
-        if (value.length() <= max) {
-            return value;
-        }
-        return "..." + StringUtils.right(value, max - 3);
-    }
-    /**
-     * Word wrap is hand-written because commons-text is not a dependency of any module and the
-     * commons-lang3 WordUtils is deprecated.
-     */
-    private static String wrap(String text) {
-        if (StringUtils.isBlank(text)) {
-            return "  (none)";
-        }
-        StringBuilder toReturn = new StringBuilder("  ");
-        int lineLength = 0;
-        for (String word : StringUtils.split(text.trim())) {
-            if (lineLength > 0 && lineLength + word.length() + 1 > SUMMARY_WRAP_CHARS) {
-                toReturn.append("\n  ");
-                lineLength = 0;
-            } else if (lineLength > 0) {
-                toReturn.append(' ');
-                lineLength++;
-            }
-            toReturn.append(word);
-            lineLength += word.length();
-        }
-        return toReturn.toString();
-    }
-    private static final class DimensionRow extends ImmutableTriple<String, String, String> {
+
+    /** a dimension the model scored null was not touched by the change: its score and gate read "-" */
+    public static final class DimensionRow extends ImmutableTriple<String, String, String> {
         public DimensionRow(String name, String score, String gate) {
             super(name, score, gate);
         }
@@ -403,17 +305,19 @@ public class ConsoleReportBuilder implements ReportBuilder {
             return getRight();
         }
     }
+
     @Value
-    private static class FileRow {
+    public static class FileRow {
         String path;
         String changeType;
-        String added;
-        String deleted;
-        String blocks;
+        int added;
+        int deleted;
+        int blocks;
         String scope;
     }
+
     @Value
-    private static class FindingRow {
+    public static class FindingRow {
         String severity;
         String title;
         String file;

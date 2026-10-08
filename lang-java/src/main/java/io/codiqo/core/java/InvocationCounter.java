@@ -2,10 +2,11 @@ package io.codiqo.core.java;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.ArrayList;
 
 
 import org.apache.commons.lang3.BooleanUtils;
+
+import com.google.common.collect.Lists;
 
 import lombok.experimental.UtilityClass;
 import net.sourceforge.pmd.lang.ast.Node;
@@ -22,9 +23,9 @@ public class InvocationCounter {
     public static List<Integer> collectDirect(ASTExecutableDeclaration executable) {
         Node body = executable.getBody();
         if (Objects.isNull(body)) {
-            return new ArrayList<>();
+            return Lists.newArrayList();
         }
-        List<Integer> toReturn = new ArrayList<>();
+        List<Integer> toReturn = Lists.newArrayList();
         walk(body, toReturn);
         return toReturn;
     }

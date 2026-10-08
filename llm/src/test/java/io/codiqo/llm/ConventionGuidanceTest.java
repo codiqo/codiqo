@@ -83,6 +83,26 @@ class ConventionGuidanceTest {
         assertTrue(guidance.contains("Fail fast — never add defensive null checks."), "CLAUDE.md content missing");
     }
     @Test
+    void eachFileIsHeadedByItsPath() throws Exception {
+        write("AGENTS.md", "\n  Prefer Optional over null returns.\n\n");
+        write("docs/rules.md", "Fail fast.\nNo defensive checks.");
+        args.setLlmConventionFiles(List.of("AGENTS.md", "docs/rules.md"));
+
+        assertEquals("### AGENTS.md\n\nPrefer Optional over null returns.\n\n### docs/rules.md\n\nFail fast.\nNo defensive checks.",
+                ConventionGuidance.read(args, NOOP_LOG));
+    }
+    /** the budget counts the headings and the blank lines around each file, as they reach the prompt */
+    @Test
+    void theBudgetCountsTheHeadings() throws Exception {
+        write("AGENTS.md", "abc");
+        args.setLlmConventionFiles(List.of("AGENTS.md"));
+
+        args.setLlmConventionFilesMaxChars(20);
+        assertEquals("### AGENTS.md\n\nabc", ConventionGuidance.read(args, NOOP_LOG));
+        args.setLlmConventionFilesMaxChars(19);
+        assertThrows(IllegalStateException.class, () -> ConventionGuidance.read(args, NOOP_LOG));
+    }
+    @Test
     void skipsMissingAndBlankFiles() throws Exception {
         write("AGENTS.md", "   \n\n  ");
         args.setLlmConventionFiles(List.of("AGENTS.md", "CLAUDE.md", "docs/CONVENTIONS.md"));

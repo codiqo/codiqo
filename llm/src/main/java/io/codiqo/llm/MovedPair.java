@@ -8,7 +8,8 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.math.NumberUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 
-import io.codiqo.util.Split;
+import com.google.common.base.Splitter;
+
 import lombok.Value;
 
 /**
@@ -33,7 +34,7 @@ public class MovedPair {
             return Optional.empty();
         }
 
-        List<String> sides = Split.on(raw, ARROW);
+        List<String> sides = Splitter.on(ARROW).trimResults().omitEmptyStrings().splitToList(raw);
         if (sides.size() != 2) {
             return Optional.empty();
         }

@@ -1,0 +1,11 @@
+/*[- The Markdown digest of a local review that the commit page shows: the coordinator's areas, the reviewers'
+observations and what the triage concluded. LocalReviewModels trims the render, and an empty one is no digest. -]*/[# th:unless="${tasks.isEmpty()}"]**Areas reviewed** ([(${reviewers})] reviewer sessions)
+[# th:each="task : ${tasks}"]- [# th:each="path, stat : ${task.paths}"]`[(${path})]`[# th:unless="${stat.last}"], [/][/] — [(${task.findings})] [(${task.findings == 1 ? 'finding' : 'findings'})]
+[/][# th:if="${unanswered > 0}"]- [(${unanswered})] reviewer sessions ended without an answer, so part of the commit may be unreviewed
+[/][/][# th:unless="${observations.isEmpty()}"]
+**Observations**
+[# th:each="observation : ${observations}"]- [(${observation})]
+[/][/][# th:if="${triage != null}"]
+**Tool findings checked after the build**: [(${triage.checked})] — [(${triage.defects})] defects, [(${triage.falsePositives})] false positives, [(${triage.harmless})] harmless
+[# th:each="verdict : ${triage.defectVerdicts}"]- `[(${verdict.rule})]` at [(${verdict.file})]:[(${verdict.line})]: [(${verdict.reason})]
+[/][/]

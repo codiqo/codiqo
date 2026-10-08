@@ -7,9 +7,9 @@ import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.HashMap;
-import java.util.ArrayList;
 
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.JvmProjectSpec;
@@ -42,20 +42,20 @@ public class GradleProjectWrapper implements JvmProjectSpec {
     private String version;
     private File baseDirectory;
     private File outputDirectory;
-    private Map<String, String> properties = new HashMap<>();
+    private Map<String, String> properties = Maps.newHashMap();
     private Optional<File> coverage = Optional.empty();
-    private Collection<File> compileSourceRoots = new ArrayList<>();
-    private Collection<File> compileClasspathElements = new ArrayList<>();
-    private Collection<File> testCompileSourceRoots = new ArrayList<>();
-    private Collection<File> testClasspathElements = new ArrayList<>();
-    private Collection<File> declaredSourceRoots = new ArrayList<>();
-    private Collection<File> declaredTestSourceRoots = new ArrayList<>();
-    private Collection<File> testReportDirectories = new ArrayList<>();
+    private Collection<File> compileSourceRoots = Lists.newArrayList();
+    private Collection<File> compileClasspathElements = Lists.newArrayList();
+    private Collection<File> testCompileSourceRoots = Lists.newArrayList();
+    private Collection<File> testClasspathElements = Lists.newArrayList();
+    private Collection<File> declaredSourceRoots = Lists.newArrayList();
+    private Collection<File> declaredTestSourceRoots = Lists.newArrayList();
+    private Collection<File> testReportDirectories = Lists.newArrayList();
 
-    private List<DependencyData> dependencies = new ArrayList<>();
+    private List<DependencyData> dependencies = Lists.newArrayList();
 
     @Getter(AccessLevel.NONE)
-    private final Map<File, String> artifactCoordinates = new HashMap<>();
+    private final Map<File, String> artifactCoordinates = Maps.newHashMap();
 
     @Delegate
     private ClassGraphSpec scan;

@@ -4,11 +4,12 @@ import java.io.File;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.LinkedList;
 
 import org.eclipse.lsp4j.CallHierarchyIncomingCall;
 import org.eclipse.lsp4j.SymbolKind;
 import org.eclipse.lsp4j.SymbolTag;
+
+import com.google.common.collect.Lists;
 
 
 import io.codiqo.api.code.CodeBlockInfo;
@@ -22,9 +23,9 @@ public class PmdAffectedSymbolInfo implements AffectedSymbolInfo {
     private final JavaCodeBlockInfo block;
     private final Language language;
     @Getter
-    private final List<SymbolTag> tags = new LinkedList<>();
+    private final List<SymbolTag> tags = Lists.newLinkedList();
     @Getter
-    private final List<CallHierarchyIncomingCall> incomingCalls = new LinkedList<>();
+    private final List<CallHierarchyIncomingCall> incomingCalls = Lists.newLinkedList();
 
     public PmdAffectedSymbolInfo(JavaCodeBlockInfo block, Language language) {
         this.block = Objects.requireNonNull(block);

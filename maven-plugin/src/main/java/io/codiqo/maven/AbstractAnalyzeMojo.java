@@ -4,7 +4,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Writer;
-import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
@@ -15,10 +14,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -45,7 +41,6 @@ import javax.inject.Inject;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.ListUtils;
-import org.apache.commons.collections4.queue.CircularFifoQueue;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.IOUtils;
@@ -97,6 +92,14 @@ import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.transport.HttpTransport;
 import org.eclipse.jgit.transport.TagOpt;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Joiner;
+import com.google.common.base.Splitter;
+import com.google.common.collect.EvictingQueue;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
+
 import io.codiqo.api.BuildTool;
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.DeltaAnalyzer;
@@ -132,13 +135,14 @@ import io.codiqo.maven.timemachine.TimeMachineConfig;
 import io.codiqo.submit.OutputSerializer;
 import io.codiqo.submit.SubmissionAssembly;
 import io.codiqo.submit.SubmissionContext;
+import io.codiqo.submit.hotspots.FixCommits;
 import io.codiqo.submit.hotspots.HotspotSnapshots;
 import io.codiqo.util.Env;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
 import io.codiqo.util.MemoryReport;
 import io.codiqo.util.ProgressStage;
-import io.codiqo.util.Split;
+import io.netty.handler.codec.http.HttpResponseStatus;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
 import lombok.AllArgsConstructor;
@@ -146,7 +150,7 @@ import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.Value;
 
-abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Artifact, Collection<File>> {
+public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Artifact, Collection<File>> {
     private static final Set<String> NON_CODE_PACKAGINGS = Set.of("pom", "bom");
     /**
      * Grep marker for the one transition that silently changes the scoring regime. It is written into the
@@ -456,7 +460,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                  * the plugin itself was resolved from (a pluginRepository, e.g. central-snapshots), which the analyzed
                  * project's <repositories> typically does not list — so plugin repositories are consulted as fallback
                  */
-                Map<String, RemoteRepository> repositories = new LinkedHashMap<>();
+                Map<String, RemoteRepository> repositories = Maps.newLinkedHashMap();
                 for (RemoteRepository repo : ListUtils.union(remoteRepos, remotePluginRepos)) {
                     repositories.putIfAbsent(repo.getId(), repo);
                 }
@@ -512,7 +516,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         args.setBuildErrorCaptureLimit(Math.max(MIN_ABBREVIATE_WIDTH, buildErrorCaptureLimit));
         args.setPmdMinPriority(pmdMinPriority);
         if (StringUtils.isNotBlank(pmdRules)) {
-            args.setPmdRules(Split.on(pmdRules, ','));
+            args.setPmdRules(Splitter.on(',').trimResults().omitEmptyStrings().splitToList(pmdRules));
         }
         args.setSpotbugsPriorityThreshold(spotbugsPriorityThreshold);
         Optional.ofNullable(spotbugsOmitVisitors).ifPresent(args::setSpotbugsOmitVisitors);
@@ -528,7 +532,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             args.setLlmMaxCallersPerBlock(llmMaxCallersPerBlock);
         }
         if (StringUtils.isNotBlank(llmConventionFiles)) {
-            args.setLlmConventionFiles(Split.on(llmConventionFiles, ','));
+            args.setLlmConventionFiles(Splitter.on(',').trimResults().omitEmptyStrings().splitToList(llmConventionFiles));
         }
         args.setAutoDiscoveryAgentInstructions(autoDiscoveryAgentInstructions);
         if (llmConventionFilesMaxChars >= 0) {
@@ -641,7 +645,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         }
     }
     protected ClassGraphSpec scanProjects(RunArgs args, Collection<MavenProject> projects) {
-        Set<URI> jars = new LinkedHashSet<>();
+        Set<URI> jars = Sets.newLinkedHashSet();
         projects.stream()
                 .filter(reactor -> BooleanUtils.negate(NON_CODE_PACKAGINGS.contains(reactor.getPackaging())))
                 .filter(reactor -> {
@@ -726,7 +730,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                     prj.getArtifacts().forEach(artifact -> {
                         File file = artifact.getFile();
                         if (Objects.nonNull(file) && file.exists()) {
-                            toReturn.getArtifacts().put(artifact, file);
+                            toReturn.getArtifacts().forcePut(artifact, file);
                         }
                     });
                     args.getProjects().add(toReturn);
@@ -768,7 +772,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             }
         }
     }
-    static void applyForkMavenOpts(InvocationRequest request, String forkMavenOpts) {
+    @VisibleForTesting
+    public static void applyForkMavenOpts(InvocationRequest request, String forkMavenOpts) {
         if (StringUtils.isNotBlank(forkMavenOpts)) {
             request.setMavenOpts(forkMavenOpts.trim());
         }
@@ -830,7 +835,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
          * added only when their own feature is active — so a coverage-only run never puts the time-machine resolver on
          * the extension realm, and vice versa.
          */
-        List<String> extensionClasspath = new ArrayList<>();
+        List<String> extensionClasspath = Lists.newArrayList();
         Properties props = Optional.ofNullable(request.getProperties()).orElseGet(Properties::new);
 
         if (CollectionUtils.isNotEmpty(buildEventSpyJars)) {
@@ -927,13 +932,14 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         }
 
         if (CollectionUtils.isNotEmpty(extensionClasspath)) {
-            props.setProperty(MAVEN_EXT_CLASS_PATH, StringUtils.join(extensionClasspath.stream().distinct().toList(), File.pathSeparator));
+            props.setProperty(MAVEN_EXT_CLASS_PATH, Joiner.on(File.pathSeparator).join(extensionClasspath.stream().distinct().toList()));
             request.setProperties(props);
         }
         return request;
     }
     /** Aether normalises a null version to the empty string, so a missing entry resolves to nothing with no signal why */
-    static String requiredVersion(Properties versions, String key) {
+    @VisibleForTesting
+    public static String requiredVersion(Properties versions, String key) {
         return Objects.requireNonNull(versions.getProperty(key), key + " missing from codiqo.versions on the plugin classpath");
     }
     private static List<String> extensionJarPaths(Collection<File> jars) {
@@ -1124,7 +1130,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         }
         getLog().warn(String.format(
                 "codiqo-maven-time-machine is not loaded in the host Maven — host-side POM model building resolves LATEST snapshots and may fail on historical commits whose POMs no longer interpolate against them. relaunch with: -Dmaven.ext.class.path=%s",
-                StringUtils.join(extensionJarPaths(timeMachineExtensionJars), File.pathSeparator)));
+                Joiner.on(File.pathSeparator).join(extensionJarPaths(timeMachineExtensionJars))));
     }
     protected BuildOutcome buildProject(
             RunArgs args,
@@ -1182,7 +1188,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 String reason = sysout.firstErrorLine()
                         .or(syserr::firstErrorLine)
                         .orElse("fork build failed (exit code " + result.getExitCode() + ")");
-                List<String> helpLines = new ArrayList<>();
+                List<String> helpLines = Lists.newArrayList();
                 helpLines.addAll(sysout.helpUrlLines());
                 helpLines.addAll(syserr.helpUrlLines());
                 AnalysisExcludeCategory category = Maven.classifyForkFailure(helpLines);
@@ -1395,7 +1401,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     private void buildHotspots(SubmissionContext ctx) {
         Log log = new MavenLogFactory(getLog()).getLogger(HotspotSnapshots.class);
         try {
-            Optional<HotspotSnapshotModel> snapshot = HotspotSnapshots.build(ctx, log);
+            Optional<HotspotSnapshotModel> snapshot = HotspotSnapshots.build(ctx, since -> fixCommits(ctx, since), log);
             if (snapshot.isPresent()) {
                 HotspotSnapshots.write(ctx, snapshot.get(), log);
                 ctx.setHotspotSnapshot(snapshot);
@@ -1406,6 +1412,10 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     }
     protected void doSubmitHotspots(SubmissionContext ctx, HotspotSnapshotModel snapshot) throws Exception {
         getLog().debug("hotspot snapshot not submitted: this goal does not submit");
+    }
+    /** a goal that does not submit has no server to ask, so every commit is judged by its message */
+    protected FixCommits fixCommits(SubmissionContext ctx, Instant since) throws Exception {
+        return FixCommits.byMessage();
     }
     protected Optional<SubmissionContext> doAnalyze(RunArgs args) throws Exception {
         purgeNonJavaSourceJars(args);
@@ -1420,7 +1430,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
                 MutableBoolean toApply = new MutableBoolean();
                 DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, args);
                 CommitAnalysis analysis = analyzer.analyze();
-                List<String> changedFiles = new ArrayList<>();
+                List<String> changedFiles = Lists.newArrayList();
                 analysis.forEach(diff -> {
                     String name = diff.getFile().getName();
                     changedFiles.add(name);
@@ -1563,7 +1573,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             try {
                 doExcludeAnalysis(revertedSha, String.format("reverted by commit %s", JGit.shortSha(args.getCommitId())), AnalysisExcludeCategory.REVERTED);
             } catch (ApiException err) {
-                if (err.getCode() == HttpURLConnection.HTTP_NOT_FOUND) {
+                if (err.getCode() == HttpResponseStatus.NOT_FOUND.code()) {
                     getLog().warn(String.format("reverted commit %s not known to backend (outside indexing window?) — skipping its exclusion", revertedSha));
                 } else {
                     throw err;
@@ -1721,7 +1731,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
     }
     @SuppressWarnings("deprecation")
     private void purgeNonJavaSourceJars(RunArgs args) throws IOException {
-        List<String> exclusions = Split.on(jdtSourceExclusions, ',');
+        List<String> exclusions = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(StringUtils.defaultString(jdtSourceExclusions));
         if (CollectionUtils.isNotEmpty(exclusions)) {
             LocalRepositoryManager localRepoManager = mavenSession.getRepositorySession().getLocalRepositoryManager();
             AtomicInteger purged = new AtomicInteger();
@@ -1776,7 +1786,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
         List<String> unresolved = Maven.unresolvedDependencyCoords(pbe);
         if (CollectionUtils.isNotEmpty(unresolved)) {
             return BuildOutcome.Skipped.builder()
-                    .reason("host model building: unresolved dependencies: " + StringUtils.join(unresolved, ", "))
+                    .reason("host model building: unresolved dependencies: " + Joiner.on(", ").join(unresolved))
                     .category(AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE)
                     .build();
         }
@@ -1813,7 +1823,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             String detail;
             boolean timedOut;
 
-            Skipped(String reason, AnalysisExcludeCategory category, String detail) {
+            public Skipped(String reason, AnalysisExcludeCategory category, String detail) {
                 this(reason, category, detail, false);
             }
         }
@@ -1829,8 +1839,8 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
 
         private final InvocationOutputHandler delegate;
         private final int captureLimit;
-        private final List<String> helpUrlLines = new ArrayList<>();
-        private final Queue<String> capturedLines = new CircularFifoQueue<>(MAX_CAPTURED_ERROR_LINES);
+        private final List<String> helpUrlLines = Lists.newArrayList();
+        private final Queue<String> capturedLines = EvictingQueue.create(MAX_CAPTURED_ERROR_LINES);
         private String firstErrorLine;
         private boolean capturing;
 
@@ -1857,7 +1867,7 @@ abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Arti
             return helpUrlLines;
         }
         public Optional<String> capturedDetail() {
-            return capturedLines.isEmpty() ? Optional.empty() : Optional.of(StringUtils.abbreviate(StringUtils.join(capturedLines, CharUtils.LF), captureLimit));
+            return capturedLines.isEmpty() ? Optional.empty() : Optional.of(StringUtils.abbreviate(Joiner.on(CharUtils.LF).join(capturedLines), captureLimit));
         }
     }
 }

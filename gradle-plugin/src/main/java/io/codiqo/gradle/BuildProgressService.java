@@ -5,7 +5,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
@@ -19,6 +18,9 @@ import org.gradle.tooling.events.OperationCompletionListener;
 import org.gradle.tooling.events.task.TaskFailureResult;
 import org.gradle.tooling.events.task.TaskFinishEvent;
 import org.gradle.tooling.events.task.TaskOperationResult;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Maps;
 
 /**
  * The Gradle counterpart of the Maven fork's BuildProgressEventSpy: appends one tab-separated line per project
@@ -35,9 +37,9 @@ import org.gradle.tooling.events.task.TaskOperationResult;
 public abstract class BuildProgressService implements BuildService<BuildProgressService.Params>, OperationCompletionListener {
     private static final Logger LOG = Logging.getLogger(BuildProgressService.class);
 
-    private final Map<String, Integer> remainingTasks = new HashMap<>();
-    private final Map<String, String> moduleIds = new HashMap<>();
-    private final Map<String, Long> startedAt = new HashMap<>();
+    private final Map<String, Integer> remainingTasks = Maps.newHashMap();
+    private final Map<String, String> moduleIds = Maps.newHashMap();
+    private final Map<String, Long> startedAt = Maps.newHashMap();
 
     public interface Params extends BuildServiceParameters {
         RegularFileProperty getProgressFile();
@@ -80,7 +82,8 @@ public abstract class BuildProgressService implements BuildService<BuildProgress
         }
     }
     /** ":a:b:compileJava" belongs to ":a:b", and ":compileJava" to the root project ":" */
-    static String projectPath(String taskPath) {
+    @VisibleForTesting
+    public static String projectPath(String taskPath) {
         int colon = taskPath.lastIndexOf(':');
         return colon <= 0 ? ":" : taskPath.substring(0, colon);
     }

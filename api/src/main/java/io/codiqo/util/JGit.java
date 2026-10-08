@@ -3,9 +3,6 @@ package io.codiqo.util;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +35,10 @@ import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.util.io.DisabledOutputStream;
+
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 import lombok.experimental.UtilityClass;
 
@@ -148,7 +149,7 @@ public class JGit {
         return refName;
     }
     public static List<String> parentShas(RevCommit commit) {
-        List<String> toReturn = new ArrayList<>(commit.getParentCount());
+        List<String> toReturn = Lists.newArrayListWithCapacity(commit.getParentCount());
         for (int i = 0; i < commit.getParentCount(); i++) {
             toReturn.add(commit.getParent(i).getName());
         }
@@ -168,7 +169,7 @@ public class JGit {
      * first (main line) parent. for a PR merge node this is exactly the set of commits the PR brought in
      */
     public static List<RevCommit> mergeSideCommits(Repository repo, RevCommit merge) throws IOException {
-        List<RevCommit> toReturn = new ArrayList<>();
+        List<RevCommit> toReturn = Lists.newArrayList();
 
         try (RevWalk walk = new RevWalk(repo)) {
             walk.markStart(walk.parseCommit(merge.getParent(1)));
@@ -230,8 +231,8 @@ public class JGit {
      * keeps the merge author rather than picking arbitrarily.
      */
     private static Optional<PersonIdent> dominantAuthorOf(Repository repo, List<RevCommit> side) throws IOException {
-        Map<String, PersonIdent> byEmail = new HashMap<>();
-        Map<String, Integer> commits = new HashMap<>();
+        Map<String, PersonIdent> byEmail = Maps.newHashMap();
+        Map<String, Integer> commits = Maps.newHashMap();
         for (RevCommit commit : side) {
             PersonIdent author = commit.getAuthorIdent();
             String key = StringUtils.lowerCase(author.getEmailAddress());
@@ -244,7 +245,7 @@ public class JGit {
             return Optional.of(byEmail.get(byCommits.get()));
         }
 
-        Map<String, Integer> lines = new HashMap<>();
+        Map<String, Integer> lines = Maps.newHashMap();
         for (RevCommit commit : side) {
             String key = StringUtils.lowerCase(commit.getAuthorIdent().getEmailAddress());
             lines.merge(key, changedLines(repo, commit), Integer::sum);
@@ -293,7 +294,7 @@ public class JGit {
         }
     }
     public static List<String> branchesContaining(Repository repo, String commitSha) throws Exception {
-        Set<String> toReturn = new LinkedHashSet<>();
+        Set<String> toReturn = Sets.newLinkedHashSet();
 
         try (Git git = Git.wrap(repo)) {
             for (Ref ref : git.branchList().setListMode(ListMode.ALL).setContains(commitSha).call()) {
@@ -303,7 +304,7 @@ public class JGit {
                 }
             }
         }
-        return new ArrayList<>(toReturn);
+        return Lists.newArrayList(toReturn);
     }
     public static Optional<String> detectDefaultBranch(Repository repo) throws IOException {
         Ref originHead = repo.exactRef(Constants.R_REMOTES + Constants.DEFAULT_REMOTE_NAME + "/" + Constants.HEAD);
@@ -337,7 +338,7 @@ public class JGit {
     }
     public static Set<String> detectRemoteUrls(Repository repo) {
         StoredConfig config = repo.getConfig();
-        Set<String> toReturn = new LinkedHashSet<>();
+        Set<String> toReturn = Sets.newLinkedHashSet();
         for (String remote : config.getSubsections("remote")) {
             String url = StringUtils.trimToNull(config.getString("remote", remote, "url"));
             if (StringUtils.isNotBlank(url)) {
@@ -347,7 +348,7 @@ public class JGit {
         return toReturn;
     }
     public static Map<String, List<String>> buildBranchIndex(Repository repo) throws Exception {
-        Map<String, List<String>> toReturn = new HashMap<>();
+        Map<String, List<String>> toReturn = Maps.newHashMap();
 
         try (Git git = Git.wrap(repo)) {
             for (Ref ref : git.branchList().setListMode(ListMode.ALL).call()) {
@@ -358,7 +359,7 @@ public class JGit {
                 try (RevWalk walk = new RevWalk(repo)) {
                     walk.markStart(walk.parseCommit(ref.getObjectId()));
                     for (RevCommit commit : walk) {
-                        List<String> branches = toReturn.computeIfAbsent(commit.getName(), k -> new ArrayList<>());
+                        List<String> branches = toReturn.computeIfAbsent(commit.getName(), k -> Lists.newArrayList());
                         if (BooleanUtils.negate(branches.contains(branchName))) {
                             branches.add(branchName);
                         }

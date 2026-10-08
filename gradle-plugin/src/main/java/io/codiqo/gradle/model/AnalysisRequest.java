@@ -1,8 +1,9 @@
 package io.codiqo.gradle.model;
 
 import java.io.Serializable;
-import java.util.ArrayList;
 import java.util.List;
+
+import com.google.common.collect.Lists;
 
 import lombok.Data;
 
@@ -35,6 +36,9 @@ public class AnalysisRequest implements Serializable {
     private boolean submit;
     private String apiUrl;
     private String apiKey;
+    /** without a key the worker uses the stored browser login of this auth server, refreshing it as it ages */
+    private String authUrl;
+    private String resourceUrl;
     private long connectTimeoutSeconds;
     private long readTimeoutSeconds;
 
@@ -69,5 +73,5 @@ public class AnalysisRequest implements Serializable {
     private long importTimeoutMinutes;
     private long lspQueryTimeoutSeconds;
 
-    private List<ModuleData> modules = new ArrayList<>();
+    private List<ModuleData> modules = Lists.newArrayList();
 }

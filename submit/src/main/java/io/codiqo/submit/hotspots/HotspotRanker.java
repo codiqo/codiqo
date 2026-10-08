@@ -1,12 +1,8 @@
 package io.codiqo.submit.hotspots;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.EnumSet;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -15,14 +11,19 @@ import java.util.function.Function;
 import java.util.function.ToDoubleFunction;
 
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.collections4.MultiSet;
-import org.apache.commons.collections4.MultiValuedMap;
-import org.apache.commons.collections4.multimap.HashSetValuedHashMap;
-import org.apache.commons.collections4.multiset.HashMultiSet;
 import org.apache.commons.math3.stat.descriptive.moment.GeometricMean;
 import org.apache.commons.math3.stat.ranking.NaNStrategy;
 import org.apache.commons.math3.stat.ranking.NaturalRanking;
 import org.apache.commons.math3.stat.ranking.TiesStrategy;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.HashMultiset;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.MultimapBuilder;
+import com.google.common.collect.Multiset;
+import com.google.common.collect.SetMultimap;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.code.DeclaredType;
 import io.codiqo.api.code.TypeKind;
@@ -57,14 +58,14 @@ public class HotspotRanker {
          * Modules are parsed in parallel, so arrival order is not stable: a name two modules declare is settled by
          * path, or the same commit could rank a different class on every run.
          */
-        Map<String, DeclaredType> byName = new LinkedHashMap<>();
+        Map<String, DeclaredType> byName = Maps.newLinkedHashMap();
         types.stream()
                 .sorted(Comparator.comparing(DeclaredType::getName).thenComparing(type -> type.getFile().getPath()))
                 .forEach(type -> byName.putIfAbsent(type.getName(), type));
 
-        MultiValuedMap<String, String> dependents = new HashSetValuedHashMap<>();
-        MultiValuedMap<String, String> dependencies = new HashSetValuedHashMap<>();
-        MultiValuedMap<String, String> implementations = new HashSetValuedHashMap<>();
+        SetMultimap<String, String> dependents = MultimapBuilder.hashKeys().hashSetValues().build();
+        SetMultimap<String, String> dependencies = MultimapBuilder.hashKeys().hashSetValues().build();
+        SetMultimap<String, String> implementations = MultimapBuilder.hashKeys().hashSetValues().build();
         for (TypeReference reference : references) {
             if (byName.containsKey(reference.getFrom()) && byName.containsKey(reference.getTo())) {
                 dependents.put(reference.getTo(), reference.getFrom());
@@ -75,16 +76,16 @@ public class HotspotRanker {
             }
         }
 
-        Map<String, Double> effective = new HashMap<>();
+        Map<String, Double> effective = Maps.newHashMap();
         byName.keySet().forEach(name -> effective.put(name, (double) dependents.get(name).size()));
         for (String abstraction : implementations.keySet()) {
-            Set<String> callers = new HashSet<>(dependents.get(abstraction));
+            Set<String> callers = Sets.newHashSet(dependents.get(abstraction));
             callers.removeAll(implementations.get(abstraction));
             double share = (double) callers.size() / implementations.get(abstraction).size();
             implementations.get(abstraction).forEach(implementation -> effective.merge(implementation, share, Double::sum));
         }
 
-        Map<String, FileChurn> churnByType = new HashMap<>();
+        Map<String, FileChurn> churnByType = Maps.newHashMap();
         byName.forEach((name, type) -> churnByType.put(name, churn.getOrDefault(paths.apply(type), FileChurn.NONE)));
 
         ToDoubleFunction<String> size = name -> byName.get(name).getNcss();
@@ -98,7 +99,7 @@ public class HotspotRanker {
         Map<String, Double> heat = geometricMean(names, List.of(percentiles(names, recent), percentiles(names, size), percentiles(names, fixes)));
 
         /** Tied scores share their best position, so a class's name cannot tilt the fused score. */
-        Map<String, Double> importance = new HashMap<>();
+        Map<String, Double> importance = Maps.newHashMap();
         for (Map<String, Double> scores : List.of(effective, mass)) {
             positions(names, scores).forEach((name, position) -> importance.merge(name, 1.0 / (FUSION_K + position), Double::sum));
         }
@@ -107,7 +108,7 @@ public class HotspotRanker {
         List<String> active = names.stream().filter(name -> recent.applyAsDouble(name) > 0).toList();
         Map<String, Integer> hotspotRanks = ranks(active, heat, HOTSPOT_LIMIT);
 
-        List<RankedType> toReturn = new ArrayList<>();
+        List<RankedType> toReturn = Lists.newArrayList();
         for (String name : names) {
             if (importanceRanks.containsKey(name) || hotspotRanks.containsKey(name)) {
                 DeclaredType type = byName.get(name);
@@ -131,18 +132,18 @@ public class HotspotRanker {
      */
     private static Map<String, Integer> ranks(Collection<String> names, Map<String, Double> scores, int limit) {
         Map<String, Double> positions = positions(names, scores);
-        MultiSet<Double> tied = new HashMultiSet<>(positions.values());
+        Multiset<Double> tied = HashMultiset.create(positions.values());
 
-        Map<String, Integer> toReturn = new HashMap<>();
+        Map<String, Integer> toReturn = Maps.newHashMap();
         positions.forEach((name, position) -> {
-            if (position + tied.getCount(position) - 1 <= limit) {
+            if (position + tied.count(position) - 1 <= limit) {
                 toReturn.put(name, position.intValue());
             }
         });
         return toReturn;
     }
     private static Map<String, Double> positions(Collection<String> names, Map<String, Double> scores) {
-        Map<String, Double> toReturn = new HashMap<>();
+        Map<String, Double> toReturn = Maps.newHashMap();
         /**
          * NaturalRanking throws on an empty array, and a project without recent commits has no active classes, so
          * the hotspot ranking would fail on it.
@@ -160,7 +161,7 @@ public class HotspotRanker {
     private static Map<String, Double> percentiles(Collection<String> names, ToDoubleFunction<String> signal) {
         List<String> order = List.copyOf(names);
         double[] ranks = new NaturalRanking(NaNStrategy.FAILED, TiesStrategy.MAXIMUM).rank(order.stream().mapToDouble(signal).toArray());
-        Map<String, Double> toReturn = new HashMap<>();
+        Map<String, Double> toReturn = Maps.newHashMap();
         for (int i = 0; i < order.size(); i++) {
             toReturn.put(order.get(i), ranks[i] / order.size());
         }
@@ -168,7 +169,7 @@ public class HotspotRanker {
     }
     private static Map<String, Double> geometricMean(Collection<String> names, List<Map<String, Double>> signals) {
         GeometricMean mean = new GeometricMean();
-        Map<String, Double> toReturn = new HashMap<>();
+        Map<String, Double> toReturn = Maps.newHashMap();
         for (String name : names) {
             toReturn.put(name, mean.evaluate(signals.stream().mapToDouble(signal -> signal.get(name)).toArray()));
         }
@@ -186,7 +187,8 @@ public class HotspotRanker {
         int dependencies;
         FileChurn churn;
 
-        int bestRank() {
+        @VisibleForTesting
+        public int bestRank() {
             int toReturn = Integer.MAX_VALUE;
             if (Objects.nonNull(importanceRank)) {
                 toReturn = importanceRank;

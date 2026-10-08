@@ -1,7 +1,5 @@
 package io.codiqo.llm.client;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -9,6 +7,8 @@ import java.util.Objects;
 
 import org.apache.commons.collections4.CollectionUtils;
 
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.openai.client.OpenAIClient;
 import com.openai.core.http.StreamResponse;
 import com.openai.models.chat.completions.ChatCompletionChunk;
@@ -25,7 +25,7 @@ public class OpenAIClientWrapper {
 
     public StreamingResult stream(ChatCompletionCreateParams params, StreamingHandler handler) {
         StreamingResult result = new StreamingResult();
-        Map<Long, AccumulatedToolCall> toolCallMap = new LinkedHashMap<>();
+        Map<Long, AccumulatedToolCall> toolCallMap = Maps.newLinkedHashMap();
 
         try (StreamResponse<ChatCompletionChunk> stream = client.chat().completions().createStreaming(params)) {
             stream.stream().forEach(chunk -> {
@@ -59,7 +59,7 @@ public class OpenAIClientWrapper {
             });
         }
 
-        result.setToolCalls(new ArrayList<>(toolCallMap.values()));
+        result.setToolCalls(Lists.newArrayList(toolCallMap.values()));
         handler.onComplete(result);
         return result;
     }
@@ -88,7 +88,7 @@ public class OpenAIClientWrapper {
         private int promptTokens;
         private int completionTokens;
         private int totalTokens;
-        private List<AccumulatedToolCall> toolCalls = new ArrayList<>();
+        private List<AccumulatedToolCall> toolCalls = Lists.newArrayList();
 
         private void appendContent(String text) {
             if (Objects.nonNull(text)) {

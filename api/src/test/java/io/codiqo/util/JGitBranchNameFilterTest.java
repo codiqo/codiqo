@@ -41,7 +41,7 @@ class JGitBranchNameFilterTest {
                 "dev",
                 "feature/x",
                 "fix/y",
-                "PAY-12390-B",
+                "SHOP-1234-B",
                 "prev-release",
                 "test-b2s-release")) {
             assertEquals(branchName, invokeLogicalBranchName(Constants.R_HEADS + branchName), branchName);

@@ -42,6 +42,7 @@ import io.codiqo.client.model.ToolUsageModel;
 import io.codiqo.client.model.VolumeScoreModel;
 import io.codiqo.llm.client.ScoringClient.ScoringResult;
 import io.codiqo.llm.schema.LlmScoringResponse;
+import io.codiqo.api.RunArgs;
 import lombok.experimental.UtilityClass;
 
 @UtilityClass
@@ -111,7 +112,7 @@ public class LlmResponseMapper {
                 throw new IllegalArgumentException("Unknown change classification: " + classification);
         }
     }
-    private static List<TaskTypeModel> mapTaskTypes(List<LlmScoringResponse.TaskType> taskTypes) {
+    public static List<TaskTypeModel> mapTaskTypes(List<LlmScoringResponse.TaskType> taskTypes) {
         return taskTypes.stream().map(LlmResponseMapper::mapTaskType).collect(Collectors.toList());
     }
     private static TaskTypeModel mapTaskType(LlmScoringResponse.TaskType taskType) {
@@ -170,7 +171,7 @@ public class LlmResponseMapper {
                 throw new IllegalArgumentException("Unknown risk level: " + riskLevel);
         }
     }
-    private static BugsModel mapBugs(LlmScoringResponse.Bugs bugs) {
+    public static BugsModel mapBugs(LlmScoringResponse.Bugs bugs) {
         BugsModel toReturn = new BugsModel();
         toReturn.setBlocking(Optional.ofNullable(bugs.getBlocking())
                 .map(LlmResponseMapper::mapBugList).orElse(Collections.emptyList()));
@@ -249,7 +250,7 @@ public class LlmResponseMapper {
                 throw new IllegalArgumentException("Unknown bug source: " + source);
         }
     }
-    private static ReviewTagsModel mapTags(LlmScoringResponse.Tags tags) {
+    public static ReviewTagsModel mapTags(LlmScoringResponse.Tags tags) {
         ReviewTagsModel toReturn = new ReviewTagsModel();
         toReturn.setTechnical(Optional.ofNullable(tags.getTechnical()).orElse(Collections.emptyList()));
         toReturn.setFunctional(Optional.ofNullable(tags.getFunctional()).orElse(Collections.emptyList()));
@@ -502,7 +503,7 @@ public class LlmResponseMapper {
         toReturn.setImpact(qualityGateAnalysis.getImpact());
         return toReturn;
     }
-    private static RiskDimensionsModel mapQualityDimensions(LlmScoringResponse.QualityDimensions qualityDimensions) {
+    public static RiskDimensionsModel mapQualityDimensions(LlmScoringResponse.QualityDimensions qualityDimensions) {
         RiskDimensionsModel toReturn = new RiskDimensionsModel();
         if (Objects.nonNull(qualityDimensions.getArchitectureImpact())) {
             toReturn.setArchitectureImpact(mapDimensionScore(qualityDimensions.getArchitectureImpact()));
@@ -538,7 +539,8 @@ public class LlmResponseMapper {
     }
     private static DimensionScoreModel mapDimensionScore(LlmScoringResponse.DimensionScore dimensionScore) {
         DimensionScoreModel toReturn = new DimensionScoreModel();
-        toReturn.setScore(dimensionScore.getScore());
+        /** a score off the declared 0-10 scale is no judgment on it, and the server would reject the whole submission over it */
+        Optional.ofNullable(dimensionScore.getScore()).filter(RunArgs.SCORE_SCALE::contains).ifPresent(toReturn::setScore);
         toReturn.setRationale(dimensionScore.getRationale());
         toReturn.setQualityGateMet(dimensionScore.isQualityGateMet());
         return toReturn;
@@ -658,7 +660,7 @@ public class LlmResponseMapper {
                 throw new IllegalArgumentException("Unknown module type: " + moduleType);
         }
     }
-    private static SignatureChangesModel mapSignatureChanges(LlmScoringResponse.SignatureChanges signatureChanges) {
+    public static SignatureChangesModel mapSignatureChanges(LlmScoringResponse.SignatureChanges signatureChanges) {
         SignatureChangesModel toReturn = new SignatureChangesModel();
         toReturn.setHasBreakingChanges(signatureChanges.isHasBreakingChanges());
         toReturn.setChangedSignatures(Optional.ofNullable(signatureChanges.getChangedSignatures()).orElse(Collections.emptyList()));

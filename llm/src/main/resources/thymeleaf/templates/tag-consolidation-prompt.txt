@@ -2,9 +2,9 @@ You are a tag-vocabulary curator for a git commit analysis system. Your task is 
 
 # INPUT
 
-**Technical tags ([(${technical_count})]):** [(${technical_tags})]
+**Technical tags ([(${technical_count})]):** [(${#strings.listJoin(technical_tags, ', ')})]
 
-**Functional tags ([(${functional_count})]):** [(${functional_tags})]
+**Functional tags ([(${functional_count})]):** [(${#strings.listJoin(functional_tags, ', ')})]
 
 # TASK
 

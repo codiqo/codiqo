@@ -9,11 +9,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.LinkedHashSet;
-import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -30,9 +28,9 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.CharUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.apache.commons.text.StringSubstitutor;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
@@ -53,6 +51,11 @@ import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Joiner;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.RunArgs;
@@ -118,6 +121,14 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
          */
         args.setHotspotsCommitId(JGit.resolveCommit(args.getGit(), StringUtils.defaultIfBlank(args.getHotspotsCommitId(), Constants.HEAD)));
     }
+    /**
+     * Runs once the commit has passed the exclusions decided before analysis (skipped merges, filtered authors) and
+     * before the analysis checkout replaces the user's repository in {@code args}. Work that costs money per commit (the
+     * local agent review) starts here rather than in {@link #doPrepare}, which runs for those excluded commits too. The
+     * exclusions that need the computed delta (include-rules, nothing analysable) are only known after the build.
+     */
+    protected void doBeforeAnalysis(RunArgs args) throws Exception {
+    }
     @Override
     protected void doExecute(RunArgs args) throws Exception {
         Optional<Exclusion> excluded = CommitExclusions.beforeAnalysis(args);
@@ -130,6 +141,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             getLog().info(String.format("merge commit %s analyzed via first-parent delta, credited to side-branch author %s",
                     commitId, CommitExclusions.creditedAuthorEmail(args)));
         }
+        doBeforeAnalysis(args);
 
         File temp = Files.createTempDirectory("codiqo").toFile();
         temp.deleteOnExit();
@@ -235,7 +247,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             }
             ProjectBuildingResult result = ((BuildOutcome.Proceeded) buildOutcome).getResult();
 
-            Collection<MavenProject> reactors = new LinkedList<>();
+            Collection<MavenProject> reactors = Lists.newLinkedList();
             Optional<BuildOutcome.Skipped> moduleOutcome = buildAndCollectModules(
                     result.getProject(), clone.getWorkTree(), buildingReq, args, reactors);
             if (moduleOutcome.isPresent()) {
@@ -270,7 +282,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     }
     private BuildOutcome buildWithBackoff(RunArgs args, ProjectBuildingRequest buildingReq) throws Exception {
         Instant commitTimestamp = TimeMachineSupport.resolveCommitTimestamp(args);
-        List<String> attemptFailures = new ArrayList<>();
+        List<String> attemptFailures = Lists.newArrayList();
         BuildOutcome.Skipped firstSkipped = null;
         Duration offset = Duration.ZERO;
         for (;;) {
@@ -337,7 +349,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
         return toReturn;
     }
     private static String attemptHistoryDetail(List<String> attemptFailures) {
-        return "time-machine attempts:" + ATTEMPT_SEPARATOR + StringUtils.join(attemptFailures, ATTEMPT_SEPARATOR);
+        return "time-machine attempts:" + ATTEMPT_SEPARATOR + Joiner.on(ATTEMPT_SEPARATOR).join(attemptFailures);
     }
     /**
      * Drops build resource directories that resolve outside their own module from the POMs of the CLONE, so the
@@ -353,7 +365,8 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
      * build needs, and tests are where coverage comes from. The import this exists for happens later still, when the
      * language server loads.
      */
-    void relaxOutOfModuleResourceDirs(File workTree) throws IOException {
+    @VisibleForTesting
+    public void relaxOutOfModuleResourceDirs(File workTree) throws IOException {
         Path root = workTree.toPath().normalize().toAbsolutePath();
         try (Stream<Path> poms = Files.walk(root)) {
             for (Path pom : poms.filter(path -> isBuildPom(root, path)).toList()) {
@@ -402,8 +415,8 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
      * is reported and left alone: the two occurrences are indistinguishable in the text.
      */
     private ResourceDirScan scanResourceDirs(Path pom, Path moduleDir) {
-        Set<String> escaping = new LinkedHashSet<>();
-        Set<String> outsideBuild = new LinkedHashSet<>();
+        Set<String> escaping = Sets.newLinkedHashSet();
+        Set<String> outsideBuild = Sets.newLinkedHashSet();
         Charset charset = StandardCharsets.UTF_8;
         try {
             Document document = secureDocumentBuilderFactory().newDocumentBuilder().parse(pom.toFile());
@@ -438,7 +451,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             getLog().warn(String.format("could not inspect %s for out-of-module resource directories: %s", pom, err.getMessage()));
         }
 
-        Set<String> rewritable = new LinkedHashSet<>(escaping);
+        Set<String> rewritable = Sets.newLinkedHashSet(escaping);
         for (String shared : CollectionUtils.intersection(escaping, outsideBuild)) {
             getLog().warn(String.format("leaving resource directory %s of %s as it is: the same path is configured outside <build> too, and the two cannot be told apart in the text — name the tree in codiqo.excludePaths if the import fails (m2e-core#1790)",
                     shared,
@@ -453,7 +466,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
         }
 
         String interpolated = interpolateModulePaths(directory, moduleDir);
-        if (interpolated.contains("${")) {
+        if (interpolated.contains(StringSubstitutor.DEFAULT_VAR_START)) {
             getLog().warn(String.format("cannot tell whether resource directory %s of %s stays inside its module: it interpolates a property this check does not evaluate — if the import fails with m2e-core#1790, name the tree in codiqo.excludePaths",
                     directory,
                     pom));
@@ -503,9 +516,16 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
      * import kept failing with nothing logged; anything else is reported rather than guessed at.
      */
     private static String interpolateModulePaths(String directory, Path moduleDir) {
-        String toReturn = Strings.CS.replace(directory, "${project.build.directory}", moduleDir.resolve("target").toString());
-        toReturn = Strings.CS.replace(toReturn, "${project.basedir}", moduleDir.toString());
-        return Strings.CS.replace(toReturn, "${basedir}", moduleDir.toString());
+        Map<String, String> paths = Map.of(
+                "project.build.directory", moduleDir.resolve("target").toString(),
+                "project.basedir", moduleDir.toString(),
+                "basedir", moduleDir.toString());
+        /**
+         * The value delimiter is switched off because Maven has no ${name:-default} form: with it on, a directory such
+         * as ${env.OUT:-x} would be rewritten to x, which Maven itself never does. A property this map does not know is
+         * left exactly as written.
+         */
+        return new StringSubstitutor(paths).setValueDelimiterMatcher(null).setPreserveEscapes(true).replace(directory);
     }
     private static DocumentBuilderFactory secureDocumentBuilderFactory() throws ParserConfigurationException {
         DocumentBuilderFactory toReturn = DocumentBuilderFactory.newInstance();

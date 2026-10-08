@@ -4,7 +4,8 @@ import java.io.IOException;
 import java.util.regex.Pattern;
 
 import org.apache.commons.io.FilenameUtils;
-import org.apache.commons.lang3.StringUtils;
+
+import com.google.common.base.Joiner;
 
 /**
  * Uploads the LLM response document for one analysis, under the object name {@link #objectName} builds. codiqo
@@ -26,7 +27,7 @@ public interface LlmResponseUploader {
 
     /** {@code codiqo/<project>/<sha>-llm-response.<extension>} — the bucket belongs to the implementation. */
     static String objectName(String projectCode, String commitSha, String extension) {
-        return StringUtils.joinWith("/",
+        return Joiner.on("/").join(
                 OBJECT_PREFIX,
                 segment(projectCode),
                 segment(commitSha) + OBJECT_SUFFIX + FilenameUtils.EXTENSION_SEPARATOR_STR + extension);

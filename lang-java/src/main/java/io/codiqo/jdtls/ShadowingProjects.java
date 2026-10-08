@@ -27,12 +27,12 @@ import lombok.experimental.UtilityClass;
  * Buildship imports a Gradle project declaring {@code srcDirs = ['../src']} the same way, with the same result.
  */
 @UtilityClass
-class ShadowingProjects {
+public class ShadowingProjects {
     /**
      * declared source roots that lie outside the declaring module's own directory; empty for every conventional
      * layout, which keeps the language server workspace untouched there
      */
-    List<File> externalSourceRoots(Collection<ProjectSpec> modules) {
+    public List<File> externalSourceRoots(Collection<ProjectSpec> modules) {
         return modules.stream()
                 .filter(JvmProjectSpec.class::isInstance)
                 .map(JvmProjectSpec.class::cast)
@@ -46,7 +46,7 @@ class ShadowingProjects {
      * directory, so its path there is no deeper than the one-segment link. A deeper root already loses to the link,
      * and a Java project is never returned — one that holds a root another module borrows still compiles it.
      */
-    List<URI> select(Collection<URI> nonJavaProjects, Collection<File> externalRoots) {
+    public List<URI> select(Collection<URI> nonJavaProjects, Collection<File> externalRoots) {
         return nonJavaProjects.stream()
                 .filter(project -> externalRoots.stream().anyMatch(root -> holdsDirectly(new File(project), root)))
                 .toList();

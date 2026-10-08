@@ -9,10 +9,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.OptionalDouble;
 import java.util.Set;
-import java.util.ArrayList;
 
 import org.junit.jupiter.api.Test;
 
+import com.google.common.collect.Lists;
 
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.cpd.CloneLocations;
@@ -68,7 +68,7 @@ class MetricsAggregatorTest {
     }
     @Test
     void computeDriverQuantileMatchesP90OfDriverScoreDistribution() {
-        List<DriverScaler.Sample> samples = new ArrayList<>();
+        List<DriverScaler.Sample> samples = Lists.newArrayList();
         for (int i = 1; i <= 100; i++) {
             samples.add(new DriverScaler.Sample(i, i, i));
         }
@@ -83,11 +83,11 @@ class MetricsAggregatorTest {
     }
     @Test
     void prodOnlyAndTestOnlyPopulationsYieldDifferentQuantilesFixingThePoolingBias() {
-        List<DriverScaler.Sample> prod = new ArrayList<>();
+        List<DriverScaler.Sample> prod = Lists.newArrayList();
         for (int i = 1; i <= 50; i++) {
             prod.add(new DriverScaler.Sample(i, i, i));
         }
-        List<DriverScaler.Sample> test = new ArrayList<>();
+        List<DriverScaler.Sample> test = Lists.newArrayList();
         for (int i = 20; i <= 70; i++) {
             test.add(new DriverScaler.Sample(i, i, i));
         }
@@ -97,7 +97,7 @@ class MetricsAggregatorTest {
         int prodP90 = MetricsAggregator.computeDriverQuantile(prod, prodScaler, 90.0);
         int testP90 = MetricsAggregator.computeDriverQuantile(test, testScaler, 90.0);
 
-        List<DriverScaler.Sample> pooled = new ArrayList<>();
+        List<DriverScaler.Sample> pooled = Lists.newArrayList();
         pooled.addAll(prod);
         pooled.addAll(test);
         DriverScaler pooledScaler = DriverScaler.of(pooled);

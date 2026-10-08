@@ -9,12 +9,9 @@ import java.lang.reflect.TypeVariable;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.Date;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -22,6 +19,9 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 /** Builds an instance with every field set, so a round trip proves no field is lost or renamed. */
 final class JsonFixtures {
@@ -42,17 +42,17 @@ final class JsonFixtures {
             Class<?> raw = (Class<?>) parameterized.getRawType();
             Type[] arguments = parameterized.getActualTypeArguments();
             if (List.class.isAssignableFrom(raw) || Collection.class.equals(raw)) {
-                List<Object> toReturn = new ArrayList<>();
+                List<Object> toReturn = Lists.newArrayList();
                 addIfPresent(toReturn, value(arguments[0], depth + 1, hint, bindings));
                 return toReturn;
             }
             if (Set.class.isAssignableFrom(raw)) {
-                Set<Object> toReturn = new LinkedHashSet<>();
+                Set<Object> toReturn = Sets.newLinkedHashSet();
                 addIfPresent(toReturn, value(arguments[0], depth + 1, hint, bindings));
                 return toReturn;
             }
             if (Map.class.isAssignableFrom(raw)) {
-                Map<Object, Object> toReturn = new LinkedHashMap<>();
+                Map<Object, Object> toReturn = Maps.newLinkedHashMap();
                 Object key = value(arguments[0], depth + 1, hint + "Key", bindings);
                 Object entry = value(arguments[1], depth + 1, hint, bindings);
                 if (key != null && entry != null) {
@@ -63,7 +63,7 @@ final class JsonFixtures {
             if (Optional.class.equals(raw)) {
                 return Optional.ofNullable(value(arguments[0], depth + 1, hint, bindings));
             }
-            Map<String, Type> bound = new LinkedHashMap<>();
+            Map<String, Type> bound = Maps.newLinkedHashMap();
             TypeVariable<?>[] variables = raw.getTypeParameters();
             for (int i = 0; i < variables.length; i++) {
                 bound.put(variables[i].getName(), arguments[i]);
@@ -119,7 +119,7 @@ final class JsonFixtures {
         return widest.newInstance(arguments);
     }
     private static List<Constructor<?>> constructors(Class<?> cls) {
-        List<Constructor<?>> toReturn = new ArrayList<>();
+        List<Constructor<?>> toReturn = Lists.newArrayList();
         for (Constructor<?> constructor : cls.getDeclaredConstructors()) {
             constructor.setAccessible(true);
             toReturn.add(constructor);
@@ -127,7 +127,7 @@ final class JsonFixtures {
         return toReturn;
     }
     static List<Field> fields(Class<?> cls) {
-        List<Field> toReturn = new ArrayList<>();
+        List<Field> toReturn = Lists.newArrayList();
         for (Class<?> c = cls; c != null && c.getName().startsWith(CODIQO_PACKAGE); c = c.getSuperclass()) {
             for (Field field : c.getDeclaredFields()) {
                 int modifiers = field.getModifiers();

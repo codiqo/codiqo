@@ -1,5 +1,5 @@
-[#-- Thymeleaf TEXT mode template for Pre-Computed Volume Scores Section --]
-## PRE-COMPUTED VOLUME SCORES (USE THESE VALUES DIRECTLY)
+/*[- Thymeleaf TEXT mode template for Pre-Computed Volume Scores Section
+-]*/## PRE-COMPUTED VOLUME SCORES (USE THESE VALUES DIRECTLY)
 
 The following values have been calculated server-side. **DO NOT recalculate them.**
 Use these exact values in your `effortBreakdown` response.

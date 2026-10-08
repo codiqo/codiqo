@@ -14,6 +14,7 @@ import javax.inject.Named;
 import javax.inject.Singleton;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.maven.eventspy.AbstractEventSpy;
 import org.apache.maven.execution.ExecutionEvent;
 import org.apache.maven.project.MavenProject;
@@ -36,7 +37,7 @@ import lombok.extern.slf4j.Slf4j;
 @Singleton
 @Named("codiqo-build-progress-eventspy")
 public class BuildProgressEventSpy extends AbstractEventSpy {
-    private final Map<String, Long> startedAt = new ConcurrentHashMap<>();
+    private final Map<Pair<String, String>, Long> startedAt = new ConcurrentHashMap<>();
 
     @Override
     public void onEvent(Object event) {
@@ -45,13 +46,13 @@ public class BuildProgressEventSpy extends AbstractEventSpy {
             progressLine(execution, System.currentTimeMillis()).ifPresent(line -> append(Paths.get(path.trim()), line));
         }
     }
-    Optional<String> progressLine(ExecutionEvent execution, long now) {
+    public Optional<String> progressLine(ExecutionEvent execution, long now) {
         MavenProject project = execution.getProject();
         return switch (execution.getType()) {
             case SessionStarted -> Optional.ofNullable(execution.getSession())
                     .map(session -> now + "\tSESSION\t" + session.getProjects().size());
             case ProjectStarted -> Optional.ofNullable(project).map(started -> {
-                startedAt.put(moduleId(started), now);
+                startedAt.put(Pair.of(started.getGroupId(), started.getArtifactId()), now);
                 return now + "\tSTARTED\t" + moduleId(started);
             });
             case ProjectSucceeded -> finished(project, "SUCCESS", now);
@@ -62,10 +63,9 @@ public class BuildProgressEventSpy extends AbstractEventSpy {
     }
     private Optional<String> finished(MavenProject project, String status, long now) {
         return Optional.ofNullable(project).map(done -> {
-            String id = moduleId(done);
             // a skipped module never started, so it has no duration
-            long duration = Optional.ofNullable(startedAt.remove(id)).map(start -> now - start).orElse(0L);
-            return now + "\t" + status + "\t" + id + "\t" + duration;
+            long duration = Optional.ofNullable(startedAt.remove(Pair.of(done.getGroupId(), done.getArtifactId()))).map(start -> now - start).orElse(0L);
+            return now + "\t" + status + "\t" + moduleId(done) + "\t" + duration;
         });
     }
     private synchronized void append(Path progressFile, String line) {

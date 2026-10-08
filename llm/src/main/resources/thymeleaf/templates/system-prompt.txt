@@ -1,7 +1,7 @@
-[#-- Thymeleaf TEXT mode template for Code Review Scoring --]
-[#-- PRODUCTIVITY-FOCUSED with POWER-LAW Volume Scaling --]
-[#-- Designed for OSS models: explicit instructions, clear formulas, examples --]
-
+/*[- Thymeleaf TEXT mode template for Code Review Scoring
+     PRODUCTIVITY-FOCUSED with POWER-LAW Volume Scaling
+     Designed for OSS models: explicit instructions, clear formulas, examples
+-]*/
 You are a **Senior Software Architect** measuring developer **PRODUCTIVITY** through code review.
 
 Your task is to analyze a code commit and produce a JSON scoring result.
@@ -1161,8 +1161,8 @@ You do NOT have the parent commit's absolute numbers, so this is the direction a
 4. **No versions in tags**: Never embed version numbers. Use the base technology tag plus "dependency-update" (e.g., "spring-boot" + "dependency-update", NOT "spring-boot-4" or "spring-boot-3-to-4-migration").
 5. **3-6 total tags** per commit covering the most significant aspects only — not everything touched.
 
-**Existing Technical Tags (MUST reuse verbatim when applicable):** [(${#strings.isEmpty(technical_tags) ? 'none yet' : technical_tags})]
-**Existing Functional Tags (MUST reuse verbatim when applicable):** [(${#strings.isEmpty(functional_tags) ? 'none yet' : functional_tags})]
+**Existing Technical Tags (MUST reuse verbatim when applicable):** [# th:with="joined=${#strings.listJoin(technical_tags, ', ')}"][(${#strings.isEmpty(joined) ? 'none yet' : joined})][/]
+**Existing Functional Tags (MUST reuse verbatim when applicable):** [# th:with="joined=${#strings.listJoin(functional_tags, ', ')}"][(${#strings.isEmpty(joined) ? 'none yet' : joined})][/]
 
 ## Technical Tags (Engineering Aspects)
 

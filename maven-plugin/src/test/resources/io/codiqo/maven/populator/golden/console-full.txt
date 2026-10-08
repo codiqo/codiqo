@@ -1,0 +1,96 @@
+Codiqo — Commit Analysis
+========================
+commit:   1a2b3c4d   (branch: main, dev +1 more)
+author:   Jane Developer <jane@example.com>
+date:     2026-07-10 10:56
+project:  example-service
+message:  refactor http channel so that every transport shares one pipeline and the filter wiring lives in ...
+
+score:    63   (MEDIUM)
+          62.47 × 0.95 + 2.81 = 62.16 ≈ 62
+quality:  0.95x multiplier   (clamped to 0.5 .. 1.2)
+risk:     59/100   (MODERATE)
+review:   senior review 7/10   (recommended at 7)
+
+files:    28 changed   (prod: 19, test: 6, config: 3)
+blocks:   4 new, 9 modified   (1640 lines)
+effort:   base 41.13   volume 12.35
+blast:    3 callers   (prod: 2, test: 1)   risk HIGH
+
+key dimensions:
++---------------------+-------+--------+
+| Dimension           | Score | Gate   |
++---------------------+-------+--------+
+| Architecture Impact |     7 |  met   |
+| Concurrency Risk    |     - |   -    |
+| Integration Surface |    10 | FAILED |
+| Data Integrity      |     3 |  met   |
+| Observability       |     0 | FAILED |
+| Testing Coverage    |    55 |  met   |
++---------------------+-------+--------+
+
+changed files:
++----------------------------------------------------------------+----------+-----+---+--------+--------+
+| File                                                           | Type     | +   | - | Blocks | Scope  |
++----------------------------------------------------------------+----------+-----+---+--------+--------+
+| ...t/lose/its/head/because/it/exceeds/the/column/core/Foo.java | ADDED    | 500 | 0 |      2 | prod   |
+| module-26/src/main/java/com/example/Changed26.java             | MODIFIED |  78 | 2 |      0 | prod   |
+| module-25/src/main/java/com/example/Changed25.java             | MODIFIED |  75 | 1 |      0 | test   |
+| module-23/src/main/java/com/example/Changed23.java             | MODIFIED |  69 | 3 |      0 | prod   |
+| module-24/src/main/java/com/example/Changed24.java             | MODIFIED |  72 | 0 |      0 | prod   |
+| module-22/src/main/java/com/example/Changed22.java             | MODIFIED |  66 | 2 |      0 | prod   |
+| module-21/src/main/java/com/example/Changed21.java             | MODIFIED |  63 | 1 |      0 | config |
+| module-19/src/main/java/com/example/Changed19.java             | MODIFIED |  57 | 3 |      0 | prod   |
+| module-20/src/main/java/com/example/Changed20.java             | MODIFIED |  60 | 0 |      0 | test   |
+| module-18/src/main/java/com/example/Changed18.java             | MODIFIED |  54 | 2 |      0 | prod   |
+| module-17/src/main/java/com/example/Changed17.java             | MODIFIED |  51 | 1 |      0 | prod   |
+| module-15/src/main/java/com/example/Changed15.java             | MODIFIED |  45 | 3 |      0 | test   |
+| module-16/src/main/java/com/example/Changed16.java             | MODIFIED |  48 | 0 |      0 | prod   |
+| module-14/src/main/java/com/example/Changed14.java             | MODIFIED |  42 | 2 |      0 | config |
+| module-13/src/main/java/com/example/Changed13.java             | MODIFIED |  39 | 1 |      0 | prod   |
+| module-11/src/main/java/com/example/Changed11.java             | MODIFIED |  33 | 3 |      0 | prod   |
+| module-12/src/main/java/com/example/Changed12.java             | MODIFIED |  36 | 0 |      0 | prod   |
+| module-10/src/main/java/com/example/Changed10.java             | MODIFIED |  30 | 2 |      0 | test   |
+| module-9/src/main/java/com/example/Changed9.java               | MODIFIED |  27 | 1 |      0 | prod   |
+| module-7/src/main/java/com/example/Changed7.java               | MODIFIED |  21 | 3 |      0 | config |
+| module-8/src/main/java/com/example/Changed8.java               | MODIFIED |  24 | 0 |      0 | prod   |
+| module-6/src/main/java/com/example/Changed6.java               | MODIFIED |  18 | 2 |      0 | prod   |
+| module-5/src/main/java/com/example/Changed5.java               | MODIFIED |  15 | 1 |      0 | test   |
+| module-3/src/main/java/com/example/Changed3.java               | MODIFIED |   9 | 3 |      0 | prod   |
+| module-4/src/main/java/com/example/Changed4.java               | MODIFIED |  12 | 0 |      0 | prod   |
++----------------------------------------------------------------+----------+-----+---+--------+--------+
+  ... 3 more (25 of 28 shown)
+
+findings (17):
++----------+------------------------------------------------------+----------------------------------------------------------------+------+
+| Severity | Finding                                              | File                                                           | Line |
++----------+------------------------------------------------------+----------------------------------------------------------------+------+
+| BLOCKING | A blocking finding whose title is much longer tha... | ...going/src/main/java/com/example/deeply/nested/Blocking.java |   12 |
+| BLOCKING | no line or file                                      |                                                                |    - |
+| MAJOR    | major finding 0                                      | core/src/main/java/com/example/Major0.java                     |    0 |
+| MAJOR    | major finding 1                                      | core/src/main/java/com/example/Major1.java                     |    7 |
+| MAJOR    | major finding 2                                      | core/src/main/java/com/example/Major2.java                     |   14 |
+| MAJOR    | major finding 3                                      | core/src/main/java/com/example/Major3.java                     |   21 |
+| MAJOR    | major finding 4                                      | core/src/main/java/com/example/Major4.java                     |   28 |
+| MAJOR    | major finding 5                                      | core/src/main/java/com/example/Major5.java                     |   35 |
+| MAJOR    | major finding 6                                      | core/src/main/java/com/example/Major6.java                     |   42 |
+| MAJOR    | major finding 7                                      | core/src/main/java/com/example/Major7.java                     |   49 |
+| MAJOR    | major finding 8                                      | core/src/main/java/com/example/Major8.java                     |   56 |
+| MAJOR    | major finding 9                                      | core/src/main/java/com/example/Major9.java                     |   63 |
+| MAJOR    | major finding 10                                     | core/src/main/java/com/example/Major10.java                    |   70 |
+| MAJOR    | major finding 11                                     | core/src/main/java/com/example/Major11.java                    |   77 |
+| MINOR    | minor one                                            | a.txt                                                          |    1 |
++----------+------------------------------------------------------+----------------------------------------------------------------+------+
+  ... 2 more (15 of 17 shown)
+
+tags:     technical:  netty, , pipeline
+          functional: -
+
+summary:
+  Refactors the HTTP channel and moves filter wiring into the core module, so that every transport
+  shares one pipeline. A deliberately overlong token follows:
+  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  and then the summary ends after a few more words to wrap again.
+
+---
+model kimi-k2.7-code:cloud   tokens 48211 in / 3120 out   in 258s

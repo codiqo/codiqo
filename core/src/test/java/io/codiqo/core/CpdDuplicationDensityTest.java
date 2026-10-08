@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
@@ -14,6 +13,8 @@ import org.apache.commons.collections4.ListUtils;
 import org.apache.commons.lang3.CharUtils;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import com.google.common.collect.Lists;
 
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.RunArgs;
@@ -83,8 +84,8 @@ class CpdDuplicationDensityTest {
         LogFactory logFactory = new SlfLogFactory();
         RunArgs args = new RunArgs();
         args.setCpdMinimumTileSize(TILE_SIZE);
-        List<Match> reported = new ArrayList<>();
-        List<Collection<Mark>> classes = new ArrayList<>();
+        List<Match> reported = Lists.newArrayList();
+        List<Collection<Mark>> classes = Lists.newArrayList();
         try (Fetch fetch = new Fetch(args);
                 JavaLanguageSpec java = new JavaLanguageSpec(logFactory, args, fetch);
                 CpdAnalysis cpd = CpdAnalysis.create(DefaultLanguageProcessors.cpdConfiguration(java.lang(), args))) {

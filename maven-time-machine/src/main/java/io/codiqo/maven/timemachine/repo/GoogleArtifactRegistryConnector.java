@@ -10,17 +10,14 @@ import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.ArrayList;
 
 import javax.annotation.PreDestroy;
 import javax.inject.Inject;
@@ -59,6 +56,10 @@ import com.google.cloud.artifactregistry.auth.CommandExecutor;
 import com.google.cloud.artifactregistry.auth.CommandExecutorResult;
 import com.google.cloud.artifactregistry.auth.CredentialProvider;
 import com.google.cloud.artifactregistry.auth.DefaultCredentialProvider;
+import com.google.common.base.Joiner;
+import com.google.common.base.Splitter;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import io.codiqo.maven.timemachine.TimeMachineConfig;
 import lombok.SneakyThrows;
@@ -88,7 +89,7 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
 
     private volatile ArtifactRegistry artifactRegistry;
     private volatile HttpTransport transport;
-    private final Map<String, List<SnapshotVersion>> deploysByResource = new ConcurrentHashMap<>();
+    private final Map<String, List<SnapshotVersion>> deploysByResource = Maps.newConcurrentMap();
 
     @Inject
     @SneakyThrows
@@ -105,7 +106,7 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
 
         artifactRegistry = new ArtifactRegistry.Builder(transport, jsonFactory, httpRequestInitializer).setApplicationName(APPLICATION_NAME).build();
     }
-    GoogleArtifactRegistryConnector(ArtifactRegistry artifactRegistry) {
+    public GoogleArtifactRegistryConnector(ArtifactRegistry artifactRegistry) {
         this.artifactRegistry = Objects.requireNonNull(artifactRegistry);
         this.transport = artifactRegistry.getRequestFactory().getTransport();
     }
@@ -149,7 +150,7 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
         for (;;) {
             try {
                 Pattern filenamePattern = snapshotFilenamePattern(artifact);
-                List<SnapshotVersion> toReturn = new ArrayList<>();
+                List<SnapshotVersion> toReturn = Lists.newArrayList();
                 String pageToken = null;
                 while (true) {
                     ListFilesResponse page = listFilesPage(location, resourcePrefix, pageToken);
@@ -189,7 +190,7 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
         return sslContext.getSocketFactory();
     }
     private static String snapshotFolderResourcePrefix(GoogleArtifactRegistryLocation location, Artifact artifact) {
-        return StringUtils.joinWith(String.valueOf(RESOURCE_SEPARATOR),
+        return Joiner.on(RESOURCE_SEPARATOR).join(
                 location.parentResource(),
                 "files",
                 artifact.getGroupId().replace('.', RESOURCE_SEPARATOR),
@@ -235,7 +236,7 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
     private static final class ZtCommandExecutor implements CommandExecutor {
         @Override
         public CommandExecutorResult executeCommand(String command, String... args) throws IOException {
-            List<String> argList = new ArrayList<>();
+            List<String> argList = Lists.newArrayList();
             argList.add(command);
             argList.addAll(List.of(args));
 
@@ -262,31 +263,31 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
     }
 
     private static final class GoogleArtifactRegistryLocation extends ImmutableTriple<String, String, String> {
-        GoogleArtifactRegistryLocation(String project, String locationId, String repository) {
+        private GoogleArtifactRegistryLocation(String project, String locationId, String repository) {
             super(project, locationId, repository);
         }
-        String getProject() {
+        private String getProject() {
             return getLeft();
         }
-        String getLocationId() {
+        private String getLocationId() {
             return getMiddle();
         }
-        String getRepository() {
+        private String getRepository() {
             return getRight();
         }
-        String parentResource() {
-            return StringUtils.joinWith(String.valueOf(RESOURCE_SEPARATOR),
+        private String parentResource() {
+            return Joiner.on(RESOURCE_SEPARATOR).join(
                     "projects", getProject(),
                     "locations", getLocationId(),
                     "repositories", getRepository());
         }
-        static GoogleArtifactRegistryLocation parse(RemoteRepository repo) {
+        private static GoogleArtifactRegistryLocation parse(RemoteRepository repo) {
             URI uri = URI.create(repo.getUrl());
             String host = uri.getHost();
             if (Objects.isNull(host) || BooleanUtils.negate(host.endsWith(HOST_SUFFIX))) {
                 throw new IllegalArgumentException(invalidUrlMessage(repo));
             }
-            List<String> segments = Arrays.asList(StringUtils.split(Optional.ofNullable(uri.getPath()).orElse(StringUtils.EMPTY), RESOURCE_SEPARATOR));
+            List<String> segments = Splitter.on(RESOURCE_SEPARATOR).omitEmptyStrings().splitToList(Optional.ofNullable(uri.getPath()).orElse(StringUtils.EMPTY));
             if (segments.size() < 2) {
                 throw new IllegalArgumentException(invalidUrlMessage(repo));
             }

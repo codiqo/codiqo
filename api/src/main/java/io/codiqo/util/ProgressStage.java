@@ -14,7 +14,7 @@ import io.codiqo.api.RunArgs;
 /**
  * One analysis stage — the language server load, CPD, coverage, the submission — recorded in the build progress file
  * the forked build's module events also go to, so a watcher outside the JVM sees where the analysis is, not only the
- * build. Inert when {@link RunArgs#getBuildProgressFile()} is unset.
+ * build. Inert when {@code RunArgs.getBuildProgressFile()} is unset.
  *
  * <pre>
  * epochMillis  STAGE_STARTED  name

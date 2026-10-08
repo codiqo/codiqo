@@ -3,9 +3,7 @@ package io.codiqo.submit.hotspots;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.HashMap;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 import org.apache.commons.lang3.tuple.ImmutableTriple;
 import org.apache.commons.lang3.tuple.MutableTriple;
@@ -18,6 +16,8 @@ import org.eclipse.jgit.revwalk.RevSort;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.util.io.DisabledOutputStream;
 
+import com.google.common.collect.Maps;
+
 import lombok.experimental.UtilityClass;
 
 /**
@@ -26,14 +26,17 @@ import lombok.experimental.UtilityClass;
  */
 @UtilityClass
 public class GitChurn {
-    /** Whole words only, so that "debug", "prefix" and "fixture" are not counted as fix commits. */
-    private static final Pattern FIX = Pattern.compile("\\b(?:bug|hot)?fix(?:es|ed|ing)?\\b|\\bbugs?\\b|\\brevert", Pattern.CASE_INSENSITIVE);
-
     public static final Duration RECENT = Duration.ofDays(365);
 
-    public Map<String, FileChurn> collect(Repository repo, String commitId) throws IOException {
-        Map<String, MutableChurn> counts = new HashMap<>();
-        Map<String, String> renamedTo = new HashMap<>();
+    /** the start of the recent window that ends at {@code commitId}: fixes count only from here on */
+    public Instant recentFrom(Repository repo, String commitId) throws IOException {
+        try (RevWalk walk = new RevWalk(repo)) {
+            return walk.parseCommit(ObjectId.fromString(commitId)).getCommitterIdent().getWhenAsInstant().minus(RECENT);
+        }
+    }
+    public Map<String, FileChurn> collect(Repository repo, String commitId, FixCommits fixCommits) throws IOException {
+        Map<String, MutableChurn> counts = Maps.newHashMap();
+        Map<String, String> renamedTo = Maps.newHashMap();
 
         try (RevWalk walk = new RevWalk(repo)) {
             RevCommit tip = walk.parseCommit(ObjectId.fromString(commitId));
@@ -49,7 +52,7 @@ public class GitChurn {
                 for (RevCommit commit : walk) {
                     if (commit.getParentCount() <= 1) {
                         boolean recent = commit.getCommitterIdent().getWhenAsInstant().compareTo(recentFrom) >= 0;
-                        boolean fix = recent && FIX.matcher(commit.getShortMessage()).find();
+                        boolean fix = recent && fixCommits.isFix(commit);
 
                         /**
                          * A root commit has no parent; passing null makes JGit diff it against the empty tree, so its
@@ -73,7 +76,7 @@ public class GitChurn {
             }
         }
 
-        Map<String, FileChurn> toReturn = new HashMap<>();
+        Map<String, FileChurn> toReturn = Maps.newHashMap();
         counts.forEach((path, churn) -> toReturn.put(path, churn.freeze()));
         return toReturn;
     }
@@ -96,10 +99,10 @@ public class GitChurn {
     }
 
     private static final class MutableChurn extends MutableTriple<Integer, Integer, Integer> {
-        MutableChurn() {
+        private MutableChurn() {
             super(0, 0, 0);
         }
-        void add(boolean recent, boolean fix) {
+        private void add(boolean recent, boolean fix) {
             setLeft(getLeft() + 1);
             if (recent) {
                 setMiddle(getMiddle() + 1);
@@ -108,7 +111,7 @@ public class GitChurn {
                 setRight(getRight() + 1);
             }
         }
-        FileChurn freeze() {
+        private FileChurn freeze() {
             return new FileChurn(getLeft(), getMiddle(), getRight());
         }
     }

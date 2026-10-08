@@ -2,8 +2,6 @@ package io.codiqo.gradle;
 
 import java.io.File;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -29,6 +27,10 @@ import org.gradle.testing.jacoco.plugins.JacocoPluginExtension;
 import org.gradle.testing.jacoco.plugins.JacocoTaskExtension;
 import org.jacoco.core.JaCoCo;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+
 import io.codiqo.api.RunArgs;
 import io.codiqo.gradle.model.AnalysisRequest;
 
@@ -38,6 +40,7 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
     private static final String DUMP_TASK = "codiqoDumpAnalysis";
     private static final String SUBMIT_TASK = "codiqoSubmitAnalysis";
     private static final String INDEX_TASK = "codiqoIndexCommits";
+    private static final String LOGIN_TASK = "codiqoLogin";
     private static final Set<String> ANALYSIS_TASKS = Set.of(DUMP_TASK, SUBMIT_TASK);
     private static final String JACOCO_PLUGIN_ID = "jacoco";
 
@@ -63,6 +66,10 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
                 "Analyze the current checkout and dump the Codiqo analysis submission as YAML");
         registerAnalysisTask(project, SUBMIT_TASK, true,
                 "Analyze the current checkout and submit the Codiqo analysis to the backend");
+        project.getTasks().register(LOGIN_TASK, CodiqoLoginTask.class, task -> {
+            task.setGroup(TASK_GROUP);
+            task.setDescription("Authorize this machine through the browser, so builds need no codiqo.apiKey");
+        });
         project.getTasks().register(INDEX_TASK, CodiqoIndexCommitsTask.class, task -> {
             task.setGroup(TASK_GROUP);
             task.setDescription("Index the commit window with the backend and write the commits still needing analysis to a file");
@@ -128,8 +135,8 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
         getEventsListenerRegistry().onTaskCompletion(service);
 
         project.getGradle().getTaskGraph().whenReady(graph -> {
-            Map<String, Integer> tasksByProject = new LinkedHashMap<>();
-            Map<String, String> ids = new LinkedHashMap<>();
+            Map<String, Integer> tasksByProject = Maps.newLinkedHashMap();
+            Map<String, String> ids = Maps.newLinkedHashMap();
             graph.getAllTasks().stream()
                     .filter(task -> BooleanUtils.negate(ANALYSIS_TASKS.contains(task.getName())))
                     .forEach(task -> {
@@ -204,7 +211,8 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
      * back to Gradle's bundled default, which is the instrument-with-one-version/parse-with-another divergence this
      * pin exists to prevent.
      */
-    static String agentArtifactVersion() {
+    @VisibleForTesting
+    public static String agentArtifactVersion() {
         Matcher matcher = AGENT_ARTIFACT_VERSION.matcher(JaCoCo.VERSION);
         if (matcher.find()) {
             return matcher.group(1);
@@ -248,7 +256,8 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
      * RunArgs owns the derivation (an unset per-test timeout becomes testTimeout/2, capped) so the Gradle daemon and
      * the analysis worker cannot disagree about the envelope they are enforcing.
      */
-    static RunArgs resolveTimeouts(long testTimeoutMinutes, Long perTestTimeoutMinutes) {
+    @VisibleForTesting
+    public static RunArgs resolveTimeouts(long testTimeoutMinutes, Long perTestTimeoutMinutes) {
         RunArgs toReturn = new RunArgs();
         toReturn.setTestTimeout(Duration.ofMinutes(testTimeoutMinutes));
         Optional.ofNullable(perTestTimeoutMinutes).ifPresent(minutes -> toReturn.setPerTestTimeout(Duration.ofMinutes(minutes)));
@@ -260,7 +269,7 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
      * sibling would serialise a dump and a submit that are never meant to run together anyway.
      */
     private static List<Task> tasksToFollow(Project project) {
-        List<Task> toReturn = new ArrayList<>();
+        List<Task> toReturn = Lists.newArrayList();
         for (Project module : project.getRootProject().getAllprojects()) {
             for (Task task : module.getTasks()) {
                 if (BooleanUtils.negate(ANALYSIS_TASKS.contains(task.getName()))) {

@@ -5,9 +5,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
-import java.util.HashSet;
-import java.util.HashMap;
-import java.util.ArrayList;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.CharUtils;
@@ -17,6 +14,9 @@ import org.eclipse.jgit.patch.HunkHeader;
 import org.eclipse.jgit.patch.Patch;
 import org.eclipse.jgit.util.RawParseUtils;
 
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 import lombok.experimental.UtilityClass;
 
@@ -38,7 +38,7 @@ public class EffectiveLineParser {
     }
 
     public static Set<Integer> parseAddedLines(String diff) {
-        Set<Integer> toReturn = new HashSet<>();
+        Set<Integer> toReturn = Sets.newHashSet();
         for (FileHeader fileHeader : parsePatch(diff).getFiles()) {
             for (HunkHeader hunk : fileHeader.getHunks()) {
                 for (Edit edit : hunk.toEditList()) {
@@ -51,7 +51,7 @@ public class EffectiveLineParser {
         return toReturn;
     }
     public static Set<Integer> parseEffectiveAddedLines(String diff, Predicate<String> ineffective) {
-        Set<Integer> toReturn = new HashSet<>();
+        Set<Integer> toReturn = Sets.newHashSet();
         walk(diff, (kind, newLine, content) -> {
             if (kind == LineKind.ADDED && isEffective(content.trim(), ineffective)) {
                 toReturn.add(newLine);
@@ -60,19 +60,19 @@ public class EffectiveLineParser {
         return toReturn;
     }
     public static Map<Integer, List<String>> parseEffectiveDeletedLineContents(String diff, Predicate<String> ineffective) {
-        Map<Integer, List<String>> toReturn = new HashMap<>();
+        Map<Integer, List<String>> toReturn = Maps.newHashMap();
         walk(diff, (kind, newLine, content) -> {
             if (kind == LineKind.DELETED) {
                 String trimmed = content.trim();
                 if (isEffective(trimmed, ineffective)) {
-                    toReturn.computeIfAbsent(newLine, k -> new ArrayList<>()).add(trimmed);
+                    toReturn.computeIfAbsent(newLine, k -> Lists.newArrayList()).add(trimmed);
                 }
             }
         });
         return toReturn;
     }
     public static Map<Integer, Integer> parseEffectiveDeletionAnchors(String diff, Predicate<String> ineffective) {
-        Map<Integer, Integer> toReturn = new HashMap<>();
+        Map<Integer, Integer> toReturn = Maps.newHashMap();
         walk(diff, (kind, newLine, content) -> {
             if (kind == LineKind.DELETED && isEffective(content.trim(), ineffective)) {
                 toReturn.merge(newLine, 1, Integer::sum);

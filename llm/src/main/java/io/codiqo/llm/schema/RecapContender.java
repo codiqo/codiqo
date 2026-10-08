@@ -1,7 +1,8 @@
 package io.codiqo.llm.schema;
 
-import java.util.ArrayList;
 import java.util.List;
+
+import com.google.common.collect.Lists;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -27,7 +28,7 @@ public class RecapContender {
     private String distinction;
     /** busiest first */
     @Builder.Default
-    private List<String> projects = new ArrayList<>();
+    private List<String> projects = Lists.newArrayList();
     /** the analysis summary of their hardest commit in the window */
     private String bestWork;
 }

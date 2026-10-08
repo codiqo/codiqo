@@ -31,7 +31,7 @@ import lombok.RequiredArgsConstructor;
 import net.sourceforge.pmd.lang.java.ast.ASTTypeDeclaration;
 
 @RequiredArgsConstructor
-class JdtIncomingCallsResolver implements IncomingCallsResolver {
+public class JdtIncomingCallsResolver implements IncomingCallsResolver {
     private final Log log;
     private final RunArgs args;
     private final JdtLspProjectImporter jdt;

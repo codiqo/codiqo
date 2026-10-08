@@ -1,0 +1,7 @@
+/*[- the JSON rules, inserted where a sentence or a line needs it: the file ends without a newline -]*/JSON RULES: the answer is read by a program, and malformed JSON loses the whole review.
+1. The answer is one JSON object and nothing else: no markdown code fences, no text before or after it.
+2. Every field name is double-quoted; no trailing commas; every array element is a complete object, never null.
+3. Leave an optional field out rather than writing null; an empty array is the right value when nothing was found.
+4. Inside strings a backslash may only come before one of " \ / n r t b f u. Write a newline as \n, a quote in code as \", a backslash in code as \; a regex such as \s is written \\s.
+5. Describe a fix in words rather than quoting code that contains quotes or backslashes.
+6. Write all text in English.

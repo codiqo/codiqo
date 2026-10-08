@@ -4,10 +4,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+
+import com.google.common.collect.Lists;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.ReportBuilder.ReportContext;
@@ -67,8 +68,8 @@ class ConsoleReportBuilderTest {
     void emptyAnalysisStillRendersWithoutBlowingUp() {
         LlmScoringRequest bare = LlmScoringRequest.builder()
                 .changeSummary(ChangeSummary.builder().build())
-                .fileChanges(new ArrayList<>())
-                .codeBlockChanges(new ArrayList<>())
+                .fileChanges(Lists.newArrayList())
+                .codeBlockChanges(Lists.newArrayList())
                 .build();
 
         String report = new ConsoleReportBuilder(new RunArgs())
@@ -94,8 +95,8 @@ class ConsoleReportBuilderTest {
         LlmScoringRequest request = LlmScoringRequest.builder()
                 // deliberately far below the payload size, as the effective-change count is on a real deletion commit
                 .changeSummary(ChangeSummary.builder().totalFilesChanged(1).totalLinesChanged(125).build())
-                .fileChanges(new ArrayList<>(List.of(prod, test1, test2, config)))
-                .codeBlockChanges(new ArrayList<>())
+                .fileChanges(Lists.newArrayList(List.of(prod, test1, test2, config)))
+                .codeBlockChanges(Lists.newArrayList())
                 .build();
 
         String report = new ConsoleReportBuilder(new RunArgs())
@@ -118,7 +119,7 @@ class ConsoleReportBuilderTest {
                 .commitId("5e6f7a8b9")
                 .timestamp("2026-06-24 09:14")
                 .analysisDuration(Duration.ofSeconds(28))
-                .branches(new ArrayList<>(List.of("dev", "main", "prev-release", "fix-build", "FEAT-31", "FEAT-12997")))
+                .branches(Lists.newArrayList(List.of("dev", "main", "prev-release", "fix-build", "FEAT-31", "FEAT-12997")))
                 .build();
 
         String report = new ConsoleReportBuilder(new RunArgs()).buildReport(result(), request(), manyBranches);
@@ -156,7 +157,7 @@ class ConsoleReportBuilderTest {
                 .linesDeleted(11)
                 .build();
 
-        List<CallerInfo> callers = new ArrayList<>(List.of(
+        List<CallerInfo> callers = Lists.newArrayList(List.of(
                 CallerInfo.builder().callerMethod("prodCaller").isTestCaller(false).build(),
                 CallerInfo.builder().callerMethod("testCaller").isTestCaller(true).build()));
 
@@ -172,8 +173,8 @@ class ConsoleReportBuilderTest {
                         .totalLinesChanged(26)
                         .codeBlocksModified(1)
                         .build())
-                .fileChanges(new ArrayList<>(List.of(file)))
-                .codeBlockChanges(new ArrayList<>(List.of(block)))
+                .fileChanges(Lists.newArrayList(List.of(file)))
+                .codeBlockChanges(Lists.newArrayList(List.of(block)))
                 .build();
     }
     private static ReportContext context() {
@@ -183,7 +184,7 @@ class ConsoleReportBuilderTest {
                 .authorEmail("jane@example.com")
                 .timestamp("2026-07-10 10:56")
                 .commitMessage("refactor http channel\n\nlonger body that must not reach the header")
-                .branches(new ArrayList<>(List.of("main")))
+                .branches(Lists.newArrayList(List.of("main")))
                 .repositoryName("example-service")
                 .llmModel("kimi-k2.7-code:cloud")
                 .analysisDuration(Duration.ofSeconds(258))

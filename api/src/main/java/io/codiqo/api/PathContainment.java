@@ -6,7 +6,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
+
+import com.google.common.collect.Maps;
 
 import lombok.experimental.UtilityClass;
 
@@ -27,7 +28,7 @@ import lombok.experimental.UtilityClass;
  */
 @UtilityClass
 public class PathContainment {
-    private static final Map<Path, Path> RESOLVED = new ConcurrentHashMap<>();
+    private static final Map<Path, Path> RESOLVED = Maps.newConcurrentMap();
 
     /**
      * The lexical comparison is tried first and is the answer whenever the two sides already agree on

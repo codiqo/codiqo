@@ -20,7 +20,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Repository;
 import org.gradle.api.DefaultTask;
-import org.gradle.api.GradleException;
 import org.gradle.api.Project;
 import org.gradle.api.tasks.TaskAction;
 
@@ -33,7 +32,8 @@ import io.codiqo.core.logging.SlfLogFactory;
 import io.codiqo.submit.CommitIndexPublisher;
 import io.codiqo.submit.CommitIndexPublisher.MissingAnalysesSelection;
 import io.codiqo.submit.CommitIndexer;
-import io.codiqo.util.Env;
+import io.codiqo.submit.auth.CodiqoCredential;
+import io.codiqo.submit.auth.CodiqoCredentials;
 import io.codiqo.util.JGit;
 
 /**
@@ -97,9 +97,9 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
      * this clone can actually diff; without one there is nothing to ask, so the whole extracted window is written.
      */
     private List<String> resolveShas(Project root, CodiqoExtension ext, Repository repo, String branch, List<CommitModel> commits) throws Exception {
-        Optional<String> apiKey = resolveApiKey(ext);
-        if (apiKey.isEmpty()) {
-            getLogger().lifecycle("codiqo: no API key configured — writing every extracted commit instead of the server's missing-analysis list");
+        Optional<CodiqoCredential> credential = resolveCredential(ext);
+        if (credential.isEmpty()) {
+            getLogger().lifecycle("codiqo: no API key configured and no browser login stored — writing every extracted commit instead of the server's missing-analysis list");
             return commits.stream().map(CommitModel::getSha).toList();
         }
 
@@ -108,7 +108,7 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
         getLogger().lifecycle("codiqo: indexing " + commits.size() + " commits for " + projectId + " at " + apiUrl);
 
         Log log = new SlfLogFactory().getLogger(CodiqoIndexCommitsTask.class);
-        CommitIndexApi client = CommitIndexPublisher.buildClient(apiUrl, apiKey.get(),
+        CommitIndexApi client = CommitIndexPublisher.buildClient(apiUrl, credential.get(),
                 longProp("codiqo.connectTimeoutSeconds", ext.getConnectTimeoutSeconds()),
                 longProp("codiqo.readTimeoutSeconds", ext.getReadTimeoutSeconds()));
 
@@ -133,13 +133,14 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
         }
         return selection.getAnalyzableShas();
     }
-    private Optional<String> resolveApiKey(CodiqoExtension ext) {
-        String configured = prop("codiqo.apiKey", ext.getApiKey());
-        if (StringUtils.isBlank(configured)) {
-            return Optional.empty();
-        }
-        return Optional.of(Env.resolve(configured).orElseThrow(() -> new GradleException(
-                "codiqo.apiKey is set to '" + configured + "' but resolves to nothing — export that variable, or pass the key directly")));
+    /** a configured key, else the stored browser login; never the browser, which an index run has nobody to answer */
+    private Optional<CodiqoCredential> resolveCredential(CodiqoExtension ext) throws IOException {
+        return CodiqoCredentials.resolve(
+                prop("codiqo.apiKey", ext.getApiKey()),
+                prop("codiqo.authUrl", ext.getAuthUrl()),
+                prop("codiqo.resourceUrl", ext.getResourceUrl()),
+                false,
+                new GradleLifecycleLog(getLogger()));
     }
     private String resolveBranch(Repository repo) throws IOException {
         String override = prop("codiqo.branch", null);

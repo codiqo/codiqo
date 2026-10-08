@@ -1,0 +1,36 @@
+Codiqo — Commit Analysis
+========================
+commit:   
+author:    <>
+date:     
+project:  
+message:  
+
+score:    0   (-)
+          -
+quality:  1.0x multiplier   (clamped to 0.5 .. 1.2)
+risk:     0/100   (-)
+review:   senior review 0/10   (recommended at 7)
+
+files:    0 changed   (prod: 0, test: 0, config: 0)
+blocks:   0 new, 0 modified   (0 lines)
+effort:   base 0.00   volume 0.00
+blast:    0 callers   (prod: 0, test: 0)   risk -
+
+key dimensions:
+  (not assessed)
+
+changed files:
+  (none)
+
+findings (0):
+  (none)
+
+tags:     technical:  -
+          functional: -
+
+summary:
+  (none)
+
+---
+model    tokens 0 in / 0 out   in 3s

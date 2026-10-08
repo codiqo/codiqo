@@ -11,9 +11,11 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.CharUtils;
 import org.junit.jupiter.api.Test;
 
+import com.google.common.base.Joiner;
+
 
 class EffectiveLineParserTest {
-    private static final String DIFF = String.join(StringUtils.LF,
+    private static final String DIFF = Joiner.on(StringUtils.LF).join(
             "diff --git a/A.java b/A.java",
             "--- a/A.java",
             "+++ b/A.java",

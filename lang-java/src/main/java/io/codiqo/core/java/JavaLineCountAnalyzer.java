@@ -1,6 +1,5 @@
 package io.codiqo.core.java;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -8,6 +7,8 @@ import java.util.Optional;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
+
+import com.google.common.collect.Lists;
 
 import lombok.Value;
 import lombok.experimental.UtilityClass;
@@ -98,7 +99,7 @@ public class JavaLineCountAnalyzer {
         return Optional.of(new BodyRange(loc.getStartLine(), loc.getStartColumn(), loc.getEndLine(), loc.getEndColumn()));
     }
     private static List<CommentSpan> collectContainedComments(ASTCompilationUnit root, int nodeBeginLine, int nodeBeginCol, int nodeEndLine, int nodeEndCol) {
-        List<CommentSpan> toReturn = new ArrayList<>();
+        List<CommentSpan> toReturn = Lists.newArrayList();
         for (JavaComment comment : root.getComments()) {
             FileLocation loc = comment.getReportLocation();
             int cBeginLine = loc.getStartLine();

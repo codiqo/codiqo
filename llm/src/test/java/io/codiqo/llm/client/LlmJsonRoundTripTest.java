@@ -28,11 +28,14 @@ import io.codiqo.llm.schema.SkipRequestResponse;
 import io.codiqo.llm.schema.TagConsolidationResponse;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.JsonNodeFactory;
+import tools.jackson.databind.node.ObjectNode;
 
 class LlmJsonRoundTripTest {
     private static final ObjectMapper REQUEST = LlmJson.requestMapper();
     private static final ObjectMapper RESPONSE = LlmJson.responseMapper();
     private static final ObjectMapper OLLAMA = new ObjectMapper();
+    private static final JsonNodeFactory JSON = JsonNodeFactory.instance;
 
     static Stream<Arguments> documents() throws Exception {
         return Stream.of(
@@ -56,31 +59,37 @@ class LlmJsonRoundTripTest {
     }
     @Test
     void aModelAnswerIsReadTheWayTheClientReadsIt() throws Exception {
-        String answer = """
-                ```json
-                {
-                  "score": 42.5,
-                  "changeClassification": "medium",
-                  "taskTypes": ["feature", "Bug_Fix", "SOMETHING_NEW"],
-                  "taskComplexity": 7,
-                  "riskAssessment": {"riskScore": 61, "riskLevel": "very_high"},
-                  "bugs": {
-                    "blocking": [{"type": "null_pointer", "title": "NPE on empty cart", "file": "src/main/java/a/Cart.java",
-                                  "line": 42, "confidence": "high", "source": "llm"}],
-                    "major": [],
-                    "minor": []
-                  },
-                  "effortBreakdown": {
-                    "diffClassification": {
-                      "movedPairs": ["src/A.java:10 -> src/B.java:12"],
-                      "perFile": [{"file": "src/A.java", "blockKinds": {"m1": "moved"},
-                                   "inPlaceModifyPairs": [{"deleted": 3, "added": 4}]}]
-                    }
-                  },
-                  "tags": {"technical": ["kafka"], "functional": ["checkout"]},
-                  "inventedByTheModel": {"anything": [1, 2, 3]}
-                }
-                ```""";
+        ObjectNode model = JSON.objectNode()
+                .put("score", 42.5)
+                .put("changeClassification", "medium")
+                .put("taskComplexity", 7);
+        model.putArray("taskTypes").add("feature").add("Bug_Fix").add("SOMETHING_NEW");
+        model.putObject("riskAssessment").put("riskScore", 61).put("riskLevel", "very_high");
+
+        ObjectNode bugs = model.putObject("bugs");
+        bugs.putArray("blocking").addObject()
+                .put("type", "null_pointer")
+                .put("title", "NPE on empty cart")
+                .put("file", "src/main/java/a/Cart.java")
+                .put("line", 42)
+                .put("confidence", "high")
+                .put("source", "llm");
+        bugs.putArray("major");
+        bugs.putArray("minor");
+
+        ObjectNode diffClassification = model.putObject("effortBreakdown").putObject("diffClassification");
+        diffClassification.putArray("movedPairs").add("src/A.java:10 -> src/B.java:12");
+        ObjectNode perFile = diffClassification.putArray("perFile").addObject().put("file", "src/A.java");
+        perFile.putObject("blockKinds").put("m1", "moved");
+        perFile.putArray("inPlaceModifyPairs").addObject().put("deleted", 3).put("added", 4);
+
+        ObjectNode tags = model.putObject("tags");
+        tags.putArray("technical").add("kafka");
+        tags.putArray("functional").add("checkout");
+        model.putObject("inventedByTheModel").putArray("anything").add(1).add(2).add(3);
+
+        /** a model fences its answer and mixes enum case; the reader must take it as the client receives it */
+        String answer = "```json\n" + model.toPrettyString() + "\n```";
 
         LlmScoringResponse response = LlmJson.readAnswer(answer, LlmScoringResponse.class);
 

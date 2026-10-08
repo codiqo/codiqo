@@ -4,8 +4,6 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.time.Duration;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -16,7 +14,6 @@ import java.util.function.Predicate;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.BooleanUtils;
-import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.time.StopWatch;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Repository;
@@ -28,18 +25,20 @@ import io.codiqo.api.code.DeclaredType;
 import io.codiqo.api.coverage.CodeBlockCoverage;
 import io.codiqo.api.cpd.CloneLocations;
 import io.codiqo.api.logging.Log;
-import io.codiqo.client.ApiClient;
 import io.codiqo.client.api.HotspotsApi;
 import io.codiqo.client.model.HotspotClassModel;
 import io.codiqo.client.model.HotspotSnapshotModel;
 import io.codiqo.client.model.HotspotTypeKind;
 import io.codiqo.submit.ApiRetry;
 import io.codiqo.submit.SubmissionContext;
+import io.codiqo.submit.auth.CodiqoApiClients;
+import io.codiqo.submit.auth.CodiqoCredential;
 import io.codiqo.submit.hotspots.GitChurn.FileChurn;
 import io.codiqo.submit.hotspots.HotspotRanker.RankedType;
 import io.codiqo.util.MemoryReport;
 import lombok.experimental.UtilityClass;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
+import com.google.common.collect.Lists;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.SerializationFeature;
 import tools.jackson.databind.json.JsonMapper;
@@ -49,13 +48,13 @@ import tools.jackson.databind.json.JsonMapper;
  */
 @UtilityClass
 public class HotspotSnapshots {
-    private static final String API_KEY_HEADER = "X-API-Key";
-
     /**
      * A shallow clone is skipped rather than ranked: file churn is measured from git history, and with that history
      * missing every class would look quiet, so the hotspot ranking would be meaningless.
+     *
+     * @param fixCommits asked for the fix commits of the recent window only when a snapshot is built
      */
-    public Optional<HotspotSnapshotModel> build(SubmissionContext ctx, Log log) throws IOException {
+    public Optional<HotspotSnapshotModel> build(SubmissionContext ctx, FixCommits.Source fixCommits, Log log) throws Exception {
         RunArgs args = ctx.getArgs();
         Optional<HotspotSnapshotModel> toReturn = Optional.empty();
 
@@ -65,7 +64,7 @@ public class HotspotSnapshots {
                 if (isShallow(repo)) {
                     log.warn("hotspots skipped: the repository is a shallow clone, so file churn cannot be measured — re-run with full history (fetch-depth: 0)");
                 } else {
-                    toReturn = Optional.of(snapshot(ctx, repo, log));
+                    toReturn = Optional.of(snapshot(ctx, repo, fixCommits.load(GitChurn.recentFrom(repo, args.getCommitId())), log));
                 }
             } else {
                 log.info("hotspots skipped for %s: the snapshot is built for %s, the commit the run started on", args.getCommitId(), args.getHotspotsCommitId());
@@ -73,14 +72,8 @@ public class HotspotSnapshots {
         }
         return toReturn;
     }
-    public void submit(String apiUrl, String apiKey, long connectTimeoutSeconds, long readTimeoutSeconds, String projectId, HotspotSnapshotModel snapshot, Log log) throws Exception {
-        ApiClient apiClient = new ApiClient();
-        apiClient.updateBaseUri(Strings.CS.removeEnd(apiUrl, "/"));
-        apiClient.setConnectTimeout(Duration.ofSeconds(connectTimeoutSeconds));
-        apiClient.setReadTimeout(Duration.ofSeconds(readTimeoutSeconds));
-        apiClient.setRequestInterceptor(builder -> builder.header(API_KEY_HEADER, apiKey));
-
-        HotspotsApi client = new HotspotsApi(apiClient);
+    public void submit(String apiUrl, CodiqoCredential credential, long connectTimeoutSeconds, long readTimeoutSeconds, String projectId, HotspotSnapshotModel snapshot, Log log) throws Exception {
+        HotspotsApi client = new HotspotsApi(CodiqoApiClients.newApiClient(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds));
         ApiRetry.call(log, "submitHotspots", apiUrl, () -> {
             client.submitHotspots(projectId, snapshot);
             return null;
@@ -100,7 +93,7 @@ public class HotspotSnapshots {
             log.info("hotspot snapshot written to " + file.getAbsolutePath());
         }
     }
-    private static HotspotSnapshotModel snapshot(SubmissionContext ctx, Repository repo, Log log) throws IOException {
+    private static HotspotSnapshotModel snapshot(SubmissionContext ctx, Repository repo, FixCommits fixCommits, Log log) throws IOException {
         StopWatch watch = StopWatch.createStarted();
         long heapBefore = MemoryReport.heapUsed();
         MemoryReport.resetHeapPeak();
@@ -108,13 +101,13 @@ public class HotspotSnapshots {
         IndexingSummary index = ctx.getIndex();
         Path workTree = ctx.getWorkTree();
 
-        Map<String, FileChurn> churn = GitChurn.collect(repo, args.getCommitId());
+        Map<String, FileChurn> churn = GitChurn.collect(repo, args.getCommitId(), fixCommits);
 
         List<DeclaredType> production = index.getTypes().stream().filter(Predicate.not(DeclaredType::isTest)).toList();
 
         List<RankedType> ranked = HotspotRanker.rank(production, index.getReferences(), type -> HotspotFindings.relative(workTree, type.getFile()), churn);
 
-        HotspotSnapshotModel toReturn = new HotspotSnapshotModel().commitSha(args.getCommitId()).classes(new ArrayList<>());
+        HotspotSnapshotModel toReturn = new HotspotSnapshotModel().commitSha(args.getCommitId()).classes(Lists.newArrayList());
         for (RankedType type : ranked) {
             toReturn.getClasses().add(classModel(ctx, type));
         }

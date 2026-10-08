@@ -1,0 +1,6 @@
+/*[- The agent instruction files ConventionGuidance read, each headed by its repository path. Nothing may follow the
+last tag, not even a newline: the budget is checked against this render as it is. -]*/[# th:each="file : ${files}"]### [(${file.heading})]
+
+[(${file.content})]
+
+[/]

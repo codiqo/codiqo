@@ -2,10 +2,10 @@ package io.codiqo.util;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.SynchronousQueue;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
+
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 
 import lombok.experimental.UtilityClass;
 
@@ -14,12 +14,7 @@ public class DaemonExecutors {
     private static final int KEEP_ALIVE_MINUTES = 1;
 
     public ExecutorService newCachedDaemonPool(String namePrefix) {
-        AtomicInteger counter = new AtomicInteger(1);
-        ThreadFactory threadFactory = runnable -> {
-            Thread thread = new Thread(runnable, namePrefix + "-" + counter.getAndIncrement());
-            thread.setDaemon(true);
-            return thread;
-        };
-        return new ThreadPoolExecutor(0, Integer.MAX_VALUE, KEEP_ALIVE_MINUTES, TimeUnit.MINUTES, new SynchronousQueue<>(), threadFactory);
+        return new ThreadPoolExecutor(0, Integer.MAX_VALUE, KEEP_ALIVE_MINUTES, TimeUnit.MINUTES, new SynchronousQueue<>(),
+                new ThreadFactoryBuilder().setNameFormat(namePrefix + "-%d").setDaemon(true).build());
     }
 }

@@ -13,7 +13,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -32,6 +31,7 @@ import org.eclipse.aether.repository.RemoteRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import com.google.api.client.http.HttpStatusCodes;
 import com.google.api.client.http.LowLevelHttpRequest;
 import com.google.api.client.http.LowLevelHttpResponse;
 import com.google.api.client.json.gson.GsonFactory;
@@ -39,6 +39,7 @@ import com.google.api.client.testing.http.MockHttpTransport;
 import com.google.api.client.testing.http.MockLowLevelHttpRequest;
 import com.google.api.client.testing.http.MockLowLevelHttpResponse;
 import com.google.api.services.artifactregistry.v1.ArtifactRegistry;
+import com.google.common.collect.Lists;
 
 class GoogleArtifactRegistryConnectorTest {
     private RecordingHttpTransport transport;
@@ -145,7 +146,7 @@ class GoogleArtifactRegistryConnectorTest {
     }
 
     private static final class RecordingHttpTransport extends MockHttpTransport {
-        private final List<String> urls = new ArrayList<>();
+        private final List<String> urls = Lists.newArrayList();
         private final AtomicInteger callCount = new AtomicInteger();
         private String body = "{}";
         private IOException failure;
@@ -178,7 +179,7 @@ class GoogleArtifactRegistryConnectorTest {
                         throw failure;
                     }
                     return new MockLowLevelHttpResponse()
-                            .setStatusCode(200)
+                            .setStatusCode(HttpStatusCodes.STATUS_CODE_OK)
                             .setContentType("application/json")
                             .setContent(body);
                 }
