@@ -100,7 +100,7 @@ public class VolumeScoreCalculator {
         double volumeScore = Math.pow(blockEffortSum, args.getVolumeExponent());
 
         List<CodeBlockEffort> codeBlockEfforts = applyAbuseSignals(initialEfforts, totalEffortRaw, globalCapApplied, maxDeviation);
-        List<FileEffort> fileEfforts = groupByFile(codeBlockEfforts, maxDeviation);
+        List<FileEffort> fileEfforts = groupByFile(codeBlockEfforts);
 
         int filesChanged = changeSummary.getTotalFilesChanged();
         double filesScopeMultiplier = 1.0;
@@ -213,7 +213,7 @@ public class VolumeScoreCalculator {
         double volumeScore = Math.pow(blockEffortSum, args.getVolumeExponent());
 
         List<CodeBlockEffort> codeBlockEfforts = applyAbuseSignals(rescaled, totalEffortRaw, globalCapApplied, maxDeviation);
-        List<FileEffort> fileEfforts = groupByFile(codeBlockEfforts, maxDeviation);
+        List<FileEffort> fileEfforts = groupByFile(codeBlockEfforts);
 
         double totalVolumeScore = volumeScore * original.getFilesScopeMultiplier();
         double baseEffort = totalVolumeScore;
@@ -763,7 +763,7 @@ public class VolumeScoreCalculator {
         return Pair.of(file, signature);
     }
     @VisibleForTesting
-    public static List<FileEffort> groupByFile(List<CodeBlockEffort> blockEfforts, double maxDeviation) {
+    public static List<FileEffort> groupByFile(List<CodeBlockEffort> blockEfforts) {
         if (CollectionUtils.isEmpty(blockEfforts)) {
             return Lists.newArrayList();
         }

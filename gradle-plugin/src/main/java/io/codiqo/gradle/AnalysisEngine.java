@@ -433,7 +433,7 @@ public class AnalysisEngine {
      */
     private static void reportHotspots(AnalysisRequest request, SubmissionContext ctx, Log log) {
         try {
-            Optional<HotspotSnapshotModel> snapshot = HotspotSnapshots.build(ctx, since -> fixCommits(request, ctx, since, log), log);
+            Optional<HotspotSnapshotModel> snapshot = HotspotSnapshots.build(ctx, since -> fixCommits(request, since, log), log);
             if (snapshot.isPresent()) {
                 HotspotSnapshots.write(ctx, snapshot.get(), log);
                 if (request.isSubmit()) {
@@ -452,7 +452,7 @@ public class AnalysisEngine {
         }
     }
     /** only a submitting run has a server to ask; any other judges every commit by its message */
-    private static FixCommits fixCommits(AnalysisRequest request, SubmissionContext ctx, Instant since, Log log) throws Exception {
+    private static FixCommits fixCommits(AnalysisRequest request, Instant since, Log log) throws Exception {
         FixCommits toReturn = FixCommits.byMessage();
         if (request.isSubmit()) {
             toReturn = FixCommits.fetch(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(), request.getReadTimeoutSeconds(),

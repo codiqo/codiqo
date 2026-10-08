@@ -1061,7 +1061,7 @@ class VolumeScoreCalculatorTest {
                 scaler, scaler, scaler, scaler,
                 0, 0, 0, 0, ADD_MULT, MODIFY_MULT, TEST_MULT, 0.25, false);
 
-        VolumeScoreCalculator.FileEffort fileEffort = VolumeScoreCalculator.groupByFile(efforts, 0.25).get(0);
+        VolumeScoreCalculator.FileEffort fileEffort = VolumeScoreCalculator.groupByFile(efforts).get(0);
         assertEquals(2, fileEffort.getBlocksFlaggedAsRatioOutlier());
         assertTrue(fileEffort.isFileFlaggedAsAbusive(),
                 "2 of 3 blocks are outliers → strict majority rule (count*2 > total) flags the file");
@@ -1078,7 +1078,7 @@ class VolumeScoreCalculatorTest {
                 scaler, scaler, scaler, scaler,
                 0, 0, 0, 0, ADD_MULT, MODIFY_MULT, TEST_MULT, 0.25, false);
 
-        VolumeScoreCalculator.FileEffort fileEffort = VolumeScoreCalculator.groupByFile(efforts, 0.25).get(0);
+        VolumeScoreCalculator.FileEffort fileEffort = VolumeScoreCalculator.groupByFile(efforts).get(0);
         assertEquals(1, fileEffort.getBlocksFlaggedAsRatioOutlier());
         assertFalse(fileEffort.isFileFlaggedAsAbusive(),
                 "1 of 3 outliers → no strict majority → file not flagged");
