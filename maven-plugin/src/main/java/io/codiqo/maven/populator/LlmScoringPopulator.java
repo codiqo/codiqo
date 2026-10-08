@@ -2,7 +2,6 @@ package io.codiqo.maven.populator;
 
 import java.time.Duration;
 import java.time.format.DateTimeFormatter;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -16,6 +15,8 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.maven.plugin.logging.Log;
+
+import com.google.common.collect.Maps;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisSubmissionModel;
@@ -181,7 +182,7 @@ public class LlmScoringPopulator implements SubmissionPopulator {
                 .build();
     }
     public static Map<String, List<DiagnosticModel>> extractCriticalViolations(AnalysisSubmissionModel submission) {
-        Map<String, List<DiagnosticModel>> toReturn = new HashMap<>();
+        Map<String, List<DiagnosticModel>> toReturn = Maps.newHashMap();
         if (Objects.nonNull(submission.getProject())) {
             for (ModuleModel module : CollectionUtils.emptyIfNull(submission.getProject().getModules())) {
                 ModuleQualityModel quality = module.getQuality();

@@ -2,9 +2,7 @@ package io.codiqo.llm;
 
 import static java.util.function.Predicate.not;
 
-import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -13,7 +11,12 @@ import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.math3.util.Precision;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.metrics.DriverScaler;
@@ -32,7 +35,6 @@ import lombok.Value;
 
 @RequiredArgsConstructor
 public class VolumeScoreCalculator {
-    private static final int ROUNDING_PRECISION = 2;
     private static final int CPD_ROUNDING_PRECISION = 1;
 
     private final RunArgs args;
@@ -127,19 +129,19 @@ public class VolumeScoreCalculator {
                 .methodCapQuantileTest(methodCapQuantileTest)
                 .constructorCapQuantileProd(constructorCapQuantileProd)
                 .constructorCapQuantileTest(constructorCapQuantileTest)
-                .sizeFactor(Precision.round(sizeFactor, ROUNDING_PRECISION))
-                .modifyMult(Precision.round(modifyMult, ROUNDING_PRECISION))
-                .addMult(Precision.round(addMult, ROUNDING_PRECISION))
+                .sizeFactor(Precision.round(sizeFactor, RunArgs.SCORE_PRECISION))
+                .modifyMult(Precision.round(modifyMult, RunArgs.SCORE_PRECISION))
+                .addMult(Precision.round(addMult, RunArgs.SCORE_PRECISION))
                 .linesChanged(changeSummary.getTotalLinesChanged())
                 .linesNew(linesNew)
                 .linesModified(linesModified)
                 .totalEffectiveStatements(totalEffectiveStatements)
                 .filesChanged(filesChanged)
-                .filesScopeMultiplier(Precision.round(filesScopeMultiplier, ROUNDING_PRECISION))
-                .blockEffortSum(Precision.round(blockEffortSum, ROUNDING_PRECISION))
-                .totalEffortRaw(Precision.round(totalEffortRaw, ROUNDING_PRECISION))
-                .totalBaseline(Precision.round(totalBaseline, ROUNDING_PRECISION))
-                .globalCap(Precision.round(globalCap, ROUNDING_PRECISION))
+                .filesScopeMultiplier(Precision.round(filesScopeMultiplier, RunArgs.SCORE_PRECISION))
+                .blockEffortSum(Precision.round(blockEffortSum, RunArgs.SCORE_PRECISION))
+                .totalEffortRaw(Precision.round(totalEffortRaw, RunArgs.SCORE_PRECISION))
+                .totalBaseline(Precision.round(totalBaseline, RunArgs.SCORE_PRECISION))
+                .globalCap(Precision.round(globalCap, RunArgs.SCORE_PRECISION))
                 .globalCapApplied(globalCapApplied)
                 .globalCapDryRun(capDryRun)
                 .codeBlocksModified(changeSummary.getCodeBlocksModified())
@@ -153,9 +155,9 @@ public class VolumeScoreCalculator {
                 .testClassesModified(changeSummary.getTestClassesModified())
                 .testClassesAdded(changeSummary.getTestClassesAdded())
                 .testFilesChanged(changeSummary.getTestFilesChanged())
-                .volumeScore(Precision.round(totalVolumeScore, ROUNDING_PRECISION))
+                .volumeScore(Precision.round(totalVolumeScore, RunArgs.SCORE_PRECISION))
                 .volumeExponent(args.getVolumeExponent())
-                .baseEffort(Precision.round(baseEffort, ROUNDING_PRECISION))
+                .baseEffort(Precision.round(baseEffort, RunArgs.SCORE_PRECISION))
                 .cpdEffectivePenalty(cpd.getEffectivePenalty())
                 .cpdCategory(cpd.getCategory())
                 .cpdRecommendedImpact(cpd.getRecommendedImpact())
@@ -172,12 +174,12 @@ public class VolumeScoreCalculator {
                 .fileEfforts(fileEfforts)
                 .build();
     }
-    public PreComputedScores recompute(PreComputedScores original, Map<String, Double> perFileEffectiveLineFactor, Map<String, Double> perFileDeletionFactor, Map<String, Double> perBlockCoeff, Map<String, Double> perBlockMovedFactor) {
+    public PreComputedScores recompute(PreComputedScores original, Map<String, Double> perFileEffectiveLineFactor, Map<String, Double> perFileDeletionFactor, Map<Pair<String, String>, Double> perBlockCoeff, Map<Pair<String, String>, Double> perBlockMovedFactor) {
         double maxDeviation = args.getDriverFactorMaxDeviation();
 
-        List<CodeBlockEffort> rescaled = new ArrayList<>(original.getCodeBlockEfforts().size());
+        List<CodeBlockEffort> rescaled = Lists.newArrayListWithCapacity(original.getCodeBlockEfforts().size());
         for (CodeBlockEffort cbe : original.getCodeBlockEfforts()) {
-            String key = blockKey(cbe.getFile(), cbe.getSignature());
+            Pair<String, String> key = blockKey(cbe.getFile(), cbe.getSignature());
             double factor = perFileEffectiveLineFactor.getOrDefault(cbe.getFile(), 1.0);
             if (cbe.getOperation() == LlmScoringRequest.Operation.DELETE) {
                 factor = perFileDeletionFactor.getOrDefault(cbe.getFile(), 1.0);
@@ -224,11 +226,11 @@ public class VolumeScoreCalculator {
         return original.toBuilder()
                 .linesNew(sumScaledLines(codeBlockEfforts, LlmScoringRequest.Operation.NEW))
                 .linesModified(sumScaledLines(codeBlockEfforts, LlmScoringRequest.Operation.MODIFY))
-                .blockEffortSum(Precision.round(blockEffortSum, ROUNDING_PRECISION))
-                .totalEffortRaw(Precision.round(totalEffortRaw, ROUNDING_PRECISION))
+                .blockEffortSum(Precision.round(blockEffortSum, RunArgs.SCORE_PRECISION))
+                .totalEffortRaw(Precision.round(totalEffortRaw, RunArgs.SCORE_PRECISION))
                 .globalCapApplied(globalCapApplied)
-                .volumeScore(Precision.round(totalVolumeScore, ROUNDING_PRECISION))
-                .baseEffort(Precision.round(baseEffort, ROUNDING_PRECISION))
+                .volumeScore(Precision.round(totalVolumeScore, RunArgs.SCORE_PRECISION))
+                .baseEffort(Precision.round(baseEffort, RunArgs.SCORE_PRECISION))
                 .totalEffectiveStatements(totalEffectiveStatements)
                 .codeBlockEfforts(codeBlockEfforts)
                 .fileEfforts(fileEfforts)
@@ -280,9 +282,9 @@ public class VolumeScoreCalculator {
         return new CpdPreComputed(effectivePenalty, category, impact, total, introduced, testOnly);
     }
     public StaticAnalysisPreComputed calculateStaticAnalysisPenalty(LlmScoringRequest request) {
-        Set<String> introducedProdErrorRules = new HashSet<>();
-        Set<String> introducedTestErrorRules = new HashSet<>();
-        Set<String> preExistingErrorRules = new HashSet<>();
+        Set<String> introducedProdErrorRules = Sets.newHashSet();
+        Set<String> introducedTestErrorRules = Sets.newHashSet();
+        Set<String> preExistingErrorRules = Sets.newHashSet();
         if (Objects.nonNull(request.getCodeBlockChanges())) {
             for (CodeBlockChange codeBlock : request.getCodeBlockChanges()) {
                 if (Objects.nonNull(codeBlock.getDiagnostics())) {
@@ -330,9 +332,10 @@ public class VolumeScoreCalculator {
                     args.getStaticAnalysisIntroducedPenalty() * effectiveIntroduced +
                             args.getStaticAnalysisPreExistingPenalty() * preExistingCount);
         }
-        return new StaticAnalysisPreComputed(totalCount, introducedCount, testOnlyIntroducedCount, preExistingCount, category, Precision.round(impact, ROUNDING_PRECISION));
+        return new StaticAnalysisPreComputed(totalCount, introducedCount, testOnlyIntroducedCount, preExistingCount, category, Precision.round(impact, RunArgs.SCORE_PRECISION));
     }
-    static List<CodeBlockEffort> calculateCodeBlockEfforts(
+    @VisibleForTesting
+    public static List<CodeBlockEffort> calculateCodeBlockEfforts(
             List<CodeBlockChange> codeBlocks,
             DriverScaler methodScalerProd,
             DriverScaler methodScalerTest,
@@ -348,10 +351,10 @@ public class VolumeScoreCalculator {
             double maxDeviation,
             boolean degraded) {
         if (CollectionUtils.isEmpty(codeBlocks)) {
-            return new ArrayList<>();
+            return Lists.newArrayList();
         }
 
-        List<CodeBlockEffort> toReturn = new ArrayList<>();
+        List<CodeBlockEffort> toReturn = Lists.newArrayList();
         for (CodeBlockChange block : codeBlocks) {
             if (block.isDelete()) {
                 continue;
@@ -418,17 +421,17 @@ public class VolumeScoreCalculator {
                     .nonCommentCodeLines(block.getNonCommentCodeLines())
                     .commentLines(block.getCommentLines())
                     .effectiveLinesChanged(block.getTotalLinesChanged())
-                    .changeRatio(Precision.round(changeRatio, ROUNDING_PRECISION))
-                    .scaledLines(Precision.round(projectedLines, ROUNDING_PRECISION))
-                    .scaledNcss(Precision.round(projectedNcss, ROUNDING_PRECISION))
-                    .scaledInvocations(Precision.round(projectedInvocations, ROUNDING_PRECISION))
+                    .changeRatio(Precision.round(changeRatio, RunArgs.SCORE_PRECISION))
+                    .scaledLines(Precision.round(projectedLines, RunArgs.SCORE_PRECISION))
+                    .scaledNcss(Precision.round(projectedNcss, RunArgs.SCORE_PRECISION))
+                    .scaledInvocations(Precision.round(projectedInvocations, RunArgs.SCORE_PRECISION))
                     .driverScore(driverScore)
                     .cappedStatements(cappedStatements)
                     .effort(effort)
                     .bucketBaseline(bucketBaseline)
                     .isTest(block.isTest())
-                    .blockRatioDeviationNcss(Precision.round(deviationNcss, ROUNDING_PRECISION))
-                    .blockRatioDeviationInvocations(Precision.round(deviationInvocations, ROUNDING_PRECISION))
+                    .blockRatioDeviationNcss(Precision.round(deviationNcss, RunArgs.SCORE_PRECISION))
+                    .blockRatioDeviationInvocations(Precision.round(deviationInvocations, RunArgs.SCORE_PRECISION))
                     .blockRatioOutlier(ratioOutlier)
                     .bodyStartLine(block.getBodyStartLine())
                     .bodyEndLine(block.getBodyEndLine())
@@ -442,12 +445,12 @@ public class VolumeScoreCalculator {
      * count alone: one synthetic block per file weighted by the config multiplier. The LLM diff
      * classification later rescales these in recompute, collapsing cosmetic and in-place churn.
      */
-    static List<CodeBlockEffort> calculateConfigFileEfforts(List<FileChange> fileChanges, double modifyMult, double configMult) {
+    private static List<CodeBlockEffort> calculateConfigFileEfforts(List<FileChange> fileChanges, double modifyMult, double configMult) {
         if (CollectionUtils.isEmpty(fileChanges)) {
-            return new ArrayList<>();
+            return Lists.newArrayList();
         }
 
-        List<CodeBlockEffort> toReturn = new ArrayList<>();
+        List<CodeBlockEffort> toReturn = Lists.newArrayList();
         for (FileChange fc : fileChanges) {
             if (BooleanUtils.negate(fc.isConfig())) {
                 continue;
@@ -495,13 +498,14 @@ public class VolumeScoreCalculator {
      * parsed one still credits its unparsed files. Pure-deletion files (no added line) carry no code and
      * are priced by calculateDeletionOnlyFileEfforts instead.
      */
-    static List<CodeBlockEffort> calculateDegradedSourceFileEfforts(List<FileChange> fileChanges, Set<String> scoredCodeFiles,
+    @VisibleForTesting
+    public static List<CodeBlockEffort> calculateDegradedSourceFileEfforts(List<FileChange> fileChanges, Set<String> scoredCodeFiles,
             double addMult, double modifyMult, double testMult) {
         if (CollectionUtils.isEmpty(fileChanges)) {
-            return new ArrayList<>();
+            return Lists.newArrayList();
         }
 
-        List<CodeBlockEffort> toReturn = new ArrayList<>();
+        List<CodeBlockEffort> toReturn = Lists.newArrayList();
         for (FileChange fc : fileChanges) {
             boolean structuredSourceAddition = BooleanUtils.and(new boolean[] {
                     BooleanUtils.negate(fc.isConfig()),
@@ -549,18 +553,19 @@ public class VolumeScoreCalculator {
      * excluded. cosmetic/moved deletions are discounted later by the per-file diff-classification factor
      * in recompute, exactly as for real blocks.
      */
-    static List<CodeBlockEffort> calculateDeletionOnlyFileEfforts(List<FileChange> fileChanges, Set<String> scoredCodeFiles,
+    @VisibleForTesting
+    public static List<CodeBlockEffort> calculateDeletionOnlyFileEfforts(List<FileChange> fileChanges, Set<String> scoredCodeFiles,
             DriverScaler methodScalerProd, DriverScaler methodScalerTest,
             double modifyMult, double testMult, double deleteRewardWeight, boolean degraded,
             int methodCapQuantileProd, int methodCapQuantileTest, double maxQuantileUnits) {
         if (BooleanUtils.or(new boolean[] { deleteRewardWeight <= 0.0, CollectionUtils.isEmpty(fileChanges) })) {
-            return new ArrayList<>();
+            return Lists.newArrayList();
         }
 
         double deletionScale = deletionCeilingScale(fileChanges, scoredCodeFiles, methodScalerProd, methodScalerTest,
                 degraded, methodCapQuantileProd, methodCapQuantileTest, maxQuantileUnits);
 
-        List<CodeBlockEffort> toReturn = new ArrayList<>();
+        List<CodeBlockEffort> toReturn = Lists.newArrayList();
         for (FileChange fc : fileChanges) {
             if (BooleanUtils.negate(isDeletionOnly(fc, scoredCodeFiles))) {
                 continue;
@@ -678,11 +683,11 @@ public class VolumeScoreCalculator {
         }
         return DriverScore.forModify(scaler, fc.getLinesDeleted(), 0);
     }
-    static List<CodeBlockEffort> applyAbuseSignals(List<CodeBlockEffort> initialEfforts, double totalEffortRaw, boolean globalCapApplied, double maxDeviation) {
+    private static List<CodeBlockEffort> applyAbuseSignals(List<CodeBlockEffort> initialEfforts, double totalEffortRaw, boolean globalCapApplied, double maxDeviation) {
         if (CollectionUtils.isEmpty(initialEfforts)) {
             return initialEfforts;
         }
-        List<CodeBlockEffort> toReturn = new ArrayList<>(initialEfforts.size());
+        List<CodeBlockEffort> toReturn = Lists.newArrayListWithCapacity(initialEfforts.size());
         for (CodeBlockEffort cbe : initialEfforts) {
             double effortShare = totalEffortRaw > 0 ? cbe.getEffort() / totalEffortRaw : 0.0;
             boolean globalCapDriver = globalCapApplied && effortShare > maxDeviation;
@@ -754,12 +759,13 @@ public class VolumeScoreCalculator {
         double ratio = (double) block.getTotalLinesChanged() / block.getBodyCodeLines();
         return Math.min(ratio, 1.0);
     }
-    public static String blockKey(String file, String signature) {
-        return file + "\0" + signature;
+    public static Pair<String, String> blockKey(String file, String signature) {
+        return Pair.of(file, signature);
     }
-    static List<FileEffort> groupByFile(List<CodeBlockEffort> blockEfforts, double maxDeviation) {
+    @VisibleForTesting
+    public static List<FileEffort> groupByFile(List<CodeBlockEffort> blockEfforts, double maxDeviation) {
         if (CollectionUtils.isEmpty(blockEfforts)) {
-            return new ArrayList<>();
+            return Lists.newArrayList();
         }
         Map<String, List<CodeBlockEffort>> byFile = blockEfforts.stream().collect(Collectors.groupingBy(CodeBlockEffort::getFile, Collectors.toList()));
 
@@ -829,9 +835,9 @@ public class VolumeScoreCalculator {
         StaticAnalysisCategory staticAnalysisCategory;
         double staticAnalysisRecommendedImpact;
         @Builder.Default
-        List<CodeBlockEffort> codeBlockEfforts = new ArrayList<>();
+        List<CodeBlockEffort> codeBlockEfforts = Lists.newArrayList();
         @Builder.Default
-        List<FileEffort> fileEfforts = new ArrayList<>();
+        List<FileEffort> fileEfforts = Lists.newArrayList();
     }
 
     @Value

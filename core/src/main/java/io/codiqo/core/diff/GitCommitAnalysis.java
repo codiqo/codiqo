@@ -7,9 +7,11 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Supplier;
-import java.util.LinkedHashSet;
-import java.util.ArrayList;
 import java.util.stream.Collectors;
+
+import com.google.common.base.Suppliers;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.coverage.ExcludedCoverageClass;
@@ -17,7 +19,6 @@ import io.codiqo.api.cpd.CopyPasteDetectionSummary;
 import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.diff.FileAnalysis;
-import io.codiqo.util.Lazy;
 import lombok.Data;
 
 @Data
@@ -30,17 +31,17 @@ public class GitCommitAnalysis implements CommitAnalysis {
     private String committer;
     private String committerEmail;
     private Date commitTimestamp;
-    private List<String> parentIds = new ArrayList<>();
+    private List<String> parentIds = Lists.newArrayList();
     private boolean historyIncomplete;
-    private List<String> branches = new ArrayList<>();
+    private List<String> branches = Lists.newArrayList();
     private boolean mergeCommit;
     private boolean revertCommit;
     private String revertedCommitId;
     private int filesChanged;
-    private Set<FileAnalysis> files = new LinkedHashSet<>();
-    private List<CopyPasteDetectionSummary> cpd = new ArrayList<>();
-    private List<ExcludedCoverageClass> excludedCoverageClasses = new ArrayList<>();
-    private final Supplier<Set<File>> destinations = Lazy.of(
+    private Set<FileAnalysis> files = Sets.newLinkedHashSet();
+    private List<CopyPasteDetectionSummary> cpd = Lists.newArrayList();
+    private List<ExcludedCoverageClass> excludedCoverageClasses = Lists.newArrayList();
+    private final Supplier<Set<File>> destinations = Suppliers.memoize(
             () -> getFiles().stream().map(FileAnalysis::getFile).collect(Collectors.toUnmodifiableSet()));
 
     @Override

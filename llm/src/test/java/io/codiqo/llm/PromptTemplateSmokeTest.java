@@ -12,7 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
-import java.util.ArrayList;
+import java.util.Map;
 
 import org.apache.commons.lang3.StringUtils;
 import org.eclipse.jgit.api.Git;
@@ -21,6 +21,9 @@ import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.google.common.base.Joiner;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
@@ -33,8 +36,11 @@ import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
 import io.codiqo.llm.schema.LlmScoringRequest.FileChange;
 import io.codiqo.llm.schema.LlmScoringRequest.FileChangeType;
 import io.codiqo.llm.schema.LlmScoringRequest.Operation;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 class PromptTemplateSmokeTest {
+    private static final JsonMapper MAPPER = JsonMapper.builder().build();
     private static final Log NOOP_LOG = NoopLog.INSTANCE;
 
     @Test
@@ -69,7 +75,7 @@ class PromptTemplateSmokeTest {
                         .codeBlocksModified(1)
                         .codeBlocksAdded(0)
                         .build())
-                .fileChanges(new ArrayList<>(List.of(eligible, ineligible)))
+                .fileChanges(Lists.newArrayList(List.of(eligible, ineligible)))
                 .codeBlockChanges(Collections.emptyList())
                 .build();
 
@@ -80,6 +86,29 @@ class PromptTemplateSmokeTest {
         assertTrue(rendered.contains("Eligible files"), "table header missing");
         assertTrue(rendered.contains("| src/main/java/Foo.java | 15 | 11 |"), "eligible file row missing");
         assertFalse(rendered.contains("| src/main/resources/application.yaml | 3 | 1 |"), "ineligible file leaked into the table");
+    }
+    /** the scoring prompts move every score, so a render with tags, guidance and one changed file is pinned whole */
+    @Test
+    void theScoringPromptsAreRenderedExactly() throws Exception {
+        ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
+        PromptContext tagged = PromptContext.builder()
+                .args(new RunArgs())
+                .technicalTags(Lists.newArrayList("spring-boot", null, "kafka"))
+                .functionalTags(Lists.newArrayList())
+                .conventionGuidance("### AGENTS.md\n\nPrefer Optional over null returns.")
+                .build();
+        LlmScoringRequest request = LlmScoringRequest.builder()
+                .changeSummary(ChangeSummary.builder()
+                        .linesAdded(5).linesDeleted(1).totalLinesChanged(6).totalFilesChanged(1).codeBlocksModified(1).build())
+                .fileChanges(Lists.newArrayList(List.of(FileChange.builder()
+                        .path("Target.java").changeType(FileChangeType.MODIFIED).language("java")
+                        .linesAdded(5).linesDeleted(1).linesJustificationRequired(true).diff("dummy").build())))
+                .codeBlockChanges(Lists.newArrayList(List.of(CodeBlockChange.builder().name("target").operation(Operation.MODIFY).file("Target.java").build())))
+                .build();
+
+        GoldenText.assertMatches("system-prompt-tagged", builder.buildSystemPrompt(tagged));
+        GoldenText.assertMatches("system-prompt-untagged", builder.buildSystemPrompt(PromptContext.builder().args(new RunArgs()).build()));
+        GoldenText.assertMatches("user-message", builder.buildUserMessageWithScores(request, tagged).getMessage());
     }
     @Test
     void userPromptPreservesCallerMetadataAndCounts() {
@@ -97,29 +126,29 @@ class PromptTemplateSmokeTest {
 
         CodeBlockChange block = CodeBlockChange.builder()
                 .name("target").operation(Operation.MODIFY).file("Target.java")
-                .callers(new ArrayList<>(List.of(prod, prod2, testCaller)))
+                .callers(Lists.newArrayList(List.of(prod, prod2, testCaller)))
                 .build();
         LlmScoringRequest request = LlmScoringRequest.builder()
                 .changeSummary(ChangeSummary.builder()
                         .linesAdded(5).linesDeleted(1).totalLinesChanged(6).totalFilesChanged(1).codeBlocksModified(1).build())
-                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                .fileChanges(Lists.newArrayList(List.of(FileChange.builder()
                         .path("Target.java").changeType(FileChangeType.MODIFIED).language("java")
                         .linesAdded(5).linesDeleted(1).linesJustificationRequired(true).diff("dummy").build())))
-                .codeBlockChanges(new ArrayList<>(List.of(block)))
+                .codeBlockChanges(Lists.newArrayList(List.of(block)))
                 .build();
 
         String rendered = builder.buildUserMessageWithScores(request, PromptContext.builder().args(new RunArgs()).build()).getMessage();
-        String compact = rendered.replaceAll("\\s", "");
+        JsonNode sent = firstCodeBlock(rendered);
 
         assertTrue(rendered.contains("com.x.A.callerA"), "caller metadata (symbol) must be retained");
-        assertTrue(compact.contains("\"callerCount\":3"), "total caller count must be preserved");
-        assertTrue(compact.contains("\"productionCallerCount\":2"), "production caller count must be preserved");
+        assertEquals(3, sent.path("callerCount").asInt(), "total caller count must be preserved");
+        assertEquals(2, sent.path("productionCallerCount").asInt(), "production caller count must be preserved");
     }
     @Test
     void userPromptCapsCallersPerBlockAndStatesOmittedCount() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
 
-        List<CallerInfo> callers = new ArrayList<>();
+        List<CallerInfo> callers = Lists.newArrayList();
         for (int i = 0; i < 80; i++) {
             callers.add(CallerInfo.builder()
                     .callerMethod("caller" + i)
@@ -138,21 +167,21 @@ class PromptTemplateSmokeTest {
         LlmScoringRequest request = LlmScoringRequest.builder()
                 .changeSummary(ChangeSummary.builder()
                         .linesAdded(3).linesDeleted(1).totalLinesChanged(4).totalFilesChanged(1).codeBlocksModified(1).build())
-                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                .fileChanges(Lists.newArrayList(List.of(FileChange.builder()
                         .path("Hot.java").changeType(FileChangeType.MODIFIED).language("java")
                         .linesAdded(3).linesDeleted(1).linesJustificationRequired(true).diff("dummy").build())))
-                .codeBlockChanges(new ArrayList<>(List.of(block)))
+                .codeBlockChanges(Lists.newArrayList(List.of(block)))
                 .build();
 
         RunArgs args = new RunArgs();
         args.setLlmPromptTokenBudget(1_000_000);
         args.setLlmMaxCallersPerBlock(5);
         String rendered = builder.buildUserMessageWithScores(request, PromptContext.builder().args(args).build()).getMessage();
-        String compact = rendered.replaceAll("\\s", "");
+        JsonNode sent = firstCodeBlock(rendered);
 
         assertEquals(5, countOccurrences(rendered, "SIG_MARKER"), "only the per-block ceiling of callers should be listed in detail");
-        assertTrue(compact.contains("\"omittedCallerCount\":75"), "the number of omitted callers must be stated");
-        assertTrue(compact.contains("\"callerCount\":80"), "true caller count must survive the per-block cap");
+        assertEquals(75, sent.path("omittedCallerCount").asInt(), "the number of omitted callers must be stated");
+        assertEquals(80, sent.path("callerCount").asInt(), "true caller count must survive the per-block cap");
     }
     /**
      * production callers take the slots first and test callers fill whatever room is left. Dropping test
@@ -164,7 +193,7 @@ class PromptTemplateSmokeTest {
     void productionCallersFillTheCapFirstAndTestCallersTakeTheRemainingRoom() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
 
-        List<CallerInfo> callers = new ArrayList<>();
+        List<CallerInfo> callers = Lists.newArrayList();
         for (int i = 0; i < 8; i++) {
             callers.add(caller("test" + i, "pkg/Test" + i + ".java", "TEST_MARKER", true));
         }
@@ -172,12 +201,12 @@ class PromptTemplateSmokeTest {
         callers.add(caller("prod1", "pkg/B.java", "PROD_MARKER", false));
 
         String rendered = renderWithCallers(builder, callers, 5);
-        String compact = rendered.replaceAll("\\s", "");
+        JsonNode sent = firstCodeBlock(rendered);
 
         assertEquals(2, countOccurrences(rendered, "PROD_MARKER"), "every production caller must take a slot before any test caller");
         assertEquals(3, countOccurrences(rendered, "TEST_MARKER"), "test callers fill the room left over rather than being dropped");
-        assertTrue(compact.contains("\"omittedProductionCallerCount\":0"), "no production caller was left out");
-        assertTrue(compact.contains("\"callerCount\":10"), "the true caller count must survive the cap");
+        assertEquals(0, sent.path("omittedProductionCallerCount").asInt(), "no production caller was left out");
+        assertEquals(10, sent.path("callerCount").asInt(), "the true caller count must survive the cap");
     }
     /**
      * the flag the model reads to tell blast radius from test coverage. Jackson drops the "is" prefix, so the
@@ -188,12 +217,14 @@ class PromptTemplateSmokeTest {
     void eachCallerStatesWhetherItIsTestCodeUnderTheNameTheSystemPromptDocuments() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
 
-        String compact = renderWithCallers(builder, new ArrayList<>(List.of(
+        JsonNode sent = firstCodeBlock(renderWithCallers(builder, Lists.newArrayList(List.of(
                 caller("prod0", "pkg/A.java", "PROD_MARKER", false),
-                caller("test0", "pkg/ATest.java", "TEST_MARKER", true))), 64).replaceAll("\\s", "");
+                caller("test0", "pkg/ATest.java", "TEST_MARKER", true))), 64));
+        Map<String, Boolean> testCallerByMethod = Maps.newHashMap();
+        sent.path("callers").forEach(caller -> testCallerByMethod.put(caller.path("callerMethod").asString(), caller.path("testCaller").asBoolean()));
 
-        assertTrue(compact.contains("\"testCaller\":true"), "a test caller must be marked as one");
-        assertTrue(compact.contains("\"testCaller\":false"), "a production caller must be marked as one");
+        assertEquals(Map.of("prod0", false, "test0", true), testCallerByMethod,
+                "every caller states under 'testCaller' whether it is test code");
         assertTrue(builder.buildSystemPrompt(PromptContext.builder().args(new RunArgs()).build()).contains("**testCaller**"),
                 "the system prompt must document the flag under the name the payload actually uses");
     }
@@ -207,7 +238,7 @@ class PromptTemplateSmokeTest {
     void callerCapKeepsWholeClassesAheadOfScatteredSingletons() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
 
-        List<CallerInfo> callers = new ArrayList<>();
+        List<CallerInfo> callers = Lists.newArrayList();
         for (int i = 0; i < 10; i++) {
             callers.add(caller("lone" + i, "pkg/Lone" + i + ".java", "LONE_MARKER", false));
         }
@@ -229,7 +260,7 @@ class PromptTemplateSmokeTest {
     void theMostCoupledCallerKeepsItsSlotAgainstAConcentratedClassOfWeakOnes() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
 
-        List<CallerInfo> callers = new ArrayList<>();
+        List<CallerInfo> callers = Lists.newArrayList();
         for (int i = 0; i < 6; i++) {
             callers.add(caller("weak" + i, "pkg/Util.java", "WEAK_MARKER", false));
         }
@@ -260,10 +291,10 @@ class PromptTemplateSmokeTest {
         LlmScoringRequest request = LlmScoringRequest.builder()
                 .changeSummary(ChangeSummary.builder()
                         .linesAdded(3).linesDeleted(1).totalLinesChanged(4).totalFilesChanged(1).codeBlocksModified(1).build())
-                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                .fileChanges(Lists.newArrayList(List.of(FileChange.builder()
                         .path("Hot.java").changeType(FileChangeType.MODIFIED).language("java")
                         .linesAdded(3).linesDeleted(1).linesJustificationRequired(true).diff("dummy").build())))
-                .codeBlockChanges(new ArrayList<>(List.of(block)))
+                .codeBlockChanges(Lists.newArrayList(List.of(block)))
                 .build();
 
         RunArgs args = new RunArgs();
@@ -274,7 +305,7 @@ class PromptTemplateSmokeTest {
     void userPromptDescendsCallerCapUnderTokenBudget() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
 
-        List<CallerInfo> callers = new ArrayList<>();
+        List<CallerInfo> callers = Lists.newArrayList();
         for (int i = 0; i < 80; i++) {
             callers.add(CallerInfo.builder()
                     .callerMethod("caller" + i)
@@ -293,10 +324,10 @@ class PromptTemplateSmokeTest {
         LlmScoringRequest request = LlmScoringRequest.builder()
                 .changeSummary(ChangeSummary.builder()
                         .linesAdded(3).linesDeleted(1).totalLinesChanged(4).totalFilesChanged(1).codeBlocksModified(1).build())
-                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                .fileChanges(Lists.newArrayList(List.of(FileChange.builder()
                         .path("Hot.java").changeType(FileChangeType.MODIFIED).language("java")
                         .linesAdded(3).linesDeleted(1).linesJustificationRequired(true).diff("dummy").build())))
-                .codeBlockChanges(new ArrayList<>(List.of(block)))
+                .codeBlockChanges(Lists.newArrayList(List.of(block)))
                 .build();
 
         RunArgs args = new RunArgs();
@@ -306,13 +337,13 @@ class PromptTemplateSmokeTest {
 
         int retained = countOccurrences(rendered, "SIG_MARKER");
         assertTrue(retained >= 1 && retained < 80, "budget guard must descend the caller cap below the ceiling, retained=" + retained);
-        assertTrue(rendered.replaceAll("\\s", "").contains("\"callerCount\":80"), "true caller count must survive the budget descent");
+        assertEquals(80, firstCodeBlock(rendered).path("callerCount").asInt(), "true caller count must survive the budget descent");
     }
     @Test
     void promptTokenBudgetIsBoundedByConfiguredNumCtx() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
 
-        List<CallerInfo> callers = new ArrayList<>();
+        List<CallerInfo> callers = Lists.newArrayList();
         for (int i = 0; i < 80; i++) {
             callers.add(CallerInfo.builder()
                     .callerMethod("caller" + i)
@@ -331,10 +362,10 @@ class PromptTemplateSmokeTest {
         LlmScoringRequest request = LlmScoringRequest.builder()
                 .changeSummary(ChangeSummary.builder()
                         .linesAdded(3).linesDeleted(1).totalLinesChanged(4).totalFilesChanged(1).codeBlocksModified(1).build())
-                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                .fileChanges(Lists.newArrayList(List.of(FileChange.builder()
                         .path("Hot.java").changeType(FileChangeType.MODIFIED).language("java")
                         .linesAdded(3).linesDeleted(1).linesJustificationRequired(true).diff("dummy").build())))
-                .codeBlockChanges(new ArrayList<>(List.of(block)))
+                .codeBlockChanges(Lists.newArrayList(List.of(block)))
                 .build();
 
         /**
@@ -368,7 +399,7 @@ class PromptTemplateSmokeTest {
     void windowSmallerThanReserveTrimsAllCallers() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
 
-        List<CallerInfo> callers = new ArrayList<>();
+        List<CallerInfo> callers = Lists.newArrayList();
         for (int i = 0; i < 80; i++) {
             callers.add(CallerInfo.builder()
                     .callerMethod("caller" + i)
@@ -386,10 +417,10 @@ class PromptTemplateSmokeTest {
         LlmScoringRequest request = LlmScoringRequest.builder()
                 .changeSummary(ChangeSummary.builder()
                         .linesAdded(3).linesDeleted(1).totalLinesChanged(4).totalFilesChanged(1).codeBlocksModified(1).build())
-                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                .fileChanges(Lists.newArrayList(List.of(FileChange.builder()
                         .path("Hot.java").changeType(FileChangeType.MODIFIED).language("java")
                         .linesAdded(3).linesDeleted(1).linesJustificationRequired(true).diff("dummy").build())))
-                .codeBlockChanges(new ArrayList<>(List.of(block)))
+                .codeBlockChanges(Lists.newArrayList(List.of(block)))
                 .build();
 
         /**
@@ -411,7 +442,7 @@ class PromptTemplateSmokeTest {
         LlmScoringRequest request = LlmScoringRequest.builder()
                 .changeSummary(ChangeSummary.builder()
                         .linesAdded(400).linesDeleted(0).totalLinesChanged(400).totalFilesChanged(1).build())
-                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                .fileChanges(Lists.newArrayList(List.of(FileChange.builder()
                         .path("Big.java").changeType(FileChangeType.MODIFIED).language("java")
                         .linesAdded(400).linesDeleted(0).linesJustificationRequired(true).diff(diff).build())))
                 .codeBlockChanges(Collections.emptyList())
@@ -438,7 +469,7 @@ class PromptTemplateSmokeTest {
         LlmScoringRequest request = LlmScoringRequest.builder()
                 .changeSummary(ChangeSummary.builder()
                         .linesAdded(400).linesDeleted(0).totalLinesChanged(400).totalFilesChanged(1).build())
-                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                .fileChanges(Lists.newArrayList(List.of(FileChange.builder()
                         .path("Big.java").changeType(FileChangeType.MODIFIED).language("java")
                         .linesAdded(400).linesDeleted(0).linesJustificationRequired(true).diff(diff).build())))
                 .codeBlockChanges(Collections.emptyList())
@@ -457,7 +488,7 @@ class PromptTemplateSmokeTest {
         LlmScoringRequest request = LlmScoringRequest.builder()
                 .changeSummary(ChangeSummary.builder()
                         .linesAdded(13).linesDeleted(2).totalLinesChanged(15).totalFilesChanged(1).build())
-                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                .fileChanges(Lists.newArrayList(List.of(FileChange.builder()
                         .path("Foo.java").changeType(FileChangeType.MODIFIED).language("java")
                         .linesAdded(13).linesDeleted(2).linesJustificationRequired(true).diff("dummy").build())))
                 .codeBlockChanges(Collections.emptyList())
@@ -489,7 +520,7 @@ class PromptTemplateSmokeTest {
         LlmScoringRequest request = LlmScoringRequest.builder()
                 .changeSummary(ChangeSummary.builder()
                         .linesAdded(10).linesDeleted(0).totalLinesChanged(10).totalFilesChanged(1).build())
-                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                .fileChanges(Lists.newArrayList(List.of(FileChange.builder()
                         .path("Foo.java").changeType(FileChangeType.ADDED).language("java")
                         .linesAdded(10).linesDeleted(0).linesJustificationRequired(true).diff("dummy").build())))
                 .codeBlockChanges(Collections.emptyList())
@@ -514,7 +545,7 @@ class PromptTemplateSmokeTest {
     @Test
     void userPromptRendersSlimMovedCandidateTable() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
-        String moveDiff = String.join(StringUtils.LF,
+        String moveDiff = Joiner.on(StringUtils.LF).join(
                 "--- a/Foo.java",
                 "+++ b/Foo.java",
                 "@@ -10,3 +10,1 @@",
@@ -541,7 +572,7 @@ class PromptTemplateSmokeTest {
                         .totalLinesChanged(2)
                         .totalFilesChanged(1)
                         .build())
-                .fileChanges(new ArrayList<>(List.of(fc)))
+                .fileChanges(Lists.newArrayList(List.of(fc)))
                 .codeBlockChanges(Collections.emptyList())
                 .build();
 
@@ -698,7 +729,7 @@ class PromptTemplateSmokeTest {
         FinalScoreCalculator.ValidationFailure unknownDeleted = new FinalScoreCalculator.ValidationFailure(
                 "Foo.java", FinalScoreCalculator.FailureReason.UNKNOWN_DELETED_LINE,
                 List.of("95"), List.of("94", "97"));
-        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator.ValidationReport(new ArrayList<>(List.of(unknownBlock, unknownDeleted)));
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator.ValidationReport(Lists.newArrayList(List.of(unknownBlock, unknownDeleted)));
 
         String rendered = builder.buildValidationFeedback(report);
 
@@ -715,7 +746,7 @@ class PromptTemplateSmokeTest {
     @Test
     void userPromptAnnotatesDiffLineNumbersAndRestoresOriginal() {
         ThymeleafPromptBuilder builder = new ThymeleafPromptBuilder(new RunArgs(), NOOP_LOG);
-        String diff = String.join(StringUtils.LF,
+        String diff = Joiner.on(StringUtils.LF).join(
                 "--- a/Foo.java",
                 "+++ b/Foo.java",
                 "@@ -10,3 +10,3 @@",
@@ -738,7 +769,7 @@ class PromptTemplateSmokeTest {
                         .totalLinesChanged(2)
                         .totalFilesChanged(1)
                         .build())
-                .fileChanges(new ArrayList<>(List.of(fileChange)))
+                .fileChanges(Lists.newArrayList(List.of(fileChange)))
                 .codeBlockChanges(Collections.emptyList())
                 .build();
 
@@ -754,13 +785,18 @@ class PromptTemplateSmokeTest {
         FinalScoreCalculator.ValidationFailure unknownAdded = new FinalScoreCalculator.ValidationFailure(
                 "Foo.java", FinalScoreCalculator.FailureReason.UNKNOWN_ADDED_LINE,
                 List.of("281", "282"), List.of("288", "290", "292"));
-        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator.ValidationReport(new ArrayList<>(List.of(unknownAdded)));
+        FinalScoreCalculator.ValidationReport report = new FinalScoreCalculator.ValidationReport(Lists.newArrayList(List.of(unknownAdded)));
 
         String rendered = builder.buildValidationFeedback(report);
 
         assertTrue(rendered.contains("281, 282"), "offending numbers missing from feedback");
         assertTrue(rendered.contains("288, 290, 292"), "valid numbers missing from feedback");
         assertTrue(rendered.contains("+N|"), "feedback must point the model at the number prefixes");
+    }
+    /** the first code block of the request JSON the user message carries, read back the way the model receives it */
+    private static JsonNode firstCodeBlock(String rendered) {
+        String requestJson = StringUtils.substringBetween(StringUtils.substringAfter(rendered, "## Full Request Data (JSON)"), "```json", "```");
+        return MAPPER.readTree(requestJson).path("codeBlockChanges").path(0);
     }
     private static int countOccurrences(String haystack, String needle) {
         int count = 0;
@@ -781,7 +817,7 @@ class PromptTemplateSmokeTest {
         return LlmScoringRequest.builder()
                 .changeSummary(ChangeSummary.builder()
                         .linesAdded(5).linesDeleted(2).totalLinesChanged(7).totalFilesChanged(1).build())
-                .fileChanges(new ArrayList<>(List.of(FileChange.builder()
+                .fileChanges(Lists.newArrayList(List.of(FileChange.builder()
                         .path("Foo.java").changeType(FileChangeType.MODIFIED).language("java")
                         .linesAdded(5).linesDeleted(2).linesJustificationRequired(true).diff("dummy").build())))
                 .codeBlockChanges(Collections.emptyList())

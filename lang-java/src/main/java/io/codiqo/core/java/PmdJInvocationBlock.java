@@ -12,10 +12,11 @@ import org.apache.commons.lang3.BooleanUtils;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.commons.Method;
 
+import com.google.common.base.Suppliers;
+
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.JvmProjectSpec;
 import io.codiqo.lang.spec.JInvocationBlock;
-import io.codiqo.util.Lazy;
 import io.github.classgraph.ClassInfo;
 import io.github.classgraph.Resource;
 import lombok.EqualsAndHashCode;
@@ -34,7 +35,7 @@ import net.sourceforge.pmd.lang.java.symbols.JClassSymbol;
 import net.sourceforge.pmd.lang.java.types.JMethodSig;
 
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
-class PmdJInvocationBlock implements JInvocationBlock {
+public class PmdJInvocationBlock implements JInvocationBlock {
     private static final String METHOD_DESCRIPTOR_PREFIX = "(";
     private static final Set<Integer> CTOR_KEYWORD_KINDS = Set.of(JavaTokenKinds.THIS, JavaTokenKinds.SUPER);
 
@@ -51,7 +52,7 @@ class PmdJInvocationBlock implements JInvocationBlock {
     private Optional<String> artifactCoordinate = Optional.empty();
     private Optional<String> targetDescriptor = Optional.empty();
     private Optional<String> targetOwner = Optional.empty();
-    private final Supplier<FileLocation> nameLocation = Lazy.of(this::computeNameLocation);
+    private final Supplier<FileLocation> nameLocation = Suppliers.memoize(this::computeNameLocation);
 
     protected PmdJInvocationBlock(MethodUsage usage) {
         this.usage = Objects.requireNonNull(usage);

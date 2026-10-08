@@ -11,12 +11,9 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.apache.commons.collections4.MultiValuedMap;
-import org.apache.commons.collections4.multimap.HashSetValuedHashMap;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
@@ -24,6 +21,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import com.google.common.collect.HashMultimap;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Multimap;
 
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.RunArgs;
@@ -62,7 +63,7 @@ class SubmissionAssemblyFullDegradedTest {
         analysis = new StubAnalysis();
         ctx = SubmissionContext.create(args, index(), analysis, workTree, StubAnalysis.LOGS,
                 "group:artifact", "test", new ClientInfoModel());
-        ctx.getProjectModel().setModules(new ArrayList<>(List.of(module("a"))));
+        ctx.getProjectModel().setModules(Lists.newArrayList(List.of(module("a"))));
 
         ModuleQualityTracker tracker = ctx.trackerFor("a");
         tracker.addModuleStatements(120);
@@ -174,7 +175,7 @@ class SubmissionAssemblyFullDegradedTest {
         return toReturn;
     }
     private static IndexingSummary index() {
-        MultiValuedMap<File, CodeBlockInfo> blocks = new HashSetValuedHashMap<>();
+        Multimap<File, CodeBlockInfo> blocks = HashMultimap.create();
         return IndexingSummary.builder()
                 .projectRoot(new File("."))
                 .projects(List.of())

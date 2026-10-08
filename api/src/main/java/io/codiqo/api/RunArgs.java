@@ -11,11 +11,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -32,14 +29,19 @@ import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.IOCase;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.Range;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.eclipse.jgit.annotations.Nullable;
 import org.eclipse.jgit.lib.Repository;
 
+import com.google.common.base.CaseFormat;
+import com.google.common.base.Splitter;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
+
 import edu.umd.cs.findbugs.Priorities;
 import io.codiqo.util.JGit;
-import io.codiqo.util.Split;
 import lombok.Data;
 import lombok.ToString;
 import net.sourceforge.pmd.lang.rule.RulePriority;
@@ -81,6 +83,38 @@ import okhttp3.HttpUrl;
 public class RunArgs {
     public static final String DEFAULT_API_URL = "https://api.codiqo.io";
     public static final String DEFAULT_AUTH_URL = "https://codiqo.io";
+    /** the protected resource a browser login's token is bound to, the same one MCP clients sign in for */
+    public static final String DEFAULT_RESOURCE_URL = "https://mcp.codiqo.io/mcp";
+    /** the backend's OpenAI-compatible proxy, which local reviews call the organization's models through */
+    public static final String DEFAULT_LLM_PROXY_URL = "https://mcp.codiqo.io/v1";
+    /** the address every loopback server binds to and advertises: the review relay, OpenCode, the browser login's callback */
+    public static final String LOOPBACK_HOST = "127.0.0.1";
+    public static final int OLLAMA_PORT = 11434;
+    /** a local Ollama daemon's OpenAI-compatible endpoint; a review against it is called directly, with no credential */
+    public static final String DEFAULT_LOCAL_LLM_URL = loopbackUrl(OLLAMA_PORT).addPathSegment("v1").build().toString();
+    public static final Duration OAUTH_REQUEST_TIMEOUT = Duration.ofSeconds(30);
+    public static final Duration OAUTH_APPROVAL_TIMEOUT = Duration.ofMinutes(10);
+    /** an access token or a stored key counts as expired this long before it does, so it never lapses in flight */
+    public static final Duration CREDENTIAL_EXPIRY_HEADROOM = Duration.ofMinutes(1);
+    /**
+     * What an access token is assumed to live when the token answer omits {@code expires_in}, which RFC 6749 section
+     * 5.1 only recommends. Reading the absent field as zero made every token count as already expired, so every request
+     * refreshed and rotated the refresh token. Better Auth sends the field; this is a short, safe guess for a server that
+     * does not, so a token is renewed early rather than sent after it has lapsed.
+     */
+    public static final Duration OAUTH_ASSUMED_ACCESS_TOKEN_LIFETIME = Duration.ofMinutes(5);
+    public static final long UPLOAD_BATCH_BYTES = 4L * 1024 * 1024;
+    /** how much of a rejected review answer an error or a warning quotes: enough to tell prose from broken JSON */
+    public static final int REVIEW_ANSWER_PREVIEW = 512;
+    /** the agent turns of a local review: the coordinator's review and its repair round */
+    public static final int REVIEW_TURNS = 2;
+    /** the agent turns of a local review with triage: the review's two, then the triage and its repair round */
+    public static final int REVIEW_TURNS_WITH_TRIAGE = 4;
+
+    public static final int SCORE_PRECISION = 2;
+    /** the 0-10 scale of the quality dimensions, the architecture impact and the senior-review score */
+    public static final Range<Integer> SCORE_SCALE = Range.of(0, 10);
+    public static final Range<Integer> COMPLEXITY_SCALE = Range.of(1, 10);
 
     public static final int DEFAULT_NUM_CTX = 256 * 1024;
     /**
@@ -112,7 +146,6 @@ public class RunArgs {
             "windows-x86_64", "config_win");
     public static final Path JDT_SHARED_INDEX = FileSystems.getDefault().getPath(System.getProperty("user.home"), ".cache", "jdtls");
     private static final Pattern JDTLS_ARCHIVE_VERSION = Pattern.compile("jdt-language-server-(\\d+\\.\\d+\\.\\d+)-");
-    private static final Pattern CAMEL_HUMP = Pattern.compile("(?<=[a-z0-9])(?=[A-Z])");
 
     /**
      * The commit under analysis, or blank for an uncommitted-changes run against the working tree. Blank disables
@@ -163,14 +196,14 @@ public class RunArgs {
      * violations, so it flagged a legitimate test convention as error severity.
      */
     @Nullable
-    private List<String> pmdRules = new ArrayList<>(List.of(
+    private List<String> pmdRules = Lists.newArrayList(
             "category/java/bestpractices.xml",
             "codiqo/pmd/java-codestyle.xml",
             "category/java/design.xml",
             "category/java/errorprone.xml",
             "category/java/performance.xml",
             "category/java/multithreading.xml",
-            "category/java/security.xml"));
+            "category/java/security.xml");
 
     /**
      * SpotBugs <i>confidence</i> cut-off on the {@link Priorities} scale, where {@code 1} is most confident: a
@@ -357,7 +390,6 @@ public class RunArgs {
     @Nullable
     private Duration readTimeout = Duration.ofMinutes(1);
 
-    /** OkHttp dispatcher ceiling on in-flight requests for codiqo's HTTP client. */
     private int maxRequests = 256;
 
     /** OkHttp dispatcher ceiling on in-flight requests per host — the one that actually binds, since a run talks to few hosts. */
@@ -391,14 +423,14 @@ public class RunArgs {
 
     /** The reactor's modules, one {@link ProjectSpec} each. {@link #owner(File)} maps a changed path back to the module that owns it. */
     @Nullable
-    private transient List<ProjectSpec> projects = new ArrayList<>();
+    private transient List<ProjectSpec> projects = Lists.newArrayList();
 
     /**
      * Java agent jars attached to the language-server JVM. Lombok is added here so JDT resolves generated members
      * (builders, accessors) and call hierarchy does not stop dead at them.
      */
     @Nullable
-    private transient List<File> agents = new ArrayList<>();
+    private transient List<File> agents = Lists.newArrayList();
 
     /** The JGit repository under analysis; its work tree is the root every analyzed path is relative to. */
     @Nullable
@@ -410,7 +442,7 @@ public class RunArgs {
 
     /** Remote URLs recorded on the submission, normalised to URIs. This is how the backend identifies which project a submission belongs to. */
     @Nullable
-    private transient Set<String> remoteUrls = new HashSet<>();
+    private transient Set<String> remoteUrls = Sets.newHashSet();
 
     /**
      * API key for the OpenAI-compatible LLM endpoint. Also authenticates the web-search tool when
@@ -498,7 +530,7 @@ public class RunArgs {
      * other number. Combines with {@link #autoDiscoveryAgentInstructions}.
      */
     @Nullable
-    private List<String> llmConventionFiles = new ArrayList<>();
+    private List<String> llmConventionFiles = Lists.newArrayList();
 
     /**
      * Also pick up the well-known agent instruction locations (AGENTS.md, CLAUDE.md, Copilot, Cursor,
@@ -529,6 +561,66 @@ public class RunArgs {
      */
     @Nullable
     private Duration llmReadTimeout = Duration.ofMinutes(10);
+
+    /**
+     * Local review: run OpenCode agents on the commit next to the analysis and attach their bugs and token usage. Only
+     * the commit checked out as a clean HEAD is reviewed. The review fields are local to the run: none of them travels
+     * with the submission. The defaults are the pairing measured on real commits: a 270-file commit reviewed for about
+     * $0.50-0.60 and a mid-size one for about $0.15-0.30.
+     */
+    private transient boolean reviewEnabled;
+
+    /** Local review: also have the agents assess the commit (code-unit difficulty, summary, tags, task types, quality dimensions). */
+    private transient boolean reviewAssess;
+
+    /** Local review: after the build, have a fork of the coordinator session judge the PMD and SpotBugs findings on added lines. */
+    private transient boolean reviewTriage;
+
+    private transient String reviewExecutable = "opencode";
+
+    /** Local review: the OpenAI-compatible endpoint the agents call; the backend's proxy, or {@link #DEFAULT_LOCAL_LLM_URL}. */
+    private transient String reviewBaseUrl = DEFAULT_LLM_PROXY_URL;
+
+    /** Local review: the coordinator's model, which plans the review and writes the commit-level answer. */
+    private transient String reviewCoordinatorModel = "deepseek-v4.1-flash:cloud";
+
+    private transient String reviewReviewerModel = "glm-5.3-flash:cloud";
+
+    private transient int reviewCoordinatorSteps = 40;
+
+    /** Local review: tool steps a reviewer may take; 25 left a quarter of them without an answer on large commits once they also labelled code units. */
+    private transient int reviewReviewerSteps = 35;
+
+    /** Local review: reviewer tasks the coordinator may start, each a parallel sub-agent session. */
+    private transient int reviewMaxTasks = 8;
+
+    /** Local review: the reviewers' observations kept for the commit page; six per reviewer are asked for, and a review with many areas keeps the first of them. */
+    private transient int reviewMaxObservations = 24;
+
+    /**
+     * Local review: context window declared for both models. OpenCode compacts a conversation that reaches it; both
+     * default models serve 1M tokens, and declaring less keeps a runaway sub-agent from dragging a huge context through
+     * every later step.
+     */
+    private transient int reviewContextWindow = 200_000;
+
+    private transient int reviewOutputLimit = 32_768;
+
+    /** Local review: the whole review, coordinator and sub-agents together; a 270-file commit took 13-16 minutes. */
+    private transient Duration reviewTimeout = Duration.ofMinutes(30);
+
+    private transient Duration reviewStartupTimeout = Duration.ofSeconds(60);
+
+    /** Local review: retries of a call through the Codiqo proxy that failed on the way (a network error, a timeout, a 429 or 5xx). */
+    private transient int reviewRelayRetries = 3;
+
+    /** Local review: how long a call through the Codiqo proxy may take to start answering; a stream then runs as long as it streams. */
+    private transient Duration reviewRelayRequestTimeout = Duration.ofMinutes(5);
+
+    /** Local review: wait before the relay's first retry, doubled for each one after; a {@code Retry-After} answer wins. */
+    private transient Duration reviewRelayRetryBackoff = Duration.ofSeconds(2);
+
+    private transient Duration reviewRelayConnectTimeout = Duration.ofSeconds(30);
 
     /** Directory for the submission dump, the HTML report and the result YAML. Unset writes them to temp files, whose paths are logged. */
     @Nullable
@@ -612,7 +704,7 @@ public class RunArgs {
      * Base directories of the modules {@link #excludeProjects} dropped, recorded as the build tool resolves the
      * reactor so the indexer can skip those trees. Transient: derived from {@link #excludeProjects}, never an input.
      */
-    private transient List<File> excludedProjectDirs = new ArrayList<>();
+    private transient List<File> excludedProjectDirs = Lists.newArrayList();
 
     /**
      * Comma-separated <b>glob</b> patterns matched against each path relative to the work tree, dropping whole
@@ -927,6 +1019,14 @@ public class RunArgs {
      */
     private double movedLineCoefficient = 0.25;
 
+    /**
+     * Rules scoring: how many lines apart, on both sides, two move candidates may be and still count as one relocated
+     * run. A candidate in a run, or one that crosses files, is a relocation; a lone candidate inside one file is a
+     * repeated fragment ({@code return x;}, a builder call) and is not. The scoring prompt asked for the same, and on
+     * scored commits the model confirmed 88% of runs and rejected 75% of lone same-file matches.
+     */
+    private int movedRunMaxGap = 2;
+
     /** Report presentation: final-score floor for the "huge" band in the HTML report. Cosmetic banding only — no scoring path reads it. */
     private int scoreThresholdHuge = 150;
 
@@ -958,7 +1058,6 @@ public class RunArgs {
     /** Report presentation: caller count above which the same fallback yields {@code MODERATE}. See {@link #callerThresholdHigh}. */
     private int callerThresholdModerate = 5;
 
-    /** Report presentation: how many clone groups the duplication table lists before truncating. */
     private int maxClonesToShow = 10;
 
     /** Carried through the config plumbing and exposed as an override, but currently read by no consumer — no prompt, score or report path uses it. */
@@ -1134,6 +1233,42 @@ public class RunArgs {
     private int coverageImpactPoorMin = 50;
 
     /**
+     * Rules scoring: architecture-bonus quality factor for changed-line coverage at or above {@link #coverageImpactGoodMin}.
+     * These eight factors replace the model's judgment when the scoring prompt is skipped; the defaults are what the
+     * model gave per band on scored commits (its median, or its mean where that sat well below the median). In the two
+     * lowest bands the model's factors spread above the median, so their defaults are its mean: on 1,000 replayed
+     * commits (6 Oct 2026) the medians left those bands' bonus 13-22% short.
+     */
+    private double qualityFactorWellCovered = 0.95;
+
+    /** Rules scoring: quality factor from {@link #coverageImpactLowMin} up to the well-covered band. See {@link #qualityFactorWellCovered}. */
+    private double qualityFactorLowCoverage = 0.7;
+
+    /** Rules scoring: quality factor from {@link #coverageImpactPoorMin} up to the low band. See {@link #qualityFactorWellCovered}. */
+    private double qualityFactorPoorCoverage = 0.6;
+
+    /** Rules scoring: quality factor for some coverage below {@link #coverageImpactPoorMin}. See {@link #qualityFactorWellCovered}. */
+    private double qualityFactorTerribleCoverage = 0.53;
+
+    /** Rules scoring: quality factor when no changed line is covered. See {@link #qualityFactorWellCovered}. */
+    private double qualityFactorUncovered = 0.45;
+
+    /** Rules scoring: quality factor when no coverage was measured (no executable changed lines, or no coverage run). See {@link #qualityFactorWellCovered}. */
+    private double qualityFactorUnmeasured = 0.75;
+
+    /** Rules scoring: quality factor of a commit with a blocking bug, whatever its coverage. See {@link #qualityFactorWellCovered}. */
+    private double qualityFactorBlockingBug = 0.4;
+
+    /** Rules scoring: ceiling on the quality factor of a commit with a major or minor bug. See {@link #qualityFactorWellCovered}. */
+    private double qualityFactorWithBugsMax = 0.9;
+
+    /**
+     * Rules scoring: architecture impact the bonus discounts from the architecture-impact dimension. The model's bonus
+     * counted about half a point less impact than the dimension it reported, at every level.
+     */
+    private double architectureBonusImpactDiscount = 0.5;
+
+    /**
      * Prompt-only: fan-out above which a block counts as high fan-out when the model judges difficulty. Explicitly
      * an input to that judgment and not the answer — a wide switch can be mechanical, a short lock-free helper
      * intricate.
@@ -1245,21 +1380,21 @@ public class RunArgs {
         if (StringUtils.isEmpty(includeBranches)) {
             return true;
         }
-        List<String> patterns = Split.on(includeBranches, ',');
+        List<String> patterns = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(includeBranches);
         return branches.stream().anyMatch(branch -> patterns.stream().anyMatch(pattern -> branch.matches(pattern)));
     }
     public boolean matchesByAuthor(String authorEmail) {
         if (StringUtils.isEmpty(includeAuthorEmails)) {
             return true;
         }
-        List<String> emails = Split.on(includeAuthorEmails, ',');
+        List<String> emails = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(includeAuthorEmails);
         return emails.contains(authorEmail);
     }
     public boolean isExcludedAuthor(String authorEmail) {
         if (StringUtils.isEmpty(excludeAuthorEmails)) {
             return false;
         }
-        List<String> patterns = Split.on(excludeAuthorEmails, ',');
+        List<String> patterns = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(excludeAuthorEmails);
         return patterns.stream().anyMatch(pattern -> FilenameUtils.wildcardMatch(authorEmail, pattern, IOCase.INSENSITIVE));
     }
     /**
@@ -1280,7 +1415,7 @@ public class RunArgs {
     }
     private List<PathMatcher> excludePathMatchers() {
         if (Objects.isNull(excludePathMatchers)) {
-            excludePathMatchers = Split.on(excludePaths, ',').stream()
+            excludePathMatchers = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(excludePaths).stream()
                     .map(pattern -> FileSystems.getDefault().getPathMatcher("glob:" + pattern))
                     .toList();
         }
@@ -1297,7 +1432,7 @@ public class RunArgs {
             return false;
         }
         String coordinates = groupId + ":" + artifactId;
-        return Split.on(excludeProjects, ',').stream().anyMatch(pattern -> BooleanUtils.or(new boolean[] {
+        return Splitter.on(',').trimResults().omitEmptyStrings().splitToList(excludeProjects).stream().anyMatch(pattern -> BooleanUtils.or(new boolean[] {
                 FilenameUtils.wildcardMatch(coordinates, pattern, IOCase.INSENSITIVE),
                 FilenameUtils.wildcardMatch(artifactId, pattern, IOCase.INSENSITIVE)
         }));
@@ -1412,7 +1547,7 @@ public class RunArgs {
                 } else if (field.getType().equals(Repository.class)) {
                     field.set(toReturn, JGit.openRepository(new File(value)));
                 } else if (field.getType().equals(List.class)) {
-                    field.set(toReturn, Split.on(value, ','));
+                    field.set(toReturn, Splitter.on(',').trimResults().omitEmptyStrings().splitToList(value));
                 } else {
                     /**
                      * options() advertises a flag for every non-transient field, so a type this parser does not
@@ -1430,7 +1565,10 @@ public class RunArgs {
         toReturn.validate();
         return toReturn;
     }
+    public static HttpUrl.Builder loopbackUrl(int port) {
+        return new HttpUrl.Builder().scheme("http").host(LOOPBACK_HOST).port(port);
+    }
     private static String toKebabCase(String camel) {
-        return CAMEL_HUMP.matcher(camel).replaceAll("-").toLowerCase(Locale.ROOT);
+        return CaseFormat.LOWER_CAMEL.to(CaseFormat.LOWER_HYPHEN, camel);
     }
 }

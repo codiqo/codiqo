@@ -4,11 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
-import java.util.ArrayList;
 
 import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 
+import com.google.common.base.Joiner;
+import com.google.common.collect.Lists;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.MovedLineDetector.MoveCandidate;
@@ -20,7 +21,7 @@ class MovedLineDetectorTest {
      * a method body is deleted and re-added lower in the same file with re-qualified receivers
      * (props.X → channel.props.X). deleted lines are old-file 11-14, added lines are new-file 25-28
      */
-    private static final String RELOCATION_DIFF = String.join(StringUtils.LF,
+    private static final String RELOCATION_DIFF = Joiner.on(StringUtils.LF).join(
             "--- a/Channel.java",
             "+++ b/Channel.java",
             "@@ -10,6 +10,2 @@",
@@ -57,14 +58,14 @@ class MovedLineDetectorTest {
     }
     @Test
     void crossFileMoveDetected() {
-        String deletedSide = String.join(StringUtils.LF,
+        String deletedSide = Joiner.on(StringUtils.LF).join(
                 "--- a/Source.java",
                 "+++ b/Source.java",
                 "@@ -5,3 +5,1 @@",
                 " context",
                 "-keystore.store(out, SelfSignedCertificateGenerator.PASSWORD.toCharArray());",
                 " context2");
-        String addedSide = String.join(StringUtils.LF,
+        String addedSide = Joiner.on(StringUtils.LF).join(
                 "--- a/Target.java",
                 "+++ b/Target.java",
                 "@@ -40,1 +40,2 @@",
@@ -84,7 +85,7 @@ class MovedLineDetectorTest {
     }
     @Test
     void trivialLinesAreNeverCandidates() {
-        String diff = String.join(StringUtils.LF,
+        String diff = Joiner.on(StringUtils.LF).join(
                 "--- a/Foo.java",
                 "+++ b/Foo.java",
                 "@@ -5,4 +5,1 @@",
@@ -105,7 +106,7 @@ class MovedLineDetectorTest {
     }
     @Test
     void sizeRatioGuardRejectsShortLineAbsorbedByLongLine() {
-        String diff = String.join(StringUtils.LF,
+        String diff = Joiner.on(StringUtils.LF).join(
                 "--- a/Foo.java",
                 "+++ b/Foo.java",
                 "@@ -5,2 +5,2 @@",
@@ -119,7 +120,7 @@ class MovedLineDetectorTest {
     }
     @Test
     void duplicateAddedLinesConsumeOneToOne() {
-        String diff = String.join(StringUtils.LF,
+        String diff = Joiner.on(StringUtils.LF).join(
                 "--- a/Foo.java",
                 "+++ b/Foo.java",
                 "@@ -5,2 +5,3 @@",
@@ -162,7 +163,7 @@ class MovedLineDetectorTest {
     }
     private static LlmScoringRequest requestWith(FileChange... fileChanges) {
         return LlmScoringRequest.builder()
-                .fileChanges(new ArrayList<>(List.of(fileChanges)))
+                .fileChanges(Lists.newArrayList(List.of(fileChanges)))
                 .build();
     }
     private static FileChange fileChange(String file, String diff) {

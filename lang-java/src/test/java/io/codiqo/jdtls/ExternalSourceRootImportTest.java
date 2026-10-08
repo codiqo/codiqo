@@ -6,14 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import java.io.File;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
-import java.security.MessageDigest;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
@@ -29,6 +26,9 @@ import org.eclipse.lsp4j.SymbolKind;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.event.Level;
+
+import com.google.common.collect.Maps;
+import com.google.common.hash.Hashing;
 
 import io.codiqo.api.BuildTool;
 import io.codiqo.api.JvmProjectSpec;
@@ -191,10 +191,10 @@ class ExternalSourceRootImportTest {
         return toReturn;
     }
     private static Map<String, String> digests(Path dir) throws Exception {
-        Map<String, String> toReturn = new TreeMap<>();
+        Map<String, String> toReturn = Maps.newTreeMap();
         try (Stream<Path> files = Files.walk(dir)) {
             for (Path file : files.filter(Files::isRegularFile).toList()) {
-                toReturn.put(dir.relativize(file).toString(), HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(file))));
+                toReturn.put(dir.relativize(file).toString(), Hashing.sha256().hashBytes(Files.readAllBytes(file)).toString());
             }
         }
         return toReturn;

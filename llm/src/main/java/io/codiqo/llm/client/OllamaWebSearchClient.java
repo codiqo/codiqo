@@ -5,14 +5,17 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.ArrayList;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.google.common.collect.Lists;
 import tools.jackson.databind.ObjectMapper;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.PromptBuilder;
 import io.codiqo.llm.PromptBuilder.WebSearchResultItem;
+import io.codiqo.util.RequestAuthorizer;
+import io.netty.handler.codec.http.HttpHeaderNames;
+import io.netty.handler.codec.http.HttpHeaderValues;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -26,7 +29,7 @@ import okhttp3.Response;
 
 public class OllamaWebSearchClient implements WebSearchClient {
     private static final String WEB_SEARCH_URL = "https://ollama.com/api/web_search";
-    private static final MediaType JSON = MediaType.get("application/json");
+    private static final MediaType JSON = MediaType.get(HttpHeaderValues.APPLICATION_JSON.toString());
 
     private final OkHttpClient httpClient;
     private final ObjectMapper objectMapper;
@@ -59,9 +62,9 @@ public class OllamaWebSearchClient implements WebSearchClient {
 
         Request request = new Request.Builder()
                 .url(WEB_SEARCH_URL)
-                .addHeader("Authorization", "Bearer " + apiKey)
-                .addHeader("Content-Type", "application/json")
-                .addHeader("Accept", "application/json")
+                .addHeader(HttpHeaderNames.AUTHORIZATION.toString(), RequestAuthorizer.bearer(apiKey))
+                .addHeader(HttpHeaderNames.CONTENT_TYPE.toString(), HttpHeaderValues.APPLICATION_JSON.toString())
+                .addHeader(HttpHeaderNames.ACCEPT.toString(), HttpHeaderValues.APPLICATION_JSON.toString())
                 .post(RequestBody.create(requestBody, JSON))
                 .build();
 
@@ -70,7 +73,7 @@ public class OllamaWebSearchClient implements WebSearchClient {
                 String responseBody = response.body().string();
                 SearchResponse searchResponse = objectMapper.readValue(responseBody, SearchResponse.class);
 
-                List<WebSearchResultItem> items = new ArrayList<>();
+                List<WebSearchResultItem> items = Lists.newArrayList();
                 if (Objects.nonNull(searchResponse.getResults())) {
                     for (ApiSearchResultItem item : searchResponse.getResults()) {
                         items.add(WebSearchResultItem.builder()
@@ -105,7 +108,7 @@ public class OllamaWebSearchClient implements WebSearchClient {
     @AllArgsConstructor
     @JsonIgnoreProperties(ignoreUnknown = true)
     private static class SearchResponse {
-        private List<ApiSearchResultItem> results = new ArrayList<>();
+        private List<ApiSearchResultItem> results = Lists.newArrayList();
     }
 
     @Data

@@ -8,14 +8,14 @@ import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Predicate;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.diff.EffectiveLineParser;
 import io.codiqo.api.diff.IneffectiveLineFilter;
@@ -44,9 +44,9 @@ public class EffectiveChangePopulator implements SubmissionPopulator {
             Predicate<String> deletedIneffective = filter.commentOrImportFilter();
             boolean trackDeleted = BooleanUtils.negate(filter.isNone());
 
-            Set<Integer> allAddedLines = new HashSet<>();
-            Set<Integer> effectiveAddedLines = new HashSet<>();
-            Map<Integer, List<String>> effectiveDeletedContents = new HashMap<>();
+            Set<Integer> allAddedLines = Sets.newHashSet();
+            Set<Integer> effectiveAddedLines = Sets.newHashSet();
+            Map<Integer, List<String>> effectiveDeletedContents = Maps.newHashMap();
             /**
              * one pass over the diff populates all three line sets — raw added lines (new-method detection),
              * effective added lines (changed-line counting), and effective deleted line contents (deleted-
@@ -63,7 +63,7 @@ public class EffectiveChangePopulator implements SubmissionPopulator {
                     if (trackDeleted) {
                         String trimmed = content.trim();
                         if (EffectiveLineParser.isEffective(trimmed, deletedIneffective)) {
-                            effectiveDeletedContents.computeIfAbsent(newLine, k -> new ArrayList<>()).add(trimmed);
+                            effectiveDeletedContents.computeIfAbsent(newLine, k -> Lists.newArrayList()).add(trimmed);
                         }
                     }
                 }
@@ -119,7 +119,7 @@ public class EffectiveChangePopulator implements SubmissionPopulator {
         }
     }
     private static List<int[]> collectBlockRanges(List<CodeUnitModel> codeUnits) {
-        List<int[]> toReturn = new ArrayList<>();
+        List<int[]> toReturn = Lists.newArrayList();
         for (CodeUnitModel codeUnit : CollectionUtils.emptyIfNull(codeUnits)) {
             // a DELETE unit's range is in the previous content, so it cannot nest anything in the new file
             if (BooleanUtils.or(new boolean[] { Boolean.TRUE.equals(codeUnit.getIsTrivial()), codeUnit.getOperation() == OperationEnum.DELETE })) {

@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -27,6 +26,9 @@ import org.eclipse.aether.repository.RemoteRepository;
 import org.eclipse.aether.resolution.MetadataRequest;
 import org.eclipse.aether.resolution.MetadataResult;
 
+import com.google.common.collect.Maps;
+
+import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -44,7 +46,7 @@ public class AetherSnapshotConnector implements SnapshotConnector {
     private static final String MAVEN_METADATA_XML = "maven-metadata.xml";
 
     private final MetadataResolver metadataResolver;
-    private final Map<String, List<SnapshotVersion>> deploysByFolder = new ConcurrentHashMap<>();
+    private final Map<DeployFolder, List<SnapshotVersion>> deploysByFolder = Maps.newConcurrentMap();
 
     @Inject
     public AetherSnapshotConnector(MetadataResolver metadataResolver) {
@@ -56,8 +58,8 @@ public class AetherSnapshotConnector implements SnapshotConnector {
     }
     @Override
     public List<SnapshotVersion> listDeploys(RepositorySystemSession session, Artifact artifact, RemoteRepository repo) {
-        String cacheKey = repo.getId() + ":" + artifact.getGroupId() + ":" + artifact.getArtifactId() + ":" + artifact.getBaseVersion();
-        return deploysByFolder.computeIfAbsent(cacheKey, k -> fetchDeploys(session, artifact, repo));
+        DeployFolder folder = new DeployFolder(repo.getId(), artifact.getGroupId(), artifact.getArtifactId(), artifact.getBaseVersion());
+        return deploysByFolder.computeIfAbsent(folder, k -> fetchDeploys(session, artifact, repo));
     }
     private List<SnapshotVersion> fetchDeploys(RepositorySystemSession session, Artifact artifact, RemoteRepository repo) {
         for (;;) {
@@ -110,5 +112,14 @@ public class AetherSnapshotConnector implements SnapshotConnector {
             }
             return versioning.getSnapshotVersions();
         }
+    }
+
+    /** one artifact's folder in one repository, whose metadata lists every deploy of the snapshot */
+    @Value
+    private static class DeployFolder {
+        String repositoryId;
+        String groupId;
+        String artifactId;
+        String baseVersion;
     }
 }

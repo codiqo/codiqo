@@ -2,10 +2,10 @@ package io.codiqo.submit;
 
 import java.util.List;
 import java.util.Set;
-import java.util.HashSet;
 
 import org.apache.commons.lang3.StringUtils;
 
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.diff.IneffectiveLineFilter;
 import io.codiqo.llm.UnifiedDiffLines;
@@ -22,8 +22,8 @@ import lombok.experimental.UtilityClass;
 @UtilityClass
 public class ChangedLineClassifier {
     public ChangedLines classify(String diff, IneffectiveLineFilter filter) {
-        Set<Integer> added = new HashSet<>();
-        Set<Integer> modified = new HashSet<>();
+        Set<Integer> added = Sets.newHashSet();
+        Set<Integer> modified = Sets.newHashSet();
         if (StringUtils.isNotEmpty(diff)) {
             for (ChangeBlock block : UnifiedDiffLines.parse(diff, filter).getBlocks()) {
                 List<Integer> blockAdded = block.getAddedLines();

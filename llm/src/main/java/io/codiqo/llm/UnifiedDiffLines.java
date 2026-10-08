@@ -6,15 +6,15 @@ import java.util.Set;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.TreeSet;
-import java.util.TreeMap;
-import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutableTriple;
 
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.diff.IneffectiveLineFilter;
 import lombok.Getter;
@@ -50,20 +50,20 @@ public final class UnifiedDiffLines {
     private static final String BLOCK_ID_PREFIX = "B";
     private static final char FIELD_SEPARATOR = '|';
 
-    private final Set<Integer> addedLines = new TreeSet<>();
-    private final Set<Integer> deletedLines = new TreeSet<>();
-    private final Set<Integer> candidateAddedLines = new TreeSet<>();
-    private final Set<Integer> candidateDeletedLines = new TreeSet<>();
-    private final Map<Integer, String> candidateAddedContent = new TreeMap<>();
-    private final Map<Integer, String> candidateDeletedContent = new TreeMap<>();
+    private final Set<Integer> addedLines = Sets.newTreeSet();
+    private final Set<Integer> deletedLines = Sets.newTreeSet();
+    private final Set<Integer> candidateAddedLines = Sets.newTreeSet();
+    private final Set<Integer> candidateDeletedLines = Sets.newTreeSet();
+    private final Map<Integer, String> candidateAddedContent = Maps.newTreeMap();
+    private final Map<Integer, String> candidateDeletedContent = Maps.newTreeMap();
     /**
      * Maps an old-file line to its new-file anchor: the next surviving line, that is the newLine
      * counter, which does not advance on deletions. This is the same coordinate EffectiveLineParser
      * anchors deleted lines to when billing them to a code unit's new-file span; a different anchor
      * would attribute moved-out invocations to a block that was never billed for them.
      */
-    private final Map<Integer, Integer> candidateDeletedAnchor = new TreeMap<>();
-    private final List<ChangeBlock> blocks = new ArrayList<>();
+    private final Map<Integer, Integer> candidateDeletedAnchor = Maps.newTreeMap();
+    private final List<ChangeBlock> blocks = Lists.newArrayList();
     private final String annotated;
 
     private UnifiedDiffLines(String diff, IneffectiveLineFilter filter) {
@@ -73,8 +73,8 @@ public final class UnifiedDiffLines {
         int oldLine = 0;
         int newLine = 0;
         boolean inHunk = false;
-        List<Integer> runDeleted = new ArrayList<>();
-        List<Integer> runAdded = new ArrayList<>();
+        List<Integer> runDeleted = Lists.newArrayList();
+        List<Integer> runAdded = Lists.newArrayList();
         /** The -1 limit keeps trailing empty strings so the annotated text round-trips the diff exactly. */
         String[] lines = diff.split(StringUtils.LF, -1);
         for (int i = 0; i < lines.length; i++) {

@@ -1,7 +1,6 @@
 package io.codiqo.submit;
 
 import java.io.File;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
@@ -9,6 +8,8 @@ import java.util.Iterator;
 import java.util.List;
 
 import org.slf4j.event.Level;
+
+import com.google.common.collect.Lists;
 
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.coverage.ExcludedCoverageClass;
@@ -25,7 +26,7 @@ import io.codiqo.api.logging.LogFactory;
 class StubAnalysis implements CommitAnalysis {
     static final LogFactory LOGS = clazz -> new NoopLog();
 
-    private final List<ExcludedCoverageClass> excluded = new ArrayList<>();
+    private final List<ExcludedCoverageClass> excluded = Lists.newArrayList();
 
     StubAnalysis withExcludedCoverageClass(ExcludedCoverageClass value) {
         excluded.add(value);

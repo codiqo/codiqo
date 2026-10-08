@@ -1,10 +1,10 @@
 package io.codiqo.llm.client;
 
 import java.util.List;
-import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 
+import com.google.common.collect.Lists;
 
 import io.codiqo.llm.PromptBuilder.PromptContext;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
@@ -20,6 +20,15 @@ public interface ScoringClient extends Scorer<ScoringClient.Params, ScoringClien
         LlmScoringRequest request;
         PromptContext context;
         StreamingHandler handler;
+
+        /** the local review's assessment of the commit, when the submission carried one */
+        LlmScoringResponse localAssessment;
+
+        /**
+         * Score from the local assessment rather than the prompt's judgment. Without it a local assessment is only
+         * compared: the score it would give is reported next to the prompt's, which stays the one recorded.
+         */
+        boolean applyLocalAssessment;
     }
 
     @Override
@@ -36,7 +45,13 @@ public interface ScoringClient extends Scorer<ScoringClient.Params, ScoringClien
         @Builder.Default
         LlmUsage usage = LlmUsage.NONE;
         @Builder.Default
-        List<String> toolCallsMade = new ArrayList<>();
+        List<String> toolCallsMade = Lists.newArrayList();
+
+        /** the score the local assessment gives, whether or not it was applied; null without one */
+        Double localAssessmentScore;
+
+        /** the score the prompt's own judgment gives; differs from the response's when the local one was applied */
+        Double promptScore;
 
         public int getPromptTokens() {
             return usage.getPromptTokens();

@@ -11,11 +11,12 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import org.apache.commons.collections4.multimap.HashSetValuedHashMap;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.Edit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import com.google.common.collect.HashMultimap;
 
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.ProjectSpec;
@@ -88,7 +89,7 @@ class DefaultLanguageProcessorsRemovedUnitsTest {
         when(analysis.iterator()).thenAnswer(invocation -> List.<FileAnalysis> of(file).iterator());
 
         IndexingSummary summary = IndexingSummary.builder()
-                .blocks(new HashSetValuedHashMap<>())
+                .blocks(HashMultimap.create())
                 .parsedFiles(parsedFiles)
                 .build();
 

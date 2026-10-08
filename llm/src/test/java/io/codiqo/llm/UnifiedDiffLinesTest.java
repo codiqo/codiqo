@@ -5,11 +5,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import java.util.Set;
-import java.util.TreeSet;
 
 import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 
+import com.google.common.base.Joiner;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.diff.CommentSyntax;
 import io.codiqo.api.diff.IneffectiveLineFilter;
@@ -20,7 +21,7 @@ class UnifiedDiffLinesTest {
 
     // shape of the real a95206ac bootstrapper regression: two hunks, old/new numbering drifting
     // apart because the new file is shorter than the old one
-    private static final String TWO_HUNK_DIFF = String.join(StringUtils.LF,
+    private static final String TWO_HUNK_DIFF = Joiner.on(StringUtils.LF).join(
             "diff --git a/src/Foo.java b/src/Foo.java",
             "index 87bbd79..da3327e 100644",
             "--- a/src/Foo.java",
@@ -47,18 +48,18 @@ class UnifiedDiffLinesTest {
     void parseTracksOldAndNewCountersAcrossHunks() {
         UnifiedDiffLines lines = UnifiedDiffLines.parse(TWO_HUNK_DIFF, C_STYLE);
 
-        assertEquals(new TreeSet<>(Set.of(6, 8, 281, 283, 284)), lines.getDeletedLines(),
+        assertEquals(Sets.newTreeSet(Set.of(6, 8, 281, 283, 284)), lines.getDeletedLines(),
                 "deleted lines carry old-file numbers");
-        assertEquals(new TreeSet<>(Set.of(7, 279, 281)), lines.getAddedLines(),
+        assertEquals(Sets.newTreeSet(Set.of(7, 279, 281)), lines.getAddedLines(),
                 "added lines carry new-file numbers");
     }
     @Test
     void candidatesExcludeImportsBlanksAndComments() {
         UnifiedDiffLines lines = UnifiedDiffLines.parse(TWO_HUNK_DIFF, C_STYLE);
 
-        assertEquals(new TreeSet<>(Set.of(281, 283, 284)), lines.getCandidateDeletedLines(),
+        assertEquals(Sets.newTreeSet(Set.of(281, 283, 284)), lines.getCandidateDeletedLines(),
                 "all hunk-1 deletions are imports → filtered out of the candidate set");
-        assertEquals(new TreeSet<>(Set.of(279, 281)), lines.getCandidateAddedLines(),
+        assertEquals(Sets.newTreeSet(Set.of(279, 281)), lines.getCandidateAddedLines(),
                 "the hunk-1 addition is an import → filtered out of the candidate set");
     }
     @Test
@@ -100,9 +101,9 @@ class UnifiedDiffLinesTest {
     void noneProfileKeepsImportsAndComments() {
         UnifiedDiffLines lines = UnifiedDiffLines.parse(TWO_HUNK_DIFF, IneffectiveLineFilter.NONE);
 
-        assertEquals(new TreeSet<>(Set.of(6, 8, 281, 283, 284)), lines.getCandidateDeletedLines(),
+        assertEquals(Sets.newTreeSet(Set.of(6, 8, 281, 283, 284)), lines.getCandidateDeletedLines(),
                 "NONE filters only blanks; import/comment filtering lives in the C_STYLE/XML profiles");
-        assertEquals(new TreeSet<>(Set.of(7, 279, 281)), lines.getCandidateAddedLines());
+        assertEquals(Sets.newTreeSet(Set.of(7, 279, 281)), lines.getCandidateAddedLines());
     }
     @Test
     void metadataAndMissingHunksProduceNoLines() {

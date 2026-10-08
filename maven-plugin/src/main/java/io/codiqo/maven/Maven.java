@@ -177,7 +177,7 @@ public class Maven {
     }
 
     private static final class SilentDetector extends Detector {
-        Properties capture() {
+        private Properties capture() {
             Properties toReturn = new Properties();
             detect(toReturn, Collections.emptyList());
             return toReturn;

@@ -21,7 +21,7 @@ public class CoverageSourceFile {
     String packageName;
     String fileName;
 
-    static CoverageSourceFile of(ISourceFileCoverage source) {
+    public static CoverageSourceFile of(ISourceFileCoverage source) {
         return new CoverageSourceFile(source.getPackageName(), source.getName());
     }
     /**
@@ -29,11 +29,11 @@ public class CoverageSourceFile {
      * only for classes that carry it ({@code CoverageBuilder.visitCoverage}), so a class without one has no source
      * coverage anywhere to be matched against — there is nothing to derive from the class name.
      */
-    static Optional<CoverageSourceFile> of(IClassCoverage cls) {
+    public static Optional<CoverageSourceFile> of(IClassCoverage cls) {
         return Optional.ofNullable(cls.getSourceFileName()).map(name -> new CoverageSourceFile(cls.getPackageName(), name));
     }
     /** the path of the source file below its source root, for resolving against one */
-    Path relativePath() {
+    public Path relativePath() {
         return Paths.get(packageName, fileName);
     }
     /**
@@ -42,7 +42,7 @@ public class CoverageSourceFile {
      * ({@code ClassCoverageImpl.getPackageName}), and "" + '/' + "Foo.java" yields a leading separator that matches
      * nothing a source root relativizes to.
      */
-    String unixPath() {
+    public String unixPath() {
         return FilenameUtils.separatorsToUnix(relativePath().toString());
     }
     @Override

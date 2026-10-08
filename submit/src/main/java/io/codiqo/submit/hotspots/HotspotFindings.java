@@ -1,14 +1,11 @@
 package io.codiqo.submit.hotspots;
 
 import java.io.File;
+import java.lang.constant.ConstantDescs;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
-import java.util.EnumMap;
-import java.util.HashMap;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -21,6 +18,11 @@ import org.apache.commons.lang3.ClassUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.objectweb.asm.Type;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Joiner;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import edu.umd.cs.findbugs.BugInstance;
 import edu.umd.cs.findbugs.SourceLineAnnotation;
@@ -48,9 +50,9 @@ public class HotspotFindings {
     public static final int COMPLEX_METHOD_THRESHOLD = 15;
 
     public List<HotspotFindingModel> collect(File file, Collection<CodeBlockInfo> blocks, Collection<CopyPasteDetectionSummary> cpd, Path workTree) {
-        Map<HotspotFindingKind, List<HotspotFindingModel>> byKind = new EnumMap<>(HotspotFindingKind.class);
+        Map<HotspotFindingKind, List<HotspotFindingModel>> byKind = Maps.newEnumMap(HotspotFindingKind.class);
         for (HotspotFindingKind kind : HotspotFindingKind.values()) {
-            byKind.put(kind, new ArrayList<>());
+            byKind.put(kind, Lists.newArrayList());
         }
 
         /**
@@ -58,10 +60,10 @@ public class HotspotFindings {
          * blocks. Only the innermost block keeps it; otherwise one violation would be reported once per enclosing
          * block.
          */
-        List<CodeBlockInfo> uncovered = new ArrayList<>();
-        List<CodeBlockInfo> complex = new ArrayList<>();
-        Map<RuleViolation, CodeBlockInfo> violations = new LinkedHashMap<>();
-        Map<BugInstance, CodeBlockInfo> bugs = new LinkedHashMap<>();
+        List<CodeBlockInfo> uncovered = Lists.newArrayList();
+        List<CodeBlockInfo> complex = Lists.newArrayList();
+        Map<RuleViolation, CodeBlockInfo> violations = Maps.newLinkedHashMap();
+        Map<BugInstance, CodeBlockInfo> bugs = Maps.newLinkedHashMap();
         for (CodeBlockInfo block : blocks) {
             CodeBlockCoverage coverage = block.coverage();
             if (BooleanUtils.and(new boolean[] { coverage.hasCoverageData(), coverage.getMissed() + coverage.getPartial() > 0 })) {
@@ -121,7 +123,7 @@ public class HotspotFindings {
         return interleave(byKind);
     }
     private static List<HotspotFindingModel> clones(File file, Collection<CopyPasteDetectionSummary> cpd, Path workTree) {
-        List<CloneLocations> clones = new ArrayList<>();
+        List<CloneLocations> clones = Lists.newArrayList();
         cpd.forEach(summary -> summary.clones().stream()
                 .filter(clone -> clone.getSpans().stream().anyMatch(span -> span.getFile().equals(file)))
                 .forEach(clones::add));
@@ -131,8 +133,8 @@ public class HotspotFindings {
          * One fragment copied to several places is one thing to fix, so clones are grouped by the fragment's span in
          * this file and reported once with a copy count, rather than once per pair.
          */
-        Map<Pair<Integer, Integer>, HotspotFindingModel> byFragment = new LinkedHashMap<>();
-        Map<Pair<Integer, Integer>, Integer> copies = new HashMap<>();
+        Map<Pair<Integer, Integer>, HotspotFindingModel> byFragment = Maps.newLinkedHashMap();
+        Map<Pair<Integer, Integer>, Integer> copies = Maps.newHashMap();
         for (CloneLocations clone : clones) {
             /** every clone here was selected for having a span in this file, so the first such span always exists */
             Span here = clone.getSpans().stream().filter(span -> span.getFile().equals(file)).findFirst().orElseThrow();
@@ -152,7 +154,7 @@ public class HotspotFindings {
             }
         }
 
-        List<HotspotFindingModel> toReturn = new ArrayList<>();
+        List<HotspotFindingModel> toReturn = Lists.newArrayList();
         byFragment.forEach((fragment, finding) -> {
             int count = copies.get(fragment);
             if (count > 1) {
@@ -163,7 +165,7 @@ public class HotspotFindings {
         return toReturn;
     }
     private static List<HotspotFindingModel> interleave(Map<HotspotFindingKind, List<HotspotFindingModel>> byKind) {
-        List<HotspotFindingModel> toReturn = new ArrayList<>();
+        List<HotspotFindingModel> toReturn = Lists.newArrayList();
         List<Iterator<HotspotFindingModel>> queues = byKind.values().stream().map(List::iterator).toList();
         boolean progressed = true;
         while (BooleanUtils.and(new boolean[] { progressed, toReturn.size() < LIMIT })) {
@@ -186,17 +188,18 @@ public class HotspotFindings {
                 .message(message);
     }
     /** Renders {@code a/B.toInfo(La/Account;Ljava/util/Set;)V} as {@code toInfo(Account, Set)}. */
-    static String readable(String signature) {
+    @VisibleForTesting
+    public static String readable(String signature) {
         String owner = StringUtils.substringBefore(signature, "(");
         String name = StringUtils.substringAfterLast(owner, ".");
-        if (JavaBinaryFormat.CONSTRUCTOR_NAME.equals(name)) {
+        if (ConstantDescs.INIT_NAME.equals(name)) {
             name = ClassUtils.getShortClassName(JavaBinaryFormat.getBinaryName(StringUtils.substringBeforeLast(owner, ".")));
         }
-        List<String> parameters = new ArrayList<>();
+        List<String> parameters = Lists.newArrayList();
         for (Type parameter : Type.getArgumentTypes("(" + StringUtils.substringAfter(signature, "("))) {
             parameters.add(ClassUtils.getShortClassName(parameter.getClassName()));
         }
-        return name + "(" + StringUtils.join(parameters, ", ") + ")";
+        return name + "(" + Joiner.on(", ").join(parameters) + ")";
     }
     private static CodeBlockInfo innermost(CodeBlockInfo current, CodeBlockInfo candidate) {
         if (lineSpan(candidate) < lineSpan(current)) {
@@ -207,7 +210,7 @@ public class HotspotFindings {
     private static int lineSpan(CodeBlockInfo block) {
         return block.getLocation().getEndLine() - block.getLocation().getStartLine();
     }
-    static String relative(Path workTree, File file) {
+    public static String relative(Path workTree, File file) {
         return FilenameUtils.separatorsToUnix(workTree.relativize(file.toPath().normalize()).toString());
     }
 }

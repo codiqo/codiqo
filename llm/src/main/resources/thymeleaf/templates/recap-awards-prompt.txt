@@ -8,7 +8,20 @@ You are writing the script for a short internal award reel that celebrates the t
 
 # CONTRIBUTORS
 
-[(${contenders})]
+[# th:each="c : ${contenders}"]#[(${c.contender.rank})] [(${c.contender.name})][# th:unless="${#strings.isEmpty(c.contender.seniority)}"] ([(${c.contender.seniority})])[/]
+[# th:if="${c.firstName != null}"]  - first name: [(${c.firstName})]
+[/][# th:if="${c.contender.headlineValue != null}"]  - [(${c.contender.headlineLabel})]: [(${c.contender.headlineValue})]
+[/][# th:if="${c.contender.commits != null}"]  - commits: [(${c.contender.commits})]
+[/][# th:if="${c.contender.seniorGradeCommits != null}"]  - senior-grade commits: [(${c.contender.seniorGradeCommits})]
+[/][# th:if="${c.contender.filesChanged != null}"]  - files touched: [(${c.contender.filesChanged})]
+[/][# th:if="${c.contender.linesChanged != null}"]  - lines changed: [(${c.contender.linesChanged})]
+[/][# th:if="${c.contender.avgComplexity != null}"]  - average task complexity (1-10): [(${c.contender.avgComplexity})]
+[/][# th:if="${c.contender.avgCoverage != null}"]  - changed-line test coverage %: [(${c.contender.avgCoverage})]
+[/][# th:if="${c.contender.distinction != null}"]  - leads the team on: [(${c.contender.distinction})]
+[/][# th:unless="${c.projects.isEmpty()}"]  - worked mostly in: [(${#strings.listJoin(c.projects, ', ')})]
+[/][# th:if="${c.contender.bestWork != null}"]  - hardest piece of work (analysis summary): [(${c.contender.bestWork})]
+[/]
+[/]
 
 # TASK
 

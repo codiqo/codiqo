@@ -20,9 +20,10 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.client.ApiException;
 import io.codiqo.client.model.AnalysisAcceptedModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
-import io.codiqo.maven.auth.BrowserLogin;
+import io.codiqo.maven.auth.MavenCredentials;
 import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.submit.AnalysisSubmitter;
+import io.codiqo.submit.auth.CodiqoCredential;
 
 @Mojo(name = "submit-analysis-file",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
@@ -39,6 +40,9 @@ public class SubmitAnalysisFileMojo extends AbstractMojo {
     @Parameter(property = "codiqo.authUrl", defaultValue = RunArgs.DEFAULT_AUTH_URL)
     private String authUrl;
 
+    @Parameter(property = "codiqo.resourceUrl", defaultValue = RunArgs.DEFAULT_RESOURCE_URL)
+    private String resourceUrl;
+
     @Parameter(property = "codiqo.inputFile", required = true)
     private File inputFile;
 
@@ -50,7 +54,7 @@ public class SubmitAnalysisFileMojo extends AbstractMojo {
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
-        String resolvedApiKey = BrowserLogin.resolveApiKey(apiKey, authUrl, getLog());
+        CodiqoCredential credential = MavenCredentials.resolve(apiKey, authUrl, resourceUrl, getLog());
 
         AnalysisSubmissionModel submission;
         try {
@@ -63,7 +67,7 @@ public class SubmitAnalysisFileMojo extends AbstractMojo {
         try {
             AnalysisAcceptedModel response = AnalysisSubmitter.submit(
                     apiUrl,
-                    resolvedApiKey,
+                    credential,
                     connectTimeoutSeconds,
                     readTimeoutSeconds,
                     submission,

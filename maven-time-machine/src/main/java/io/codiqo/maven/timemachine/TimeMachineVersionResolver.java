@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -27,6 +26,8 @@ import org.eclipse.aether.resolution.VersionResolutionException;
 import org.eclipse.aether.resolution.VersionResult;
 import org.eclipse.sisu.Priority;
 
+import com.google.common.collect.Maps;
+
 import io.codiqo.maven.timemachine.repo.RepoClient;
 import lombok.extern.slf4j.Slf4j;
 
@@ -44,7 +45,7 @@ public class TimeMachineVersionResolver implements VersionResolver {
 
     private final VersionResolver delegate;
     private final RepoClient repoClient;
-    private final Map<CacheKey, SnapshotWithMetadata> cache = new ConcurrentHashMap<>();
+    private final Map<CacheKey, SnapshotWithMetadata> cache = Maps.newConcurrentMap();
 
     @Inject
     public TimeMachineVersionResolver(@Named("default") VersionResolver delegate, RepoClient repoClient) {

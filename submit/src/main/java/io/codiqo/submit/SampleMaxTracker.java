@@ -12,7 +12,7 @@ public class SampleMaxTracker {
     private MaxHolder ncss = MaxHolder.EMPTY;
     private MaxHolder invocations = MaxHolder.EMPTY;
 
-    void update(String file, String block, DriverScaler.Sample sample) {
+    public void update(String file, String block, DriverScaler.Sample sample) {
         if (sample.lines() > lines.value()) {
             lines = new MaxHolder(file, block, sample.lines());
         }
@@ -23,7 +23,7 @@ public class SampleMaxTracker {
             invocations = new MaxHolder(file, block, sample.invocations());
         }
     }
-    void mergeFrom(SampleMaxTracker other) {
+    public void mergeFrom(SampleMaxTracker other) {
         if (other.lines.value() > lines.value()) {
             lines = other.lines;
         }

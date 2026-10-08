@@ -44,7 +44,7 @@ class GitChurnTest {
             git.merge().include(git.getRepository().resolve("side")).setMessage("merge side, fixing nothing").call();
             RevCommit tip = git.getRepository().parseCommit(git.getRepository().resolve("HEAD"));
 
-            Map<String, FileChurn> churn = GitChurn.collect(git.getRepository(), tip.getName());
+            Map<String, FileChurn> churn = GitChurn.collect(git.getRepository(), tip.getName(), FixCommits.byMessage());
 
             assertEquals(new FileChurn(5, 5, 1), churn.get("Bar.java"));
             assertEquals(new FileChurn(1, 1, 0), churn.get("Side.java"));

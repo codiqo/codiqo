@@ -1,12 +1,12 @@
 package io.codiqo.llm.client;
 import java.util.List;
-import java.util.ArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import org.junit.jupiter.api.Test;
 
+import com.google.common.collect.Lists;
 
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
@@ -20,13 +20,13 @@ class LlmScoringClientTest {
     @Test
     void removesEstimatesForTestCodeUnitsAndKeepsProductionOnes() {
         LlmScoringRequest request = LlmScoringRequest.builder()
-                .codeBlockChanges(new ArrayList<>(List.of(
+                .codeBlockChanges(Lists.newArrayList(List.of(
                         CodeBlockChange.builder().signature(PROD_SIGNATURE).isTest(false).build(),
                         CodeBlockChange.builder().signature(TEST_SIGNATURE).isTest(true).build())))
                 .build();
 
         LlmScoringResponse response = LlmScoringResponse.builder()
-                .modifyImpactEstimates(new ArrayList<>(List.of(
+                .modifyImpactEstimates(Lists.newArrayList(List.of(
                         ModifyImpactEstimate.builder().signature(PROD_SIGNATURE).build(),
                         ModifyImpactEstimate.builder().signature(TEST_SIGNATURE).build())))
                 .build();
@@ -40,7 +40,7 @@ class LlmScoringClientTest {
     @Test
     void toleratesAbsentEstimatesFromTheLlm() {
         LlmScoringRequest request = LlmScoringRequest.builder()
-                .codeBlockChanges(new ArrayList<>(List.of(
+                .codeBlockChanges(Lists.newArrayList(List.of(
                         CodeBlockChange.builder().signature(TEST_SIGNATURE).isTest(true).build())))
                 .build();
 

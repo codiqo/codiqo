@@ -2,8 +2,8 @@ package io.codiqo.gradle.model;
 
 import java.io.Serializable;
 import java.util.List;
-import java.util.ArrayList;
 
+import com.google.common.collect.Lists;
 
 import lombok.Data;
 
@@ -21,10 +21,10 @@ public class ModuleData implements Serializable {
     private String outputDirectory;
     private String coveragePath;
 
-    private List<String> compileSourceRoots = new ArrayList<>();
-    private List<String> testCompileSourceRoots = new ArrayList<>();
-    private List<String> testReportDirectories = new ArrayList<>();
-    private List<String> compileClasspathElements = new ArrayList<>();
-    private List<String> testClasspathElements = new ArrayList<>();
-    private List<DependencyData> dependencies = new ArrayList<>();
+    private List<String> compileSourceRoots = Lists.newArrayList();
+    private List<String> testCompileSourceRoots = Lists.newArrayList();
+    private List<String> testReportDirectories = Lists.newArrayList();
+    private List<String> compileClasspathElements = Lists.newArrayList();
+    private List<String> testClasspathElements = Lists.newArrayList();
+    private List<DependencyData> dependencies = Lists.newArrayList();
 }

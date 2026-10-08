@@ -3,7 +3,6 @@ package io.codiqo.core.diff;
 import java.io.File;
 import java.util.Optional;
 import java.util.Set;
-import java.util.LinkedHashSet;
 
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.builder.EqualsBuilder;
@@ -12,6 +11,8 @@ import org.eclipse.collections.api.map.primitive.MutableIntObjectMap;
 import org.eclipse.collections.impl.map.mutable.primitive.IntObjectHashMap;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.jacoco.core.analysis.ILine;
+
+import com.google.common.collect.Sets;
 
 
 import io.codiqo.api.ProjectSpec;
@@ -41,16 +42,19 @@ public class GitFileAnalysis implements FileAnalysis {
     @ToString.Exclude
     private GitStructuredDiff structuredDiff;
     @ToString.Exclude
-    private Set<AffectedSymbolInfo> potentiallyAffectedSymbols = new LinkedHashSet<>();
+    private Set<AffectedSymbolInfo> potentiallyAffectedSymbols = Sets.newLinkedHashSet();
     @ToString.Exclude
-    private Set<CodeBlockInfo> removedCodeBlocks = new LinkedHashSet<>();
+    private Set<CodeBlockInfo> removedCodeBlocks = Sets.newLinkedHashSet();
     @ToString.Exclude
-    @Getter(onMethod_ = @Override)
     private MutableIntObjectMap<ILine> lineCoverage = new IntObjectHashMap<>();
     private boolean testFile;
     @Getter(AccessLevel.NONE)
     private Optional<ProjectSpec> project = Optional.empty();
 
+    @Override
+    public MutableIntObjectMap<ILine> getLineCoverage() {
+        return lineCoverage;
+    }
     @Override
     public void lineCoverage(int lineNumber, ILine line) {
         lineCoverage.put(lineNumber, line);

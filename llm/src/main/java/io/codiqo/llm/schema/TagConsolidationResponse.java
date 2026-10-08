@@ -1,7 +1,8 @@
 package io.codiqo.llm.schema;
 
-import java.util.ArrayList;
 import java.util.List;
+
+import com.google.common.collect.Lists;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -14,9 +15,9 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class TagConsolidationResponse {
     @Builder.Default
-    private List<TagMapping> technical = new ArrayList<>();
+    private List<TagMapping> technical = Lists.newArrayList();
     @Builder.Default
-    private List<TagMapping> functional = new ArrayList<>();
+    private List<TagMapping> functional = Lists.newArrayList();
 
     @Data
     @Builder
@@ -25,6 +26,6 @@ public class TagConsolidationResponse {
     public static class TagMapping {
         private String canonical;
         @Builder.Default
-        private List<String> merged = new ArrayList<>();
+        private List<String> merged = Lists.newArrayList();
     }
 }

@@ -6,7 +6,6 @@ import java.io.Serializable;
 import java.net.Socket;
 import java.nio.file.Path;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -95,6 +94,8 @@ import org.eclipse.lsp4j.services.LanguageClient;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.slf4j.event.Level;
 
+import com.google.common.collect.Maps;
+
 import io.codiqo.api.BuildTool;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.jdtls.ServiceStatus;
@@ -103,7 +104,7 @@ import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.util.DaemonExecutors;
 
-class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeable {
+public class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeable {
     private final CompletableFuture<StatusReport> ready = new CompletableFuture<>();
     private final ExecutorService executor = DaemonExecutors.newCachedDaemonPool("codiqo-jdtls");
     private final Log log;
@@ -310,10 +311,10 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
         cap.setGeneral(general);
         params.setCapabilities(cap);
 
-        Map<String, Object> java = new HashMap<>();
+        Map<String, Object> java = Maps.newHashMap();
 
-        Map<String, Object> jdt = new HashMap<>();
-        Map<String, Object> ls = new HashMap<>();
+        Map<String, Object> jdt = Maps.newHashMap();
+        Map<String, Object> ls = Maps.newHashMap();
         ls.put("lombokSupport", Map.of("enabled", true));
         ls.put("protobufSupport", Map.of("enabled", true));
         ls.put("androidSupport", Map.of("enabled", true));
@@ -324,13 +325,13 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
         java.put("jdt", jdt);
         java.put("errors", Map.of("incompleteClasspath", Map.of("severity", "warning")));
 
-        Map<String, Object> configuration = new HashMap<>();
+        Map<String, Object> configuration = Maps.newHashMap();
         configuration.put("checkProjectSettingsExclusions", false);
         configuration.put("updateBuildConfiguration", "automatic");
         configuration.put("workspaceCacheLimit", 90);
         configuration.put("runtimes", List.of());
 
-        Map<String, Object> mavenConfig = new HashMap<>();
+        Map<String, Object> mavenConfig = Maps.newHashMap();
         mavenConfig.put("notCoveredPluginExecutionSeverity", "warning");
         mavenConfig.put("defaultMojoExecutionAction", "ignore");
         mavenConfig.put("lifecycleMappings", null);
@@ -342,7 +343,7 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
 
         java.put("trace", Map.of("server", "verbose"));
 
-        Map<String, Object> importOpts = new HashMap<>();
+        Map<String, Object> importOpts = Maps.newHashMap();
 
         /**
          * deliberately NOT offline, even though the userSettings above point m2e at a local repository the fork
@@ -352,13 +353,13 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
          * still looked correct. The pins hold anyway: that repository carries one timestamp per snapshot in freshly
          * written metadata, and updateSnapshots below stays false.
          */
-        Map<String, Object> mavenImport = new HashMap<>();
+        Map<String, Object> mavenImport = Maps.newHashMap();
         mavenImport.put("enabled", importerEnabled(BuildTool.MAVEN));
         mavenImport.put("offline", Map.of("enabled", false));
         mavenImport.put("disableTestClasspathFlag", false);
         importOpts.put("maven", mavenImport);
 
-        Map<String, Object> gradleImport = new HashMap<>();
+        Map<String, Object> gradleImport = Maps.newHashMap();
         gradleImport.put("enabled", importerEnabled(BuildTool.GRADLE));
         gradleImport.put("wrapper", Map.of("enabled", true));
         gradleImport.put("offline", Map.of("enabled", false));
@@ -380,7 +381,7 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
         java.put("referencesCodeLens", Map.of("enabled", true));
         java.put("implementationsCodeLens", "all");
 
-        Map<String, Object> format = new HashMap<>();
+        Map<String, Object> format = Maps.newHashMap();
         format.put("enabled", true);
         format.put("comments", Map.of("enabled", true));
         format.put("onType", Map.of("enabled", true));
@@ -390,7 +391,7 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
 
         java.put("saveActions", Map.of("organizeImports", false));
 
-        Map<String, Object> project = new HashMap<>();
+        Map<String, Object> project = Maps.newHashMap();
         project.put("referencedLibraries", List.of("lib/**/*.jar"));
         project.put("importOnFirstTimeStartup", "automatic");
         project.put("importHint", true);
@@ -416,7 +417,7 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
         java.put("codeAction", Map.of("sortMembers", Map.of("avoidVolatileChanges", true)));
         java.put("inlayHints", Map.of("parameterNames", Map.of("enabled", "literals", "exclusions", List.of())));
 
-        Map<String, Object> codeGeneration = new HashMap<>();
+        Map<String, Object> codeGeneration = Maps.newHashMap();
         codeGeneration.put("generateComments", false);
         codeGeneration.put("useBlocks", false);
         codeGeneration.put("insertionLocation", "lastMember");
@@ -451,7 +452,7 @@ class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, Closeabl
 
         java.put("sharedIndexes", Map.of("enabled", args.isJdtUseSharedIndex() ? "auto" : "off"));
 
-        Map<String, Object> completions = new HashMap<>();
+        Map<String, Object> completions = Maps.newHashMap();
         completions.put("enabled", true);
         completions.put("overwrite", true);
         completions.put("favoriteStaticMembers",

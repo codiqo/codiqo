@@ -6,7 +6,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -28,12 +27,14 @@ import org.slf4j.event.Level;
 import org.zeroturnaround.process.JavaProcess;
 import org.zeroturnaround.process.Processes;
 
+import com.google.common.collect.Lists;
+
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.util.Fetch;
 
-class JdtLspProcess implements Closeable {
+public class JdtLspProcess implements Closeable {
     private static final int MIN_JDK_LANGUAGE_SERVER = 21;
 
     /** the one threshold the fork can still miss: requireLanguageServerJdk admits 21 and 22 */
@@ -85,7 +86,7 @@ class JdtLspProcess implements Closeable {
             java = args.getJavaHome().toPath().normalize().resolve("bin").resolve(java).toFile().getAbsolutePath();
         }
 
-        List<String> cmd = new ArrayList<>();
+        List<String> cmd = Lists.newArrayList();
         cmd.add(java);
         cmd.addAll(List.of("-server", "-Xlog:disable"));
         if (Objects.nonNull(args.getJdtDebugPort())) {

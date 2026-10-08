@@ -1,6 +1,5 @@
 package io.codiqo.gradle;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
@@ -12,6 +11,9 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.gradle.api.Task;
 import org.gradle.api.tasks.testing.Test;
+
+import com.google.common.base.Joiner;
+import com.google.common.collect.Lists;
 
 import lombok.experimental.UtilityClass;
 
@@ -32,14 +34,14 @@ public class BuildFailures {
     private static final int DETAIL_LIMIT = 4096;
 
     public static Optional<String> detail(Collection<Task> tasks) {
-        List<String> failures = new ArrayList<>();
+        List<String> failures = Lists.newArrayList();
         for (Task task : tasks) {
             if (countsAgainstTheBuild(task)) {
                 failures.add(task.getPath() + ": " + messageChain(task.getState().getFailure()));
             }
         }
         if (CollectionUtils.isNotEmpty(failures)) {
-            return Optional.of(StringUtils.abbreviate(StringUtils.join(failures, System.lineSeparator()), DETAIL_LIMIT));
+            return Optional.of(StringUtils.abbreviate(Joiner.on(System.lineSeparator()).join(failures), DETAIL_LIMIT));
         }
         return Optional.empty();
     }

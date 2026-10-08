@@ -11,7 +11,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
-import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -27,6 +26,8 @@ import org.eclipse.lsp4j.SymbolTag;
 import org.jacoco.core.analysis.ICounter;
 import org.jacoco.core.analysis.ILine;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Lists;
 
 import edu.umd.cs.findbugs.BugInstance;
 import edu.umd.cs.findbugs.BugRankCategory;
@@ -147,7 +148,8 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         ctx.getSubmissionModel().setHasCodeChanges(
                 LanguageCapabilities.hasCodeChanges(files.stream().map(FileChangeModel::getLanguage).toList()));
     }
-    static CodeUnitModel removedCodeUnitModel(SubmissionContext ctx, Language language, JavaCodeBlockInfo javaBlock, Path workTreeRealPath) {
+    @VisibleForTesting
+    public static CodeUnitModel removedCodeUnitModel(SubmissionContext ctx, Language language, JavaCodeBlockInfo javaBlock, Path workTreeRealPath) {
         JavaInfoModel infoModel = javaInfo(javaBlock);
         AffectedSymbolInfo symbol = new PmdAffectedSymbolInfo(javaBlock, language);
 
@@ -412,7 +414,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
 
             int cweid = bug.getBugPattern().getCWEid();
             if (cweid > 0) {
-                diagnosticModel.setCwe(new ArrayList<>(List.of("CWE-" + cweid)));
+                diagnosticModel.setCwe(Lists.newArrayList(List.of("CWE-" + cweid)));
             }
 
             codeUnitModel.getDiagnostics().add(diagnosticModel);
@@ -471,7 +473,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         metricsModel.setCodeLines(metrics.lineCount());
         metricsModel.setNonCommentCodeStatements(metrics.ncss());
         metricsModel.setDirectInvocationCount(metrics.directInvocationCount());
-        metricsModel.setDirectInvocationLines(new ArrayList<>(metrics.directInvocationLines()));
+        metricsModel.setDirectInvocationLines(Lists.newArrayList(metrics.directInvocationLines()));
         metricsModel.setFanOut(metrics.fanOut());
         metricsModel.setNpath(metrics.npath());
 
@@ -577,7 +579,8 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
      * An unmapped kind aborts the whole run; jdt.ls, for example, reports enum constants that call a changed member
      * as EnumMember, which did abort runs before it was mapped.
      */
-    static SymbolKindModel resolveSymbolKind(SymbolKind kind) {
+    @VisibleForTesting
+    public static SymbolKindModel resolveSymbolKind(SymbolKind kind) {
         return switch (kind) {
             case Class, Object, TypeParameter -> SymbolKindModel.propertyClass;
             case Interface -> SymbolKindModel.INTERFACE;

@@ -1,7 +1,6 @@
 package io.codiqo.llm.client;
 
 import java.io.IOException;
-import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -10,6 +9,7 @@ import java.util.concurrent.ExecutorService;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 
+import com.google.common.collect.Maps;
 import com.openai.client.OpenAIClient;
 import com.openai.core.JsonValue;
 import com.openai.models.ResponseFormatJsonObject;
@@ -88,7 +88,7 @@ public class JsonCompletionClient implements LlmClient {
          * belongs here for the same reason it does there: a caller that configured one expects the same
          * answer for the same input, and these calls decide whether a commit is scored at all
          */
-        Map<String, Object> options = new LinkedHashMap<>();
+        Map<String, Object> options = Maps.newLinkedHashMap();
         if (Objects.nonNull(numCtx)) {
             options.put("num_ctx", numCtx);
         }

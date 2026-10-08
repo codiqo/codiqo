@@ -7,9 +7,7 @@ import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.URI;
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -47,7 +45,10 @@ import org.eclipse.lsp4j.services.LanguageServer;
 import org.eclipse.lsp4j.services.TextDocumentService;
 import org.eclipse.lsp4j.services.WorkspaceService;
 
+import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 
 import io.codiqo.api.LanguageServerProjectImporter;
 import io.codiqo.api.RunArgs;
@@ -128,7 +129,7 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
         }
     }
     private void detachShadowingProjects(List<File> externalRoots) throws Exception {
-        Set<URI> javaProjects = new HashSet<>(projectUris(false));
+        Set<URI> javaProjects = Sets.newHashSet(projectUris(false));
         List<URI> nonJavaProjects = projectUris(true).stream().filter(not(javaProjects::contains)).toList();
         List<URI> shadowing = ShadowingProjects.select(nonJavaProjects, externalRoots);
         if (CollectionUtils.isEmpty(shadowing)) {
@@ -146,7 +147,7 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
          * finds the module's linked copy without its packages ("com.example [in src [in main]] does not exist"). One
          * source file per root answering with symbols is the capability the shadowing took away, so that is the wait
          */
-        List<String> probes = new ArrayList<>();
+        List<String> probes = Lists.newArrayList();
         for (File root : externalRoots) {
             probeSourceFile(root).ifPresent(file -> probes.add(file.toPath().normalize().toUri().toString()));
         }
@@ -175,9 +176,14 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
          * the option travels as a JSON string: jdt.ls receives command arguments as plain objects, so a JSON object
          * arrives as a map, which JSONUtility.toModel turns into null and the handler then dereferences
          */
-        List<Object> arguments = includeNonJava ? List.of("{\"includeNonJava\":true}") : List.of();
+        List<Object> arguments = Lists.newArrayList();
+        if (includeNonJava) {
+            JsonObject options = new JsonObject();
+            options.addProperty("includeNonJava", true);
+            arguments.add(options.toString());
+        }
         Object result = executeCommand("java.project.getAll", arguments);
-        List<URI> uris = new ArrayList<>();
+        List<URI> uris = Lists.newArrayList();
         if (result instanceof JsonArray array) {
             array.forEach(element -> uris.add(URI.create(element.getAsString())));
         } else if (result instanceof Collection<?> collection) {

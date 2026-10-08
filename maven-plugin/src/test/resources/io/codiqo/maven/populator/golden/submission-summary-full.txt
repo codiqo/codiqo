@@ -1,0 +1,149 @@
+
+Codiqo — Driver Score Calibration
+---------------------------------
+project:         example-service
+commit:          1a2b3c4d5e6f
+author:          Jane Developer
+
+files:
+  total:    5   (prod: 4, test: 1)
+  by_type:  add: 2, modify: 1, delete: 1, rename: 1
+
+changed_blocks:
+  total:    8
+  by_op:    new: 7, modify: 1   (trivial_skipped: 2)
+  by_scope: prod: 6, test: 2
+
+baseline_populations:
+  method/prod:       N=4      trivials_excluded=2
+  method/test:       N=2      trivials_excluded=1
+  constructor/prod:  N=1      trivials_excluded=1
+  constructor/test:  N=0      trivials_excluded=0
+
+driver_score_cap (global ceiling on total code-block effort):
+  bucket_baseline = P95(driver_scores) × operationMult × testWeight, per (kind, scope)
+  total_baseline  = Σ_block bucket_baseline (summed over all changed non-trivial blocks)
+  global_cap      = total_baseline × 2.50
+  total_effort    = min(Σ_block effort, global_cap)
+  P95 = 95th percentile of driver-score distribution within each (kind, scope) population
+  2.50 = driver score cap multiplier (caps the total summed effort at this multiple of the baseline budget)
+  per-block driver scores are not individually clipped; the cap binds only on their sum
+  method/prod:      quantile=31    bucket_budget_per_block=78
+  method/test:      quantile=15    bucket_budget_per_block=38
+  constructor/prod: quantile=3     bucket_budget_per_block=8
+  constructor/test: quantile=0     bucket_budget_per_block=0
+
+scalers:
+  method/prod: (N=4)
+    lines:   min=4    p50=15.0   p75=29.8   p90=33.0   p95=33.0   max=33
+    ncss:    min=2    p50=7.0    p75=11.3   p90=12.0   p95=12.0   max=12
+    invocs:  min=1    p50=5.0    p75=13.0   p90=15.0   p95=15.0   max=15
+  method/test: (N=2)
+    lines:   min=8    p50=12.0   p75=16.0   p90=16.0   p95=16.0   max=16
+    ncss:    min=4    p50=5.0    p75=6.0    p90=6.0    p95=6.0    max=6
+    invocs:  min=6    p50=7.5    p75=9.0    p90=9.0    p95=9.0    max=9
+  constructor/prod: (N=1)
+    lines:   min=3    p50=3.0    p75=3.0    p90=3.0    p95=3.0    max=3
+    ncss:    min=2    p50=2.0    p75=2.0    p90=2.0    p95=2.0    max=2
+    invocs:  min=1    p50=1.0    p75=1.0    p90=1.0    p95=1.0    max=1
+  constructor/test: (N=0)
+
+driver_formula:
+  weights:          W_L=1.00  W_S=1.00  W_I=0.50   (total=2.50)
+  formula_new:      (W_L·lines + W_S·ncss·k_S + W_I·invocs·k_I) / total
+  formula_modify:   (W_L·linesChanged + W_I·invocsChanged·k_I) / (W_L + W_I)
+  factors (k_S = lines.p50 / ncss.p50, k_I = lines.p50 / invocs.p50; raw bucket-level — no clamp):
+    method/prod:      k_S=2.143  k_I=3.000   (lines.p50=15.0, ncss.p50=7.0, invocs.p50=5.0)
+    method/test:      k_S=2.400  k_I=1.600   (lines.p50=12.0, ncss.p50=5.0, invocs.p50=7.5)
+    constructor/prod: k_S=1.500  k_I=3.000   (lines.p50=3.0, ncss.p50=2.0, invocs.p50=1.0)
+    constructor/test: (N=0)
+
+max contributors:
+  method/prod:
++--------+-----+--------------------------------------------------------------------------------+--------------------------------------------------------------------------------+
+| Dim    | Max | File                                                                           | Block                                                                          |
++--------+-----+--------------------------------------------------------------------------------+--------------------------------------------------------------------------------+
+| lines  |  40 | VeryLongGeneratedClassNameWithoutAnySpacesThatKeepsGoingAndGoingPastTheColumnL | run()                                                                          |
+|        |     | imitImpl                                                                       |                                                                                |
++--------+-----+--------------------------------------------------------------------------------+--------------------------------------------------------------------------------+
+| ncss   |  12 | HttpChannelInitializer                                                         | initChannel(io.netty.channel.socket.SocketChannel channel,                     |
+|        |     |                                                                                | java.util.Map<String, java.util.List<Integer>> options)                        |
++--------+-----+--------------------------------------------------------------------------------+--------------------------------------------------------------------------------+
+| invocs |  15 | HttpChannelInitializer                                                         | initChannel(io.netty.channel.socket.SocketChannel channel,                     |
+|        |     |                                                                                | java.util.Map<String, java.util.List<Integer>> options)                        |
++--------+-----+--------------------------------------------------------------------------------+--------------------------------------------------------------------------------+
+  method/test:
++--------+-----+------+-------+
+| Dim    | Max | File | Block |
++--------+-----+------+-------+
+| lines  |   - | -    | -     |
++--------+-----+------+-------+
+| ncss   |   - | -    | -     |
++--------+-----+------+-------+
+| invocs |   - | -    | -     |
++--------+-----+------+-------+
+  constructor/prod:
++--------+-----+------+-------+
+| Dim    | Max | File | Block |
++--------+-----+------+-------+
+| lines  |   - | -    | -     |
++--------+-----+------+-------+
+| ncss   |   - | -    | -     |
++--------+-----+------+-------+
+| invocs |   - | -    | -     |
++--------+-----+------+-------+
+  constructor/test:
++--------+-----+------+-------+
+| Dim    | Max | File | Block |
++--------+-----+------+-------+
+| lines  |   - | -    | -     |
++--------+-----+------+-------+
+| ncss   |   - | -    | -     |
++--------+-----+------+-------+
+| invocs |   - | -    | -     |
++--------+-----+------+-------+
+
+Changed code blocks (ordered by driver score):
++-----------------+-------------------------------------------------+-------------+--------+----+----+----+-------+-------+-------+----------------------------------+
+| File            | Block                                           | Kind        | Op     | L  | S  | I  | pL    | pS    | pI    | Driver                           |
++-----------------+-------------------------------------------------+-------------+--------+----+----+----+-------+-------+-------+----------------------------------+
+| HttpChannel     | initChannel(SocketChannel)                      | Method      | NEW    | 30 | 12 | 15 | 30.00 | 25.71 | 45.00 | 31.29 = (30.00+25.71+45.00)/2.50 |
++-----------------+-------------------------------------------------+-------------+--------+----+----+----+-------+-------+-------+----------------------------------+
+| HttpChannel     | dense()                                         | Method      | NEW    | 10 |  9 |  1 | 10.00 | 19.29 |  3.00 | 12.31 = (10.00+19.29+3.00)/2.50  |
++-----------------+-------------------------------------------------+-------------+--------+----+----+----+-------+-------+-------+----------------------------------+
+| HttpChannelTest | routesEveryRequest()                            | Method      | NEW    | 14 |  3 | 11 | 14.00 |  7.20 | 17.60 | 12.00 = (14.00+7.20+17.60)/2.50  |
++-----------------+-------------------------------------------------+-------------+--------+----+----+----+-------+-------+-------+----------------------------------+
+| HttpChannel     | HttpChannel(int, java.util.Map<String, Object>) | Constructor | NEW    | 10 |  1 |  9 | 10.00 |  1.50 | 27.00 | 10.00 = (10.00+1.50+27.00)/2.50  |
++-----------------+-------------------------------------------------+-------------+--------+----+----+----+-------+-------+-------+----------------------------------+
+| HttpChannel     | handle(Request, Response)                       | Method      | MODIFY |  9 |  8 |  3 |  9.00 |     — |  9.00 | 9.00 = (9.00+9.00)/2             |
++-----------------+-------------------------------------------------+-------------+--------+----+----+----+-------+-------+-------+----------------------------------+
+| HttpChannelTest | chatty()                                        | Method      | NEW    |  4 |  1 |  9 |  4.00 |  2.40 | 14.40 | 5.44 = (4.00+2.40+14.40)/2.50    |
++-----------------+-------------------------------------------------+-------------+--------+----+----+----+-------+-------+-------+----------------------------------+
+| HttpChannel     | HttpChannel()                                   | Constructor | NEW    |  3 |  2 |  1 |  3.00 |  3.00 |  3.00 | 3.00 = (3.00+3.00+3.00)/2.50     |
++-----------------+-------------------------------------------------+-------------+--------+----+----+----+-------+-------+-------+----------------------------------+
+
+Trivial changed code blocks (excluded from driver score):
++-----------------+-----------+--------+-----+---+---+---+
+| File            | Block     | Kind   | Op  | L | S | I |
++-----------------+-----------+--------+-----+---+---+---+
+| HttpChannelTest | setUp()   | Method | NEW | 2 | 2 | 2 |
++-----------------+-----------+--------+-----+---+---+---+
+| HttpChannel     | getName() | Method | NEW | 1 | 1 | 0 |
++-----------------+-----------+--------+-----+---+---+---+
+
+Ratio outliers in this commit (block S/L or I/L deviates > 0.75 from bucket median):
++-----------------+-------------------------------------------------+-------------+-------+-----+--------+---------+---------+
+| File            | Block                                           | Kind        | Scope | Op  | Driver | S/L_dev | I/L_dev |
++-----------------+-------------------------------------------------+-------------+-------+-----+--------+---------+---------+
+| HttpChannelTest | chatty()                                        | Method      | test  | NEW |   5.44 |     40% |    260% |
++-----------------+-------------------------------------------------+-------------+-------+-----+--------+---------+---------+
+| HttpChannel     | HttpChannel(int, java.util.Map<String, Object>) | Constructor | prod  | NEW |  10.00 |     85% |    170% |
++-----------------+-------------------------------------------------+-------------+-------+-----+--------+---------+---------+
+| HttpChannel     | dense()                                         | Method      | prod  | NEW |  12.31 |     93% |     70% |
++-----------------+-------------------------------------------------+-------------+-------+-----+--------+---------+---------+
+
+Ratio outlier counts by bucket:
+  method/prod:       1
+  method/test:       1
+  constructor/prod:  1
+  constructor/test:  0

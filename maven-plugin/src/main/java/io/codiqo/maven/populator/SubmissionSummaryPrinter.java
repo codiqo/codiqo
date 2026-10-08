@@ -1,7 +1,6 @@
 package io.codiqo.maven.populator;
 
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
@@ -10,18 +9,11 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-import com.github.freva.asciitable.AsciiTable;
-import com.github.freva.asciitable.Column;
-import com.github.freva.asciitable.ColumnData;
-import com.github.freva.asciitable.HorizontalAlign;
-import lombok.AccessLevel;
-import lombok.Getter;
-import lombok.RequiredArgsConstructor;
-import lombok.Value;
-import lombok.experimental.Accessors;
-import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.CharUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.math3.util.Precision;
 import org.apache.maven.plugin.logging.Log;
@@ -31,12 +23,14 @@ import org.thymeleaf.context.Context;
 import org.thymeleaf.templatemode.TemplateMode;
 import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver;
 
-import io.codiqo.api.metrics.DriverScaler.DimensionStats;
+import com.google.common.collect.Lists;
+
 import io.codiqo.api.metrics.DriverScaler;
+import io.codiqo.api.metrics.DriverScaler.DimensionStats;
 import io.codiqo.api.metrics.DriverScore;
 import io.codiqo.client.model.AnalysisSubmissionModel;
-import io.codiqo.client.model.CodeUnitModel.OperationEnum;
 import io.codiqo.client.model.CodeUnitModel;
+import io.codiqo.client.model.CodeUnitModel.OperationEnum;
 import io.codiqo.client.model.CommitModel;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.MetricsModel;
@@ -46,20 +40,27 @@ import io.codiqo.submit.ModuleQualityTracker;
 import io.codiqo.submit.SampleMaxTracker;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.submit.SubmissionPopulator;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
+import lombok.Value;
+import lombok.experimental.Accessors;
 
+/**
+ * Logs the driver-score calibration of a submission, laid out by the submission-summary template. The public nested
+ * classes are that template's view model: their accessors are read by the template alone, which is why Java shows no
+ * caller for most of them.
+ */
 @RequiredArgsConstructor
 public class SubmissionSummaryPrinter implements SubmissionPopulator {
     private static final String TITLE = "Codiqo — Driver Score Calibration";
     private static final String TEMPLATE_NAME = "submission-summary";
     private static final int ROUNDING = 2;
     private static final int COMMIT_SHA_LENGTH = 12;
+    private static final String NONE = "-";
+    private static final String NOT_APPLICABLE = "—";
 
     private static final TemplateEngine TEMPLATE_ENGINE;
-
-    private static final List<ColumnData<MaxRow>> MAX_CONTRIBUTOR_COLUMNS;
-    private static final List<ColumnData<BlockRow>> CHANGED_BLOCKS_FIXED_COLUMNS;
-    private static final List<ColumnData<BlockRow>> TRIVIAL_BLOCKS_FIXED_COLUMNS;
-    private static final List<ColumnData<BlockRow>> OUTLIER_BLOCKS_FIXED_COLUMNS;
 
     static {
         ClassLoaderTemplateResolver resolver = new ClassLoaderTemplateResolver();
@@ -70,97 +71,60 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
 
         TEMPLATE_ENGINE = new TemplateEngine();
         TEMPLATE_ENGINE.setTemplateResolver(resolver);
-
-        MAX_CONTRIBUTOR_COLUMNS = Arrays.<ColumnData<MaxRow>> asList(
-                new Column().header("Dim").dataAlign(HorizontalAlign.LEFT).with((MaxRow r) -> r.dim()),
-                new Column().header("Max").dataAlign(HorizontalAlign.RIGHT).with((MaxRow r) -> r.value() < 0 ? "-" : String.valueOf(r.value())),
-                new Column().header("File").dataAlign(HorizontalAlign.LEFT).with((MaxRow r) -> r.file()),
-                new Column().header("Block").dataAlign(HorizontalAlign.LEFT).with((MaxRow r) -> r.block()));
-
-        CHANGED_BLOCKS_FIXED_COLUMNS = Arrays.<ColumnData<BlockRow>> asList(
-                new Column().header("Kind").dataAlign(HorizontalAlign.LEFT).with((BlockRow r) -> r.kind()),
-                new Column().header("Op").dataAlign(HorizontalAlign.LEFT).with(SubmissionSummaryPrinter::formatOperation),
-                new Column().header("L").dataAlign(HorizontalAlign.RIGHT).with((BlockRow r) -> String.valueOf(r.lines())),
-                new Column().header("S").dataAlign(HorizontalAlign.RIGHT).with((BlockRow r) -> String.valueOf(r.ncss())),
-                new Column().header("I").dataAlign(HorizontalAlign.RIGHT).with((BlockRow r) -> String.valueOf(r.invocations())),
-                new Column().header("pL").dataAlign(HorizontalAlign.RIGHT).with((BlockRow r) -> formatDouble(r.projectedLines())),
-                new Column().header("pS").dataAlign(HorizontalAlign.RIGHT).with((BlockRow r) -> r.operation() == OperationEnum.MODIFY ? "—" : formatDouble(r.projectedNcss())),
-                new Column().header("pI").dataAlign(HorizontalAlign.RIGHT).with((BlockRow r) -> formatDouble(r.projectedInvocations())),
-                new Column().header("Driver").dataAlign(HorizontalAlign.LEFT).with(SubmissionSummaryPrinter::formatDriver));
-
-        TRIVIAL_BLOCKS_FIXED_COLUMNS = Arrays.<ColumnData<BlockRow>> asList(
-                new Column().header("Kind").dataAlign(HorizontalAlign.LEFT).with((BlockRow r) -> r.kind()),
-                new Column().header("Op").dataAlign(HorizontalAlign.LEFT).with(SubmissionSummaryPrinter::formatOperation),
-                new Column().header("L").dataAlign(HorizontalAlign.RIGHT).with((BlockRow r) -> String.valueOf(r.lines())),
-                new Column().header("S").dataAlign(HorizontalAlign.RIGHT).with((BlockRow r) -> String.valueOf(r.ncss())),
-                new Column().header("I").dataAlign(HorizontalAlign.RIGHT).with((BlockRow r) -> String.valueOf(r.invocations())));
-
-        OUTLIER_BLOCKS_FIXED_COLUMNS = Arrays.<ColumnData<BlockRow>> asList(
-                new Column().header("Kind").dataAlign(HorizontalAlign.LEFT).with((BlockRow r) -> r.kind()),
-                new Column().header("Scope").dataAlign(HorizontalAlign.LEFT).with((BlockRow r) -> r.test() ? "test" : "prod"),
-                new Column().header("Op").dataAlign(HorizontalAlign.LEFT).with(SubmissionSummaryPrinter::formatOperation),
-                new Column().header("Driver").dataAlign(HorizontalAlign.RIGHT).with((BlockRow r) -> formatDouble(r.driver())),
-                new Column().header("S/L_dev").dataAlign(HorizontalAlign.RIGHT).with((BlockRow r) -> r.operation() == OperationEnum.MODIFY ? "—" : formatPercent(r.deviationNcss())),
-                new Column().header("I/L_dev").dataAlign(HorizontalAlign.RIGHT).with((BlockRow r) -> r.operation() == OperationEnum.MODIFY ? "—" : formatPercent(r.deviationInvocations())));
+        TEMPLATE_ENGINE.addDialect(new TextLayoutDialect());
     }
 
     private final Log log;
 
     @Override
     public void accept(SubmissionContext ctx) {
-        log.info(StringUtils.EMPTY);
-        logLines(StringUtils.stripEnd(renderTextSummary(ctx), StringUtils.LF));
-        log.info(StringUtils.EMPTY);
-
-        log.info("max contributors:");
-        log.info("  method/prod:");
-        logLines(renderMaxContributorsTable(ctx.getMethodMaxProd()));
-        log.info("  method/test:");
-        logLines(renderMaxContributorsTable(ctx.getMethodMaxTest()));
-        log.info("  constructor/prod:");
-        logLines(renderMaxContributorsTable(ctx.getConstructorMaxProd()));
-        log.info("  constructor/test:");
-        logLines(renderMaxContributorsTable(ctx.getConstructorMaxTest()));
-
-        RowBundle rowBundle = buildChangedBlockRows(ctx, ctx.getSubmissionModel());
-        if (CollectionUtils.isNotEmpty(rowBundle.nonTrivial())) {
-            log.info(StringUtils.EMPTY);
-            log.info("Changed code blocks (ordered by driver score):");
-            logLines(renderChangedBlocksTable(rowBundle.nonTrivial()));
+        String text = TEMPLATE_ENGINE.process(TEMPLATE_NAME, templateContext(ctx));
+        for (String line : StringUtils.splitPreserveAllTokens(Strings.CS.removeEnd(text, StringUtils.LF), CharUtils.LF)) {
+            log.info(line);
         }
-        if (CollectionUtils.isNotEmpty(rowBundle.trivial())) {
-            log.info(StringUtils.EMPTY);
-            log.info("Trivial changed code blocks (excluded from driver score):");
-            logLines(renderTrivialBlocksTable(rowBundle.trivial()));
-        }
+    }
+    private static Context templateContext(SubmissionContext ctx) {
+        AnalysisSubmissionModel submission = ctx.getSubmissionModel();
+        CommitModel commit = submission.getCommit();
+        TrivialCounts trivials = aggregateTrivialCounts(ctx);
+        double capMultiplier = ctx.getArgs().getDriverScoreCapMultiplier();
+        Context toReturn = new Context(Locale.ENGLISH);
 
-        List<BlockRow> outliers = rowBundle.nonTrivial().stream()
+        toReturn.setVariable("title", TITLE);
+        toReturn.setVariable("projectId", submission.getProject().getCode());
+        toReturn.setVariable("commitSha", Objects.nonNull(commit) ? StringUtils.substring(commit.getSha(), 0, COMMIT_SHA_LENGTH) : null);
+        toReturn.setVariable("commitAuthor", Objects.nonNull(commit) ? commit.getAuthor() : null);
+        toReturn.setVariable("files", countFiles(submission));
+        toReturn.setVariable("blocks", countChangedBlocks(submission));
+
+        toReturn.setVariable("rows", Arrays.asList(
+                new ScalerRow("method/prod", trivials.methodProd(), ctx.getMethodCapQuantileProd(), ctx.getMethodScalerProd(), capMultiplier),
+                new ScalerRow("method/test", trivials.methodTest(), ctx.getMethodCapQuantileTest(), ctx.getMethodScalerTest(), capMultiplier),
+                new ScalerRow("constructor/prod", trivials.ctorProd(), ctx.getConstructorCapQuantileProd(), ctx.getConstructorScalerProd(), capMultiplier),
+                new ScalerRow("constructor/test", trivials.ctorTest(), ctx.getConstructorCapQuantileTest(), ctx.getConstructorScalerTest(), capMultiplier)));
+        toReturn.setVariable("quantilePercent", (int) Math.round(ctx.getArgs().getStatsQuantile() * 100));
+        toReturn.setVariable("capMultiplier", capMultiplier);
+        toReturn.setVariable("weightLines", DriverScore.WEIGHT_LINES);
+        toReturn.setVariable("weightNcss", DriverScore.WEIGHT_NCSS);
+        toReturn.setVariable("weightInvocations", DriverScore.WEIGHT_INVOCATIONS);
+        toReturn.setVariable("totalWeight", DriverScore.TOTAL_WEIGHT);
+
+        toReturn.setVariable("maxContributors", Arrays.asList(
+                maxContributors("method/prod", ctx.getMethodMaxProd()),
+                maxContributors("method/test", ctx.getMethodMaxTest()),
+                maxContributors("constructor/prod", ctx.getConstructorMaxProd()),
+                maxContributors("constructor/test", ctx.getConstructorMaxTest())));
+
+        RowBundle rowBundle = buildChangedBlockRows(ctx, submission);
+        toReturn.setVariable("changedBlocks", rowBundle.nonTrivial());
+        toReturn.setVariable("trivialBlocks", rowBundle.trivial());
+        toReturn.setVariable("outliers", rowBundle.nonTrivial().stream()
                 .filter(BlockRow::outlier)
                 .sorted(Comparator.comparingDouble((BlockRow r) -> Math.max(r.deviationNcss(), r.deviationInvocations())).reversed())
-                .collect(Collectors.toList());
-        double maxDeviation = ctx.getArgs().getDriverFactorMaxDeviation();
-        log.info(StringUtils.EMPTY);
-        log.info(String.format(Locale.ROOT, "Ratio outliers in this commit (block S/L or I/L deviates > %.2f from bucket median):", maxDeviation));
-        if (outliers.isEmpty()) {
-            log.info("  none");
-        } else {
-            logLines(renderOutliersTable(outliers));
-        }
-
-        OutlierBucketCounts bucketCounts = countOutliersByBucket(rowBundle.nonTrivial());
-        log.info(StringUtils.EMPTY);
-        log.info("Ratio outlier counts by bucket:");
-        log.info(String.format(Locale.ROOT, "  method/prod:       %d", bucketCounts.methodProd()));
-        log.info(String.format(Locale.ROOT, "  method/test:       %d", bucketCounts.methodTest()));
-        log.info(String.format(Locale.ROOT, "  constructor/prod:  %d", bucketCounts.ctorProd()));
-        log.info(String.format(Locale.ROOT, "  constructor/test:  %d", bucketCounts.ctorTest()));
-    }
-    private static String renderOutliersTable(List<BlockRow> rows) {
-        List<ColumnData<BlockRow>> columns = new ArrayList<>();
-        columns.add(new Column().header("File").dataAlign(HorizontalAlign.LEFT).maxWidth(determineWidth(rows, BlockRow::file, "File")).with((BlockRow r) -> r.file()));
-        columns.add(new Column().header("Block").dataAlign(HorizontalAlign.LEFT).maxWidth(determineWidth(rows, BlockRow::block, "Block")).with((BlockRow r) -> r.block()));
-        columns.addAll(OUTLIER_BLOCKS_FIXED_COLUMNS);
-        return AsciiTable.getTable(rows, columns);
+                .collect(Collectors.toList()));
+        toReturn.setVariable("maxDeviation", ctx.getArgs().getDriverFactorMaxDeviation());
+        toReturn.setVariable("outlierCounts", countOutliersByBucket(rowBundle.nonTrivial()));
+        return toReturn;
     }
     private static OutlierBucketCounts countOutliersByBucket(List<BlockRow> rows) {
         OutlierBucketCounts counts = new OutlierBucketCounts();
@@ -184,40 +148,6 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
             }
         }
         return counts;
-    }
-    private void logLines(String text) {
-        for (String line : text.split(StringUtils.LF, -1)) {
-            log.info(line);
-        }
-    }
-    private static String renderTextSummary(SubmissionContext ctx) {
-        AnalysisSubmissionModel submission = ctx.getSubmissionModel();
-        CommitModel commit = submission.getCommit();
-        TrivialCounts trivials = aggregateTrivialCounts(ctx);
-        double capMultiplier = ctx.getArgs().getDriverScoreCapMultiplier();
-
-        List<ScalerRow> rows = Arrays.asList(
-                new ScalerRow("method/prod", trivials.methodProd(), ctx.getMethodCapQuantileProd(), ctx.getMethodScalerProd(), capMultiplier),
-                new ScalerRow("method/test", trivials.methodTest(), ctx.getMethodCapQuantileTest(), ctx.getMethodScalerTest(), capMultiplier),
-                new ScalerRow("constructor/prod", trivials.ctorProd(), ctx.getConstructorCapQuantileProd(), ctx.getConstructorScalerProd(), capMultiplier),
-                new ScalerRow("constructor/test", trivials.ctorTest(), ctx.getConstructorCapQuantileTest(), ctx.getConstructorScalerTest(), capMultiplier));
-
-        Context tctx = new Context(Locale.ENGLISH);
-        tctx.setVariable("title", TITLE);
-        tctx.setVariable("separator", StringUtils.repeat('-', TITLE.length()));
-        tctx.setVariable("projectId", submission.getProject().getCode());
-        tctx.setVariable("commitSha", Objects.nonNull(commit) ? StringUtils.substring(commit.getSha(), 0, COMMIT_SHA_LENGTH) : null);
-        tctx.setVariable("commitAuthor", Objects.nonNull(commit) ? commit.getAuthor() : null);
-        tctx.setVariable("files", countFiles(submission));
-        tctx.setVariable("blocks", countChangedBlocks(submission));
-        tctx.setVariable("rows", rows);
-        tctx.setVariable("quantilePercent", (int) Math.round(ctx.getArgs().getStatsQuantile() * 100));
-        tctx.setVariable("capMultiplierFmt", String.format(Locale.ROOT, "%.2f", capMultiplier));
-        tctx.setVariable("weightLines", String.format(Locale.ROOT, "%.2f", DriverScore.WEIGHT_LINES));
-        tctx.setVariable("weightNcss", String.format(Locale.ROOT, "%.2f", DriverScore.WEIGHT_NCSS));
-        tctx.setVariable("weightInvocs", String.format(Locale.ROOT, "%.2f", DriverScore.WEIGHT_INVOCATIONS));
-        tctx.setVariable("totalWeight", String.format(Locale.ROOT, "%.2f", DriverScore.TOTAL_WEIGHT));
-        return TEMPLATE_ENGINE.process(TEMPLATE_NAME, tctx);
     }
     private static FileCounts countFiles(AnalysisSubmissionModel submission) {
         FileCounts counts = new FileCounts();
@@ -279,8 +209,8 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         return counts;
     }
     private static RowBundle buildChangedBlockRows(SubmissionContext ctx, AnalysisSubmissionModel submission) {
-        List<BlockRow> nonTrivial = new ArrayList<>();
-        List<BlockRow> trivial = new ArrayList<>();
+        List<BlockRow> nonTrivial = Lists.newArrayList();
+        List<BlockRow> trivial = Lists.newArrayList();
         for (FileChangeModel file : CollectionUtils.emptyIfNull(submission.getFiles())) {
             boolean isTest = Boolean.TRUE.equals(file.getIsTest());
             for (CodeUnitModel unit : CollectionUtils.emptyIfNull(file.getCodeUnits())) {
@@ -300,26 +230,11 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         trivial.sort(Comparator.comparingInt(BlockRow::lines).reversed());
         return new RowBundle(nonTrivial, trivial);
     }
-    private static String renderChangedBlocksTable(List<BlockRow> rows) {
-        List<ColumnData<BlockRow>> columns = new ArrayList<>();
-        columns.add(new Column().header("File").dataAlign(HorizontalAlign.LEFT).maxWidth(determineWidth(rows, BlockRow::file, "File")).with((BlockRow r) -> r.file()));
-        columns.add(new Column().header("Block").dataAlign(HorizontalAlign.LEFT).maxWidth(determineWidth(rows, BlockRow::block, "Block")).with((BlockRow r) -> r.block()));
-        columns.addAll(CHANGED_BLOCKS_FIXED_COLUMNS);
-        return AsciiTable.getTable(rows, columns);
-    }
-    private static String renderTrivialBlocksTable(List<BlockRow> rows) {
-        List<ColumnData<BlockRow>> columns = new ArrayList<>();
-        columns.add(new Column().header("File").dataAlign(HorizontalAlign.LEFT).maxWidth(determineWidth(rows, BlockRow::file, "File")).with((BlockRow r) -> r.file()));
-        columns.add(new Column().header("Block").dataAlign(HorizontalAlign.LEFT).maxWidth(determineWidth(rows, BlockRow::block, "Block")).with((BlockRow r) -> r.block()));
-        columns.addAll(TRIVIAL_BLOCKS_FIXED_COLUMNS);
-        return AsciiTable.getTable(rows, columns);
-    }
-    private static String renderMaxContributorsTable(SampleMaxTracker tracker) {
-        List<MaxRow> rows = Arrays.asList(
+    private static MaxContributors maxContributors(String label, SampleMaxTracker tracker) {
+        return new MaxContributors(label, Arrays.asList(
                 new MaxRow("lines", tracker.lines().value(), tracker.lines().file(), tracker.lines().block()),
                 new MaxRow("ncss", tracker.ncss().value(), tracker.ncss().file(), tracker.ncss().block()),
-                new MaxRow("invocs", tracker.invocations().value(), tracker.invocations().file(), tracker.invocations().block()));
-        return AsciiTable.getTable(rows, MAX_CONTRIBUTOR_COLUMNS);
+                new MaxRow("invocs", tracker.invocations().value(), tracker.invocations().file(), tracker.invocations().block())));
     }
     private static Optional<BlockRow> buildRow(SubmissionContext ctx, FileChangeModel file, CodeUnitModel unit, boolean isTest) {
         MetricsModel metrics = unit.getMetrics();
@@ -402,26 +317,11 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         }
         return isTest ? ctx.getMethodScalerTest() : ctx.getMethodScalerProd();
     }
-    private static String formatDriver(BlockRow r) {
-        if (r.operation() == OperationEnum.MODIFY) {
-            return String.format(Locale.ROOT, "%.2f = (%.2f+%.2f)/2",
-                    r.driver(),
-                    r.projectedLines(), r.projectedInvocations());
-        }
-        return String.format(Locale.ROOT, "%.2f = (%.2f+%.2f+%.2f)/%.2f",
-                r.driver(),
-                r.projectedLines(), r.projectedNcss(), r.projectedInvocations(),
-                DriverScore.TOTAL_WEIGHT);
+    private static String fixed(double value) {
+        return String.format(Locale.ROOT, "%.2f", value);
     }
-    private static String formatOperation(BlockRow r) {
-        return Objects.isNull(r.operation()) ? "-" : r.operation().name();
-    }
-    private static int determineWidth(List<BlockRow> rows, java.util.function.Function<BlockRow, String> extractor, String header) {
-        int longest = StringUtils.length(header);
-        for (BlockRow row : rows) {
-            longest = Math.max(longest, StringUtils.length(extractor.apply(row)));
-        }
-        return longest + 3;
+    private static String percent(double ratio) {
+        return String.format(Locale.ROOT, "%.0f%%", ratio * 100);
     }
     private static boolean isMethodOrConstructor(SymbolKindModel kind) {
         return kind == SymbolKindModel.METHOD || kind == SymbolKindModel.CONSTRUCTOR;
@@ -437,21 +337,6 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         String name = slash >= 0 ? path.substring(slash + 1) : path;
         int dot = name.lastIndexOf('.');
         return dot > 0 ? name.substring(0, dot) : name;
-    }
-    private static String formatDouble(double value) {
-        return String.format(Locale.ROOT, "%.2f", value);
-    }
-    private static String formatPercent(double ratio) {
-        return String.format(Locale.ROOT, "%.0f%%", ratio * 100);
-    }
-    private static String formatDimension(DimensionStats stats) {
-        return String.format(Locale.ROOT, "min=%-4d p50=%-6.1f p75=%-6.1f p90=%-6.1f p95=%-6.1f max=%d",
-                stats.min(),
-                stats.p50(),
-                stats.p75(),
-                stats.p90(),
-                stats.p95(),
-                stats.max());
     }
 
     @Getter
@@ -496,34 +381,8 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         DriverScaler scaler;
         double capMultiplier;
 
-        public String baselineLine() {
-            return String.format(Locale.ROOT, "  %-17s  N=%-5d  trivials_excluded=%d", label + ":", scaler.population(), trivialsExcluded);
-        }
-        public String capLine() {
-            int budgetPerBlock = (int) Math.round(capQuantile * capMultiplier);
-            return String.format(Locale.ROOT, "  %-17s quantile=%-5d bucket_budget_per_block=%d", label + ":", capQuantile, budgetPerBlock);
-        }
-        public List<String> scalerLines() {
-            if (scaler.isEmpty()) {
-                return Arrays.asList(String.format("  %s: (N=0)", label));
-            }
-            return Arrays.asList(
-                    String.format(Locale.ROOT, "  %s: (N=%d)", label, scaler.population()),
-                    String.format("    lines:   %s", formatDimension(scaler.lines())),
-                    String.format("    ncss:    %s", formatDimension(scaler.ncss())),
-                    String.format("    invocs:  %s", formatDimension(scaler.invocations())));
-        }
-        public String factorLine() {
-            if (scaler.isEmpty()) {
-                return String.format("    %-17s (N=0)", label + ":");
-            }
-            return String.format(Locale.ROOT, "    %-17s k_S=%.3f  k_I=%.3f   (lines.p50=%.1f, ncss.p50=%.1f, invocs.p50=%.1f)",
-                    label + ":",
-                    scaler.ncssFactor(),
-                    scaler.invocationsFactor(),
-                    scaler.lines().p50(),
-                    scaler.ncss().p50(),
-                    scaler.invocations().p50());
+        public int budgetPerBlock() {
+            return (int) Math.round(capQuantile * capMultiplier);
         }
     }
 
@@ -542,7 +401,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
     @Value
     @Accessors(fluent = true)
     @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
-    private static final class BlockRow {
+    public static final class BlockRow {
         String file;
         String block;
         String kind;
@@ -558,24 +417,76 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         double deviationNcss;
         double deviationInvocations;
         boolean outlier;
+
+        public boolean modify() {
+            return operation == OperationEnum.MODIFY;
+        }
+        public String operationLabel() {
+            return Objects.isNull(operation) ? NONE : operation.name();
+        }
+        public String scopeLabel() {
+            return test ? "test" : "prod";
+        }
+        public String projectedLinesLabel() {
+            return fixed(projectedLines);
+        }
+        /** a modified block has no statement count of its own: only its changed lines and invocations drive it */
+        public String projectedNcssLabel() {
+            return modify() ? NOT_APPLICABLE : fixed(projectedNcss);
+        }
+        public String projectedInvocationsLabel() {
+            return fixed(projectedInvocations);
+        }
+        public String driverLabel() {
+            return fixed(driver);
+        }
+        public String driverFormula() {
+            if (modify()) {
+                return fixed(driver) + " = (" + fixed(projectedLines) + "+" + fixed(projectedInvocations) + ")/2";
+            }
+            return fixed(driver) + " = (" + fixed(projectedLines) + "+" + fixed(projectedNcss) + "+" + fixed(projectedInvocations) + ")/" + fixed(DriverScore.TOTAL_WEIGHT);
+        }
+        public String deviationNcssLabel() {
+            return modify() ? NOT_APPLICABLE : percent(deviationNcss);
+        }
+        public String deviationInvocationsLabel() {
+            return modify() ? NOT_APPLICABLE : percent(deviationInvocations);
+        }
     }
 
     @Getter
     @Accessors(fluent = true)
-    private static final class OutlierBucketCounts {
+    public static final class OutlierBucketCounts {
         private int methodProd;
         private int methodTest;
         private int ctorProd;
         private int ctorTest;
     }
 
+    public static final class MaxContributors extends ImmutablePair<String, List<MaxRow>> {
+        private MaxContributors(String label, List<MaxRow> rows) {
+            super(label, rows);
+        }
+        public String label() {
+            return getLeft();
+        }
+        public List<MaxRow> rows() {
+            return getRight();
+        }
+    }
+
     @Value
     @Accessors(fluent = true)
     @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
-    private static final class MaxRow {
+    public static final class MaxRow {
         String dim;
         int value;
         String file;
         String block;
+
+        /** a bucket with no sample has no maximum */
+        public String valueLabel() {
+            return value < 0 ? NONE : String.valueOf(value);
+        }
     }
 }

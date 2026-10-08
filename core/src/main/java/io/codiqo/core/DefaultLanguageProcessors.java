@@ -12,17 +12,12 @@ import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
 import java.util.EnumSet;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -30,16 +25,12 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
-import java.util.TreeMap;
-import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.collections4.MultiValuedMap;
-import org.apache.commons.collections4.multimap.HashSetValuedHashMap;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -50,6 +41,13 @@ import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.lib.Repository;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Multimap;
+import com.google.common.collect.MultimapBuilder;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.IndexingSummary.IndexingSummaryBuilder;
@@ -98,12 +96,12 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     private final Log log;
     private final RunArgs args;
     private final List<LanguageSpec> processors;
-    private final Set<String> extensions = new HashSet<>();
+    private final Set<String> extensions = Sets.newHashSet();
 
     public DefaultLanguageProcessors(LogFactory logFactory, RunArgs args, Fetch fetch) {
         this.log = logFactory.getLogger(getClass());
         this.args = Objects.requireNonNull(args);
-        this.processors = new ArrayList<>(List.of(new JavaLanguageSpec(logFactory, args, fetch)));
+        this.processors = Lists.newArrayList(List.of(new JavaLanguageSpec(logFactory, args, fetch)));
 
         processors.forEach(processor -> extensions.addAll(processor.lang().getExtensions()));
     }
@@ -146,21 +144,16 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
          * CodeBlockInfo.hashCode() is the PMD AST node identity hashCode (varies per JVM run), so a plain
          * HashSet would make downstream code-unit ordering — and thus the dumped YAML — non-reproducible.
          */
-        MultiValuedMap<File, CodeBlockInfo> blocks = new HashSetValuedHashMap<>() {
-            @Override
-            protected HashSet<CodeBlockInfo> createCollection() {
-                return new LinkedHashSet<>();
-            }
-        };
+        Multimap<File, CodeBlockInfo> blocks = MultimapBuilder.hashKeys().linkedHashSetValues().build();
         Set<File> parsedFiles = ConcurrentHashMap.newKeySet();
         Queue<DeclaredType> types = new ConcurrentLinkedQueue<>();
         Queue<TypeReference> references = new ConcurrentLinkedQueue<>();
-        List<Path> totalFiles = new ArrayList<>();
-        List<Path> ignoredFiles = new ArrayList<>();
-        List<Path> excludedFiles = new ArrayList<>();
-        List<Path> excludedTrees = new ArrayList<>();
-        List<Path> skippedFiles = new ArrayList<>();
-        List<Path> unreadableFiles = new ArrayList<>();
+        List<Path> totalFiles = Lists.newArrayList();
+        List<Path> ignoredFiles = Lists.newArrayList();
+        List<Path> excludedFiles = Lists.newArrayList();
+        List<Path> excludedTrees = Lists.newArrayList();
+        List<Path> skippedFiles = Lists.newArrayList();
+        List<Path> unreadableFiles = Lists.newArrayList();
         AtomicInteger skippedTrivial = new AtomicInteger();
         AtomicInteger totalSymbols = new AtomicInteger();
 
@@ -168,7 +161,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         try (Repository repo = JGit.openRepository(projectRoot)) {
             toReturn.projectRoot(projectRoot);
 
-            Set<Path> indexed = new LinkedHashSet<>();
+            Set<Path> indexed = Sets.newLinkedHashSet();
             DirCache dirCache = repo.readDirCache();
             int entryCount = dirCache.getEntryCount();
             for (int i = 0; i < entryCount; i++) {
@@ -290,13 +283,13 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                 }
             });
 
-            Map<ProjectSpec, List<File>> filesByOwner = new LinkedHashMap<>();
-            List<File> orphans = new ArrayList<>();
+            Map<ProjectSpec, List<File>> filesByOwner = Maps.newLinkedHashMap();
+            List<File> orphans = Lists.newArrayList();
             for (Path path : totalFiles) {
                 File file = path.toFile();
                 Optional<ProjectSpec> opt = args.owner(file);
                 if (opt.isPresent()) {
-                    filesByOwner.computeIfAbsent(opt.get(), k -> new ArrayList<>()).add(file);
+                    filesByOwner.computeIfAbsent(opt.get(), k -> Lists.newArrayList()).add(file);
                 } else {
                     orphans.add(file);
                 }
@@ -370,8 +363,8 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                     .projects(args.getProjects())
                     .blocks(blocks)
                     .parsedFiles(Set.copyOf(parsedFiles))
-                    .types(new ArrayList<>(types))
-                    .references(new ArrayList<>(references))
+                    .types(Lists.newArrayList(types))
+                    .references(Lists.newArrayList(references))
                     .totalFiles(totalFiles)
                     .skippedFiles(skippedFiles)
                     .ignoredFiles(ignoredFiles)
@@ -393,14 +386,14 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         int removed = 0;
 
         for (LanguageSpec processor : processors) {
-            Map<ProjectSpec, Map<GitFileAnalysis, Set<Integer>>> removalCandidates = new LinkedHashMap<>();
+            Map<ProjectSpec, Map<GitFileAnalysis, Set<Integer>>> removalCandidates = Maps.newLinkedHashMap();
 
             for (FileAnalysis it : analysis) {
                 if (it.isExtension(processor.lang())) {
                     if (it instanceof GitFileAnalysis gitAnalysis) {
                         gitAnalysis.setLanguage(processor.lang());
 
-                        Set<Integer> lines = new HashSet<>();
+                        Set<Integer> lines = Sets.newHashSet();
                         if (Objects.nonNull(gitAnalysis.getStructuredDiff())) {
                             for (GitDiffHunk hunk : gitAnalysis.getStructuredDiff().getHunks()) {
                                 for (int line = hunk.getNewStartLine(); line < hunk.getNewEndLine(); line++) {
@@ -434,7 +427,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                         if (summary.getParsedFiles().contains(gitAnalysis.getFile())) {
                             Set<Integer> removedLines = removedLines(gitAnalysis);
                             if (CollectionUtils.isNotEmpty(removedLines)) {
-                                removalCandidates.computeIfAbsent(gitAnalysis.project().orElseThrow(), owner -> new LinkedHashMap<>()).put(gitAnalysis, removedLines);
+                                removalCandidates.computeIfAbsent(gitAnalysis.project().orElseThrow(), owner -> Maps.newLinkedHashMap()).put(gitAnalysis, removedLines);
                             }
                         }
                     }
@@ -452,7 +445,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         List<PreviousRevision> revisions = removedLinesByFile.keySet().stream()
                 .map(gitAnalysis -> new PreviousRevision(gitAnalysis.getFile(), gitAnalysis.getOldPath(), gitAnalysis.getContentBefore()))
                 .toList();
-        MultiValuedMap<File, CodeBlockInfo> before = processor.parseRemoved(owner, revisions);
+        Multimap<File, CodeBlockInfo> before = processor.parseRemoved(owner, revisions);
 
         int toReturn = 0;
         for (Entry<GitFileAnalysis, Set<Integer>> entry : removedLinesByFile.entrySet()) {
@@ -468,7 +461,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         return toReturn;
     }
     private static Set<Integer> removedLines(GitFileAnalysis gitAnalysis) {
-        Set<Integer> toReturn = new HashSet<>();
+        Set<Integer> toReturn = Sets.newHashSet();
         if (BooleanUtils.and(new boolean[] {
                 MODIFIED_IN_PLACE.contains(gitAnalysis.getChangeType()),
                 Objects.nonNull(gitAnalysis.getContentBefore()),
@@ -545,9 +538,10 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
             }
         }
     }
-    void tokenizeAndCollect(LanguageSpec processor, List<Path> files, IndexingSummary summary, CommitAnalysis analysis) throws IOException {
-        Set<DuplicationMatch> matches = new LinkedHashSet<>();
-        Map<FileId, File> filesById = new HashMap<>();
+    @VisibleForTesting
+    public void tokenizeAndCollect(LanguageSpec processor, List<Path> files, IndexingSummary summary, CommitAnalysis analysis) throws IOException {
+        Set<DuplicationMatch> matches = Sets.newLinkedHashSet();
+        Map<FileId, File> filesById = Maps.newHashMap();
         boolean anyFileAdded = false;
 
         CPDConfiguration cfg = cpdConfiguration(processor.lang(), args);
@@ -655,7 +649,8 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
             throw new LanguageTerminationException(err);
         }
     }
-    static CPDConfiguration cpdConfiguration(Language language, RunArgs args) {
+    @VisibleForTesting
+    public static CPDConfiguration cpdConfiguration(Language language, RunArgs args) {
         CPDConfiguration toReturn = new CPDConfiguration(LanguageRegistry.singleton(language));
         toReturn.setDefaultLanguageVersion(language.getDefaultVersion());
         toReturn.setFailOnViolation(false);
@@ -674,18 +669,19 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
      * <p>Marks are compared by position, which only {@link Mark#compareTo} does: {@code Mark.equals} compares token
      * content, so every copy of a clone is equal to every other.
      */
-    static Map<Match, Set<Mark>> cloneClasses(List<Match> matches) {
-        Map<Integer, Map<Mark, Set<Mark>>> classOf = new HashMap<>();
+    @VisibleForTesting
+    public static Map<Match, Set<Mark>> cloneClasses(List<Match> matches) {
+        Map<Integer, Map<Mark, Set<Mark>>> classOf = Maps.newHashMap();
         for (Match match : matches) {
-            Map<Mark, Set<Mark>> sameLength = classOf.computeIfAbsent(match.getTokenCount(), count -> new TreeMap<>());
-            Set<Mark> merged = new TreeSet<>(match.getMarkSet());
+            Map<Mark, Set<Mark>> sameLength = classOf.computeIfAbsent(match.getTokenCount(), count -> Maps.newTreeMap());
+            Set<Mark> merged = Sets.newTreeSet(match.getMarkSet());
             for (Mark mark : match.getMarkSet()) {
                 Optional.ofNullable(sameLength.get(mark)).ifPresent(merged::addAll);
             }
             merged.forEach(mark -> sameLength.put(mark, merged));
         }
 
-        Map<Match, Set<Mark>> toReturn = new LinkedHashMap<>();
+        Map<Match, Set<Mark>> toReturn = Maps.newLinkedHashMap();
         Set<Set<Mark>> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         for (Match match : matches) {
             Set<Mark> merged = classOf.get(match.getTokenCount()).get(match.getFirstMark());

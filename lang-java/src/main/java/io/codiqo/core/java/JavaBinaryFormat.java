@@ -1,5 +1,6 @@
 package io.codiqo.core.java;
 
+import java.lang.constant.ConstantDescs;
 import java.util.Iterator;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -25,7 +26,6 @@ import net.sourceforge.pmd.lang.java.types.TypePrettyPrint;
 @UtilityClass
 public class JavaBinaryFormat {
     public static final ASMDescriptorVisitor INSTANCE = new ASMDescriptorVisitor();
-    public static final String CONSTRUCTOR_NAME = "<init>";
     public static final String OBJECT_DESCRIPTOR = "Ljava/lang/Object;";
 
     public static boolean isFullyResolved(JMethodSig sig) {
@@ -47,7 +47,7 @@ public class JavaBinaryFormat {
         return Type.getObjectType(getInternalName(symbol.getBinaryName()));
     }
     public static Method toMethod(JMethodSig sig) {
-        String name = sig.isConstructor() ? CONSTRUCTOR_NAME : sig.getName();
+        String name = sig.isConstructor() ? ConstantDescs.INIT_NAME : sig.getName();
         return new Method(name, toDescriptor(sig));
     }
     public static int getTypeSize(JTypeMirror type) {

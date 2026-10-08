@@ -1,17 +1,18 @@
 package io.codiqo.core.java;
 
 import java.io.File;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
 
-import org.apache.commons.collections4.MultiSet;
-import org.apache.commons.collections4.multiset.HashMultiSet;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.tuple.Triple;
+
+import com.google.common.collect.HashMultiset;
+import com.google.common.collect.Multiset;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.code.DeclaredType;
 import io.codiqo.api.code.TypeKind;
@@ -41,19 +42,19 @@ import net.sourceforge.pmd.lang.metrics.MetricsUtil;
  * references that hotspot importance is ranked on.
  */
 @UtilityClass
-class JavaTypeGraphReader {
-    void read(ASTCompilationUnit tree, File file, boolean test, List<DeclaredType> types, List<TypeReference> references) {
+public class JavaTypeGraphReader {
+    public void read(ASTCompilationUnit tree, File file, boolean test, List<DeclaredType> types, List<TypeReference> references) {
         for (ASTTypeDeclaration declaration : tree.getTypeDeclarations()) {
             String from = declaration.getBinaryName();
             types.add(new DeclaredType(from, file, kind(declaration), MetricsUtil.computeMetric(JavaMetrics.NCSS, declaration), test));
 
-            MultiSet<Triple<String, String, TypeReferenceKind>> counts = new HashMultiSet<>();
+            Multiset<Triple<String, String, TypeReferenceKind>> counts = HashMultiset.create();
             /**
              * Only direct ASTClassType children of the extends/implements lists are supertypes. The type arguments in
              * {@code implements Function<Api, Model>} are nested deeper, and collecting them too would record Api and
              * Model as supertypes of the declaring class.
              */
-            Set<Node> supertypes = new HashSet<>();
+            Set<Node> supertypes = Sets.newHashSet();
             declaration.descendants(ASTExtendsList.class).crossFindBoundaries()
                     .forEach(list -> list.children(ASTClassType.class).forEach(supertypes::add));
             declaration.descendants(ASTImplementsList.class).crossFindBoundaries()
@@ -71,8 +72,8 @@ class JavaTypeGraphReader {
                 }
             });
 
-            for (Triple<String, String, TypeReferenceKind> key : counts.uniqueSet()) {
-                references.add(new TypeReference(key.getLeft(), key.getMiddle(), key.getRight(), counts.getCount(key)));
+            for (Triple<String, String, TypeReferenceKind> key : counts.elementSet()) {
+                references.add(new TypeReference(key.getLeft(), key.getMiddle(), key.getRight(), counts.count(key)));
             }
         }
     }

@@ -70,6 +70,218 @@ paths:
           $ref: '#/components/responses/BadRequest'
       security:
         - apiKey: []
+        - bearerAuth: []
+
+  /api/v1/analyses/uploads:
+    post:
+      operationId: openAnalysisUpload
+      tags: [Analysis]
+      summary: Open a staged upload of a commit analysis
+      description: |
+        The staged form of submitAnalysis, for submissions too large for one request or networks too unreliable to
+        resend one. The body is the submission without its heavy parts: files, duplication, dependencies,
+        fullProjectCoverage, index and localReview are attached by their own calls and ignored here. Nothing is
+        analysed or scheduled until finalizeAnalysisUpload, which runs exactly what submitAnalysis runs; an upload
+        never finalized expires.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalysisSubmissionModel'
+      responses:
+        '201':
+          description: Upload opened
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisUploadModel'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+      security:
+        - apiKey: []
+        - bearerAuth: []
+
+  /api/v1/analyses/uploads/{uploadId}/files:
+    put:
+      operationId: putAnalysisUploadFiles
+      tags: [Analysis]
+      summary: Attach a batch of changed files
+      description: Each file is stored under its path, so a batch sent again replaces the files it carries.
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalysisUploadFilesModel'
+      responses:
+        '204':
+          description: Stored; a repeated call replaces what the previous one stored
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - apiKey: []
+        - bearerAuth: []
+
+  /api/v1/analyses/uploads/{uploadId}/duplication:
+    put:
+      operationId: putAnalysisUploadDuplication
+      tags: [Analysis]
+      summary: Attach the duplication report
+      description: The CPD report of the changed files.
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DuplicationReportModel'
+      responses:
+        '204':
+          description: Stored; a repeated call replaces what the previous one stored
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - apiKey: []
+        - bearerAuth: []
+
+  /api/v1/analyses/uploads/{uploadId}/dependencies:
+    put:
+      operationId: putAnalysisUploadDependencies
+      tags: [Analysis]
+      summary: Attach the dependency registry
+      description: The resolved dependencies of the build.
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DependencyRegistryModel'
+      responses:
+        '204':
+          description: Stored; a repeated call replaces what the previous one stored
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - apiKey: []
+        - bearerAuth: []
+
+  /api/v1/analyses/uploads/{uploadId}/full-coverage:
+    put:
+      operationId: putAnalysisUploadFullCoverage
+      tags: [Analysis]
+      summary: Attach the full project coverage
+      description: The coverage of the whole project, not only the changed lines.
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FullProjectCoverageModel'
+      responses:
+        '204':
+          description: Stored; a repeated call replaces what the previous one stored
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - apiKey: []
+        - bearerAuth: []
+
+  /api/v1/analyses/uploads/{uploadId}/index:
+    put:
+      operationId: putAnalysisUploadIndex
+      tags: [Analysis]
+      summary: Attach the codebase index
+      description: The codebase index used for callers and blast radius.
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CodebaseIndexModel'
+      responses:
+        '204':
+          description: Stored; a repeated call replaces what the previous one stored
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - apiKey: []
+        - bearerAuth: []
+
+  /api/v1/analyses/uploads/{uploadId}/local-review:
+    put:
+      operationId: putAnalysisUploadLocalReview
+      tags: [Analysis]
+      summary: Attach the local review
+      description: The local review's bugs, sessions and assessment.
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LocalReviewModel'
+      responses:
+        '204':
+          description: Stored; a repeated call replaces what the previous one stored
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - apiKey: []
+        - bearerAuth: []
+
+  /api/v1/analyses/uploads/{uploadId}/finalize:
+    post:
+      operationId: finalizeAnalysisUpload
+      tags: [Analysis]
+      summary: Finalize a staged upload and submit it for scoring
+      description: |
+        Assembles the upload into one submission and runs submitAnalysis with it, so the stored analysis is the one
+        a single request would have produced. The upload is deleted with the same commit, so it is finalized once.
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalysisUploadFinalizeModel'
+      responses:
+        '202':
+          description: Analysis accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisAcceptedModel'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - apiKey: []
+        - bearerAuth: []
 
   /api/v1/analyses/uncommitted:
     post:
@@ -99,6 +311,7 @@ paths:
           $ref: '#/components/responses/BadRequest'
       security:
         - apiKey: []
+        - bearerAuth: []
 
   /api/v1/analyses/{analysisId}:
     get:
@@ -123,6 +336,7 @@ paths:
           $ref: '#/components/responses/NotFound'
       security:
         - apiKey: []
+        - bearerAuth: []
   /api/v1/analyses/commit/{commitSha}:
     get:
       operationId: getAnalysisByCommitSha
@@ -145,6 +359,7 @@ paths:
           $ref: '#/components/responses/NotFound'
       security:
         - apiKey: []
+        - bearerAuth: []
     delete:
       operationId: deleteAnalysis
       tags: [Analysis]
@@ -164,6 +379,7 @@ paths:
           $ref: '#/components/responses/NotFound'
       security:
         - apiKey: []
+        - bearerAuth: []
 
   /api/v1/analyses/commit/{commitSha}/exclude:
     patch:
@@ -191,6 +407,7 @@ paths:
           $ref: '#/components/responses/NotFound'
       security:
         - apiKey: []
+        - bearerAuth: []
 
   /api/v1/projects/{projectId}/commits:
     post:
@@ -222,6 +439,7 @@ paths:
           $ref: '#/components/responses/NotFound'
       security:
         - apiKey: []
+        - bearerAuth: []
 
   /api/v1/projects/{projectId}/commits/missing-analyses:
     get:
@@ -258,6 +476,44 @@ paths:
           $ref: '#/components/responses/NotFound'
       security:
         - apiKey: []
+        - bearerAuth: []
+
+  /api/v1/projects/{projectId}/commits/fix-commits:
+    get:
+      operationId: listFixCommits
+      tags: [Hotspots]
+      summary: List the project's scored commits since a time, and which of them fixed a defect
+      description: |
+        For counting the fixes that make a class a hotspot. A scored commit is a fix when its analysis classified it as
+        a bug fix or a security patch; a commit the server never scored is not listed, and the caller decides how to
+        count it.
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: since
+          in: query
+          required: true
+          description: |
+            An ISO-8601 instant such as 2026-01-01T00:00:00Z. Declared as a plain string: as a date-time it becomes an
+            OffsetDateTime parameter, which JAX-RS cannot read from a query string (no String constructor, valueOf or
+            fromString), so every call would fail.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Scored commits and the fixes among them
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FixCommitsModel'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - apiKey: []
+        - bearerAuth: []
 
   /api/v1/projects/{projectId}/commits/{commitSha}:
     get:
@@ -287,6 +543,7 @@ paths:
           $ref: '#/components/responses/NotFound'
       security:
         - apiKey: []
+        - bearerAuth: []
 
   /api/v1/projects/{projectId}/hotspots:
     post:
@@ -317,6 +574,7 @@ paths:
           $ref: '#/components/responses/NotFound'
       security:
         - apiKey: []
+        - bearerAuth: []
 
 components:
   securitySchemes:
@@ -324,6 +582,21 @@ components:
       type: apiKey
       in: header
       name: X-API-Key
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        The OAuth access token of the build plugins' browser login (a JWT carrying codiqo:submit), or a Codiqo API
+        key sent as a bearer token.
+
+  parameters:
+    UploadId:
+      name: uploadId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
 
   responses:
     BadRequest:
@@ -492,6 +765,157 @@ components:
           description: Present when this is a diff-only degraded submission of a build-breaking commit — no coverage/static-analysis/duplication/code-unit data was collectable
           allOf:
             - $ref: '#/components/schemas/AnalysisBuildFailureModel'
+        localReview:
+          description: |
+            Bugs an agent review found on the machine that ran the analysis, with the tokens each agent session used.
+            Optional: older clients and runs without the review leave it out. The server stores the bugs with source
+            `local_review` next to the ones its own scoring finds, and records the sessions as LLM usage.
+          allOf:
+            - $ref: '#/components/schemas/LocalReviewModel'
+
+    LocalReviewModel:
+      type: object
+      required: [bugs]
+      properties:
+        tookMs:
+          type: integer
+          format: int64
+          description: Wall-clock time of the whole review, coordinator and sub-agents together
+        bugs:
+          $ref: '#/components/schemas/BugsModel'
+        sessions:
+          type: array
+          description: One entry per agent session; sub-agent sessions are listed separately from the coordinator
+          items:
+            $ref: '#/components/schemas/LocalReviewSessionModel'
+        assessment:
+          $ref: '#/components/schemas/LocalAssessmentModel'
+        observations:
+          type: array
+          description: The review agents' risk observations, each a short concrete fact about what the change does
+          items:
+            type: string
+        reasoning:
+          type: string
+          description: |
+            A Markdown digest of the review for the commit page: the areas reviewed and their findings, the
+            observations, and the triage of the build's tool findings.
+
+    LocalAssessmentModel:
+      type: object
+      description: |
+        The judgment pieces of a scoring response that the local review's agents produced from the same reading of
+        the commit. The code-unit difficulty labels travel on the submitted code units (CodeUnitModel.category).
+        Testing coverage is not here: it needs the build's coverage and stays with the server.
+      properties:
+        summary:
+          type: string
+        tags:
+          $ref: '#/components/schemas/ReviewTagsModel'
+        taskTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskTypeModel'
+        taskComplexity:
+          type: integer
+          minimum: 1
+          maximum: 10
+        taskComplexityRationale:
+          type: string
+        taskComplexityNew:
+          type: integer
+          minimum: 1
+          maximum: 10
+        taskComplexityModified:
+          type: integer
+          minimum: 1
+          maximum: 10
+        qualityDimensions:
+          $ref: '#/components/schemas/RiskDimensionsModel'
+        solidViolations:
+          type: array
+          items:
+            type: string
+          description: SOLID principle violations the commit introduces; the server prices them, the review only names them
+        architectureIssues:
+          type: array
+          items:
+            type: string
+        moduleType:
+          type: string
+          enum: [core_library, shared_utility, leaf_application]
+          description: The review's classification of the module the commit changes; caller counts stay the server's
+        signatureChanges:
+          $ref: '#/components/schemas/SignatureChangesModel'
+        blastRadiusExplanation:
+          type: string
+        requiresSeniorReview:
+          type: integer
+          minimum: 0
+          maximum: 10
+        seniorReviewReasons:
+          type: array
+          items:
+            type: string
+        staticAnalysisReview:
+          $ref: '#/components/schemas/StaticAnalysisReviewModel'
+          description: |
+            The review's verdicts on the PMD and SpotBugs findings on lines the commit added, read in a fork of the
+            coordinator's session after the build: a real defect stays in the changed-lines list at the tool's
+            severity, a harmless one stays there at info, a false positive moves to the false-positive list. Findings
+            the triage did not judge are placed by the server as before.
+
+    LocalReviewSessionModel:
+      type: object
+      required: [agent, model]
+      properties:
+        agent:
+          type: string
+        model:
+          type: string
+        inputTokens:
+          type: integer
+          format: int64
+          description: New (uncached) input tokens
+        cachedInputTokens:
+          type: integer
+          format: int64
+          description: Input tokens served from the provider's prompt cache, priced far below new input
+        outputTokens:
+          type: integer
+          format: int64
+        reasoningTokens:
+          type: integer
+          format: int64
+
+    AnalysisUploadModel:
+      type: object
+      required: [uploadId, expiresAt]
+      properties:
+        uploadId:
+          type: string
+          format: uuid
+        expiresAt:
+          type: string
+          format: date-time
+
+    AnalysisUploadFilesModel:
+      type: object
+      required: [files]
+      properties:
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileChangeModel'
+
+    AnalysisUploadFinalizeModel:
+      type: object
+      required: [fileCount]
+      properties:
+        fileCount:
+          type: integer
+          minimum: 0
+          description: How many distinct files the client attached; finalize refuses an upload that stored a different number
 
     AnalysisAcceptedModel:
       type: object
@@ -1805,6 +2229,25 @@ components:
             type: string
             pattern: '^[a-f0-9]{40}$'
 
+    FixCommitsModel:
+      type: object
+      required: [projectId, scoredShas, fixShas]
+      properties:
+        projectId:
+          type: string
+        scoredShas:
+          description: Every commit since the requested time that the server scored
+          type: array
+          items:
+            type: string
+            pattern: '^[a-f0-9]{40}$'
+        fixShas:
+          description: The scored commits classified as a bug fix or a security patch; a subset of scoredShas
+          type: array
+          items:
+            type: string
+            pattern: '^[a-f0-9]{40}$'
+
     CommitStatusModel:
       type: object
       required: [commit, analysisState]
@@ -1970,6 +2413,10 @@ components:
             LLM-assigned difficulty of this code unit, judged per line of code (intensive — not by size).
             Drives the per-block effort coefficient that replaces the old commit-level complexity multiplier.
             Null when the LLM did not classify this unit.
+        categoryReason:
+          type: string
+          nullable: true
+          description: The local review's one-sentence reason for a category above MECHANICAL.
 
     SignatureFormatModel:
       type: string
@@ -2579,7 +3026,7 @@ components:
           enum: [high, medium, low]
         source:
           type: string
-          enum: [llm, pmd, spotbugs]
+          enum: [llm, pmd, spotbugs, local_review]
 
     AssessmentModel:
       type: object
