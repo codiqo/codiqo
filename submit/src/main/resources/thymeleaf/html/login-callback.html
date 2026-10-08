@@ -1,0 +1,1 @@
+<!doctype html><meta charset=utf-8><title>Codiqo</title> <body style="font-family:system-ui;margin:4rem"><th:block th:if="${approved}"><h2>Codiqo is authorized</h2><p>You can close this tab and go back to the terminal.</p></th:block><th:block th:unless="${approved}"><h2>Codiqo was not authorized</h2><p th:text="${error}"></p></th:block></body>

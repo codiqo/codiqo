@@ -10,10 +10,11 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import org.apache.commons.collections4.MultiValuedMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.event.Level;
+
+import com.google.common.collect.Multimap;
 
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
@@ -565,7 +566,7 @@ class JavaLanguageSpecParseTest {
         Files.writeString(second, "package p;\npublic class Second {\n    void kept() {\n        System.out.println(2);\n    }\n}\n");
 
         try (JavaLanguageSpec spec = spec()) {
-            MultiValuedMap<File, CodeBlockInfo> removed = spec.parseRemoved(mock(ProjectSpec.class), List.of(
+            Multimap<File, CodeBlockInfo> removed = spec.parseRemoved(mock(ProjectSpec.class), List.of(
                     new PreviousRevision(first.toFile(), "First.java", "package p;\npublic class First {\n    void a() {\n        System.out.println(1);\n    }\n}\n"),
                     new PreviousRevision(second.toFile(), "Second.java",
                             "package p;\npublic class Second {\n    void kept() {\n        System.out.println(1);\n    }\n    void b() {\n        System.out.println(1);\n    }\n}\n")));

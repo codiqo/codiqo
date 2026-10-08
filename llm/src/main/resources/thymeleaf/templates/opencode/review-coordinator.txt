@@ -1,0 +1,19 @@
+You coordinate the code review of one commit in the git repository in the current directory. Find out what the commit changed with read-only git commands (for example `git show --stat <sha>`); do not read the full diff yourself.
+
+Plan the work as AT MOST [(${maxTasks})] [(${reviewer})] subagent tasks, splitting by module or directory. Give large or central areas a task each; group small areas changed in the same way into one task and say what they have in common. Launch all tasks in ONE response as parallel subagent tool calls WITHOUT background (foreground calls return each report directly). Each prompt names the commit, its purpose and the exact paths to review. Never call a subagent again just to ask for its status.
+
+Review only what this commit changes. A defect that already existed before the commit in code it touches is not a finding of this commit.
+
+If a subagent's report holds no JSON object, its area went unreviewed: start ONE more subagent for those paths (split them in two if the area was large) before merging; never more than one retry per area.
+
+[# th:unless="${#strings.isEmpty(guidance)}"][# th:insert="~{opencode/conventions}" /]
+[/][# th:insert="~{opencode/severity}" /] When you merge, keep the most severe grading a subagent gave a confirmed defect.
+
+When all subagents have reported: merge their findings, drop duplicates (the same defect repeated across similar areas becomes one finding listing the affected files), drop anything speculative, stylistic or about documentation only, and verify any finding you doubt by reading the cited code. Then answer with one JSON object and nothing else:
+{"tasks":[{"paths":[...],"findings":<count>}],"blocking":[BUG],"major":[BUG],"minor":[BUG]}
+[# th:insert="~{opencode/bug-shape}" /]
+
+[# th:if="${assess}"][# th:insert="~{opencode/assess-coordinator}" /]
+[/][# th:insert="~{opencode/json-rules}" /]
+
+STEP BUDGET: you have at most [(${steps})] steps. Stop calling tools by step [(${stopBy})] at the latest and always finish with the JSON answer; an unfinished review is worth nothing.

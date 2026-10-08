@@ -4,12 +4,13 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.HashMap;
-import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -35,7 +36,7 @@ public class LlmScoringResponse {
     private ChangeClassification changeClassification;
 
     @Builder.Default
-    private List<TaskType> taskTypes = new ArrayList<>();
+    private List<TaskType> taskTypes = Lists.newArrayList();
 
     private Integer taskComplexity;
     private String taskComplexityRationale;
@@ -48,17 +49,17 @@ public class LlmScoringResponse {
     private BlastRadiusAnalysis blastRadiusAnalysis;
     private int requiresSeniorReview;
     @Builder.Default
-    private List<String> seniorReviewReasons = new ArrayList<>();
+    private List<String> seniorReviewReasons = Lists.newArrayList();
     private String summary;
     private Tags tags;
 
     @Builder.Default
-    private List<ModifyImpactEstimate> modifyImpactEstimates = new ArrayList<>();
+    private List<ModifyImpactEstimate> modifyImpactEstimates = Lists.newArrayList();
 
     private ChangeImpactEstimate changeImpactEstimate;
 
     @Builder.Default
-    private List<CodeBlockCategoryView> blockCategories = new ArrayList<>();
+    private List<CodeBlockCategoryView> blockCategories = Lists.newArrayList();
 
     public boolean hasBlockingBugs() {
         return Objects.nonNull(bugs) && CollectionUtils.isNotEmpty(bugs.getBlocking());
@@ -179,7 +180,7 @@ public class LlmScoringResponse {
         private ComplexityMultiplier complexityMultiplier;
         private double baseEffortScore;
         @Builder.Default
-        private List<FileEffortView> fileEfforts = new ArrayList<>();
+        private List<FileEffortView> fileEfforts = Lists.newArrayList();
         private DiffClassification diffClassification;
     }
 
@@ -226,11 +227,11 @@ public class LlmScoringResponse {
         private int pureAddDeleteLines;
         private int movedLines;
         @Builder.Default
-        private List<String> confirmedMoveIds = new ArrayList<>();
+        private List<String> confirmedMoveIds = Lists.newArrayList();
         @Builder.Default
-        private List<String> movedPairs = new ArrayList<>();
+        private List<String> movedPairs = Lists.newArrayList();
         @Builder.Default
-        private List<FileDiffClassification> perFile = new ArrayList<>();
+        private List<FileDiffClassification> perFile = Lists.newArrayList();
         private String rationale;
     }
 
@@ -246,27 +247,27 @@ public class LlmScoringResponse {
         private int movedLines;
 
         @Builder.Default
-        private Map<String, String> blockKinds = new HashMap<>();
+        private Map<String, String> blockKinds = Maps.newHashMap();
         @Builder.Default
-        private List<Integer> cosmeticAdded = new ArrayList<>();
+        private List<Integer> cosmeticAdded = Lists.newArrayList();
         @Builder.Default
-        private List<Integer> cosmeticDeleted = new ArrayList<>();
+        private List<Integer> cosmeticDeleted = Lists.newArrayList();
         @Builder.Default
-        private List<LinePair> inPlaceModifyPairs = new ArrayList<>();
+        private List<LinePair> inPlaceModifyPairs = Lists.newArrayList();
         @Builder.Default
-        private List<LinePair> trueModifyPairs = new ArrayList<>();
+        private List<LinePair> trueModifyPairs = Lists.newArrayList();
         @Builder.Default
-        private List<Integer> pureAdd = new ArrayList<>();
+        private List<Integer> pureAdd = Lists.newArrayList();
         @Builder.Default
-        private List<Integer> pureDelete = new ArrayList<>();
+        private List<Integer> pureDelete = Lists.newArrayList();
         // LLM-cited wrapped-continuation tail: added-side overflow of a lengthened statement whose tokens are carried over from the deleted form, 0 effort, counted as an in-place collapse rather than cosmetic
         @Builder.Default
-        private List<Integer> inPlaceCollapsedAdded = new ArrayList<>();
+        private List<Integer> inPlaceCollapsedAdded = Lists.newArrayList();
         // server-derived from confirmed move candidates; a cross-file pair splits its sides across two entries
         @Builder.Default
-        private List<Integer> movedAdded = new ArrayList<>();
+        private List<Integer> movedAdded = Lists.newArrayList();
         @Builder.Default
-        private List<Integer> movedDeleted = new ArrayList<>();
+        private List<Integer> movedDeleted = Lists.newArrayList();
     }
 
     @Data
@@ -301,6 +302,8 @@ public class LlmScoringResponse {
         private String file;
         private String signature;
         private CodeBlockCategory category;
+        /** the local review's one-sentence reason for a label above MECHANICAL; the scoring prompt gives none */
+        private String reason;
     }
 
     @Data
@@ -350,9 +353,9 @@ public class LlmScoringResponse {
     @AllArgsConstructor
     public static class ArchitectureAnalysis {
         @Builder.Default
-        private List<String> solidViolations = new ArrayList<>();
+        private List<String> solidViolations = Lists.newArrayList();
         @Builder.Default
-        private List<String> architectureIssues = new ArrayList<>();
+        private List<String> architectureIssues = Lists.newArrayList();
         private double penaltyImpact;
     }
 
@@ -362,7 +365,7 @@ public class LlmScoringResponse {
     @AllArgsConstructor
     public static class QualityGateAnalysis {
         @Builder.Default
-        private List<String> failedGates = new ArrayList<>();
+        private List<String> failedGates = Lists.newArrayList();
         private double impact;
     }
 
@@ -397,12 +400,19 @@ public class LlmScoringResponse {
 
     @Data
     @Builder
-    @NoArgsConstructor
     @AllArgsConstructor
     public static class DimensionScore {
         private Integer score;
         private String rationale;
-        private boolean qualityGateMet;
+        /** met unless an answer says otherwise: an answer that leaves a gate out has not failed it ("when in doubt, met") */
+        @Builder.Default
+        private boolean qualityGateMet = true;
+
+        /** what Jackson builds before reading an answer, so the default survives a gate the answer leaves out */
+        @JsonCreator
+        public DimensionScore() {
+            this.setQualityGateMet(true);
+        }
     }
 
     @Data
@@ -420,11 +430,11 @@ public class LlmScoringResponse {
     @AllArgsConstructor
     public static class Bugs {
         @Builder.Default
-        private List<Bug> blocking = new ArrayList<>();
+        private List<Bug> blocking = Lists.newArrayList();
         @Builder.Default
-        private List<Bug> major = new ArrayList<>();
+        private List<Bug> major = Lists.newArrayList();
         @Builder.Default
-        private List<Bug> minor = new ArrayList<>();
+        private List<Bug> minor = Lists.newArrayList();
     }
 
     @Data
@@ -450,17 +460,17 @@ public class LlmScoringResponse {
     @AllArgsConstructor
     public static class StaticAnalysisReview {
         @Builder.Default
-        private List<StaticAnalysisFinding> pmdInChangedLines = new ArrayList<>();
+        private List<StaticAnalysisFinding> pmdInChangedLines = Lists.newArrayList();
         @Builder.Default
-        private List<StaticAnalysisFinding> pmdPreExisting = new ArrayList<>();
+        private List<StaticAnalysisFinding> pmdPreExisting = Lists.newArrayList();
         @Builder.Default
-        private List<StaticAnalysisFinding> pmdFalsePositives = new ArrayList<>();
+        private List<StaticAnalysisFinding> pmdFalsePositives = Lists.newArrayList();
         @Builder.Default
-        private List<StaticAnalysisFinding> spotbugsInChangedLines = new ArrayList<>();
+        private List<StaticAnalysisFinding> spotbugsInChangedLines = Lists.newArrayList();
         @Builder.Default
-        private List<StaticAnalysisFinding> spotbugsPreExisting = new ArrayList<>();
+        private List<StaticAnalysisFinding> spotbugsPreExisting = Lists.newArrayList();
         @Builder.Default
-        private List<StaticAnalysisFinding> spotbugsFalsePositives = new ArrayList<>();
+        private List<StaticAnalysisFinding> spotbugsFalsePositives = Lists.newArrayList();
     }
 
     @Data
@@ -494,7 +504,7 @@ public class LlmScoringResponse {
         private int testCallers;
         private RiskLevel riskLevel;
         @Builder.Default
-        private List<String> criticalCallers = new ArrayList<>();
+        private List<String> criticalCallers = Lists.newArrayList();
         private ModuleType moduleType;
         private SignatureChanges signatureChanges;
         private ExternalImpact externalImpactEstimate;
@@ -508,7 +518,7 @@ public class LlmScoringResponse {
     public static class SignatureChanges {
         private boolean hasBreakingChanges;
         @Builder.Default
-        private List<String> changedSignatures = new ArrayList<>();
+        private List<String> changedSignatures = Lists.newArrayList();
         private BreakingChangeType breakingChangeType;
     }
 
@@ -518,9 +528,9 @@ public class LlmScoringResponse {
     @AllArgsConstructor
     public static class Tags {
         @Builder.Default
-        private List<String> technical = new ArrayList<>();
+        private List<String> technical = Lists.newArrayList();
         @Builder.Default
-        private List<String> functional = new ArrayList<>();
+        private List<String> functional = Lists.newArrayList();
     }
 
     @Data
@@ -532,7 +542,7 @@ public class LlmScoringResponse {
         private double totalEffort;
         private boolean isTest;
         @Builder.Default
-        private List<CodeBlockEffortView> codeBlockEfforts = new ArrayList<>();
+        private List<CodeBlockEffortView> codeBlockEfforts = Lists.newArrayList();
         private int blocksFlaggedAsRatioOutlier;
         private int blocksFlaggedAsGlobalCapDriver;
         private double maxBlockRatioDeviationNcss;

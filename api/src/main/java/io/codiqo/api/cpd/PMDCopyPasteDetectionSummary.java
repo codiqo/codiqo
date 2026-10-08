@@ -4,18 +4,19 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
-import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.HashMap;
-import java.util.LinkedHashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 
 import org.apache.commons.lang3.CharUtils;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.DuplicateMark;
 import io.codiqo.api.IndexingSummary;
@@ -29,10 +30,9 @@ import lombok.experimental.Accessors;
 @Getter
 @Accessors(fluent = true)
 public class PMDCopyPasteDetectionSummary implements CopyPasteDetectionSummary {
-    private final Map<CodeBlockInfo, Set<CodeBlockInfo>> copyPasteFrom = new LinkedHashMap<>();
-    private final Set<Set<CodeBlockInfo>> copyPasteNew = new LinkedHashSet<>();
-    private final Set<DuplicationMatch> affected = new LinkedHashSet<>();
-    @Getter(onMethod_ = @Override)
+    private final Map<CodeBlockInfo, Set<CodeBlockInfo>> copyPasteFrom = Maps.newLinkedHashMap();
+    private final Set<Set<CodeBlockInfo>> copyPasteNew = Sets.newLinkedHashSet();
+    private final Set<DuplicationMatch> affected = Sets.newLinkedHashSet();
     private final List<CloneLocations> clones;
     private final Map<File, Integer> tokensPerFile;
     private static final int READ_BUFFER_BYTES = 64 * 1024;
@@ -102,8 +102,8 @@ public class PMDCopyPasteDetectionSummary implements CopyPasteDetectionSummary {
         });
 
         affected.forEach(match -> {
-            Set<CodeBlockInfo> modifiedSet = new LinkedHashSet<>();
-            Set<CodeBlockInfo> staticSet = new LinkedHashSet<>();
+            Set<CodeBlockInfo> modifiedSet = Sets.newLinkedHashSet();
+            Set<CodeBlockInfo> staticSet = Sets.newLinkedHashSet();
 
             for (DuplicateMark mark : match) {
                 mark.block().ifPresent(block -> {
@@ -119,20 +119,25 @@ public class PMDCopyPasteDetectionSummary implements CopyPasteDetectionSummary {
                 copyPasteNew.add(modifiedSet);
             } else {
                 for (CodeBlockInfo it : modifiedSet) {
-                    copyPasteFrom.computeIfAbsent(it, k -> new LinkedHashSet<>()).addAll(staticSet);
+                    copyPasteFrom.computeIfAbsent(it, k -> Sets.newLinkedHashSet()).addAll(staticSet);
                 }
             }
         });
     }
-    static List<CloneLocations.Span> spans(DuplicationMatch match) {
-        List<CloneLocations.Span> toReturn = new ArrayList<>();
+    @Override
+    public List<CloneLocations> clones() {
+        return clones;
+    }
+    private static List<CloneLocations.Span> spans(DuplicationMatch match) {
+        List<CloneLocations.Span> toReturn = Lists.newArrayList();
         for (DuplicateMark mark : match) {
             toReturn.add(new CloneLocations.Span(mark.getFile(), mark.getLocation().getStartLine(), mark.getLocation().getEndLine()));
         }
         return toReturn;
     }
-    static int countDuplicatedLines(Set<DuplicationMatch> matches) {
-        Map<File, BitSet> linesByFile = new HashMap<>();
+    @VisibleForTesting
+    public static int countDuplicatedLines(Set<DuplicationMatch> matches) {
+        Map<File, BitSet> linesByFile = Maps.newHashMap();
 
         for (DuplicationMatch match : matches) {
             for (DuplicateMark mark : match) {
@@ -143,7 +148,8 @@ public class PMDCopyPasteDetectionSummary implements CopyPasteDetectionSummary {
 
         return linesByFile.values().stream().mapToInt(BitSet::cardinality).sum();
     }
-    static int countSourceLines(Collection<File> files) {
+    @VisibleForTesting
+    public static int countSourceLines(Collection<File> files) {
         int toReturn = 0;
         byte[] buffer = new byte[READ_BUFFER_BYTES];
 

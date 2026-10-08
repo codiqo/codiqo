@@ -9,6 +9,9 @@ import lombok.Setter;
 public class CodiqoExtension {
     private String apiUrl = RunArgs.DEFAULT_API_URL;
     private String apiKey;
+    /** where the browser login ({@code codiqoLogin}) signs in; a run without {@code apiKey} uses that login */
+    private String authUrl = RunArgs.DEFAULT_AUTH_URL;
+    private String resourceUrl = RunArgs.DEFAULT_RESOURCE_URL;
     private long connectTimeoutSeconds = 30;
     private long readTimeoutSeconds = 60;
 

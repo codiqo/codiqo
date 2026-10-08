@@ -16,9 +16,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import java.util.LinkedHashSet;
-import java.util.LinkedHashMap;
-import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
@@ -91,8 +88,13 @@ import org.openrewrite.staticanalysis.UseDiamondOperator;
 import org.openrewrite.staticanalysis.UseJavaStyleArrayDeclarations;
 import org.openrewrite.staticanalysis.UsePortableNewlines;
 
+import com.google.common.base.Joiner;
+import com.google.common.base.Splitter;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
+
 import io.codiqo.util.JGit;
-import io.codiqo.util.Split;
 
 @Mojo(name = "normalize-sources",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
@@ -188,7 +190,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
 
                 getLog().info(String.format(Locale.ROOT, "parsed %d source files in %s", allSourceFiles.size(), stopWatch));
 
-                Map<Path, List<String>> fileRecipeMap = new LinkedHashMap<>();
+                Map<Path, List<String>> fileRecipeMap = Maps.newLinkedHashMap();
 
                 stopWatch = StopWatch.createStarted();
                 List<Result> results = runRecipes(recipeList, allSourceFiles, fileRecipeMap);
@@ -212,7 +214,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
     }
     private List<Recipe> instantiateRecipes() throws MojoFailureException {
         List<Class<? extends Recipe>> classes = resolveRecipeClasses();
-        List<Recipe> toReturn = new ArrayList<>();
+        List<Recipe> toReturn = Lists.newArrayList();
 
         for (Class<? extends Recipe> clazz : classes) {
             try {
@@ -229,8 +231,8 @@ public class NormalizeSourcesMojo extends AbstractMojo {
             return DEFAULT_RECIPE_CLASSES;
         }
 
-        List<String> names = Split.on(recipes, ',');
-        List<Class<? extends Recipe>> toReturn = new ArrayList<>();
+        List<String> names = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(recipes);
+        List<Class<? extends Recipe>> toReturn = Lists.newArrayList();
 
         for (String name : names) {
             try {
@@ -247,7 +249,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
         ExecutionContext ctx = new InMemoryExecutionContext(err -> getLog().warn("parse error: " + err.getMessage()));
         JavaTypeCache typeCache = new JavaTypeCache();
         DirCache index = repo.readDirCache();
-        List<SourceFile> toReturn = new ArrayList<>();
+        List<SourceFile> toReturn = Lists.newArrayList();
 
         for (MavenProject reactor : reactors) {
             if (NON_CODE_PACKAGINGS.contains(reactor.getPackaging())) {
@@ -276,8 +278,8 @@ public class NormalizeSourcesMojo extends AbstractMojo {
     }
     private List<Result> runRecipes(List<Recipe> recipeList, List<SourceFile> sourceFiles, Map<Path, List<String>> fileRecipeMap) {
         ExecutionContext ctx = new InMemoryExecutionContext(err -> getLog().warn("recipe error: " + err.getMessage()));
-        List<SourceFile> current = new ArrayList<>(sourceFiles);
-        Set<Path> changedPaths = new LinkedHashSet<>();
+        List<SourceFile> current = Lists.newArrayList(sourceFiles);
+        Set<Path> changedPaths = Sets.newLinkedHashSet();
 
         for (Recipe recipe : recipeList) {
             StopWatch stopWatch = StopWatch.createStarted();
@@ -294,7 +296,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
                 for (Result result : results) {
                     Path path = result.getAfter().getSourcePath();
                     changedPaths.add(path);
-                    fileRecipeMap.computeIfAbsent(path, k -> new ArrayList<>()).add(recipeName);
+                    fileRecipeMap.computeIfAbsent(path, k -> Lists.newArrayList()).add(recipeName);
 
                     current = current.stream()
                             .map(sf -> sf.getSourcePath().equals(result.getBefore().getSourcePath()) ? result.getAfter() : sf)
@@ -303,7 +305,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
             }
         }
 
-        List<Result> toReturn = new ArrayList<>();
+        List<Result> toReturn = Lists.newArrayList();
         for (int i = 0; i < sourceFiles.size(); i++) {
             SourceFile original = sourceFiles.get(i);
             SourceFile modified = current.get(i);
@@ -323,7 +325,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
         for (Map.Entry<Path, List<String>> entry : fileRecipeMap.entrySet()) {
             getLog().info(String.format("  %s — [%s]",
                     baseDir.resolve(entry.getKey()),
-                    StringUtils.join(entry.getValue(), ", ")));
+                    Joiner.on(", ").join(entry.getValue())));
         }
         getLog().info(StringUtils.EMPTY);
     }
@@ -356,8 +358,8 @@ public class NormalizeSourcesMojo extends AbstractMojo {
         }
     }
     private static List<Path> collectJavaFiles(MavenProject reactor, Path baseDir, DirCache index) {
-        List<Path> toReturn = new ArrayList<>();
-        List<String> roots = new ArrayList<>();
+        List<Path> toReturn = Lists.newArrayList();
+        List<String> roots = Lists.newArrayList();
         roots.addAll(reactor.getCompileSourceRoots());
         roots.addAll(reactor.getTestCompileSourceRoots());
 
@@ -387,7 +389,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
         });
     }
     private static List<Path> resolveClasspath(MavenProject reactor) throws DependencyResolutionRequiredException {
-        Set<String> elements = new LinkedHashSet<>();
+        Set<String> elements = Sets.newLinkedHashSet();
         elements.addAll(reactor.getCompileClasspathElements());
         elements.addAll(reactor.getTestClasspathElements());
 

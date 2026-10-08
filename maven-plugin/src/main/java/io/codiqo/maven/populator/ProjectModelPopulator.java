@@ -11,14 +11,16 @@ import java.time.OffsetDateTime;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
-import java.util.HashMap;
 
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.apache.commons.lang3.tuple.Triple;
 import org.apache.maven.plugin.logging.Log;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Maps;
 
 import io.codiqo.api.MavenProjectSpec;
 import io.codiqo.client.model.DependencyModel;
@@ -58,7 +60,7 @@ public class ProjectModelPopulator implements SubmissionPopulator {
         });
     }
     private static void populateDependencies(SubmissionContext ctx) {
-        Map<String, SnapshotMetadataModel> snapshotMetadataByCoordinate = loadSnapshotMetadata(ctx.getArgs().getTimeMachineMetaDir());
+        Map<Triple<String, String, String>, SnapshotMetadataModel> snapshotMetadataByCoordinate = loadSnapshotMetadata(ctx.getArgs().getTimeMachineMetaDir());
         ctx.getArgs().getProjects().stream()
                 .filter(spec -> spec instanceof MavenProjectWrapper)
                 .map(spec -> (MavenProjectWrapper) spec)
@@ -101,8 +103,9 @@ public class ProjectModelPopulator implements SubmissionPopulator {
                     }
                 });
     }
-    private static Map<String, SnapshotMetadataModel> loadSnapshotMetadata(File metaDir) {
-        Map<String, SnapshotMetadataModel> toReturn = new HashMap<>();
+    @VisibleForTesting
+    public static Map<Triple<String, String, String>, SnapshotMetadataModel> loadSnapshotMetadata(File metaDir) {
+        Map<Triple<String, String, String>, SnapshotMetadataModel> toReturn = Maps.newHashMap();
         if (Objects.nonNull(metaDir) && metaDir.isDirectory()) {
             File[] files = metaDir.listFiles((dir, fileName) -> "properties".equals(FilenameUtils.getExtension(fileName)));
             if (ArrayUtils.isNotEmpty(files)) {
@@ -115,9 +118,11 @@ public class ProjectModelPopulator implements SubmissionPopulator {
                         continue;
                     }
 
-                    String coordinate = props.getProperty(SnapshotMetadataStore.KEY_COORDINATE);
-                    if (StringUtils.isNotBlank(coordinate)) {
-                        toReturn.put(coordinate, toSnapshotMetadataModel(props));
+                    String groupId = props.getProperty(SnapshotMetadataStore.KEY_GROUP_ID);
+                    String artifactId = props.getProperty(SnapshotMetadataStore.KEY_ARTIFACT_ID);
+                    String baseVersion = props.getProperty(SnapshotMetadataStore.KEY_BASE_VERSION);
+                    if (StringUtils.isNoneBlank(groupId, artifactId, baseVersion)) {
+                        toReturn.put(Triple.of(groupId, artifactId, baseVersion), toSnapshotMetadataModel(props));
                     }
                 }
             }
@@ -196,7 +201,7 @@ public class ProjectModelPopulator implements SubmissionPopulator {
 
         return toReturn;
     }
-    private static String coordinate(org.apache.maven.artifact.Artifact artifact) {
-        return artifact.getGroupId() + ":" + artifact.getArtifactId() + ":" + artifact.getBaseVersion();
+    private static Triple<String, String, String> coordinate(org.apache.maven.artifact.Artifact artifact) {
+        return Triple.of(artifact.getGroupId(), artifact.getArtifactId(), artifact.getBaseVersion());
     }
 }

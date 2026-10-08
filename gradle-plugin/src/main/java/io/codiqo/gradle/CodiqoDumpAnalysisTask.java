@@ -2,13 +2,14 @@ package io.codiqo.gradle;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
+import java.io.IOException;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 import javax.inject.Inject;
 
@@ -22,10 +23,14 @@ import org.gradle.api.model.ObjectFactory;
 import org.gradle.api.tasks.TaskAction;
 import org.gradle.process.ExecOperations;
 
+import com.google.common.collect.Lists;
+
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 import io.codiqo.gradle.model.AnalysisRequest;
+import io.codiqo.submit.auth.CodiqoCredentials;
+import io.codiqo.submit.auth.CredentialStore;
 
 /**
  * Forks the shared analysis engine into its own JVM against the model collected off the execution path (see
@@ -59,15 +64,16 @@ public abstract class CodiqoDumpAnalysisTask extends DefaultTask {
         this.scheduledTasks = scheduledTasks;
     }
     @TaskAction
-    public void dump() throws URISyntaxException {
+    public void dump() throws URISyntaxException, IOException {
         if (Objects.isNull(request)) {
             throw new IllegalStateException(
                     "Codiqo model was not collected — apply the plugin to the root project (via the codiqo init script) so it can snapshot the build.");
         }
 
-        if (BooleanUtils.and(new boolean[]{submit, StringUtils.isBlank(request.getApiKey())})) {
-            throw new GradleException(
-                    "codiqoSubmitAnalysis needs an API key: set codiqo.apiKey in the codiqo { } block, or pass -Pcodiqo.apiKey=env:CODIQO_API_KEY");
+        /** Checked before the build, so a missing login does not surface only after a full analysis. */
+        if (BooleanUtils.and(new boolean[]{submit, StringUtils.isBlank(request.getApiKey())}) && hasNoStoredLogin()) {
+            throw new GradleException("codiqoSubmitAnalysis needs a credential: run 'gradle codiqoLogin' once on this machine, "
+                    + "or set codiqo.apiKey in the codiqo { } block (-Pcodiqo.apiKey=env:CODIQO_API_KEY on CI)");
         }
 
         /**
@@ -107,6 +113,13 @@ public abstract class CodiqoDumpAnalysisTask extends DefaultTask {
             spec.systemProperty(SLF4J_SIMPLE_PREFIX + "showThreadName", "false");
             spec.systemProperty(SLF4J_SIMPLE_PREFIX + "showLogName", "false");
             spec.systemProperty(SLF4J_SIMPLE_PREFIX + "showShortLogName", "true");
+
+            /**
+             * The login was checked above in this JVM, where {@code -Dcodiqo.home} may have moved the store; the worker
+             * reads it again at submit time and must look in the same place. Without the property it fell back to
+             * ~/.codiqo and failed with no credential after the whole analysis had run.
+             */
+            Optional.ofNullable(System.getProperty(CredentialStore.HOME_PROPERTY)).ifPresent(home -> spec.systemProperty(CredentialStore.HOME_PROPERTY, home));
         });
     }
     /**
@@ -118,7 +131,7 @@ public abstract class CodiqoDumpAnalysisTask extends DefaultTask {
     private static List<File> workerClasspath() throws URISyntaxException {
         ClassLoader loader = CodiqoDumpAnalysisTask.class.getClassLoader();
         if (loader instanceof URLClassLoader urlLoader) {
-            List<File> toReturn = new ArrayList<>();
+            List<File> toReturn = Lists.newArrayList();
             for (URL url : urlLoader.getURLs()) {
                 toReturn.add(Paths.get(url.toURI()).toFile());
             }
@@ -132,5 +145,8 @@ public abstract class CodiqoDumpAnalysisTask extends DefaultTask {
     private static String javaExecutable(String javaHome) {
         String java = SystemUtils.IS_OS_WINDOWS ? "java.exe" : "java";
         return Paths.get(javaHome).normalize().resolve("bin").resolve(java).toFile().getAbsolutePath();
+    }
+    private boolean hasNoStoredLogin() throws IOException {
+        return CodiqoCredentials.resolve(null, request.getAuthUrl(), request.getResourceUrl(), false, new GradleLifecycleLog(getLogger())).isEmpty();
     }
 }

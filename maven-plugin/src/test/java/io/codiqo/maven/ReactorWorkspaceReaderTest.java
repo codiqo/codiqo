@@ -8,7 +8,6 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.maven.model.Build;
@@ -17,6 +16,8 @@ import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import com.google.common.collect.Lists;
 
 /**
  * A sibling module must resolve to the commit's own files, never to a repository snapshot: a snapshot deployed before
@@ -94,7 +95,7 @@ class ReactorWorkspaceReaderTest {
                 <parent><groupId>com.example</groupId><artifactId>parent</artifactId><version>2.0.104-SNAPSHOT</version></parent>
                 <artifactId>extra</artifactId>""");
 
-        ReactorWorkspaceReader reader = ReactorWorkspaceReader.fromPoms(root.resolve("pom.xml").toFile(), new ArrayList<String>()::add);
+        ReactorWorkspaceReader reader = ReactorWorkspaceReader.fromPoms(root.resolve("pom.xml").toFile(), Lists.<String>newArrayList()::add);
 
         assertEquals(root.resolve("bom/pom.xml").toFile(), reader.findArtifact(new DefaultArtifact(GROUP, "bom", "pom", VERSION)),
                 "the inherited coordinates of an imported BOM resolve to the clone's own POM");
@@ -111,7 +112,7 @@ class ReactorWorkspaceReaderTest {
                 <modules><module>broken</module></modules>""");
         Files.createDirectories(root.resolve("broken"));
         Files.writeString(root.resolve("broken/pom.xml"), "<project><unclosed>", StandardCharsets.UTF_8);
-        List<String> warnings = new ArrayList<>();
+        List<String> warnings = Lists.newArrayList();
 
         ReactorWorkspaceReader reader = ReactorWorkspaceReader.fromPoms(root.resolve("pom.xml").toFile(), warnings::add);
 

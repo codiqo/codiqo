@@ -4,16 +4,19 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import javax.inject.Named;
 import javax.inject.Singleton;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.Strings;
+import org.apache.commons.text.StringSubstitutor;
 import org.apache.maven.AbstractMavenLifecycleParticipant;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Plugin;
@@ -38,6 +41,8 @@ import lombok.extern.slf4j.Slf4j;
 @Singleton
 @Named("codiqo-jacoco-injector")
 public class JacocoAgentInjector extends AbstractMavenLifecycleParticipant {
+    /** surefire's late property evaluation, {@code @{argLine}} */
+    private static final String LATE_PROPERTY_START = "@{";
     private static final String MAVEN_PLUGINS_GROUP_ID = "org.apache.maven.plugins";
     private static final String SUREFIRE_ARTIFACT_ID = "maven-surefire-plugin";
     private static final String FAILSAFE_ARTIFACT_ID = "maven-failsafe-plugin";
@@ -109,8 +114,8 @@ public class JacocoAgentInjector extends AbstractMavenLifecycleParticipant {
     private static void appendAgent(Xpp3Dom config, String javaAgent, Set<String> agentPropertyNames, String argLineProperty) {
         /**
          * the agent deliberately goes LAST: running jacoco before another transforming -javaagent (e.g. allure's
-         * aspectjweaver) was verified to destroy recording in that JVM entirely (aggregator-server 448 -> 0 covered
-         * methods), while jacoco-last only shifts the class ids of the few classes the other agent rewrites — those
+         * aspectjweaver) was verified to destroy recording in that JVM entirely (a server module went from 448 covered
+         * methods to 0), while jacoco-last only shifts the class ids of the few classes the other agent rewrites — those
          * are excluded from coverage by the analysis-side mismatch guard
          */
         Xpp3Dom argLine = config.getChild(ARG_LINE);
@@ -136,12 +141,13 @@ public class JacocoAgentInjector extends AbstractMavenLifecycleParticipant {
          * property — a leftover @{argLine}/${propertyName} reference would reach the test JVM as literal text and
          * abort the fork with "Unrecognized option"
          */
-        String toReturn = argLine;
-        for (String name : agentPropertyNames) {
-            toReturn = Strings.CS.replace(toReturn, "@{" + name + "}", "");
-            toReturn = Strings.CS.replace(toReturn, "${" + name + "}", "");
-        }
-        return toReturn.trim();
+        Map<String, String> removed = agentPropertyNames.stream().collect(Collectors.toMap(Function.identity(), name -> StringUtils.EMPTY));
+        String toReturn = substitutor(removed, StringSubstitutor.DEFAULT_VAR_START).replace(argLine);
+        return substitutor(removed, LATE_PROPERTY_START).replace(toReturn).trim();
+    }
+    /** only the agent's properties are removed: every other token, a {@code ${name:-x}} lookalike included, stays as written */
+    private static StringSubstitutor substitutor(Map<String, String> removed, String prefix) {
+        return new StringSubstitutor(removed, prefix, StringSubstitutor.DEFAULT_VAR_END).setValueDelimiterMatcher(null).setPreserveEscapes(true);
     }
     private static Set<String> jacocoAgentPropertyNames(MavenProject project) {
         Set<String> toReturn = new HashSet<>();

@@ -5,7 +5,8 @@ import java.util.List;
 
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
-import org.apache.commons.lang3.StringUtils;
+
+import com.google.common.base.Joiner;
 
 import io.codiqo.api.config.ConfigFileSpec;
 import io.codiqo.api.diff.CommentSyntax;
@@ -29,7 +30,7 @@ public class GradleBuildConfigFileSpec implements ConfigFileSpec {
     }
     @Override
     public String describe() {
-        return StringUtils.join(FILE_NAMES, ", ") + ", *" + VERSION_CATALOG_SUFFIX;
+        return Joiner.on(", ").join(FILE_NAMES) + ", *" + VERSION_CATALOG_SUFFIX;
     }
     @Override
     public IneffectiveLineFilter lineFilter() {

@@ -7,7 +7,6 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
-import java.util.ArrayList;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.eclipse.collections.api.map.primitive.MutableIntObjectMap;
@@ -16,6 +15,9 @@ import org.jacoco.core.analysis.ILine;
 
 import java.util.Objects;
 
+import com.google.common.base.Suppliers;
+import com.google.common.collect.Lists;
+
 import edu.umd.cs.findbugs.BugInstance;
 import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.coverage.CodeBlockCoverage;
@@ -23,7 +25,6 @@ import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.metrics.CodeBlockMetrics;
 import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
-import io.codiqo.util.Lazy;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
@@ -41,7 +42,7 @@ import net.sourceforge.pmd.reporting.RuleViolation;
 @Setter
 @Getter
 @SuperBuilder
-abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
+public abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
     private static final int TRIVIAL_NCSS_MAX = 2;
     private static final int TRIVIAL_CYCLO_MAX = 1;
 
@@ -52,19 +53,18 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
     private String body;
     private SourceLocation location;
     @Builder.Default
-    private Collection<JInvocationBlock> invocations = new ArrayList<>();
+    private Collection<JInvocationBlock> invocations = Lists.newArrayList();
     @Builder.Default
-    private List<RuleViolation> pmdViolations = new ArrayList<>();
+    private List<RuleViolation> pmdViolations = Lists.newArrayList();
     @Builder.Default
-    private List<BugInstance> spotbugs = new ArrayList<>();
+    private List<BugInstance> spotbugs = Lists.newArrayList();
     @Builder.Default
-    @Getter(onMethod_ = @Override)
     private MutableIntObjectMap<ILine> lineCoverage = new IntObjectHashMap<>();
     @Builder.Default
     private Optional<AffectedSymbolInfo> affectedSymbol = Optional.empty();
 
-    private final Supplier<CodeBlockCoverage> coverage = Lazy.of(() -> CodeBlockCoverage.from(lineCoverage));
-    private final Supplier<CodeBlockMetrics> metrics = Lazy.of(() -> {
+    private final Supplier<CodeBlockCoverage> coverage = Suppliers.memoize(() -> CodeBlockCoverage.from(lineCoverage));
+    private final Supplier<CodeBlockMetrics> metrics = Suppliers.memoize(() -> {
         int lineCount = MetricsUtil.computeMetric(JavaMetrics.LINES_OF_CODE, node, MetricOptions.emptyOptions());
         JavaLineCountAnalyzer.LineCounts lineCounts = JavaLineCountAnalyzer.analyze(node);
         int nonCommentCodeLines = lineCounts.getCodeLines();
@@ -185,6 +185,10 @@ abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInfo {
     @Override
     public void spotbug(BugInstance violation) {
         spotbugs.add(violation);
+    }
+    @Override
+    public MutableIntObjectMap<ILine> getLineCoverage() {
+        return lineCoverage;
     }
     @Override
     public void lineCoverage(int lineNumber, ILine line) {

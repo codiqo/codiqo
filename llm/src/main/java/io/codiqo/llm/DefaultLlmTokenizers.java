@@ -4,12 +4,12 @@ import java.io.InputStream;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
+import com.google.common.collect.Maps;
 import com.knuddels.jtokkit.Encodings;
 import com.knuddels.jtokkit.api.Encoding;
 import com.knuddels.jtokkit.api.EncodingType;
@@ -31,7 +31,7 @@ public class DefaultLlmTokenizers implements LlmTokenizers, AutoCloseable {
             "padding", Boolean.FALSE.toString());
 
     private final Log log;
-    private final ConcurrentMap<String, Optional<HuggingFaceTokenizer>> loaded = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Optional<HuggingFaceTokenizer>> loaded = Maps.newConcurrentMap();
 
     private final Map<String, String> tokenizerRepos = Map.of(
             "deepseek", "deepseek-ai/DeepSeek-V3",

@@ -2,8 +2,9 @@ package io.codiqo.core.java;
 
 import java.util.function.Supplier;
 
+import com.google.common.base.Suppliers;
+
 import io.codiqo.lang.spec.JavaConstructorBlockInfo;
-import io.codiqo.util.Lazy;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.experimental.SuperBuilder;
@@ -13,8 +14,8 @@ import net.sourceforge.pmd.lang.java.types.JMethodSig;
 @Setter
 @Getter
 @SuperBuilder
-class JavaPmdConstructorInfo extends AbstractJavaPmdDeclarationInfo implements JavaConstructorBlockInfo {
-    private final Supplier<String> signatureSupplier = Lazy.of(() -> {
+public class JavaPmdConstructorInfo extends AbstractJavaPmdDeclarationInfo implements JavaConstructorBlockInfo {
+    private final Supplier<String> signatureSupplier = Suppliers.memoize(() -> {
         org.objectweb.asm.Type ownerType = JavaBinaryFormat.toOwnerType(getConstructor().getSymbol().getEnclosingClass());
         org.objectweb.asm.commons.Method method = JavaBinaryFormat.toMethod(getConstructor().getGenericSignature());
         return ownerType.getInternalName() + "." + method;

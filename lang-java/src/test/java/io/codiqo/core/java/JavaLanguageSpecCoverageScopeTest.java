@@ -9,7 +9,6 @@ import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -20,6 +19,8 @@ import org.jacoco.core.analysis.IPackageCoverage;
 import org.jacoco.core.analysis.ISourceFileCoverage;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import com.google.common.collect.Maps;
 
 import io.codiqo.api.JvmProjectSpec;
 import io.codiqo.api.RunArgs;
@@ -97,7 +98,7 @@ class JavaLanguageSpecCoverageScopeTest {
     @Test
     void aSourceFileOutsideEveryExcludePatternIsKept() throws Exception {
         Path sourceRoot = sourceRoot("core/src/main/java", "com/example/Kept.java");
-        Map<File, ISourceFileCoverage> coverages = new HashMap<>();
+        Map<File, ISourceFileCoverage> coverages = Maps.newHashMap();
 
         Set<CoverageSourceFile> excluded = JavaLanguageSpec.collectSourceCoverage(
                 args("android/**"), workTree.toFile(), project(sourceRoot), bundle("com/example", "Kept.java"), coverages);
@@ -113,7 +114,7 @@ class JavaLanguageSpecCoverageScopeTest {
     @Test
     void aSourceFileUnderAnExcludedTreeIsDroppedFromCoverage() throws Exception {
         Path sourceRoot = sourceRoot("android/guava/src/main/java", "com/example/Mirrored.java");
-        Map<File, ISourceFileCoverage> coverages = new HashMap<>();
+        Map<File, ISourceFileCoverage> coverages = Maps.newHashMap();
 
         Set<CoverageSourceFile> excluded = JavaLanguageSpec.collectSourceCoverage(
                 args("android/**"), workTree.toFile(), project(sourceRoot), bundle("com/example", "Mirrored.java"), coverages);
@@ -124,7 +125,7 @@ class JavaLanguageSpecCoverageScopeTest {
     @Test
     void withoutAnyPatternEverySourceFileIsKept() throws Exception {
         Path sourceRoot = sourceRoot("android/guava/src/main/java", "com/example/Mirrored.java");
-        Map<File, ISourceFileCoverage> coverages = new HashMap<>();
+        Map<File, ISourceFileCoverage> coverages = Maps.newHashMap();
 
         Set<CoverageSourceFile> excluded = JavaLanguageSpec.collectSourceCoverage(
                 args(null), workTree.toFile(), project(sourceRoot), bundle("com/example", "Mirrored.java"), coverages);

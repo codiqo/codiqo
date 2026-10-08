@@ -10,13 +10,14 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.IdentityHashMap;
-import java.util.ArrayList;
 import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.thymeleaf.context.Context;
+
+import com.google.common.collect.Lists;
 
 import tools.jackson.databind.ObjectMapper;
 
@@ -33,7 +34,6 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private static final String TEMPLATE_SYSTEM_PROMPT = "system-prompt";
     private static final String TEMPLATE_USER_PROMPT = "user-message";
     private static final String TEMPLATE_WEB_SEARCH_RESULTS = "web-search-results";
-    private static final String TEMPLATE_PRE_COMPUTED_SCORES = "pre-computed-scores";
     private static final String TEMPLATE_VALIDATION_FEEDBACK = "validation-feedback";
 
     private static final ObjectMapper MAPPER = LlmJson.requestMapper();
@@ -91,7 +91,6 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
                 context.getConstructorCapQuantileTest());
         logPromptMetrics(context.getArgs().getLlmModel(), request, preComputedScores, budgeted.getJson(), budgeted.getTokens());
         ctx.setVariable("preComputedScores", preComputedScores);
-        ctx.setVariable("preComputedScoresSection", buildPreComputedScoresSection(preComputedScores));
 
         String message = PromptTemplates.process(TEMPLATE_USER_PROMPT, ctx);
         return new UserMessageResult(message, preComputedScores);
@@ -107,7 +106,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
                 requestTokens);
 
         if (CollectionUtils.isNotEmpty(request.getFileChanges())) {
-            List<FileTokens> perFile = new ArrayList<>();
+            List<FileTokens> perFile = Lists.newArrayList();
             for (LlmScoringRequest.FileChange file : request.getFileChanges()) {
                 int tokens = estimateTokens(model, MAPPER.writeValueAsString(file));
                 perFile.add(FileTokens.builder().path(file.getPath()).tokens(tokens).linesChanged(file.getLinesAdded() + file.getLinesDeleted()).build());
@@ -220,7 +219,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
      * one part of the prompt can be judged by what it saves.
      */
     private void logSectionTokens(String model, LlmScoringRequest request, int requestTokens) {
-        List<List<LlmScoringRequest.CallerInfo>> callers = new ArrayList<>();
+        List<List<LlmScoringRequest.CallerInfo>> callers = Lists.newArrayList();
         for (LlmScoringRequest.CodeBlockChange block : CollectionUtils.emptyIfNull(request.getCodeBlockChanges())) {
             callers.add(CollectionUtils.isEmpty(block.getCallers()) ? Collections.emptyList() : block.getCallers());
         }
@@ -266,7 +265,7 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
      * budget. Accumulates in long so an extreme ceiling cannot overflow the sequence into a negative cap.
      */
     private static List<Integer> fibonacciDescentCaps(int ceiling) {
-        List<Integer> caps = new ArrayList<>();
+        List<Integer> caps = Lists.newArrayList();
         long a = 1;
         long b = 2;
         while (a < ceiling) {
@@ -299,9 +298,9 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
                 return;
             }
 
-            List<LlmScoringRequest.CallerInfo> ranked = new ArrayList<>(full);
+            List<LlmScoringRequest.CallerInfo> ranked = Lists.newArrayList(full);
             ranked.sort(callerPriority(full));
-            List<LlmScoringRequest.CallerInfo> kept = new ArrayList<>(ranked.subList(0, cap));
+            List<LlmScoringRequest.CallerInfo> kept = Lists.newArrayList(ranked.subList(0, cap));
             long fullProduction = full.stream().filter(not(LlmScoringRequest.CallerInfo::isTestCaller)).count();
             long keptProduction = kept.stream().filter(not(LlmScoringRequest.CallerInfo::isTestCaller)).count();
 
@@ -356,11 +355,6 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     private static void restoreDiffs(Map<LlmScoringRequest.FileChange, String> saved) {
         saved.forEach(LlmScoringRequest.FileChange::setDiff);
     }
-    private static String buildPreComputedScoresSection(PreComputedScores scores) {
-        Context ctx = new Context(Locale.ENGLISH);
-        ctx.setVariable("scores", scores);
-        return PromptTemplates.process(TEMPLATE_PRE_COMPUTED_SCORES, ctx);
-    }
     private static Context createContext(PromptContext promptContext) {
         Context ctx = new Context(Locale.ENGLISH);
         RunArgs args = promptContext.getArgs();
@@ -409,8 +403,8 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
         ctx.setVariable("project_total_files", promptContext.getProjectTotalFiles());
         ctx.setVariable("project_total_methods", promptContext.getProjectTotalMethods());
         ctx.setVariable("code_units_affected", promptContext.getCodeUnitsAffected());
-        ctx.setVariable("technical_tags", String.join(", ", promptContext.getTechnicalTags()));
-        ctx.setVariable("functional_tags", String.join(", ", promptContext.getFunctionalTags()));
+        ctx.setVariable("technical_tags", promptContext.getTechnicalTags().stream().filter(Objects::nonNull).toList());
+        ctx.setVariable("functional_tags", promptContext.getFunctionalTags().stream().filter(Objects::nonNull).toList());
         ctx.setVariable("tags_vocabulary_cap", promptContext.getTagsVocabularyCap());
         ctx.setVariable("web_search_enabled", args.isLlmEnableWebSearchTool());
         ctx.setVariable("convention_guidance", conventionGuidance);
@@ -439,9 +433,9 @@ public class ThymeleafPromptBuilder implements PromptBuilder {
     @Data
     @Builder
     public static class FileTokens {
-        String path;
-        int tokens;
-        int linesChanged;
+        private String path;
+        private int tokens;
+        private int linesChanged;
     }
 
     private static final class BudgetedRequest extends ImmutablePair<String, Integer> {

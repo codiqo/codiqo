@@ -43,7 +43,7 @@ public class PromptFences {
      */
     /**
      * Bounds the input before stripping, which is the only safe way to strip author-controlled text: the
-     * fixpoint loop below is quadratic in nesting depth, and git puts no limit on a commit message, so
+     * fix point loop below is quadratic in nesting depth, and git puts no limit on a commit message, so
      * running it over a megabyte of nested markers pins the worker for minutes. Cutting on a code point
      * keeps a supplementary-plane character from being halved into an unpaired surrogate, which serializes
      * as structurally invalid JSON string content.

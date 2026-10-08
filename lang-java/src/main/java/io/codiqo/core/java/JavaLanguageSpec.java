@@ -13,31 +13,24 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
 import java.util.EnumSet;
 import java.util.Enumeration;
-import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
-import org.apache.commons.collections4.MultiValuedMap;
-import org.apache.commons.collections4.multimap.ArrayListValuedHashMap;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.filefilter.FileFilterUtils;
@@ -66,6 +59,16 @@ import org.jacoco.core.data.ExecutionData;
 import org.jacoco.core.data.ExecutionDataStore;
 import org.jacoco.core.tools.ExecFileLoader;
 import org.slf4j.event.Level;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Joiner;
+import com.google.common.base.Splitter;
+import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Multimap;
+import com.google.common.collect.Sets;
 
 import edu.umd.cs.findbugs.BugCollection;
 import edu.umd.cs.findbugs.BugCollectionBugReporter;
@@ -101,7 +104,6 @@ import io.codiqo.jdtls.JdtLspProjectImporter;
 import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.util.Fetch;
-import io.codiqo.util.Split;
 import lombok.EqualsAndHashCode;
 import lombok.Value;
 import net.sourceforge.pmd.PMDConfiguration;
@@ -173,7 +175,7 @@ public class JavaLanguageSpec implements LanguageSpec {
     private final RunArgs args;
     private final JavaLanguageModule language = new JavaLanguageModule();
     private final Function<NodeStream<? extends JavaNode>, Collection<JInvocationBlock>> outboundASTconverter = stream -> {
-        List<JInvocationBlock> builder = new ArrayList<>();
+        List<JInvocationBlock> builder = Lists.newArrayList();
         stream.toStream().forEach(node -> {
             if (node instanceof MethodUsage usage) {
                 OverloadSelectionResult overload = usage.getOverloadSelectionInfo();
@@ -203,7 +205,7 @@ public class JavaLanguageSpec implements LanguageSpec {
      * module's classpath loader long after parse returns. Closing the registry at the end of parse makes every later
      * lookup of a class PMD had not loaded yet fail with "AuxClasspathLoader is closed" or silently come back unresolved.
      */
-    private final Map<ProjectSpec, LanguageProcessorRegistry> registries = new ConcurrentHashMap<>();
+    private final Map<ProjectSpec, LanguageProcessorRegistry> registries = Maps.newConcurrentMap();
 
     public JavaLanguageSpec(LogFactory logFactory, RunArgs args, Fetch fetch) {
         this.log = logFactory.getLogger(getClass());
@@ -230,10 +232,10 @@ public class JavaLanguageSpec implements LanguageSpec {
     }
     @Override
     public ParsedSources parse(ProjectSpec owner, Collection<File> files) throws IOException {
-        List<CodeBlockInfo> blocks = new ArrayList<>();
-        Set<File> parsedFiles = new HashSet<>();
-        List<DeclaredType> types = new ArrayList<>();
-        List<TypeReference> references = new ArrayList<>();
+        List<CodeBlockInfo> blocks = Lists.newArrayList();
+        Set<File> parsedFiles = Sets.newHashSet();
+        List<DeclaredType> types = Lists.newArrayList();
+        List<TypeReference> references = Lists.newArrayList();
         boolean readTypeGraph = args.isHotspotsCommit();
 
         LanguageProcessorRegistry processingRegistry = registries.computeIfAbsent(owner, this::processingRegistry);
@@ -246,8 +248,8 @@ public class JavaLanguageSpec implements LanguageSpec {
                 boolean test = owner.isTestResource(destination);
                 parseTree(destination, text, pmd, errorReporter, processingRegistry, "skipping code unit indexing for this file", tree -> {
                     List<CodeBlockInfo> fileBlocks = collectBlocks(owner, destination, tree);
-                    List<DeclaredType> fileTypes = new ArrayList<>();
-                    List<TypeReference> fileReferences = new ArrayList<>();
+                    List<DeclaredType> fileTypes = Lists.newArrayList();
+                    List<TypeReference> fileReferences = Lists.newArrayList();
                     if (readTypeGraph) {
                         /**
                          * Reading the type graph resolves far more types than block collection does, so it fails more
@@ -274,8 +276,8 @@ public class JavaLanguageSpec implements LanguageSpec {
         return new ParsedSources(List.copyOf(blocks), Set.copyOf(parsedFiles), List.copyOf(types), List.copyOf(references));
     }
     @Override
-    public MultiValuedMap<File, CodeBlockInfo> parseRemoved(ProjectSpec owner, Collection<PreviousRevision> revisions) throws IOException {
-        MultiValuedMap<File, CodeBlockInfo> toReturn = new ArrayListValuedHashMap<>();
+    public Multimap<File, CodeBlockInfo> parseRemoved(ProjectSpec owner, Collection<PreviousRevision> revisions) throws IOException {
+        Multimap<File, CodeBlockInfo> toReturn = ArrayListMultimap.create();
 
         LanguageProcessorRegistry processingRegistry = registries.computeIfAbsent(owner, this::processingRegistry);
         Parser pmd = processingRegistry.getProcessor(language).services().getParser();
@@ -285,7 +287,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         for (PreviousRevision revision : revisions) {
             File file = revision.getFile();
             TextFile now = TextFile.forPath(file.toPath().normalize(), StandardCharsets.UTF_8, language.getDefaultVersion());
-            Optional<Map<String, Declaration>> declaredNow = parseTree(file, now, pmd, errorReporter, processingRegistry, unpaired,
+            Optional<Map<List<JavaSourceIdentity.Step>, Declaration>> declaredNow = parseTree(file, now, pmd, errorReporter, processingRegistry, unpaired,
                     tree -> declaredIdentities(tree, FilenameUtils.getBaseName(file.getName())));
 
             if (declaredNow.isPresent()) {
@@ -305,10 +307,10 @@ public class JavaLanguageSpec implements LanguageSpec {
         bundle.setProperty(JavaLanguageProperties.FIRST_CLASS_LOMBOK, true);
 
         if (owner instanceof JvmProjectSpec jvm) {
-            Set<String> jars = new LinkedHashSet<>();
+            Set<String> jars = Sets.newLinkedHashSet();
             jvm.getCompileClasspathElements().forEach(element -> jars.add(element.getAbsolutePath()));
             jvm.getTestClasspathElements().forEach(element -> jars.add(element.getAbsolutePath()));
-            bundle.setProperty(JvmLanguagePropertyBundle.AUX_CLASSPATH, StringUtils.join(jars, File.pathSeparator));
+            bundle.setProperty(JvmLanguagePropertyBundle.AUX_CLASSPATH, Joiner.on(File.pathSeparator).join(jars));
         }
 
         LanguageRegistry languageRegistry = LanguageRegistry.singleton(language);
@@ -345,7 +347,7 @@ public class JavaLanguageSpec implements LanguageSpec {
     }
     @Override
     public void close() throws IOException {
-        List<AutoCloseable> toClose = new ArrayList<>(registries.values());
+        List<AutoCloseable> toClose = Lists.newArrayList(registries.values());
         toClose.add(jdt);
         Exception err = IOUtil.closeAll(toClose);
         if (Objects.nonNull(err)) {
@@ -384,7 +386,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         }
     }
     private List<CodeBlockInfo> collectBlocks(ProjectSpec owner, File destination, ASTCompilationUnit tree) {
-        List<CodeBlockInfo> toReturn = new ArrayList<>();
+        List<CodeBlockInfo> toReturn = Lists.newArrayList();
 
         /**
          * Every type declaration, anonymous class and lambda is a find boundary in PMD's Java AST, so without
@@ -454,7 +456,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         StopWatch stopWatch = StopWatch.createStarted();
 
         ExecFileLoader loader = new ExecFileLoader();
-        Map<File, LoadedExec> loadedExecs = new LinkedHashMap<>();
+        Map<File, LoadedExec> loadedExecs = Maps.newLinkedHashMap();
         List<ProjectSpec> coveredProjects = loadOwnedCoverage(summary, loader, loadedExecs);
 
         if (MapUtils.isNotEmpty(loadedExecs)) {
@@ -465,8 +467,8 @@ public class JavaLanguageSpec implements LanguageSpec {
             return;
         }
 
-        Map<File, ISourceFileCoverage> coverages = new LinkedHashMap<>();
-        List<IClassCoverage> collisions = new ArrayList<>();
+        Map<File, ISourceFileCoverage> coverages = Maps.newLinkedHashMap();
+        List<IClassCoverage> collisions = Lists.newArrayList();
         CoverageTotals totals = analyzeModules(coveredProjects, loader.getExecutionDataStore(), coverages, collisions);
 
         if (CollectionUtils.isNotEmpty(collisions)) {
@@ -491,8 +493,8 @@ public class JavaLanguageSpec implements LanguageSpec {
      * ran produced none at all.
      */
     private List<ProjectSpec> loadOwnedCoverage(IndexingSummary summary, ExecFileLoader loader, Map<File, LoadedExec> loadedExecs) throws IOException {
-        List<ProjectSpec> toReturn = new ArrayList<>();
-        List<String> uninstrumentedModules = new ArrayList<>();
+        List<ProjectSpec> toReturn = Lists.newArrayList();
+        List<String> uninstrumentedModules = Lists.newArrayList();
 
         for (ProjectSpec project : summary.getProjects()) {
             Optional<File> coverage = project.coverage();
@@ -520,7 +522,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         if (CollectionUtils.isNotEmpty(uninstrumentedModules)) {
             throw new IOException(String.format(
                     "coverage was required (codiqo.failOnUninstrumentedModule) but no coverage data was produced for module(s) with tests: %s — the JaCoCo agent did not attach or no tests executed",
-                    StringUtils.join(uninstrumentedModules, ", ")));
+                    Joiner.on(", ").join(uninstrumentedModules)));
         }
 
         return toReturn;
@@ -619,7 +621,7 @@ public class JavaLanguageSpec implements LanguageSpec {
          * copies of a class across modules would otherwise be double-counted.
          */
         MutableLongSet countedClassIds = new LongHashSet();
-        Set<String> countedPackages = new HashSet<>();
+        Set<String> countedPackages = Sets.newHashSet();
 
         for (ProjectSpec project : coveredProjects) {
             CoverageBuilder coverageBuilder = new CoverageBuilder();
@@ -681,7 +683,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         coverages.values().removeIf(source -> collided.contains(CoverageSourceFile.of(source)));
 
         Map<String, File> analyzedBySourcePath = indexBySourceRootRelativePath(analysis.locations(), sourceRoots(summary.getProjects()));
-        List<File> changed = new ArrayList<>();
+        List<File> changed = Lists.newArrayList();
         for (CoverageSourceFile source : collided) {
             Optional.ofNullable(analyzedBySourcePath.get(source.unixPath())).ifPresent(changed::add);
         }
@@ -751,20 +753,20 @@ public class JavaLanguageSpec implements LanguageSpec {
         log.info("coverage analysis: %d files affected matched, %d unmatched, %d lines with coverage", matched, unmatched, linesWithCoverage);
     }
     private void capturePmdViolations(IndexingSummary summary, CommitAnalysis analysis) {
-        Map<ProjectSpec, List<File>> filesByProject = new LinkedHashMap<>();
-        List<File> orphans = new ArrayList<>();
+        Map<ProjectSpec, List<File>> filesByProject = Maps.newLinkedHashMap();
+        List<File> orphans = Lists.newArrayList();
         for (File sourceFile : summary.getBlocks().keySet()) {
             if (FilenameUtils.isExtension(sourceFile.getName(), language.getExtensions())) {
                 Optional<ProjectSpec> owner = args.owner(sourceFile);
                 if (owner.isPresent()) {
-                    filesByProject.computeIfAbsent(owner.get(), k -> new ArrayList<>()).add(sourceFile);
+                    filesByProject.computeIfAbsent(owner.get(), k -> Lists.newArrayList()).add(sourceFile);
                 } else {
                     orphans.add(sourceFile);
                 }
             }
         }
 
-        List<Collection<File>> groups = new ArrayList<>();
+        List<Collection<File>> groups = Lists.newArrayList();
         groups.addAll(filesByProject.values());
         if (CollectionUtils.isNotEmpty(orphans)) {
             groups.add(orphans);
@@ -790,7 +792,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         try (PmdAnalysis pmd = PmdAnalysis.create(cfg)) {
             pmd.addRuleSets(pmd.newRuleSetLoader().warnDeprecated(false).loadFromResources(args.getPmdRules()));
 
-            Map<String, File> filesByAbsolutePath = new LinkedHashMap<>();
+            Map<String, File> filesByAbsolutePath = Maps.newLinkedHashMap();
             for (File sourceFile : filesForProject) {
                 if (pmd.files().addFile(sourceFile.toPath().normalize())) {
                     filesByAbsolutePath.put(sourceFile.getAbsolutePath(), sourceFile);
@@ -825,7 +827,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         }
     }
     private void captureSpotbugsViolations(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
-        Map<ProjectSpec, edu.umd.cs.findbugs.Project> projects = new LinkedHashMap<>();
+        Map<ProjectSpec, edu.umd.cs.findbugs.Project> projects = Maps.newLinkedHashMap();
         for (ProjectSpec project : summary.getProjects()) {
             if (project instanceof JvmProjectSpec jvm) {
                 File outputDir = project.getOutputDirectory();
@@ -846,7 +848,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         DetectorFactoryCollection.resetInstance(detectorFactory);
 
         Map<String, File> filesBySourcePath = indexBySourceRootRelativePath(summary.getBlocks().keySet(), sourceRoots(projects.keySet()));
-        Set<String> omitVisitors = new HashSet<>(Split.on(args.getSpotbugsOmitVisitors(), ','));
+        Set<String> omitVisitors = Sets.newHashSet(Splitter.on(',').trimResults().omitEmptyStrings().splitToList(StringUtils.defaultString(args.getSpotbugsOmitVisitors())));
 
         StopWatch spotbugsWatch = StopWatch.createStarted();
         for (edu.umd.cs.findbugs.Project spotbugs : projects.values()) {
@@ -941,7 +943,7 @@ public class JavaLanguageSpec implements LanguageSpec {
                 .map(URL::toString)
                 .collect(Collectors.toSet());
 
-        Set<Plugin> toReturn = new HashSet<>();
+        Set<Plugin> toReturn = Sets.newHashSet();
         Enumeration<URL> resources = getClass().getClassLoader().getResources(FINDBUGS_DESCRIPTOR);
         while (resources.hasMoreElements()) {
             URL resource = resources.nextElement();
@@ -965,7 +967,8 @@ public class JavaLanguageSpec implements LanguageSpec {
 
         return toReturn;
     }
-    static boolean expectsCoverage(ProjectSpec project) throws IOException {
+    @VisibleForTesting
+    public static boolean expectsCoverage(ProjectSpec project) throws IOException {
         /**
          * A module expects coverage only when its test run actually happened: compiled main classes and at least one
          * JUnit XML report in a directory the build tool named for it. A pom aggregator, a code-less module, or a module
@@ -988,13 +991,14 @@ public class JavaLanguageSpec implements LanguageSpec {
      * tree, while JaCoCo walks compiled output and never sees the index walk the pattern was written against — so
      * without filtering here an excluded tree still lands in the coverage totals.
      */
-    static Set<CoverageSourceFile> collectSourceCoverage(
+    @VisibleForTesting
+    public static Set<CoverageSourceFile> collectSourceCoverage(
             RunArgs args,
             File workTree,
             JvmProjectSpec jvm,
             IBundleCoverage bundle,
             Map<File, ISourceFileCoverage> coverages) {
-        Set<CoverageSourceFile> toReturn = new HashSet<>();
+        Set<CoverageSourceFile> toReturn = Sets.newHashSet();
         for (File sourceRoot : jvm.getCompileSourceRoots()) {
             Path normalized = sourceRoot.toPath().normalize().toAbsolutePath();
             for (IPackageCoverage pkg : bundle.getPackages()) {
@@ -1018,7 +1022,8 @@ public class JavaLanguageSpec implements LanguageSpec {
      * A compiled directory is not evidence that anything ran against it — matching these against an exec file's
      * contents is.
      */
-    static Set<String> compiledClassNames(File outputDir) throws IOException {
+    @VisibleForTesting
+    public static Set<String> compiledClassNames(File outputDir) throws IOException {
         Path root = outputDir.toPath();
         try (Stream<Path> compiled = Files.walk(root)) {
             return compiled.filter(path -> CLASS_EXTENSION.equals(FilenameUtils.getExtension(path.toString())))
@@ -1031,7 +1036,7 @@ public class JavaLanguageSpec implements LanguageSpec {
      * on each side. An ambiguous overload stays a removal rather than being guessed at, because pairing it with the
      * wrong counterpart would attribute one method's change to another.
      */
-    private static List<CodeBlockInfo> removedBlocks(List<CodeBlockInfo> blocks, Map<String, Declaration> before, Map<String, Declaration> now, String previousPrimaryType) {
+    private static List<CodeBlockInfo> removedBlocks(List<CodeBlockInfo> blocks, Map<List<JavaSourceIdentity.Step>, Declaration> before, Map<List<JavaSourceIdentity.Step>, Declaration> now, String previousPrimaryType) {
         Set<Declaration> leftoverBefore = before.values().stream().filter(not(declaration -> now.containsKey(declaration.getExact()))).collect(Collectors.toCollection(HashSet::new));
         Set<Declaration> leftoverNow = now.values().stream().filter(not(declaration -> before.containsKey(declaration.getExact()))).collect(Collectors.toCollection(HashSet::new));
 
@@ -1040,14 +1045,14 @@ public class JavaLanguageSpec implements LanguageSpec {
         pairMutualBest(leftoverBefore, leftoverNow);
         pairUnique(leftoverBefore, leftoverNow, Declaration::getName);
 
-        Set<String> removed = leftoverBefore.stream().map(Declaration::getExact).collect(Collectors.toSet());
+        Set<List<JavaSourceIdentity.Step>> removed = leftoverBefore.stream().map(Declaration::getExact).collect(Collectors.toSet());
         return blocks.stream()
                 .filter(block -> removed.contains(JavaSourceIdentity.of(((AbstractJavaPmdDeclarationInfo) block).getNode(), previousPrimaryType)))
                 .toList();
     }
-    private static void pairUnique(Set<Declaration> leftoverBefore, Set<Declaration> leftoverNow, Function<Declaration, String> key) {
-        Map<String, List<Declaration>> byKeyBefore = leftoverBefore.stream().collect(Collectors.groupingBy(key));
-        Map<String, List<Declaration>> byKeyNow = leftoverNow.stream().collect(Collectors.groupingBy(key));
+    private static <K> void pairUnique(Set<Declaration> leftoverBefore, Set<Declaration> leftoverNow, Function<Declaration, K> key) {
+        Map<K, List<Declaration>> byKeyBefore = leftoverBefore.stream().collect(Collectors.groupingBy(key));
+        Map<K, List<Declaration>> byKeyNow = leftoverNow.stream().collect(Collectors.groupingBy(key));
         byKeyBefore.forEach((candidate, sameBefore) -> {
             List<Declaration> sameNow = byKeyNow.getOrDefault(candidate, List.of());
             if (BooleanUtils.and(new boolean[] { sameBefore.size() == 1, sameNow.size() == 1 })) {
@@ -1057,8 +1062,8 @@ public class JavaLanguageSpec implements LanguageSpec {
         });
     }
     private static void pairMutualBest(Set<Declaration> leftoverBefore, Set<Declaration> leftoverNow) {
-        Map<String, List<Declaration>> byKeyNow = leftoverNow.stream().collect(Collectors.groupingBy(Declaration::getNameAndArity));
-        Map<Declaration, Declaration> pairs = new HashMap<>();
+        Map<Pair<List<JavaSourceIdentity.Step>, Integer>, List<Declaration>> byKeyNow = leftoverNow.stream().collect(Collectors.groupingBy(Declaration::getNameAndArity));
+        Map<Declaration, Declaration> pairs = Maps.newHashMap();
         for (Declaration old : leftoverBefore) {
             List<Declaration> candidates = byKeyNow.getOrDefault(old.getNameAndArity(), List.of());
             uniqueBest(old, candidates).ifPresent(candidate -> {
@@ -1073,7 +1078,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         int best = candidates.stream().mapToInt(candidate -> samePositions(from, candidate)).max().orElse(0);
         List<Declaration> top = candidates.stream().filter(candidate -> samePositions(from, candidate) == best).toList();
         if (BooleanUtils.and(new boolean[] { best > 0, top.size() == 1 })) {
-            return Optional.of(top.iterator().next());
+            return Optional.of(Iterables.getOnlyElement(top));
         }
         return Optional.empty();
     }
@@ -1086,16 +1091,16 @@ public class JavaLanguageSpec implements LanguageSpec {
         }
         return toReturn;
     }
-    private static Map<String, Declaration> declaredIdentities(ASTCompilationUnit tree, String primaryTypeName) {
-        Map<String, Declaration> toReturn = new HashMap<>();
+    private static Map<List<JavaSourceIdentity.Step>, Declaration> declaredIdentities(ASTCompilationUnit tree, String primaryTypeName) {
+        Map<List<JavaSourceIdentity.Step>, Declaration> toReturn = Maps.newHashMap();
         tree.descendants(ASTExecutableDeclaration.class)
                 .crossFindBoundaries()
                 .forEach(executable -> {
-                    String name = JavaSourceIdentity.nameOf(executable, primaryTypeName);
+                    List<JavaSourceIdentity.Step> name = JavaSourceIdentity.nameOf(executable, primaryTypeName);
                     Declaration declaration = new Declaration(
                             JavaSourceIdentity.of(executable, primaryTypeName),
                             JavaSourceIdentity.memberOf(executable, primaryTypeName),
-                            name + '/' + executable.getArity(),
+                            Pair.of(name, executable.getArity()),
                             name,
                             JavaSourceIdentity.parametersOf(executable));
                     toReturn.put(declaration.getExact(), declaration);
@@ -1103,11 +1108,11 @@ public class JavaLanguageSpec implements LanguageSpec {
         tree.descendants(ASTCompactConstructorDeclaration.class)
                 .crossFindBoundaries()
                 .forEach(constructor -> {
-                    String name = JavaSourceIdentity.nameOf(constructor, primaryTypeName);
+                    List<JavaSourceIdentity.Step> name = JavaSourceIdentity.nameOf(constructor, primaryTypeName);
                     Declaration declaration = new Declaration(
                             JavaSourceIdentity.of(constructor, primaryTypeName),
                             JavaSourceIdentity.memberOf(constructor, primaryTypeName),
-                            name + '/' + constructor.getEnclosingType().getRecordComponents().size(),
+                            Pair.of(name, constructor.getEnclosingType().getRecordComponents().size()),
                             name,
                             JavaSourceIdentity.parametersOf(constructor));
                     toReturn.put(declaration.getExact(), declaration);
@@ -1119,7 +1124,8 @@ public class JavaLanguageSpec implements LanguageSpec {
      * for any of them. Empty when no loaded exec mentions the module at all, which is how a module no test ever touched
      * is told apart from one whose coverage is merely old.
      */
-    static Optional<Date> newestExecContaining(Collection<LoadedExec> loadedExecs, Set<String> compiledClassNames) {
+    @VisibleForTesting
+    public static Optional<Date> newestExecContaining(Collection<LoadedExec> loadedExecs, Set<String> compiledClassNames) {
         return loadedExecs.stream()
                 .filter(exec -> CollectionUtils.containsAny(exec.getClassNames(), compiledClassNames))
                 .map(exec -> exec.getFile().lastModified())
@@ -1141,7 +1147,7 @@ public class JavaLanguageSpec implements LanguageSpec {
      * Matching on that key is exact, where comparing path suffixes conflates two same-named files in different modules.
      */
     private static Map<String, File> indexBySourceRootRelativePath(Collection<File> files, Collection<Path> sourceRoots) {
-        Map<String, File> toReturn = new LinkedHashMap<>();
+        Map<String, File> toReturn = Maps.newLinkedHashMap();
         for (File file : files) {
             Path normalized = file.toPath().normalize();
             for (Path root : sourceRoots) {
@@ -1154,7 +1160,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         return toReturn;
     }
     private static Set<Path> sourceRoots(Collection<ProjectSpec> projects) {
-        Set<Path> toReturn = new LinkedHashSet<>();
+        Set<Path> toReturn = Sets.newLinkedHashSet();
         for (ProjectSpec project : projects) {
             if (project instanceof JvmProjectSpec jvm) {
                 jvm.getCompileSourceRoots().forEach(dir -> toReturn.add(dir.toPath().normalize()));
@@ -1217,7 +1223,8 @@ public class JavaLanguageSpec implements LanguageSpec {
      * analyzed; where the tests actually loaded a versioned copy its probes no longer match, and the existing
      * duplicate-name handling drops that name from coverage rather than trusting the wrong body.
      */
-    static int analyzeClassRoots(Analyzer analyzer, File outputDir) throws IOException {
+    @VisibleForTesting
+    public static int analyzeClassRoots(Analyzer analyzer, File outputDir) throws IOException {
         File[] roots = outputDir.listFiles(child -> BooleanUtils.negate(META_INF_DIR.equals(child.getName())));
         /**
          * null means listFiles itself failed, so fall back to the plain walk. An empty array is a different answer:
@@ -1260,7 +1267,8 @@ public class JavaLanguageSpec implements LanguageSpec {
         return files.stream().map(File::getAbsolutePath).toList();
     }
 
-    static final class LoadedExec extends ImmutablePair<File, Set<String>> {
+    @VisibleForTesting
+    public static final class LoadedExec extends ImmutablePair<File, Set<String>> {
         public LoadedExec(File file, Set<String> classNames) {
             super(file, classNames);
         }
@@ -1274,10 +1282,10 @@ public class JavaLanguageSpec implements LanguageSpec {
 
     @Value
     private static class Declaration {
-        String exact;
-        String member;
-        String nameAndArity;
-        String name;
+        List<JavaSourceIdentity.Step> exact;
+        List<JavaSourceIdentity.Step> member;
+        Pair<List<JavaSourceIdentity.Step>, Integer> nameAndArity;
+        List<JavaSourceIdentity.Step> name;
         @EqualsAndHashCode.Exclude
         List<String> parameters;
     }

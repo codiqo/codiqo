@@ -64,15 +64,15 @@
         <google-auth.version>1.54.0</google-auth.version>
         <google-api-client.version>2.9.1</google-api-client.version>
         <google-http-client.version>2.2.0</google-http-client.version>
-        <google-api-services-artifactregistry.version>v1-rev20260822-2.0.0</google-api-services-artifactregistry.version>
+        <google-api-services-artifactregistry.version>v1-rev20260925-2.0.0</google-api-services-artifactregistry.version>
         <artifactregistry-auth-common.version>2.2.5</artifactregistry-auth-common.version>
         <jackson.version>3.2.3</jackson.version>
         <jackson2.version>2.22.3</jackson2.version>
-        <scribejava.version>8.3.3</scribejava.version>
-        <snakeyaml.engine.version>3.1.1</snakeyaml.engine.version>
+        <snakeyaml.engine.version>3.2</snakeyaml.engine.version>
         <snakeyaml.version>2.7</snakeyaml.version>
         <okio.version>3.18.2</okio.version>
         <okhttp.version>5.5.0</okhttp.version>
+        <netty.version>4.2.19.Final</netty.version>
         <guava.version>33.7.2-jre</guava.version>
         <vavr.version>1.0.0</vavr.version>
         <jgit.version>7.8.0.202609011348-r</jgit.version>
@@ -90,10 +90,10 @@
         <findbugs.sec.version>1.14.0</findbugs.sec.version>
         <findbugs.contrib.version>7.7.4</findbugs.contrib.version>
         <jacoco.version>0.8.15</jacoco.version>
-        <classgraph.version>4.8.196</classgraph.version>
+        <classgraph.version>4.8.197</classgraph.version>
         <oshi.version>7.7.0</oshi.version>
         <jol.version>0.17</jol.version>
-        <openai.version>4.73.0</openai.version>
+        <openai.version>4.78.1</openai.version>
         <djl.tokenizers.version>0.38.0</djl.tokenizers.version>
         <jtokkit.version>1.1.0</jtokkit.version>
         <gradle.api.version>8.11.1</gradle.api.version>
@@ -145,7 +145,7 @@
         <version.gpg.plugin>3.2.8</version.gpg.plugin>
         <version.license.plugin>2.7.1</version.license.plugin>
         <version.pmd.plugin>3.28.0</version.pmd.plugin>
-        <version.openapi.plugin>7.25.0</version.openapi.plugin>
+        <version.openapi.plugin>7.26.0</version.openapi.plugin>
         <version.buildhelper.plugin>3.6.2</version.buildhelper.plugin>
         <version.os.plugin>1.7.1</version.os.plugin>
         <version.plugin.plugin>3.16.0</version.plugin.plugin>
@@ -226,6 +226,13 @@
                 <groupId>com.squareup.okio</groupId>
                 <artifactId>okio-bom</artifactId>
                 <version>${okio.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-bom</artifactId>
+                <version>${netty.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -485,11 +492,6 @@
                 <groupId>com.google.code.gson</groupId>
                 <artifactId>gson</artifactId>
                 <version>${gson.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>com.github.scribejava</groupId>
-                <artifactId>scribejava-core</artifactId>
-                <version>${scribejava.version}</version>
             </dependency>
             <dependency>
                 <groupId>tools.jackson.core</groupId>
@@ -1407,24 +1409,6 @@
                                     <version>[${maven.compiler.release},)</version>
                                     <message>codiqo builds against Java ${maven.compiler.release} and up; point JAVA_HOME at a newer JDK.</message>
                                 </requireJavaVersion>
-                            </rules>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>ban-guava</id>
-                        <phase>validate</phase>
-                        <goals>
-                            <goal>enforce</goal>
-                        </goals>
-                        <configuration>
-                            <rules>
-                                <bannedDependencies>
-                                    <excludes>
-                                        <exclude>com.google.guava:guava:*:*:compile</exclude>
-                                        <exclude>com.google.guava:guava:*:*:runtime</exclude>
-                                    </excludes>
-                                    <message>Guava is banned across codiqo (replaced by the JDK / commons-collections4). Only maven-time-machine may pull it transitively via the Google Artifact Registry resolver, where this rule is skipped.</message>
-                                </bannedDependencies>
                             </rules>
                         </configuration>
                     </execution>

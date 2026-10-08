@@ -1,0 +1,99 @@
+
+Codiqo — Driver Score Calibration
+---------------------------------
+project:         empty-project
+
+files:
+  total:    0   (prod: 0, test: 0)
+  by_type:  add: 0, modify: 0, delete: 0, rename: 0
+
+changed_blocks:
+  total:    0
+  by_op:    new: 0, modify: 0   (trivial_skipped: 0)
+  by_scope: prod: 0, test: 0
+
+baseline_populations:
+  method/prod:       N=0      trivials_excluded=0
+  method/test:       N=0      trivials_excluded=0
+  constructor/prod:  N=0      trivials_excluded=0
+  constructor/test:  N=0      trivials_excluded=0
+
+driver_score_cap (global ceiling on total code-block effort):
+  bucket_baseline = P95(driver_scores) × operationMult × testWeight, per (kind, scope)
+  total_baseline  = Σ_block bucket_baseline (summed over all changed non-trivial blocks)
+  global_cap      = total_baseline × 2.50
+  total_effort    = min(Σ_block effort, global_cap)
+  P95 = 95th percentile of driver-score distribution within each (kind, scope) population
+  2.50 = driver score cap multiplier (caps the total summed effort at this multiple of the baseline budget)
+  per-block driver scores are not individually clipped; the cap binds only on their sum
+  method/prod:      quantile=0     bucket_budget_per_block=0
+  method/test:      quantile=0     bucket_budget_per_block=0
+  constructor/prod: quantile=0     bucket_budget_per_block=0
+  constructor/test: quantile=0     bucket_budget_per_block=0
+
+scalers:
+  method/prod: (N=0)
+  method/test: (N=0)
+  constructor/prod: (N=0)
+  constructor/test: (N=0)
+
+driver_formula:
+  weights:          W_L=1.00  W_S=1.00  W_I=0.50   (total=2.50)
+  formula_new:      (W_L·lines + W_S·ncss·k_S + W_I·invocs·k_I) / total
+  formula_modify:   (W_L·linesChanged + W_I·invocsChanged·k_I) / (W_L + W_I)
+  factors (k_S = lines.p50 / ncss.p50, k_I = lines.p50 / invocs.p50; raw bucket-level — no clamp):
+    method/prod:      (N=0)
+    method/test:      (N=0)
+    constructor/prod: (N=0)
+    constructor/test: (N=0)
+
+max contributors:
+  method/prod:
++--------+-----+------+-------+
+| Dim    | Max | File | Block |
++--------+-----+------+-------+
+| lines  |   - | -    | -     |
++--------+-----+------+-------+
+| ncss   |   - | -    | -     |
++--------+-----+------+-------+
+| invocs |   - | -    | -     |
++--------+-----+------+-------+
+  method/test:
++--------+-----+------+-------+
+| Dim    | Max | File | Block |
++--------+-----+------+-------+
+| lines  |   - | -    | -     |
++--------+-----+------+-------+
+| ncss   |   - | -    | -     |
++--------+-----+------+-------+
+| invocs |   - | -    | -     |
++--------+-----+------+-------+
+  constructor/prod:
++--------+-----+------+-------+
+| Dim    | Max | File | Block |
++--------+-----+------+-------+
+| lines  |   - | -    | -     |
++--------+-----+------+-------+
+| ncss   |   - | -    | -     |
++--------+-----+------+-------+
+| invocs |   - | -    | -     |
++--------+-----+------+-------+
+  constructor/test:
++--------+-----+------+-------+
+| Dim    | Max | File | Block |
++--------+-----+------+-------+
+| lines  |   - | -    | -     |
++--------+-----+------+-------+
+| ncss   |   - | -    | -     |
++--------+-----+------+-------+
+| invocs |   - | -    | -     |
++--------+-----+------+-------+
+
+Ratio outliers in this commit (block S/L or I/L deviates > 0.75 from bucket median):
+  none
+
+Ratio outlier counts by bucket:
+  method/prod:       0
+  method/test:       0
+  constructor/prod:  0
+  constructor/test:  0

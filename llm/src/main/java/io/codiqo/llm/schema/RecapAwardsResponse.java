@@ -1,7 +1,8 @@
 package io.codiqo.llm.schema;
 
-import java.util.ArrayList;
 import java.util.List;
+
+import com.google.common.collect.Lists;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -19,7 +20,7 @@ public class RecapAwardsResponse {
     /** the closing card's line */
     private String signOff;
     @Builder.Default
-    private List<Award> awards = new ArrayList<>();
+    private List<Award> awards = Lists.newArrayList();
 
     @Data
     @Builder

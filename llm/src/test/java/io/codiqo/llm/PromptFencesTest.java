@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -15,6 +14,8 @@ import java.util.regex.Pattern;
 
 import org.apache.commons.io.IOUtils;
 import org.junit.jupiter.api.Test;
+
+import com.google.common.collect.Sets;
 
 class PromptFencesTest {
     // a fence marker sits alone on its line; without the newline exclusion this spans the ">>> RECOMMENDED IMPACT ... <<<" decorations
@@ -32,7 +33,7 @@ class PromptFencesTest {
      */
     @Test
     void everyFenceMarkerUsedByATemplateIsRegistered() throws IOException {
-        Set<String> used = new LinkedHashSet<>();
+        Set<String> used = Sets.newLinkedHashSet();
         for (String template : TEMPLATES) {
             Matcher matcher = FENCE.matcher(read(template));
             while (matcher.find()) {

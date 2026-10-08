@@ -1,38 +1,39 @@
 [(${title})]
-[(${separator})]
-commit:   [(${commitSha})][# th:if="${branches != ''}"]   (branch: [(${branches})])[/]
+[(${#strings.repeat('=', #strings.length(title))})]
+commit:   [(${commitSha})][# th:unless="${#lists.isEmpty(branches)}" th:with="shown=2"]   (branch: [# th:each="branch, stat : ${branches}" th:if="${stat.index < shown}"][(${stat.first ? '' : ', '})][(${branch})][/][# th:if="${#lists.size(branches) > shown}"] +[(${#lists.size(branches) - shown})] more[/])[/]
 author:   [(${author})] <[(${authorEmail})]>
 date:     [(${timestamp})]
 project:  [(${project})]
-message:  [(${message})]
+message:  [(${#strings.abbreviate(message, 100)})]
 
-score:    [(${score})]   ([(${classification})])
-          [(${scoreCalculation})]
+score:    [(${#layout.fixed(score, 0)})]   ([(${classification == null ? '-' : classification})])
+          [(${#strings.isEmpty(scoreCalculation) ? '-' : scoreCalculation})]
 quality:  [(${qualityMultiplier})]x multiplier   (clamped to [(${qualityMultiplierMin})] .. [(${qualityMultiplierMax})])
-risk:     [(${riskScore})]/[(${riskScoreMax})]   ([(${riskLevel})])
+risk:     [(${riskScore})]/[(${riskScoreMax})]   ([(${riskLevel == null ? '-' : riskLevel})])
 review:   senior review [(${seniorReview})]/10   (recommended at [(${seniorReviewThreshold})])
 
 files:    [(${filesChanged})] changed   (prod: [(${prodFilesChanged})], test: [(${testFilesChanged})], config: [(${configFilesChanged})])
 blocks:   [(${blocksAdded})] new, [(${blocksModified})] modified   ([(${linesChanged})] lines)
-effort:   base [(${baseEffort})]   volume [(${volumeScore})]
-blast:    [(${callersTotal})] callers   (prod: [(${callersProduction})], test: [(${callersTest})])   risk [(${blastRiskLevel})]
+effort:   base [(${#layout.fixed(baseEffort, 2)})]   volume [(${#layout.fixed(volumeScore, 2)})]
+blast:    [(${callersTotal})] callers   (prod: [(${callersProduction})], test: [(${callersTest})])   risk [(${blastRiskLevel == null ? '-' : blastRiskLevel})]
 
 key dimensions:
-[(${dimensionTable})]
+[# th:if="${#lists.isEmpty(dimensions)}"]  (not assessed)[/][# th:unless="${#lists.isEmpty(dimensions)}"][(${#tables.compact({'Dimension', 'Score', 'Gate'}, {'LEFT', 'RIGHT', 'CENTER'}, dimensions.{ {name, score, gate} })})][/]
 
 changed files:
-[(${fileTable})]
-[# th:if="${fileOverflow != ''}"][(${fileOverflow})]
+[# th:if="${#lists.isEmpty(files)}"]  (none)[/][# th:unless="${#lists.isEmpty(files)}"][(${#tables.compact({'File', 'Type', '+', '-', 'Blocks', 'Scope'}, {'LEFT', 'LEFT', 'RIGHT', 'RIGHT', 'RIGHT', 'LEFT'}, files.{ {path, changeType, added, deleted, blocks, scope} })})][/]
+[# th:if="${fileTotal > #lists.size(files)}"]  ... [(${fileTotal - #lists.size(files)})] more ([(${#lists.size(files)})] of [(${fileTotal})] shown)
 [/]
-findings ([(${findingCount})]):
-[(${findingTable})]
-[# th:if="${findingOverflow != ''}"][(${findingOverflow})]
+findings ([(${findingTotal})]):
+[# th:if="${#lists.isEmpty(findings)}"]  (none)[/][# th:unless="${#lists.isEmpty(findings)}"][(${#tables.compact({'Severity', 'Finding', 'File', 'Line'}, {'LEFT', 'LEFT', 'LEFT', 'RIGHT'}, findings.{ {severity, title, file, line} })})][/]
+[# th:if="${findingTotal > #lists.size(findings)}"]  ... [(${findingTotal - #lists.size(findings)})] more ([(${#lists.size(findings)})] of [(${findingTotal})] shown)
 [/]
-tags:     technical:  [(${technicalTags})]
-          functional: [(${functionalTags})]
+tags:     technical:  [# th:if="${#lists.isEmpty(technicalTags)}"]-[/][# th:each="tag, stat : ${technicalTags}"][(${stat.first ? '' : ', '})][(${tag})][/]
+          functional: [# th:if="${#lists.isEmpty(functionalTags)}"]-[/][# th:each="tag, stat : ${functionalTags}"][(${stat.first ? '' : ', '})][(${tag})][/]
 
 summary:
-[(${summary})]
-
+[# th:with="lines=${#layout.words(summary, 96)}"][# th:if="${#lists.isEmpty(lines)}"]  (none)
+[/][# th:each="line : ${lines}"]  [(${line})]
+[/][/]
 ---
 model [(${llmModel})]   tokens [(${promptTokens})] in / [(${completionTokens})] out   in [(${durationSeconds})]s

@@ -14,10 +14,11 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.client.model.AnalysisAcceptedModel;
 import io.codiqo.client.model.AnalysisResultModel;
-import io.codiqo.maven.auth.BrowserLogin;
+import io.codiqo.maven.auth.MavenCredentials;
 import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.submit.AnalysisSubmitter;
 import io.codiqo.submit.SubmissionContext;
+import io.codiqo.submit.auth.CodiqoCredential;
 
 /**
  * Scores the working tree as if it were a commit.
@@ -46,6 +47,9 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
 
     @Parameter(property = "codiqo.authUrl", defaultValue = RunArgs.DEFAULT_AUTH_URL)
     private String authUrl;
+
+    @Parameter(property = "codiqo.resourceUrl", defaultValue = RunArgs.DEFAULT_RESOURCE_URL)
+    private String resourceUrl;
 
     /** off keeps the run entirely local — analysis and the console report, nothing leaves the machine */
     @Parameter(property = "codiqo.submit", defaultValue = "true")
@@ -77,12 +81,12 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
     @Override
     protected void doLlmScoring(SubmissionContext ctx) throws Exception {
         if (submit) {
-            String resolvedApiKey = BrowserLogin.resolveApiKey(apiKey, authUrl, getLog());
+            CodiqoCredential credential = MavenCredentials.resolve(apiKey, authUrl, resourceUrl, getLog());
             Log reporter = new MavenMessageReporter(getLog());
 
             AnalysisAcceptedModel response = AnalysisSubmitter.submitUncommitted(
                     apiUrl,
-                    resolvedApiKey,
+                    credential,
                     connectTimeoutSeconds,
                     readTimeoutSeconds,
                     ctx.getSubmissionModel(),
@@ -93,7 +97,7 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
 
             AnalysisResultModel result = AnalysisSubmitter.awaitCompletion(
                     apiUrl,
-                    resolvedApiKey,
+                    credential,
                     connectTimeoutSeconds,
                     readTimeoutSeconds,
                     response.getAnalysisId(),

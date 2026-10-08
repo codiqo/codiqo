@@ -8,7 +8,10 @@ import java.util.concurrent.ExecutorService;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.tuple.ImmutableTriple;
 import org.thymeleaf.context.Context;
+
+import com.google.common.annotations.VisibleForTesting;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
@@ -36,13 +39,7 @@ public class RecapAwardsClient implements LlmClient {
             String period,
             String metric,
             List<RecapContender> contenders) throws Exception {
-        Context ctx = new Context();
-        ctx.setVariable("organization", organization);
-        ctx.setVariable("period", period);
-        ctx.setVariable("metric", metric);
-        ctx.setVariable("contenders", describe(contenders));
-
-        String prompt = PromptTemplates.process(TEMPLATE_RECAP_AWARDS, ctx);
+        String prompt = prompt(organization, period, metric, contenders);
         log.info(String.format(Locale.ROOT, "recap awards prompt: %d chars (%d contributors, ranked by %s)",
                 prompt.length(),
                 contenders.size(),
@@ -54,37 +51,31 @@ public class RecapAwardsClient implements LlmClient {
     public void close() {
         completions.close();
     }
-    private static String describe(List<RecapContender> contenders) {
-        StringBuilder toReturn = new StringBuilder();
-        for (RecapContender contender : contenders) {
-            toReturn.append("#").append(contender.getRank()).append(' ').append(contender.getName());
-            if (StringUtils.isNotBlank(contender.getSeniority())) {
-                toReturn.append(" (").append(contender.getSeniority()).append(')');
-            }
-            toReturn.append(StringUtils.LF);
-
-            appendFact(toReturn, "first name", StringUtils.substringBefore(StringUtils.trim(contender.getName()), StringUtils.SPACE));
-            appendFact(toReturn, contender.getHeadlineLabel(), contender.getHeadlineValue());
-            appendFact(toReturn, "commits", contender.getCommits());
-            appendFact(toReturn, "senior-grade commits", contender.getSeniorGradeCommits());
-            appendFact(toReturn, "files touched", contender.getFilesChanged());
-            appendFact(toReturn, "lines changed", contender.getLinesChanged());
-            appendFact(toReturn, "average task complexity (1-10)", contender.getAvgComplexity());
-            appendFact(toReturn, "changed-line test coverage %", contender.getAvgCoverage());
-            appendFact(toReturn, "leads the team on", contender.getDistinction());
-            if (CollectionUtils.isNotEmpty(contender.getProjects())) {
-                appendFact(toReturn, "worked mostly in", String.join(", ", contender.getProjects()));
-            }
-            appendFact(toReturn, "hardest piece of work (analysis summary)", contender.getBestWork());
-
-            toReturn.append(StringUtils.LF);
-        }
-        return toReturn.toString();
+    @VisibleForTesting
+    public static String prompt(String organization, String period, String metric, List<RecapContender> contenders) {
+        Context ctx = new Context();
+        ctx.setVariable("organization", organization);
+        ctx.setVariable("period", period);
+        ctx.setVariable("metric", metric);
+        ctx.setVariable("contenders", contenders.stream().map(ContenderView::new).toList());
+        return PromptTemplates.process(TEMPLATE_RECAP_AWARDS, ctx);
     }
-    private static void appendFact(StringBuilder target, String label, Object value) {
-        if (Objects.isNull(value)) {
-            return;
+
+    /** one contender as the prompt lists it: the facts as measured, the first name it may use, the projects it names */
+    public static final class ContenderView extends ImmutableTriple<RecapContender, String, List<String>> {
+        public ContenderView(RecapContender contender) {
+            super(contender,
+                    StringUtils.substringBefore(StringUtils.trim(contender.getName()), StringUtils.SPACE),
+                    CollectionUtils.emptyIfNull(contender.getProjects()).stream().filter(Objects::nonNull).toList());
         }
-        target.append("  - ").append(label).append(": ").append(value).append(StringUtils.LF);
+        public RecapContender getContender() {
+            return getLeft();
+        }
+        public String getFirstName() {
+            return getMiddle();
+        }
+        public List<String> getProjects() {
+            return getRight();
+        }
     }
 }

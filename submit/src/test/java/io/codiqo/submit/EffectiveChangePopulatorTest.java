@@ -7,6 +7,8 @@ import java.util.List;
 import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 
+import com.google.common.base.Joiner;
+
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CodeUnitModel;
 import io.codiqo.client.model.CodeUnitModel.OperationEnum;
@@ -17,7 +19,7 @@ import io.codiqo.client.model.MetricsModel;
 import io.codiqo.client.model.SymbolKindModel;
 
 class EffectiveChangePopulatorTest {
-    private static final String JAVA_DIFF = String.join(StringUtils.LF,
+    private static final String JAVA_DIFF = Joiner.on(StringUtils.LF).join(
             "diff --git a/A.java b/A.java",
             "--- a/A.java",
             "+++ b/A.java",
@@ -33,7 +35,7 @@ class EffectiveChangePopulatorTest {
             " }",
             "") + StringUtils.LF;
 
-    private static final String NEW_METHOD_DIFF = String.join(StringUtils.LF,
+    private static final String NEW_METHOD_DIFF = Joiner.on(StringUtils.LF).join(
             "diff --git a/A.java b/A.java",
             "--- a/A.java",
             "+++ b/A.java",
@@ -69,7 +71,7 @@ class EffectiveChangePopulatorTest {
     }
     @Test
     void keepsFullyRewrittenMethodAsModify() {
-        String diff = String.join(StringUtils.LF,
+        String diff = Joiner.on(StringUtils.LF).join(
                 "diff --git a/A.java b/A.java",
                 "--- a/A.java",
                 "+++ b/A.java",
@@ -110,7 +112,7 @@ class EffectiveChangePopulatorTest {
     }
     @Test
     void countsDeletedInvocationsOnAnchoredLinesViaJavaInvocationCounter() {
-        String diff = String.join(StringUtils.LF,
+        String diff = Joiner.on(StringUtils.LF).join(
                 "diff --git a/A.java b/A.java",
                 "--- a/A.java",
                 "+++ b/A.java",
@@ -129,7 +131,7 @@ class EffectiveChangePopulatorTest {
     }
     @Test
     void nonJavaFilesGetZeroDeletedInvocations() {
-        String diff = String.join(StringUtils.LF,
+        String diff = Joiner.on(StringUtils.LF).join(
                 "diff --git a/a.py b/a.py",
                 "--- a/a.py",
                 "+++ b/a.py",
@@ -152,7 +154,7 @@ class EffectiveChangePopulatorTest {
     }
     @Test
     void linesInsideNestedBlockAttributeOnlyToInnermostUnit() {
-        String diff = String.join(StringUtils.LF,
+        String diff = Joiner.on(StringUtils.LF).join(
                 "diff --git a/A.java b/A.java",
                 "--- a/A.java",
                 "+++ b/A.java",

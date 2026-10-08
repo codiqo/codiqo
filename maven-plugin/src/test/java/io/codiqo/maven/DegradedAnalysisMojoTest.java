@@ -8,11 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.HttpURLConnection;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
@@ -30,6 +28,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.google.common.collect.Lists;
+
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.ApiException;
 import io.codiqo.client.model.AnalysisSubmissionModel;
@@ -38,6 +38,7 @@ import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.util.JGit;
+import io.netty.handler.codec.http.HttpResponseStatus;
 import lombok.Value;
 
 /**
@@ -281,7 +282,7 @@ class DegradedAnalysisMojoTest {
         private SubmissionContext scoredCtx;
         private String notFoundSha;
         private boolean failSourceOnlyIndex;
-        private final List<Exclusion> exclusions = new ArrayList<>();
+        private final List<Exclusion> exclusions = Lists.newArrayList();
 
         @Override
         protected void doLlmScoring(SubmissionContext ctx) {
@@ -297,7 +298,7 @@ class DegradedAnalysisMojoTest {
         @Override
         protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files, ProjectMetricsModel projectMetrics) throws ApiException {
             if (commitSha.equals(notFoundSha)) {
-                throw new ApiException(HttpURLConnection.HTTP_NOT_FOUND, "analysis not found: " + commitSha);
+                throw new ApiException(HttpResponseStatus.NOT_FOUND.code(), "analysis not found: " + commitSha);
             }
             exclusions.add(new Exclusion(commitSha, reason, category, detail, files, projectMetrics));
         }

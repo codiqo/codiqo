@@ -27,12 +27,15 @@ import lombok.experimental.UtilityClass;
  * mirror the {@code snapshot.*} keys persisted on the backend.
  *
  * <p>The parent reader ({@code ProjectModelPopulator}) lives in the plugin realm and cannot depend on
- * this module at runtime, so each file embeds its {@link #KEY_COORDINATE} ({@code groupId:artifactId:baseVersion})
+ * this module at runtime, so each file embeds its coordinate ({@link #KEY_GROUP_ID}, {@link #KEY_ARTIFACT_ID},
+ * {@link #KEY_BASE_VERSION})
  * — the reader keys off file content, not the filename.
  */
 @UtilityClass
 public class SnapshotMetadataStore {
-    public static final String KEY_COORDINATE = "snapshot.coordinate";
+    public static final String KEY_GROUP_ID = "snapshot.groupId";
+    public static final String KEY_ARTIFACT_ID = "snapshot.artifactId";
+    public static final String KEY_BASE_VERSION = "snapshot.baseVersion";
     public static final String KEY_RESOLVED_VERSION = "snapshot.resolvedVersion";
     public static final String KEY_DEPLOYED_AT = "snapshot.deployedAt";
     public static final String KEY_BUILD_NUMBER = "snapshot.buildNumber";
@@ -53,7 +56,9 @@ public class SnapshotMetadataStore {
                 Files.createDirectories(dir);
 
                 Properties props = new Properties();
-                props.setProperty(KEY_COORDINATE, groupId + ":" + artifactId + ":" + baseVersion);
+                props.setProperty(KEY_GROUP_ID, groupId);
+                props.setProperty(KEY_ARTIFACT_ID, artifactId);
+                props.setProperty(KEY_BASE_VERSION, baseVersion);
                 props.setProperty(KEY_RESOLVED_VERSION, resolution.getResolvedVersion());
                 props.setProperty(KEY_DEPLOYED_AT, DateTimeFormatter.ISO_INSTANT.format(resolution.getDeployedAt()));
                 if (Objects.nonNull(resolution.getBuildNumber())) {

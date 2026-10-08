@@ -4,8 +4,8 @@ import java.net.URL;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.HashMap;
-import java.util.concurrent.ConcurrentHashMap;
+
+import com.google.common.collect.Maps;
 
 import io.codiqo.api.ClassGraphSpec;
 import io.github.classgraph.ClassInfo;
@@ -18,8 +18,8 @@ import lombok.RequiredArgsConstructor;
 public class ClassGraphWrapper implements ClassGraphSpec {
     private final ScanResult scan;
 
-    private final Map<ClassInfo, Map<MethodKey, MethodEntry>> methods = new ConcurrentHashMap<>();
-    private final Map<ClassInfo, Map<MethodKey, MethodEntry>> constructors = new ConcurrentHashMap<>();
+    private final Map<ClassInfo, Map<MethodKey, MethodEntry>> methods = Maps.newConcurrentMap();
+    private final Map<ClassInfo, Map<MethodKey, MethodEntry>> constructors = Maps.newConcurrentMap();
 
     @Override
     public List<URL> getClasspathURLs() {
@@ -96,7 +96,7 @@ public class ClassGraphWrapper implements ClassGraphSpec {
         return buildEntries(info.getConstructorInfo());
     }
     private static Map<MethodKey, MethodEntry> buildEntries(Iterable<MethodInfo> methodInfos) {
-        Map<MethodKey, MethodEntry> toReturn = new HashMap<>();
+        Map<MethodKey, MethodEntry> toReturn = Maps.newHashMap();
         for (MethodInfo method : methodInfos) {
             String descriptor = method.getTypeDescriptorStr();
             toReturn.put(new MethodKey(method.getName(), descriptor), new MethodEntry(descriptor, method.getTypeSignatureStr()));

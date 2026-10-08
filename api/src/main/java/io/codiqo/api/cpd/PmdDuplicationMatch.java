@@ -5,12 +5,13 @@ import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.Set;
-import java.util.LinkedHashSet;
 import java.util.function.Supplier;
+
+import com.google.common.base.Suppliers;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.DuplicateMark;
 import io.codiqo.api.code.CodeBlockInfo;
-import io.codiqo.util.Lazy;
 import lombok.Builder;
 import lombok.Getter;
 
@@ -21,10 +22,10 @@ public class PmdDuplicationMatch implements DuplicationMatch {
     private final int lineCount;
     private final Collection<DuplicateMark> marks;
     @Builder.Default
-    private final Set<CodeBlockInfo> blocks = new LinkedHashSet<>();
+    private final Set<CodeBlockInfo> blocks = Sets.newLinkedHashSet();
     @Builder.Default
-    private final Set<File> files = new LinkedHashSet<>();
-    private final Supplier<Boolean> crossFile = Lazy.of(this::computeCrossFile);
+    private final Set<File> files = Sets.newLinkedHashSet();
+    private final Supplier<Boolean> crossFile = Suppliers.memoize(this::computeCrossFile);
 
     @Override
     public void accept(CodeBlockInfo info) {

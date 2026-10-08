@@ -6,13 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import org.apache.commons.math3.util.Precision;
 import org.junit.jupiter.api.Test;
+
+import com.google.common.collect.Lists;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.metrics.DriverScaler;
@@ -511,7 +512,7 @@ class VolumeScoreCalculatorTest {
     }
 
     private static DriverScaler uniformScaler(int min, int max) {
-        List<DriverScaler.Sample> samples = new ArrayList<>();
+        List<DriverScaler.Sample> samples = Lists.newArrayList();
         for (int i = min; i <= max; i++) {
             samples.add(new DriverScaler.Sample(i, i, i));
         }
@@ -628,7 +629,7 @@ class VolumeScoreCalculatorTest {
          * 40 files × 60 deleted lines each. Every file is individually unremarkable, so the per-block
          * global cap would never bind — this is exactly the shape the absolute ceiling exists to bound.
          */
-        List<FileChange> sweep = new ArrayList<>();
+        List<FileChange> sweep = Lists.newArrayList();
         for (int i = 0; i < 40; i++) {
             sweep.add(FileChange.builder().path("Gone" + i + ".java")
                     .changeType(LlmScoringRequest.FileChangeType.MODIFIED).isConfig(false)
@@ -669,7 +670,7 @@ class VolumeScoreCalculatorTest {
     @Test
     void testOnlySweepIsClippedAgainstTheTestQuantile() {
         DriverScaler scaler = uniformScaler(1, 100);
-        List<FileChange> sweep = new ArrayList<>();
+        List<FileChange> sweep = Lists.newArrayList();
         for (int i = 0; i < 40; i++) {
             sweep.add(deletionOnlyFile(60, true));
         }
@@ -1060,7 +1061,7 @@ class VolumeScoreCalculatorTest {
                 scaler, scaler, scaler, scaler,
                 0, 0, 0, 0, ADD_MULT, MODIFY_MULT, TEST_MULT, 0.25, false);
 
-        VolumeScoreCalculator.FileEffort fileEffort = VolumeScoreCalculator.groupByFile(efforts, 0.25).get(0);
+        VolumeScoreCalculator.FileEffort fileEffort = VolumeScoreCalculator.groupByFile(efforts).get(0);
         assertEquals(2, fileEffort.getBlocksFlaggedAsRatioOutlier());
         assertTrue(fileEffort.isFileFlaggedAsAbusive(),
                 "2 of 3 blocks are outliers → strict majority rule (count*2 > total) flags the file");
@@ -1077,7 +1078,7 @@ class VolumeScoreCalculatorTest {
                 scaler, scaler, scaler, scaler,
                 0, 0, 0, 0, ADD_MULT, MODIFY_MULT, TEST_MULT, 0.25, false);
 
-        VolumeScoreCalculator.FileEffort fileEffort = VolumeScoreCalculator.groupByFile(efforts, 0.25).get(0);
+        VolumeScoreCalculator.FileEffort fileEffort = VolumeScoreCalculator.groupByFile(efforts).get(0);
         assertEquals(1, fileEffort.getBlocksFlaggedAsRatioOutlier());
         assertFalse(fileEffort.isFileFlaggedAsAbusive(),
                 "1 of 3 outliers → no strict majority → file not flagged");

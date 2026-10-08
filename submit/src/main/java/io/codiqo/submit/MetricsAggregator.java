@@ -1,6 +1,5 @@
 package io.codiqo.submit;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
@@ -10,6 +9,9 @@ import java.util.function.Function;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.math3.stat.descriptive.rank.Percentile;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Lists;
 
 import io.codiqo.api.cpd.CopyPasteDetectionSummary;
 import io.codiqo.api.metrics.DriverScaler.DimensionStats;
@@ -272,7 +274,8 @@ public class MetricsAggregator implements SubmissionPopulator {
      * language. A run that read code and found no clones is 0%, not unknown, which downstream has to be able to tell
      * apart.
      */
-    static OptionalDouble cpdDuplicationPercent(Collection<CopyPasteDetectionSummary> cpd) {
+    @VisibleForTesting
+    public static OptionalDouble cpdDuplicationPercent(Collection<CopyPasteDetectionSummary> cpd) {
         if (CollectionUtils.isEmpty(cpd)) {
             return OptionalDouble.empty();
         }
@@ -327,7 +330,7 @@ public class MetricsAggregator implements SubmissionPopulator {
      * without a tracker when nothing was indexed under it, and every aggregation here has to skip those.
      */
     private static List<TrackedModule> trackedModules(SubmissionContext ctx) {
-        List<TrackedModule> toReturn = new ArrayList<>();
+        List<TrackedModule> toReturn = Lists.newArrayList();
         for (ModuleModel moduleModel : ctx.getProjectModel().getModules()) {
             ModuleQualityTracker tracker = ctx.getQualityTrackers().get(moduleModel.getId());
             if (Objects.nonNull(tracker)) {
@@ -337,7 +340,7 @@ public class MetricsAggregator implements SubmissionPopulator {
         return toReturn;
     }
     private static List<DriverScaler.Sample> collectSamples(List<TrackedModule> tracked, Function<ModuleQualityTracker, List<DriverScaler.Sample>> extractor) {
-        List<DriverScaler.Sample> toReturn = new ArrayList<>();
+        List<DriverScaler.Sample> toReturn = Lists.newArrayList();
         for (TrackedModule module : tracked) {
             toReturn.addAll(extractor.apply(module.getTracker()));
         }
@@ -350,7 +353,8 @@ public class MetricsAggregator implements SubmissionPopulator {
         }
         return toReturn;
     }
-    static int computeDriverQuantile(
+    @VisibleForTesting
+    public static int computeDriverQuantile(
             List<DriverScaler.Sample> samples,
             DriverScaler scaler,
             double quantileLevel) {

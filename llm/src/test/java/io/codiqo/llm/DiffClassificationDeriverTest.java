@@ -5,12 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import java.util.Map;
-import java.util.HashMap;
-import java.util.ArrayList;
 
 import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 
+import com.google.common.base.Joiner;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import io.codiqo.llm.MovedLineDetector.MoveCandidate;
 import io.codiqo.llm.schema.LlmScoringRequest;
@@ -23,7 +24,7 @@ import io.codiqo.llm.schema.LlmScoringResponse.LinePair;
 
 class DiffClassificationDeriverTest {
     // B1: deleted {11} / added {11}; B2: deleted {13, 14} / added {13} (delete-heavy run)
-    private static final String DIFF = String.join(StringUtils.LF,
+    private static final String DIFF = Joiner.on(StringUtils.LF).join(
             "--- a/Foo.java",
             "+++ b/Foo.java",
             "@@ -10,6 +10,5 @@",
@@ -70,7 +71,7 @@ class DiffClassificationDeriverTest {
     void cosmeticLinesAreRemovedBeforePairing() {
         LlmScoringResponse response = responseWith(FileDiffClassification.builder()
                 .file("Foo.java")
-                .cosmeticAdded(new ArrayList<>(List.of(13)))
+                .cosmeticAdded(Lists.newArrayList(List.of(13)))
                 .build());
         LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
 
@@ -86,7 +87,7 @@ class DiffClassificationDeriverTest {
     void invalidCosmeticCitationsAreDropped() {
         LlmScoringResponse response = responseWith(FileDiffClassification.builder()
                 .file("Foo.java")
-                .cosmeticAdded(new ArrayList<>(List.of(10, 999))) // context line and nonexistent line
+                .cosmeticAdded(Lists.newArrayList(List.of(10, 999))) // context line and nonexistent line
                 .build());
         LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
 
@@ -104,7 +105,7 @@ class DiffClassificationDeriverTest {
         FileChange eligible = fileChange("Foo.java", DIFF, true);
         FileChange config = fileChange("pom.xml", DIFF, false);
         LlmScoringRequest request = LlmScoringRequest.builder()
-                .fileChanges(new ArrayList<>(List.of(eligible, config)))
+                .fileChanges(Lists.newArrayList(List.of(eligible, config)))
                 .build();
 
         new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request);
@@ -116,7 +117,7 @@ class DiffClassificationDeriverTest {
     @Test
     void confirmedMovedLinesAreExcludedFromPairing() {
         LlmScoringResponse response = responseWith(FileDiffClassification.builder().file("Foo.java").build());
-        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M1")));
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList(List.of("M1")));
         LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
 
         new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request, List.of(candidate("M1", "Foo.java", 14, "Foo.java", 13)));
@@ -134,9 +135,9 @@ class DiffClassificationDeriverTest {
     void movedBeatsCosmeticCitation() {
         LlmScoringResponse response = responseWith(FileDiffClassification.builder()
                 .file("Foo.java")
-                .cosmeticAdded(new ArrayList<>(List.of(13)))
+                .cosmeticAdded(Lists.newArrayList(List.of(13)))
                 .build());
-        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M1")));
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList(List.of("M1")));
         LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
 
         new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request, List.of(candidate("M1", "Foo.java", 14, "Foo.java", 13)));
@@ -148,7 +149,7 @@ class DiffClassificationDeriverTest {
     @Test
     void unknownConfirmedMoveIdsAreDropped() {
         LlmScoringResponse response = responseWith(FileDiffClassification.builder().file("Foo.java").build());
-        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M9")));
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList(List.of("M9")));
         LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
 
         new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request, List.of(candidate("M1", "Foo.java", 14, "Foo.java", 13)));
@@ -162,7 +163,7 @@ class DiffClassificationDeriverTest {
     @Test
     void movedPairsMergeIntoMovedSets() {
         LlmScoringResponse response = responseWith(FileDiffClassification.builder().file("Foo.java").build());
-        response.getEffortBreakdown().getDiffClassification().setMovedPairs(new ArrayList<>(List.of("Foo.java:14->Foo.java:13")));
+        response.getEffortBreakdown().getDiffClassification().setMovedPairs(Lists.newArrayList(List.of("Foo.java:14->Foo.java:13")));
         LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
 
         new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request);
@@ -178,7 +179,7 @@ class DiffClassificationDeriverTest {
     @Test
     void invalidMovedPairsAreDropped() {
         LlmScoringResponse response = responseWith(FileDiffClassification.builder().file("Foo.java").build());
-        response.getEffortBreakdown().getDiffClassification().setMovedPairs(new ArrayList<>(List.of(
+        response.getEffortBreakdown().getDiffClassification().setMovedPairs(Lists.newArrayList(List.of(
                 "garbage",
                 "Foo.java:999->Foo.java:13",
                 "Foo.java:14->Foo.java:999")));
@@ -196,8 +197,8 @@ class DiffClassificationDeriverTest {
     @Test
     void movedPairOverlappingConfirmedMoveIsDropped() {
         LlmScoringResponse response = responseWith(FileDiffClassification.builder().file("Foo.java").build());
-        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M1")));
-        response.getEffortBreakdown().getDiffClassification().setMovedPairs(new ArrayList<>(List.of("Foo.java:14->Foo.java:13")));
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList(List.of("M1")));
+        response.getEffortBreakdown().getDiffClassification().setMovedPairs(Lists.newArrayList(List.of("Foo.java:14->Foo.java:13")));
         LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
 
         new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request, List.of(candidate("M1", "Foo.java", 14, "Foo.java", 13)));
@@ -212,9 +213,9 @@ class DiffClassificationDeriverTest {
     @Test
     void crossFileMoveSplitsSidesAcrossFiles() {
         LlmScoringResponse response = responseWith(FileDiffClassification.builder().file("A.java").build());
-        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M1")));
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList(List.of("M1")));
         LlmScoringRequest request = LlmScoringRequest.builder()
-                .fileChanges(new ArrayList<>(List.of(fileChange("A.java", DIFF, true), fileChange("B.java", DIFF, true))))
+                .fileChanges(Lists.newArrayList(List.of(fileChange("A.java", DIFF, true), fileChange("B.java", DIFF, true))))
                 .build();
 
         new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request, List.of(candidate("M1", "A.java", 14, "B.java", 13)));
@@ -232,7 +233,7 @@ class DiffClassificationDeriverTest {
         FileChange fc = fileChange("Foo.java", DIFF, true);
         fc.setLinesAdded(2);
         fc.setLinesDeleted(3);
-        LlmScoringRequest request = LlmScoringRequest.builder().fileChanges(new ArrayList<>(List.of(fc))).build();
+        LlmScoringRequest request = LlmScoringRequest.builder().fileChanges(Lists.newArrayList(List.of(fc))).build();
 
         new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request);
 
@@ -245,7 +246,7 @@ class DiffClassificationDeriverTest {
     void citedInPlaceCollapsedIsRemovedBeforePairing() {
         LlmScoringResponse response = responseWith(FileDiffClassification.builder()
                 .file("Foo.java")
-                .inPlaceCollapsedAdded(new ArrayList<>(List.of(13)))
+                .inPlaceCollapsedAdded(Lists.newArrayList(List.of(13)))
                 .build());
         LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
 
@@ -267,7 +268,7 @@ class DiffClassificationDeriverTest {
     void invalidInPlaceCollapsedCitationsAreDropped() {
         LlmScoringResponse response = responseWith(FileDiffClassification.builder()
                 .file("Foo.java")
-                .inPlaceCollapsedAdded(new ArrayList<>(List.of(10, 999))) // context line and nonexistent line
+                .inPlaceCollapsedAdded(Lists.newArrayList(List.of(10, 999))) // context line and nonexistent line
                 .build());
         LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
 
@@ -281,8 +282,8 @@ class DiffClassificationDeriverTest {
     void cosmeticBeatsInPlaceCollapsedForSameLine() {
         LlmScoringResponse response = responseWith(FileDiffClassification.builder()
                 .file("Foo.java")
-                .cosmeticAdded(new ArrayList<>(List.of(13)))
-                .inPlaceCollapsedAdded(new ArrayList<>(List.of(13)))
+                .cosmeticAdded(Lists.newArrayList(List.of(13)))
+                .inPlaceCollapsedAdded(Lists.newArrayList(List.of(13)))
                 .build());
         LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
 
@@ -297,9 +298,9 @@ class DiffClassificationDeriverTest {
     void movedBeatsInPlaceCollapsedCitation() {
         LlmScoringResponse response = responseWith(FileDiffClassification.builder()
                 .file("Foo.java")
-                .inPlaceCollapsedAdded(new ArrayList<>(List.of(13)))
+                .inPlaceCollapsedAdded(Lists.newArrayList(List.of(13)))
                 .build());
-        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(new ArrayList<>(List.of("M1")));
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList(List.of("M1")));
         LlmScoringRequest request = requestWithDiff("Foo.java", DIFF);
 
         new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request, List.of(candidate("M1", "Foo.java", 14, "Foo.java", 13)));
@@ -316,7 +317,7 @@ class DiffClassificationDeriverTest {
     }
     private static LlmScoringRequest requestWithDiff(String file, String diff) {
         return LlmScoringRequest.builder()
-                .fileChanges(new ArrayList<>(List.of(fileChange(file, diff, true))))
+                .fileChanges(Lists.newArrayList(List.of(fileChange(file, diff, true))))
                 .build();
     }
     private static FileChange fileChange(String file, String diff, boolean linesJustificationRequired) {
@@ -330,13 +331,13 @@ class DiffClassificationDeriverTest {
         LlmScoringResponse response = new LlmScoringResponse();
         response.setEffortBreakdown(EffortBreakdown.builder()
                 .diffClassification(DiffClassification.builder()
-                        .perFile(new ArrayList<>(List.of(perFile)))
+                        .perFile(Lists.newArrayList(List.of(perFile)))
                         .build())
                 .build());
         return response;
     }
     private static Map<String, String> kinds(String blockId, String kind) {
-        Map<String, String> toReturn = new HashMap<>();
+        Map<String, String> toReturn = Maps.newHashMap();
         toReturn.put(blockId, kind);
         return toReturn;
     }

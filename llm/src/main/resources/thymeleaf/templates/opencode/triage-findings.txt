@@ -1,0 +1,15 @@
+The build has finished. PMD and SpotBugs reported the findings below on lines this commit added. You already read the commit: decide, for each finding, whether it is a real defect. Read the cited code with read-only tools where your earlier reading does not settle it. Do not start subagents.
+
+- "defect": the code behaves incorrectly where the rule points. Give it a severity and a bug type.
+- "harmless": the rule matched, but nothing goes wrong: a naming or style convention, a deliberate idiom, a requirement imposed from outside (for example a provider that mandates an algorithm).
+- "false_positive": the rule's premise does not hold for this code (for example a "collection" rule on a byte array or on a deliberate null sentinel).
+
+A finding is not a defect because a rule names it, nor harmless because the code looks intentional: judge what the code actually does. [# th:insert="~{opencode/severity}" /]
+
+Answer with one JSON object and nothing else, one verdict per finding in the order given:
+{"verdicts":[{"tool":"...","rule":"...","file":"...","line":<number>,"verdict":"defect|harmless|false_positive","severity":"blocking|major|minor, or null unless a defect","type":"[(${#strings.listJoin(bugTypes, '|')})], or null unless a defect","reason":"one or two sentences citing the code you checked","suggestedFix":"one line, or null"}]}
+
+[# th:insert="~{opencode/json-rules}" /]
+
+Findings:
+[(${findings})]

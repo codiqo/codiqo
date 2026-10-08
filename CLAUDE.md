@@ -144,6 +144,22 @@ private String formatScore(double value) {
 }
 ```
 
+### No Package-Private Members
+**Main code never uses package-private scope.** A member or class is `private` or `public`. One that is public only so
+a test can reach it carries Guava's `@VisibleForTesting`. Tests keep JUnit's
+package-private convention, and `@Value` fields are already private.
+
+```java
+// Good
+@VisibleForTesting
+public static int countSourceLines(Collection<File> files) { ... }
+private static String readable(String descriptor) { ... }
+
+// Bad - package-private scope in main code
+static int countSourceLines(Collection<File> files) { ... }
+String readable(String descriptor) { ... }
+```
+
 ### Class Body Spacing
 **No blank line after class declaration**. The first member should immediately follow the opening brace.
 
@@ -632,13 +648,18 @@ public int calculate() {
 }
 ```
 
-## Utility Libraries - Apache Commons & Lombok
+## Utility Libraries - Guava, Apache Commons & Lombok
 
-Apache Commons and Lombok are always on the classpath. **Prefer these utilities over manual implementations**.
+Guava, Apache Commons and Lombok are always on the classpath. **Prefer these utilities over manual implementations**.
 
 Before hand-rolling anything — a file filter, a path join, a separator character, a null-safe default, a value class —
-check whether commons-lang3, commons-io, commons-collections4, commons-math3, ASM or Lombok already ships it. They
-usually do, and the shipped version already handles the edge case the hand-rolled one is about to get wrong.
+check whether Guava, commons-lang3, commons-io, commons-collections4, commons-math3, ASM or Lombok already ships it.
+They usually do, and the shipped version already handles the edge case the hand-rolled one is about to get wrong.
+
+**Guava is used freely, as in codiqo-backend**: `Lists`/`Maps`/`Sets`, `Splitter`/`Joiner`, `Multiset`/`Multimap`/
+`BiMap`, `ListenableFuture`/`Futures`/`MoreExecutors`, `ThreadFactoryBuilder`, `Suppliers.memoize`, `Hashing`,
+`BaseEncoding`, `CaseFormat` and `@VisibleForTesting`. Each module that uses it declares `guava` itself (the
+dependency analyzer fails the build otherwise).
 
 ### Math - Use Apache Commons Math
 
@@ -651,29 +672,37 @@ double rounded = Precision.round(value, 2);
 double rounded = Math.round(value * 100.0) / 100.0;
 ```
 
-### Collections - JDK Constructors & Apache Commons
+### Collections - Use Guava
 
-Plain collections use the JDK constructors directly; immutable ones use the JDK factories:
+Prefer Guava factory methods over `new` constructors; immutable literals stay on the JDK factories (`List.of`,
+`Set.of`, `Map.of`):
 
 ```java
 // Good
+List<String> items = Lists.newArrayList();
+List<String> copy = Lists.newArrayList(source);
+Set<String> unique = Sets.newHashSet();
+Map<String, Integer> counts = Maps.newHashMap();
+Map<String, Item> ordered = Maps.newLinkedHashMap();
+Set<String> fixed = Set.of("a", "b");
+
+// Avoid
 List<String> items = new ArrayList<>();
 Set<String> unique = new HashSet<>();
 Map<String, Integer> counts = new HashMap<>();
-Set<String> fixed = Set.of("a", "b");
 ```
 
-For the structures the JDK does not provide, use commons-collections4:
+For the shapes the JDK does not provide, use Guava's:
 
 ```java
 // Good
-BidiMap<String, String> bidi = new DualHashBidiMap<>();   // bidirectional lookup, .getKey() for the reverse
-MultiValuedMap<String, Item> byKey = new HashSetValuedHashMap<>();
-MultiSet<String> counts = new HashMultiSet<>();           // .getCount(x), .setCount(x, n), .uniqueSet()
+BiMap<String, String> bidi = HashBiMap.create();                       // .inverse() for the reverse lookup
+SetMultimap<String, Item> byKey = MultimapBuilder.hashKeys().hashSetValues().build();
+Multiset<String> counts = HashMultiset.create();                       // .count(x), .setCount(x, n), .elementSet()
 ```
 
-`Bag`/`HashBag` are **deprecated since commons-collections4 4.6.0** — `Bag` violated the `Collection`
-contract. Use `MultiSet`/`HashMultiSet` instead.
+commons-collections4 stays for its null-safe helpers (`CollectionUtils.isEmpty`, `emptyIfNull`, `MapUtils`), not
+for collection types.
 
 ### Lombok @UtilityClass for Static-Only Classes
 
@@ -705,19 +734,19 @@ Apply this to every existing and new utility class. Examples already in the code
 
 ### Lombok @Builder with Collections
 
-**When using Lombok `@Builder`, all collection fields (List, Set, Map) must have `@Builder.Default` initialized to an empty collection**:
+**When using Lombok `@Builder`, all collection fields (List, Set, Map) must have `@Builder.Default` with Guava factory initialization**:
 
 ```java
-// Good - @Builder.Default with an empty collection
+// Good - @Builder.Default with Guava factory
 @Data
 @Builder
 public class Response {
     @Builder.Default
-    private List<String> items = new ArrayList<>();
+    private List<String> items = Lists.newArrayList();
     @Builder.Default
-    private Set<Integer> ids = new HashSet<>();
+    private Set<Integer> ids = Sets.newHashSet();
     @Builder.Default
-    private Map<String, Object> metadata = new HashMap<>();
+    private Map<String, Object> metadata = Maps.newHashMap();
 }
 
 // Bad - no @Builder.Default (builder creates null collections)
@@ -767,6 +796,13 @@ public static final class FileChurn extends ImmutableTriple<Integer, Integer, In
   never `==`.
 - `toString()` prints `(a,b,c)` and `hashCode()` differs from Lombok's: do not rely on either for output.
 
+**A composite map or set key is a value, never a joined string.** `file + ":" + line` and `path + "#" + signature`
+collide when a part contains the separator and hide what the key is made of: use `Pair.of(file, line)` /
+`Triple.of(...)`, or a `@Value` class for four or more parts (`StaticFindings.FindingKey`). A member's identity is a
+path of typed steps (`JavaSourceIdentity.Step`), and a Java signature written by two different producers is compared
+through `JavaSignatures.comparable`, never by regexes that re-derive one side's naming. Wire formats a model or a
+user reads (`MovedPair`'s `file:line->file:line`, Maven `groupId:artifactId`) stay strings.
+
 ### Lombok @Value Instead of Java Records
 
 **Do not declare Java `record`s.** Immutable value objects use Lombok `@Value`; mutable holders use `@Data`. Every data
@@ -803,7 +839,7 @@ skips generating any method that already exists.
 The one exception is Java source embedded in a test fixture *as a string* (the PMD type-inference crash reproduction,
 for example): that is input data, not project code.
 
-### Strings - Use Apache Commons
+### Strings - Use Apache Commons & Guava
 
 **Use Apache Commons for null-safe checks and defaults:**
 
@@ -816,27 +852,50 @@ String result = StringUtils.defaultIfEmpty(value, "default");
 if (input == null || input.trim().isEmpty()) { ... }
 ```
 
-**Use `io.codiqo.util.Split` for splitting strings** — it trims every part and drops the empty ones, so a
-caller never has to post-process the result:
+**Use Guava `Splitter` for splitting strings** — always use `trimResults()` and `omitEmptyStrings()`, unless an
+empty or untrimmed part means something (a diff line, a CSV cell), where `String.split` / `splitPreserveAllTokens`
+stay. `Splitter` does not accept `null`: give it `StringUtils.defaultString(input)` when the input may be absent.
 
 ```java
-// Good - Split trims and omits empties
-List<String> items = Split.on(input, ',');
-List<String> lines = Split.on(text, '\n');
-List<String> words = Split.onWhitespace(input);
+// Good - Guava Splitter with trimResults and omitEmptyStrings
+List<String> items = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(input);
+List<String> lines = Splitter.on(CharUtils.LF).trimResults().omitEmptyStrings().splitToList(text);
+List<String> words = Splitter.on(CharMatcher.whitespace()).omitEmptyStrings().splitToList(input);
 
 // Avoid - manual split + trim
 String[] items = input.split(",");
 Arrays.stream(items).map(String::trim).filter(s -> !s.isEmpty())...
 ```
 
-**Use Apache Commons for joining strings** — `StringUtils.join` is null-safe on the collection itself:
+**Use Guava `Joiner` for joining strings** — use `skipNulls()` when nulls are possible. A stream that maps its
+elements first keeps `Collectors.joining`:
+
+```java
+// Good - Guava Joiner
+String joined = Joiner.on(", ").join(items);
+String joined = Joiner.on(", ").skipNulls().join(items);
+String joined = items.stream().map(Item::getName).collect(Collectors.joining(", "));
+
+// Avoid
+String joined = StringUtils.join(items, ", ");
+String joined = String.join(", ", items);
+```
+
+### Concurrency - Use Guava
+
+Name and configure threads with `ThreadFactoryBuilder`, wrap an executor with Guava's forwarding classes rather than
+a hand-written delegate, shut a pool down with `MoreExecutors.shutdownAndAwaitTermination`, and memoize with
+`Suppliers.memoize`. A retry's `Thread.sleep` stays interruptible: `Uninterruptibles` is only for code that would
+otherwise swallow the interrupt and carry on.
 
 ```java
 // Good
-String joined = StringUtils.join(items, ", ");
-String joined = StringUtils.joinWith(", ", first, second);
-String joined = items.stream().map(Item::getName).collect(Collectors.joining(", "));
+ThreadFactory threads = new ThreadFactoryBuilder().setNameFormat("codiqo-jdtls-%d").setDaemon(true).build();
+Supplier<Tokenizer> tokenizer = Suppliers.memoize(() -> load(family));
+MoreExecutors.shutdownAndAwaitTermination(executor, Duration.ofSeconds(10));
+
+// Bad - a hand-rolled factory with its own counter
+ThreadFactory threads = runnable -> new Thread(runnable, "codiqo-jdtls-" + counter.getAndIncrement());
 ```
 
 ### Character and String Constants
@@ -857,7 +916,7 @@ and mixing literals with constants is how one separator ends up spelled three di
 // Good - pick the form the API actually takes
 StringUtils.splitPreserveAllTokens(report, CharUtils.LF);        // takes a char
 StringUtils.substringBefore(message, StringUtils.LF);            // takes a String
-String.join(StringUtils.LF, lines);
+Joiner.on(StringUtils.LF).join(lines);
 FileFilterUtils.suffixFileFilter(FilenameUtils.EXTENSION_SEPARATOR_STR + CLASS_EXTENSION);
 
 // Bad - raw literals
@@ -1431,3 +1490,66 @@ private Score calculateWeightedScore(List<Metric> metrics, Map<String, Double> w
     // Complex logic worth extracting
 }
 ```
+
+## HTTP — Netty's Codec, Never Hand-Rolled
+
+**Header names, media types, status codes and query strings come from `netty-codec-http`**, which every module that
+speaks HTTP declares (versions from the imported `netty-bom`). Only the codec is used: the loopback servers stay on the
+JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or OkHttp.
+
+- `HttpHeaderNames` / `HttpHeaderValues` for every header and media type (`.toString()` where an API takes a `String`),
+  `HttpResponseStatus.X.code()` and `HttpStatusClass` for statuses, never a literal, a JAX-RS `Status` or
+  `HttpURLConnection.HTTP_*`.
+- `QueryStringDecoder` reads a query, `QueryStringEncoder` writes one (a form body is the encoder's raw query); never
+  `URLDecoder`/`URLEncoder` around a hand split on `&` and `=`. OkHttp's `HttpUrl` builds an OkHttp request's URL.
+- A credential is never read out: `RequestAuthorizer.accept` hands its header to the caller, who sets it
+  (`credential.accept(request::setHeader)`), and `RequestAuthorizer.bearer` is the one place `Bearer` is spelled.
+
+## Credentials — One Login for Maven and Gradle
+
+**Every call to Codiqo authenticates through `io.codiqo.submit.auth`** (a `CodiqoCredential` is a `RequestAuthorizer`), never a hand-set header:
+
+- `CodiqoCredentials.resolve` is the one lookup: a configured `codiqo.apiKey`, else the browser login stored in
+  `~/.codiqo/credentials-<auth host>` (shared by both plugins; `-Dcodiqo.home` moves it), else a key a login stored
+  before OAuth, else the browser. Callers with nobody at the terminal (Gradle workers, the index task) pass
+  `allowBrowser = false`; the `login` goal and the `codiqoLogin` task create the login.
+- The browser login is OAuth 2.1 with PKCE against Better Auth (`/api/auth/oauth2/*`), the same server MCP clients use:
+  a native client is registered per login, the redirect is a loopback port, and every token request names the resource
+  (`codiqo.resourceUrl`), without which the token is not the JWT the backend verifies. The scopes are
+  `BrowserLogin.SCOPES`; `codiqo:llm` and `codiqo:submit` are the ones the backend requires.
+- Access tokens live minutes, so `OAuthCredential` refreshes per request and stores the rotated refresh token
+  atomically. Build API clients with `CodiqoApiClients.newApiClient`, which authorises each request as it is sent.
+- The local review calls the backend's LLM proxy (`codiqo.review.baseUrl`, default `RunArgs.DEFAULT_LLM_PROXY_URL`)
+  through `LlmRelay`, a loopback relay that adds the credential per request and refuses callers without its per-review
+  secret. A loopback base URL (a local Ollama daemon) is called directly, with no credential.
+- A credential refresh that fails on the network is retried by the relay like any call; only a refusal that survives the
+  retries answers 401. A stream cut after the answer started ends with an error event, since its status was already
+  sent. A stored login is adopted from disk only when it has this login's OAuth client (another organization's login
+  registered another one), and rotated tokens are kept in memory before they are written.
+
+## Local Review — Switches and What Travels
+
+- `codiqo.review` runs OpenCode next to the build (only on the clean HEAD commit); `codiqo.review.assess` adds the
+  judgment (labels with a reason above MECHANICAL, task types, dimensions, senior review, blast radius);
+  `codiqo.review.triage` asks a fork of the coordinator session, after the build, which PMD and SpotBugs findings on
+  added lines are defects (`StaticFindings.introduced`). A confirmed defect becomes a bug unless the review already
+  reported one on that line; every verdict places its finding in `LocalAssessmentModel.staticAnalysisReview`.
+- The reviewers' `observations` are collected from their own answers (`LocalReviewer.reviewerAnswers`), and
+  `LocalReviewModels.toModel` writes a Markdown `reasoning` digest (the coordinator's areas, the observations, the
+  triage) that the commit page shows.
+- The agents' git rules allow read-only commands and deny their writing and executing forms after them (`difftool`,
+  `--output`, `--no-index`, external diff and textconv drivers): OpenCode applies the last matching rule. Convention
+  files are fenced with `PromptFences`' markers, which `ConventionGuidance` strips from every file.
+- What the model writes is checked before it is sent: a bug without a title or description and a dimension score off
+  the 0-10 scale are left out, since the server would reject the whole submission over them.
+- **Every default lives in `RunArgs`.** The review's settings are `transient` `review*` fields (local to the run, never
+  in the submission), and `LocalReviewer` reads them from `RunArgs` itself. Only what the run supplies is passed
+  beside it: the convention guidance and a `ReviewEndpoint` (base URL, key, credential), which the relay swaps for its
+  own loopback URL and secret. A mojo parameter has no `defaultValue`: it is a nullable wrapper that overrides the `RunArgs`
+  field only when set. Settings with no `RunArgs` instance at hand (the login, the loopback host, the upload batch,
+  the 0-10 score scale and the rounding precision) are `RunArgs` constants. Protocol names (headers, paths, rule ids)
+  stay beside the code that speaks the protocol.
+- **The agents' prompts are Thymeleaf TEXT templates** (`thymeleaf/templates/opencode/*.txt`, rendered by
+  `PromptTemplates`): values go in with `[(${...})]`, the assessment and convention parts are `th:if` blocks. Thymeleaf
+  does not re-read an inserted value, so a convention file holding `[(...)]` stays text. The OpenCode configuration
+  itself stays a Jackson tree: a JSON template would not escape a quote in a model name or a path.

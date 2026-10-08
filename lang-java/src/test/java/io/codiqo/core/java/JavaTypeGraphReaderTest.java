@@ -3,13 +3,14 @@ package io.codiqo.core.java;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.io.File;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
+
+import com.google.common.collect.Lists;
 
 import io.codiqo.api.code.DeclaredType;
 import io.codiqo.api.code.TypeReference;
@@ -55,8 +56,8 @@ class JavaTypeGraphReaderTest {
                     Parser parser = registry.getProcessor(LANG).services().getParser();
                     ASTCompilationUnit tree = (ASTCompilationUnit) parser.parse(new ParserTask(doc, SemanticErrorReporter.noop(), registry));
 
-                    List<DeclaredType> types = new ArrayList<>();
-                    List<TypeReference> toReturn = new ArrayList<>();
+                    List<DeclaredType> types = Lists.newArrayList();
+                    List<TypeReference> toReturn = Lists.newArrayList();
                     JavaTypeGraphReader.read(tree, new File("Test.java"), false, types, toReturn);
                     return toReturn;
                 }
