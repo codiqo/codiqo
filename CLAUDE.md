@@ -1529,7 +1529,8 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
 
 ## Local Review — Switches and What Travels
 
-- `codiqo.review` runs OpenCode next to the build (only on the clean HEAD commit); `codiqo.review.assess` adds the
+- `codiqo.review` runs OpenCode next to the build, in the analysis clone, so every analysed commit is reviewed (a backlog
+  pays for one review per commit); `codiqo.review.assess` adds the
   judgment (labels with a reason above MECHANICAL, task types, dimensions, senior review, blast radius);
   `codiqo.review.triage` asks a fork of the coordinator session, after the build, which PMD and SpotBugs findings on
   added lines are defects (`StaticFindings.introduced`). A confirmed defect becomes a bug unless the review already

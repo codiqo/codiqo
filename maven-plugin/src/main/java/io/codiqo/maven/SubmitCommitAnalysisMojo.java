@@ -12,9 +12,6 @@ import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
-import org.eclipse.jgit.api.Git;
-import org.eclipse.jgit.lib.Constants;
-import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 
 import com.google.common.collect.HashMultiset;
@@ -67,8 +64,8 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
 
     /**
      * Runs a local agent review of the commit next to the analysis and attaches its bugs and token usage to the
-     * submission. Only the commit checked out as a clean HEAD is reviewed: the agents read surrounding files from the
-     * working tree, so for any other commit they would see code that is not the commit's.
+     * submission. The agents read the analysis clone, which holds exactly the commit, so every analysed commit is
+     * reviewed, a backlog of historical ones included; each one is a review the organization pays for.
      */
     @Parameter(property = "codiqo.review")
     private Boolean review;
@@ -137,45 +134,38 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
 
         /** before the build, while the developer is at the terminal: a browser login opened later would go unnoticed */
         credential();
-
+    }
+    /**
+     * Starts the review in the analysis clone, which holds the commit as its clean HEAD however old the commit is, so
+     * every analysed commit is reviewed, not only the tip a CI run checked out. It runs next to the build.
+     */
+    @Override
+    protected void doAfterCheckout(RunArgs args) throws Exception {
         if (args.isReviewEnabled()) {
-            Repository repository = args.getGit();
-            ObjectId head = repository.resolve(Constants.HEAD);
-            boolean clean;
-            try (Git git = Git.wrap(repository)) {
-                clean = git.status().call().isClean();
-            }
-
-            if (Objects.nonNull(head) && head.name().equals(args.getCommitId()) && clean) {
-                // a commit that changes nothing the analysis reads is excluded after the build, so its review would be paid for and dropped
-                if (CommitExclusions.hasAnalyzableFile(JGit.changedFileNames(repository, args.getCommitId()), DefaultLanguageProcessors.supportedExtensions())) {
-                    ReviewEndpoint endpoint = new ReviewEndpoint(args.getReviewBaseUrl(), null, null);
-                    if (endpoint.isProxiedBy(resourceUrl)) {
-                        endpoint = new ReviewEndpoint(args.getReviewBaseUrl(), null, credential());
-                    }
-                    LocalReviewer reviewer = new LocalReviewer(args, endpoint, LocalReviewGuidance.read(args, getLog()),
-                            new MavenLogFactory(getLog()).getLogger(LocalReviewer.class));
-                    Path workTree = repository.getWorkTree().toPath();
-                    String commit = args.getCommitId();
-                    Optional<LocalReviewer.FindingsSource> findings = args.isReviewTriage() ? Optional.of(buildFindings::get) : Optional.empty();
-                    backgroundReview = BackgroundReview.start(() -> reviewer.reviewThenTriage(workTree, commit, findings));
-                    getLog().info("local review of " + args.getCommitId() + " started next to the analysis");
-                } else {
-                    getLog().info("local review skipped: " + args.getCommitId() + " changes no file the analysis reads");
+            Repository clone = args.getGit();
+            // a commit that changes nothing the analysis reads is excluded after the build, so its review would be paid for and dropped
+            if (CommitExclusions.hasAnalyzableFile(JGit.changedFileNames(clone, args.getCommitId()), DefaultLanguageProcessors.supportedExtensions())) {
+                ReviewEndpoint endpoint = new ReviewEndpoint(args.getReviewBaseUrl(), null, null);
+                if (endpoint.isProxiedBy(resourceUrl)) {
+                    endpoint = new ReviewEndpoint(args.getReviewBaseUrl(), null, credential());
                 }
+                LocalReviewer reviewer = new LocalReviewer(args, endpoint, LocalReviewGuidance.read(args, getLog()),
+                        new MavenLogFactory(getLog()).getLogger(LocalReviewer.class));
+                Path workTree = clone.getWorkTree().toPath();
+                String commit = args.getCommitId();
+                Optional<LocalReviewer.FindingsSource> findings = args.isReviewTriage() ? Optional.of(buildFindings::get) : Optional.empty();
+                backgroundReview = BackgroundReview.start(() -> reviewer.reviewThenTriage(workTree, commit, findings));
+                getLog().info("local review of " + args.getCommitId() + " started next to the analysis");
             } else {
-                getLog().info("local review skipped: " + args.getCommitId() + " is not the clean HEAD of " + repository.getWorkTree());
+                getLog().info("local review skipped: " + args.getCommitId() + " changes no file the analysis reads");
             }
         }
     }
+    /** a review still running when the analysis ends (a failed build, an exclusion) is stopped before its tree is deleted */
     @Override
-    protected void doExecute(RunArgs args) throws Exception {
-        try {
-            super.doExecute(args);
-        } finally {
-            if (Objects.nonNull(backgroundReview)) {
-                backgroundReview.close();
-            }
+    protected void doBeforeCheckoutRemoved(RunArgs args) throws Exception {
+        if (Objects.nonNull(backgroundReview)) {
+            backgroundReview.close();
         }
     }
     @Override

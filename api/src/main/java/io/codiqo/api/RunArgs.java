@@ -563,8 +563,8 @@ public class RunArgs {
     private Duration llmReadTimeout = Duration.ofMinutes(10);
 
     /**
-     * Local review: run OpenCode agents on the commit next to the analysis and attach their bugs and token usage. Only
-     * the commit checked out as a clean HEAD is reviewed. The review fields are local to the run: none of them travels
+     * Local review: run OpenCode agents on the commit next to the analysis and attach their bugs and token usage. The
+     * agents read the analysis clone, so every analysed commit is reviewed. The review fields are local to the run: none of them travels
      * with the submission. The defaults are the pairing measured on real commits: a 270-file commit reviewed for about
      * $0.50-0.60 and a mid-size one for about $0.15-0.30.
      */

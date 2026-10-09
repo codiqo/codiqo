@@ -123,11 +123,20 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     }
     /**
      * Runs once the commit has passed the exclusions decided before analysis (skipped merges, filtered authors) and
-     * before the analysis checkout replaces the user's repository in {@code args}. Work that costs money per commit (the
-     * local agent review) starts here rather than in {@link #doPrepare}, which runs for those excluded commits too. The
-     * exclusions that need the computed delta (include-rules, nothing analysable) are only known after the build.
+     * before the analysis checkout replaces the user's repository in {@code args}. The exclusions that need the computed
+     * delta (include-rules, nothing analysable) are only known after the build.
      */
     protected void doBeforeAnalysis(RunArgs args) throws Exception {
+    }
+    /**
+     * Runs once the analysis clone holds the commit as its clean HEAD, before the build. Work that reads the commit's
+     * tree and costs money per commit (the local agent review) starts here: the clone is that commit whichever commit
+     * the user's repository has checked out, so a backlog of historical commits is served as well as the tip.
+     */
+    protected void doAfterCheckout(RunArgs args) throws Exception {
+    }
+    /** runs before the analysis clone is deleted, whatever the outcome: work still reading it must stop here */
+    protected void doBeforeCheckoutRemoved(RunArgs args) throws Exception {
     }
     @Override
     protected void doExecute(RunArgs args) throws Exception {
@@ -205,6 +214,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                 git.checkout().setForced(true).setName(commitId).call();
                 getLog().info(String.format("checked out commit ID: %s", commitId));
             }
+            doAfterCheckout(args);
 
             /**
              * host-side ProjectBuilder calls (pre-flight, root and module model building) resolve snapshot parents
@@ -263,6 +273,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                 super.doExecute(args);
             }
         } finally {
+            doBeforeCheckoutRemoved(args);
             clone.close();
             /**
              * by now the commit's outcome is already decided and, for a skip, already reported; a checkout that will
