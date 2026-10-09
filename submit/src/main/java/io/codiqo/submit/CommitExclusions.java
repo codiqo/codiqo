@@ -9,7 +9,6 @@ import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 
@@ -39,7 +38,7 @@ public class CommitExclusions {
                 return merge;
             }
         }
-        if (BooleanUtils.negate(isAuthorAdmitted(args))) {
+        if (args.isExcludedAuthor(creditedAuthorEmail(args))) {
             return Optional.of(new Exclusion("author excluded by codiqo.excludeAuthorEmails", AnalysisExcludeCategory.FILTERED_BY_RULES));
         }
         return Optional.empty();
@@ -110,35 +109,17 @@ public class CommitExclusions {
                 }
                 /**
                  * A multi-author side branch is not skipped: it is analysed and credited to whoever dominates it
-                 * ({@link JGit#mergeSideCreditedAuthor}).
+                 * ({@link JGit#creditedAuthor}).
                  */
                 return Optional.empty();
             }
         }
         return Optional.of("merge commit (multiple parents)");
     }
-    public static boolean isAuthorAdmitted(RunArgs args) throws IOException {
-        ObjectId objectId = args.getGit().resolve(args.getCommitId());
-        try (RevWalk walk = new RevWalk(args.getGit())) {
-            RevCommit commit = walk.parseCommit(objectId);
-            PersonIdent credited = commit.getAuthorIdent();
-            if (JGit.isMerge(commit)) {
-                credited = JGit.mergeSideCreditedAuthor(args.getGit(), commit).orElse(credited);
-            }
-            return JGit.isAuthorAdmitted(args.getGit(), commit, credited,
-                    email -> BooleanUtils.negate(args.isExcludedAuthor(email)));
-        }
-    }
     public static String creditedAuthorEmail(RunArgs args) throws IOException {
         ObjectId objectId = args.getGit().resolve(args.getCommitId());
         try (RevWalk walk = new RevWalk(args.getGit())) {
-            RevCommit commit = walk.parseCommit(objectId);
-            if (JGit.isMerge(commit)) {
-                return JGit.mergeSideCreditedAuthor(args.getGit(), commit)
-                        .map(PersonIdent::getEmailAddress)
-                        .orElseGet(() -> commit.getAuthorIdent().getEmailAddress());
-            }
-            return commit.getAuthorIdent().getEmailAddress();
+            return JGit.creditedAuthor(args.getGit(), walk.parseCommit(objectId)).getEmailAddress();
         }
     }
     public static final class Exclusion extends ImmutablePair<String, AnalysisExcludeCategory> {
