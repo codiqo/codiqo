@@ -248,14 +248,17 @@ class LocalReviewModelsTest {
         AnalysisSubmissionModel submission = new AnalysisSubmissionModel().files(List.of(
                 new FileChangeModel().path("src/main/java/com/example/Totals.java").codeUnits(List.of(handler, constructor, alreadyLabelled, unnamed, nested))));
 
-        int labelled = LocalReviewModels.applyBlockCategories(submission, assessed(
+        LocalReviewModels.Labelling labelling = LocalReviewModels.applyBlockCategories(submission, assessed(
                 label("src/main/java/com/example/Totals.java", "handle(java.util.List<String>, Optional<Long>)", LlmScoringResponse.CodeBlockCategory.SUBSTANTIVE),
                 label("./src/main/java/com/example/Totals.java", "<init>(Config,Clock)", LlmScoringResponse.CodeBlockCategory.ROUTINE),
                 label("src/main/java/com/example/Totals.java", "sum(List)", LlmScoringResponse.CodeBlockCategory.INTRICATE),
                 label("src/main/java/com/example/Gone.java", "deleted()", LlmScoringResponse.CodeBlockCategory.ROUTINE),
                 label("src/main/java/com/example/Totals.java", "put(Map<String, List<Integer>>, Optional<Map<K, V>>)", LlmScoringResponse.CodeBlockCategory.INTRICATE)));
 
-        assertEquals(3, labelled);
+        assertEquals(3, labelling.getApplied());
+        assertEquals(5, labelling.getReturned());
+        assertEquals(5, labelling.getUnits());
+        assertEquals(List.of("src/main/java/com/example/Gone.java#deleted()"), labelling.getUnmatched(), "a label naming no unit is reported, not lost silently");
         assertEquals(CodeUnitModel.CategoryEnum.INTRICATE, nested.getCategory(), "nested type arguments are erased whole");
         assertEquals(CodeUnitModel.CategoryEnum.SUBSTANTIVE, handler.getCategory());
         assertEquals(CodeUnitModel.CategoryEnum.ROUTINE, constructor.getCategory());

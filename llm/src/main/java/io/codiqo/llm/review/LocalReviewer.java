@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.commons.lang3.tuple.ImmutablePair;
@@ -229,7 +230,11 @@ public class LocalReviewer {
                             observations.add(observation.strip());
                         }
                     }
-                    readLabels(session.getSessionId(), text).forEach(block -> labels.putIfAbsent(Pair.of(block.getFile(), block.getSignature()), block));
+                    List<LlmScoringResponse.CodeBlockCategoryView> sessionLabels = readLabels(session.getSessionId(), text);
+                    if (BooleanUtils.and(new boolean[] { args.isReviewAssess(), sessionLabels.isEmpty() })) {
+                        log.warn("reviewer session %s labelled none of its code units", session.getSessionId());
+                    }
+                    sessionLabels.forEach(block -> labels.putIfAbsent(Pair.of(block.getFile(), block.getSignature()), block));
                 } catch (IOException err) {
                     log.warn("reviewer session %s ended with no answer at all: %s", session.getSessionId(), err.getMessage());
                     unanswered.add(session.getSessionId());
