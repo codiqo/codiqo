@@ -18,6 +18,7 @@ import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
@@ -328,12 +329,44 @@ public class JGit {
         }
         return Optional.of(branch);
     }
-    public static String currentBranchOrDefault(Repository repo) throws IOException {
+    /**
+     * the checked-out branch, else the repository's default branch; empty on a detached HEAD with no default to fall
+     * back on, where {@code Repository.getBranch()} answers with a SHA that names no branch
+     */
+    public static Optional<String> currentBranchOrDefault(Repository repo) throws IOException {
         String branch = repo.getBranch();
         if (isDetachedHead(branch)) {
-            return detectDefaultBranch(repo).orElse(branch);
+            return detectDefaultBranch(repo);
         }
-        return branch;
+        return Optional.of(branch);
+    }
+    /**
+     * the names of the files a commit changed against its first parent, or against the empty tree for a root commit;
+     * empty on a shallow-clone boundary, whose parent is not present
+     */
+    public static List<String> changedFileNames(Repository repo, String commitId) throws IOException {
+        List<String> toReturn = Lists.newArrayList();
+        try (RevWalk walk = new RevWalk(repo);
+                ObjectReader reader = repo.newObjectReader();
+                DiffFormatter formatter = new DiffFormatter(DisabledOutputStream.INSTANCE)) {
+            formatter.setRepository(repo);
+
+            RevCommit commit = walk.parseCommit(repo.resolve(commitId));
+            List<DiffEntry> entries;
+            if (commit.getParentCount() > 0) {
+                entries = formatter.scan(commit.getParent(0), commit);
+            } else if (reader.getShallowCommits().contains(commit.getId())) {
+                entries = Collections.emptyList();
+            } else {
+                entries = formatter.scan(new EmptyTreeIterator(), new CanonicalTreeParser(null, reader, commit.getTree()));
+            }
+
+            for (DiffEntry entry : entries) {
+                String path = entry.getChangeType() == DiffEntry.ChangeType.DELETE ? entry.getOldPath() : entry.getNewPath();
+                toReturn.add(FilenameUtils.getName(path));
+            }
+        }
+        return toReturn;
     }
     /**
      * whether {@code Repository.getBranch()} answered with a raw SHA rather than a branch name, which is what a

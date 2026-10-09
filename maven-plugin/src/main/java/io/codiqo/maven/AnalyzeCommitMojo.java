@@ -149,7 +149,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
         /** The clone keeps the user's working directory untouched and keeps uncommitted files out of the analysis. */
         StopWatch stopWatch = StopWatch.createStarted();
         StoredConfig originalConfig = args.getGit().getConfig();
-        args.setDefaultBranch(args.getGit().getBranch());
+        JGit.currentBranchOrDefault(args.getGit()).ifPresent(args::setDefaultBranch);
 
         String sourceUri = args.getGit().getDirectory().toURI().toString();
         ObjectId sourceHead = args.getGit().resolve(Constants.HEAD);

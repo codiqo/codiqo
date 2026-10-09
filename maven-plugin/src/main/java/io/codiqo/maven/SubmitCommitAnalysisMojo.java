@@ -27,6 +27,9 @@ import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.HotspotSnapshotModel;
 import io.codiqo.client.model.LocalReviewModel;
 import io.codiqo.client.model.ProjectMetricsModel;
+import io.codiqo.core.DefaultLanguageProcessors;
+import io.codiqo.submit.CommitExclusions;
+import io.codiqo.util.JGit;
 import io.codiqo.llm.review.FindingTriage;
 import io.codiqo.llm.review.FindingVerdict;
 import io.codiqo.llm.review.LocalReview;
@@ -144,17 +147,22 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
             }
 
             if (Objects.nonNull(head) && head.name().equals(args.getCommitId()) && clean) {
-                ReviewEndpoint endpoint = new ReviewEndpoint(args.getReviewBaseUrl(), null, null);
-                if (endpoint.isProxiedBy(resourceUrl)) {
-                    endpoint = new ReviewEndpoint(args.getReviewBaseUrl(), null, credential());
+                // a commit that changes nothing the analysis reads is excluded after the build, so its review would be paid for and dropped
+                if (CommitExclusions.hasAnalyzableFile(JGit.changedFileNames(repository, args.getCommitId()), DefaultLanguageProcessors.supportedExtensions())) {
+                    ReviewEndpoint endpoint = new ReviewEndpoint(args.getReviewBaseUrl(), null, null);
+                    if (endpoint.isProxiedBy(resourceUrl)) {
+                        endpoint = new ReviewEndpoint(args.getReviewBaseUrl(), null, credential());
+                    }
+                    LocalReviewer reviewer = new LocalReviewer(args, endpoint, LocalReviewGuidance.read(args, getLog()),
+                            new MavenLogFactory(getLog()).getLogger(LocalReviewer.class));
+                    Path workTree = repository.getWorkTree().toPath();
+                    String commit = args.getCommitId();
+                    Optional<LocalReviewer.FindingsSource> findings = args.isReviewTriage() ? Optional.of(buildFindings::get) : Optional.empty();
+                    backgroundReview = BackgroundReview.start(() -> reviewer.reviewThenTriage(workTree, commit, findings));
+                    getLog().info("local review of " + args.getCommitId() + " started next to the analysis");
+                } else {
+                    getLog().info("local review skipped: " + args.getCommitId() + " changes no file the analysis reads");
                 }
-                LocalReviewer reviewer = new LocalReviewer(args, endpoint, LocalReviewGuidance.read(args, getLog()),
-                        new MavenLogFactory(getLog()).getLogger(LocalReviewer.class));
-                Path workTree = repository.getWorkTree().toPath();
-                String commit = args.getCommitId();
-                Optional<LocalReviewer.FindingsSource> findings = args.isReviewTriage() ? Optional.of(buildFindings::get) : Optional.empty();
-                backgroundReview = BackgroundReview.start(() -> reviewer.reviewThenTriage(workTree, commit, findings));
-                getLog().info("local review of " + args.getCommitId() + " started next to the analysis");
             } else {
                 getLog().info("local review skipped: " + args.getCommitId() + " is not the clean HEAD of " + repository.getWorkTree());
             }
