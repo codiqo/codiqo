@@ -6,6 +6,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -36,6 +37,8 @@ import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
+import org.eclipse.jgit.treewalk.CanonicalTreeParser;
+import org.eclipse.jgit.treewalk.EmptyTreeIterator;
 import org.eclipse.jgit.util.io.DisabledOutputStream;
 
 import com.google.common.collect.Lists;
@@ -236,14 +239,26 @@ public class JGit {
         }
 
         Map<String, PersonIdent> byEmail = Maps.newLinkedHashMap();
-        Map<String, Integer> lines = Maps.newHashMap();
         Map<String, Integer> commits = Maps.newHashMap();
         for (RevCommit sideCommit : authored) {
             PersonIdent author = sideCommit.getAuthorIdent();
             String key = StringUtils.lowerCase(author.getEmailAddress());
             byEmail.putIfAbsent(key, author);
-            lines.merge(key, changedLines(repo, sideCommit), Integer::sum);
             commits.merge(key, 1, Integer::sum);
+        }
+
+        /**
+         * A single author needs no ranking, and the ranking diffs every side commit. The index resolves the credit for
+         * every merge in the walked history before filtering it, so a long single-author branch would otherwise have
+         * all of its patches read on every index run, and again by the analysis, to learn an answer already known.
+         */
+        if (byEmail.size() == 1) {
+            return byEmail.values().iterator().next();
+        }
+
+        Map<String, Integer> lines = Maps.newHashMap();
+        for (RevCommit sideCommit : authored) {
+            lines.merge(StringUtils.lowerCase(sideCommit.getAuthorIdent().getEmailAddress()), changedLines(repo, sideCommit), Integer::sum);
         }
 
         Set<String> leaders = leadersOf(commits, leadersOf(lines, byEmail.keySet()));
@@ -257,15 +272,29 @@ public class JGit {
         int max = candidates.stream().mapToInt(counts::get).max().orElseThrow();
         return candidates.stream().filter(candidate -> counts.get(candidate) == max).collect(Collectors.toSet());
     }
-    /** added plus deleted lines a single-parent commit contributed; a merge or a root commit counts as nothing. */
+    /**
+     * added plus deleted lines a non-merge side commit contributed. A true root commit — an unrelated history merged in —
+     * is measured against the empty tree, because its whole tree lands in the merge delta: counting it as nothing let a
+     * two-line follow-up outrank the author of the entire imported history. A shallow-clone boundary also reports no
+     * parents (JGit grafts them away), but its parent exists and is merely absent locally, so its tree is mostly other
+     * people's work and it counts as nothing; measuring it against the empty tree would credit the merge to whoever
+     * authored the oldest fetched commit.
+     */
     private static int changedLines(Repository repo, RevCommit commit) throws IOException {
-        if (commit.getParentCount() != 1) {
-            return 0;
-        }
-        try (DiffFormatter formatter = new DiffFormatter(DisabledOutputStream.INSTANCE)) {
+        try (ObjectReader reader = repo.newObjectReader(); DiffFormatter formatter = new DiffFormatter(DisabledOutputStream.INSTANCE)) {
             formatter.setRepository(repo);
+
+            List<DiffEntry> entries;
+            if (commit.getParentCount() > 0) {
+                entries = formatter.scan(commit.getParent(0), commit);
+            } else if (reader.getShallowCommits().contains(commit.getId())) {
+                entries = Collections.emptyList();
+            } else {
+                entries = formatter.scan(new EmptyTreeIterator(), new CanonicalTreeParser(null, reader, commit.getTree()));
+            }
+
             int toReturn = 0;
-            for (DiffEntry entry : formatter.scan(commit.getParent(0), commit)) {
+            for (DiffEntry entry : entries) {
                 for (Edit edit : formatter.toFileHeader(entry).toEditList()) {
                     toReturn += edit.getEndA() - edit.getBeginA() + edit.getEndB() - edit.getBeginB();
                 }

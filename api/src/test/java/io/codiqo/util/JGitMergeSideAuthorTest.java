@@ -196,6 +196,42 @@ class JGitMergeSideAuthorTest {
 
         assertEquals("first@corp.com", JGit.creditedAuthor(repository, merge).getEmailAddress());
     }
+    /** an unrelated history merged in: its root brings its whole tree into the merge delta, so that tree is its author's work. */
+    @Test
+    void importedRootCountsItsWholeTree() throws Exception {
+        RevCommit base = commitAs("base.txt", "0", "base", "Maintainer", "maintainer@corp.com");
+        git.checkout().setOrphan(true).setName("imported").call();
+        git.rm().addFilepattern("base.txt").call();
+        commitAs("imported.txt", "a\nb\nc\nd\ne\nf\ng\nh", "import the library", "Alice", "alice@corp.com");
+        commitAs("alice.txt", "1", "one more line", "Alice", "alice@corp.com");
+        RevCommit tip = commitAs("bob.txt", "1\n2", "two lines", "Bob", "bob@corp.com");
+
+        RevCommit merge = rawMerge(List.of(base, tip), "Merge the imported history");
+
+        assertEquals("alice@corp.com", JGit.creditedAuthor(repository, merge).getEmailAddress());
+    }
+    /**
+     * a shallow boundary also reports no parents, but its tree is mostly inherited: measured against the empty tree it
+     * would credit the merge to whoever wrote the oldest fetched commit, here for a one-line change.
+     */
+    @Test
+    void shallowBoundaryCountsAsNothing() throws Exception {
+        commitAs("base.txt", "1\n2\n3\n4\n5\n6\n7\n8\n9\n10", "base", "Maintainer", "maintainer@corp.com");
+        git.branchCreate().setName("feature").call();
+        git.checkout().setName("feature").call();
+        RevCommit boundary = commitAs("alice.txt", "1", "one line", "Alice", "alice@corp.com");
+        commitAs("bob.txt", "1\n2", "two lines", "Bob", "bob@corp.com");
+        git.checkout().setName("main").call();
+        commitAs("m.txt", "m", "mainline", "Maintainer", "maintainer@corp.com");
+        RevCommit merge = mergeAs("feature", "Merge pull request #11", "CI Bot", "bot@ci.com");
+
+        Files.writeString(tempDir.resolve(".git").resolve("shallow"), boundary.getName() + "\n", StandardCharsets.UTF_8);
+        try (Repository shallow = new FileRepositoryBuilder().setGitDir(new File(tempDir.toFile(), ".git")).build()) {
+            RevCommit grafted = JGit.mergeSideCommits(shallow, merge).stream().filter(boundary::equals).findFirst().orElseThrow();
+            assertEquals(0, grafted.getParentCount(), "precondition: the boundary reads as parentless");
+            assertEquals("bob@corp.com", JGit.creditedAuthor(shallow, merge).getEmailAddress());
+        }
+    }
     private RevCommit rawMerge(List<RevCommit> parents, String message) throws Exception {
         try (ObjectInserter inserter = repository.newObjectInserter()) {
             CommitBuilder builder = new CommitBuilder();
