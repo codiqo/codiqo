@@ -1,17 +1,20 @@
 package io.codiqo.util;
 
+import static java.util.function.Predicate.not;
+
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.function.Predicate;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
@@ -34,6 +37,8 @@ import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
+import org.eclipse.jgit.treewalk.CanonicalTreeParser;
+import org.eclipse.jgit.treewalk.EmptyTreeIterator;
 import org.eclipse.jgit.util.io.DisabledOutputStream;
 
 import com.google.common.collect.Lists;
@@ -204,88 +209,92 @@ public class JGit {
         return Optional.ofNullable(soleAuthor);
     }
     /**
-     * whether the author filter admits a commit, given the author it was already credited to. a merge node's own
-     * author is an integration identity — a merge queue, a release bot, whoever clicked the button — so rejecting it
-     * would drop the side branch's human work with it. such a node is admitted when ANY side-branch author is
-     * admitted, which is the only case {@link #mergeSideSoleAuthor} cannot already express: it derives an author only
-     * when the side branch has exactly one. a bot merging its own bot-authored branch has no admitted side author and
-     * stays rejected, which is the point of excluding bots in the first place.
+     * who a commit is credited to. A plain commit, and an octopus merge (no single side branch to read), keep their own
+     * author. A two-parent merge node's parent[0] delta is the side branch's net change, and its own author is an
+     * integration identity — a merge queue, a release bot, whoever clicked the button — so it is credited to whoever
+     * wrote most of the side branch instead.
      *
-     * <p>Restricted to two-parent merges, matching {@link #mergeSideSoleAuthor}: an octopus merge has no single side
-     * branch to read, so it is judged on its own author alone.
+     * <p>The index, the author filters and the delta analyzer all read the credit from here, and the filters judge
+     * exactly this identity and nothing else. When admission instead fell back to "any side author is admitted", a
+     * bot-credited merge with one human commit on it was admitted and then scored under the bot, and the index (which
+     * applies includeAuthorEmails) and the analysis (which re-checks the credited author) disagreed on the same commit.
+     *
+     * <p>Only the side branch's own non-merge commits count as authorship. A back-merge of the mainline into the branch
+     * changes no line of its own, and when a bot performs it ("update branch"), counting it as a commit made the bot the
+     * dominant author of a human pull request. Lines changed decide the credit, so a few one-line autofix commits do not
+     * outweigh the change they tidy; commit counts break a tie in lines; and a genuine tie goes to the author of the
+     * branch's earliest commit — whoever opened the pull request. The credit therefore never depends on the author
+     * filter, which is what keeps every reader of it in agreement. A side branch with no commits of its own (everything
+     * already merged) keeps the merge author.
      */
-    public static boolean isAuthorAdmitted(Repository repo, RevCommit commit, PersonIdent creditedAuthor, Predicate<String> admits)
-            throws IOException {
-        if (admits.test(creditedAuthor.getEmailAddress())) {
-            return true;
-        }
+    public static PersonIdent creditedAuthor(Repository repo, RevCommit commit) throws IOException {
         if (commit.getParentCount() != MERGE_PARENT_COUNT) {
-            return false;
+            return commit.getAuthorIdent();
         }
-        return mergeSideCommits(repo, commit).stream()
-                .anyMatch(side -> admits.test(side.getAuthorIdent().getEmailAddress()));
-    }
-    /**
-     * who to credit for a merge node's parent[0] delta when the side branch has more than one author: the one who
-     * wrote most of it. Commits decide it, lines break a tie, and a genuine tie resolves to empty so the caller
-     * keeps the merge author rather than picking arbitrarily.
-     */
-    private static Optional<PersonIdent> dominantAuthorOf(Repository repo, List<RevCommit> side) throws IOException {
-        Map<String, PersonIdent> byEmail = Maps.newHashMap();
+
+        /** the side walk runs newest first, so reversing it puts the branch's earliest commit first */
+        List<RevCommit> authored = Lists.reverse(mergeSideCommits(repo, commit).stream().filter(not(JGit::isMerge)).toList());
+        if (authored.isEmpty()) {
+            return commit.getAuthorIdent();
+        }
+
+        Map<String, PersonIdent> byEmail = Maps.newLinkedHashMap();
         Map<String, Integer> commits = Maps.newHashMap();
-        for (RevCommit commit : side) {
-            PersonIdent author = commit.getAuthorIdent();
+        for (RevCommit sideCommit : authored) {
+            PersonIdent author = sideCommit.getAuthorIdent();
             String key = StringUtils.lowerCase(author.getEmailAddress());
             byEmail.putIfAbsent(key, author);
             commits.merge(key, 1, Integer::sum);
         }
 
-        Optional<String> byCommits = soleMaximum(commits);
-        if (byCommits.isPresent()) {
-            return Optional.of(byEmail.get(byCommits.get()));
+        /**
+         * A single author needs no ranking, and the ranking diffs every side commit. The index resolves the credit for
+         * every merge in the walked history before filtering it, so a long single-author branch would otherwise have
+         * all of its patches read on every index run, and again by the analysis, to learn an answer already known.
+         */
+        if (byEmail.size() == 1) {
+            return byEmail.values().iterator().next();
         }
 
         Map<String, Integer> lines = Maps.newHashMap();
-        for (RevCommit commit : side) {
-            String key = StringUtils.lowerCase(commit.getAuthorIdent().getEmailAddress());
-            lines.merge(key, changedLines(repo, commit), Integer::sum);
-        }
-        return soleMaximum(lines).map(byEmail::get);
-    }
-    /** the credited author of a merge: its sole side author when there is one, otherwise whoever dominates it */
-    public static Optional<PersonIdent> mergeSideCreditedAuthor(Repository repo, RevCommit merge) throws IOException {
-        if (merge.getParentCount() != MERGE_PARENT_COUNT) {
-            return Optional.empty();
+        for (RevCommit sideCommit : authored) {
+            lines.merge(StringUtils.lowerCase(sideCommit.getAuthorIdent().getEmailAddress()), changedLines(repo, sideCommit), Integer::sum);
         }
 
-        List<RevCommit> side = mergeSideCommits(repo, merge);
-        Optional<PersonIdent> sole = soleAuthorOf(side);
-        if (sole.isPresent()) {
-            return sole;
-        }
-        return dominantAuthorOf(repo, side);
+        Set<String> leaders = leadersOf(commits, leadersOf(lines, byEmail.keySet()));
+        return byEmail.entrySet().stream()
+                .filter(entry -> leaders.contains(entry.getKey()))
+                .map(Map.Entry::getValue)
+                .iterator().next();
     }
-    /** the single largest value, or empty when nothing leads outright — a tie must not be resolved by map order. */
-    private static Optional<String> soleMaximum(Map<String, Integer> counts) {
-        int max = counts.values().stream().mapToInt(Integer::intValue).max().orElse(0);
-        if (max == 0) {
-            return Optional.empty();
-        }
-        List<String> leaders = counts.entrySet().stream()
-                .filter(entry -> entry.getValue() == max)
-                .map(Map.Entry::getKey)
-                .toList();
-        return leaders.size() == 1 ? Optional.of(leaders.iterator().next()) : Optional.empty();
+    /** the candidates that share the largest value, so a tie is left for the next rule rather than resolved by map order */
+    private static Set<String> leadersOf(Map<String, Integer> counts, Set<String> candidates) {
+        int max = candidates.stream().mapToInt(counts::get).max().orElseThrow();
+        return candidates.stream().filter(candidate -> counts.get(candidate) == max).collect(Collectors.toSet());
     }
-    /** added plus deleted lines a single-parent commit contributed; a merge or a root commit counts as nothing. */
+    /**
+     * added plus deleted lines a non-merge side commit contributed. A true root commit — an unrelated history merged in —
+     * is measured against the empty tree, because its whole tree lands in the merge delta: counting it as nothing let a
+     * two-line follow-up outrank the author of the entire imported history. A shallow-clone boundary also reports no
+     * parents (JGit grafts them away), but its parent exists and is merely absent locally, so its tree is mostly other
+     * people's work and it counts as nothing; measuring it against the empty tree would credit the merge to whoever
+     * authored the oldest fetched commit.
+     */
     private static int changedLines(Repository repo, RevCommit commit) throws IOException {
-        if (commit.getParentCount() != 1) {
-            return 0;
-        }
-        try (DiffFormatter formatter = new DiffFormatter(DisabledOutputStream.INSTANCE)) {
+        try (ObjectReader reader = repo.newObjectReader(); DiffFormatter formatter = new DiffFormatter(DisabledOutputStream.INSTANCE)) {
             formatter.setRepository(repo);
+
+            List<DiffEntry> entries;
+            if (commit.getParentCount() > 0) {
+                entries = formatter.scan(commit.getParent(0), commit);
+            } else if (reader.getShallowCommits().contains(commit.getId())) {
+                entries = Collections.emptyList();
+            } else {
+                entries = formatter.scan(new EmptyTreeIterator(), new CanonicalTreeParser(null, reader, commit.getTree()));
+            }
+
             int toReturn = 0;
-            for (DiffEntry entry : formatter.scan(commit.getParent(0), commit)) {
+            for (DiffEntry entry : entries) {
                 for (Edit edit : formatter.toFileHeader(entry).toEditList()) {
                     toReturn += edit.getEndA() - edit.getBeginA() + edit.getEndB() - edit.getBeginB();
                 }

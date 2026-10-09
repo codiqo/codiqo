@@ -69,15 +69,13 @@ public class CommitIndexer {
                 List<String> branches = branchIndex.getOrDefault(commit.getName(), Collections.emptyList());
 
                 /**
-                 * merge nodes are credited to the developer whose PR landed — its sole side-branch author, or
-                 * whoever dominates a multi-author one — so the author filter must not drop a PR just because a
-                 * bot or a teammate clicked merge. AnalyzeCommitMojo resolves the same way: a commit the index
-                 * credits to one person and the analysis to another would report two different owners.
+                 * merge nodes are credited to whoever wrote most of the side branch ({@link JGit#creditedAuthor}),
+                 * so the author filter does not drop a PR just because a bot or a teammate clicked merge. The
+                 * analysis judges the same identity: a commit the index credits to one person and the analysis to
+                 * another would report two different owners, and an exclusion the index missed is re-reported and
+                 * rebuilt on every run.
                  */
-                PersonIdent author = commit.getAuthorIdent();
-                if (JGit.isMerge(commit)) {
-                    author = JGit.mergeSideCreditedAuthor(repo, commit).orElse(author);
-                }
+                PersonIdent author = JGit.creditedAuthor(repo, commit);
 
                 /**
                  * includeBranches is applied here, alongside the author filters, rather than only at analysis time:
@@ -87,7 +85,7 @@ public class CommitIndexer {
                 if (BooleanUtils.or(new boolean[] {
                         BooleanUtils.negate(branches.contains(branch)),
                         BooleanUtils.negate(filterArgs.matchesByBranch(branches)),
-                        BooleanUtils.negate(JGit.isAuthorAdmitted(repo, commit, author, filterArgs::isAuthorAllowed))
+                        BooleanUtils.negate(filterArgs.isAuthorAllowed(author.getEmailAddress()))
                 })) {
                     continue;
                 }
