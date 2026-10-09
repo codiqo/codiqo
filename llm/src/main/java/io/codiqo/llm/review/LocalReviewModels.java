@@ -1,6 +1,7 @@
 package io.codiqo.llm.review;
 
 import java.nio.file.Paths;
+import java.util.EnumSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -48,6 +49,12 @@ import tools.jackson.core.JacksonException;
 @UtilityClass
 public class LocalReviewModels {
     private static final String TEMPLATE_DIGEST = "opencode/review-digest";
+    /**
+     * The units a review labels: what the commit adds or changes. A deleted unit is priced as a deletion and never
+     * labelled, and it may share its name with a new one (a method moved into a nested class), which would hand the new
+     * unit's label to it as well.
+     */
+    private static final EnumSet<CodeUnitModel.OperationEnum> LABELLED_OPERATIONS = EnumSet.of(CodeUnitModel.OperationEnum.NEW, CodeUnitModel.OperationEnum.MODIFY);
 
     public LocalReviewModel toModel(LocalReview review) {
         return toModel(review, Optional.empty());
@@ -97,13 +104,15 @@ public class LocalReviewModels {
         int units = 0;
         for (FileChangeModel file : CollectionUtils.emptyIfNull(submission.getFiles())) {
             for (CodeUnitModel unit : CollectionUtils.emptyIfNull(file.getCodeUnits())) {
-                units++;
-                Pair<String, String> unitKey = key(file.getPath(), unit.getName());
-                LlmScoringResponse.CodeBlockCategoryView label = labels.get(unitKey);
-                if (Objects.nonNull(label)) {
-                    matched.add(unitKey);
-                    if (Objects.isNull(unit.getCategory())) {
-                        resolved.put(unit, label);
+                if (LABELLED_OPERATIONS.contains(unit.getOperation())) {
+                    units++;
+                    Pair<String, String> unitKey = key(file.getPath(), unit.getName());
+                    LlmScoringResponse.CodeBlockCategoryView label = labels.get(unitKey);
+                    if (Objects.nonNull(label)) {
+                        matched.add(unitKey);
+                        if (Objects.isNull(unit.getCategory())) {
+                            resolved.put(unit, label);
+                        }
                     }
                 }
             }
@@ -290,8 +299,9 @@ public class LocalReviewModels {
 
     /**
      * What applying the review's labels did: the labels the reviewers returned, the code units they labelled, the
-     * submission's code units, and the labels that named no code unit (file#signature, as compared), which is the
-     * evidence for signature or path drift between the reviewers and the analysis.
+     * submission's units a review labels (added or changed), and the labels that named no such unit
+     * (file#signature, as compared), which is the evidence for signature or path drift between the reviewers and the
+     * analysis.
      */
     @Value
     public static class Labelling {

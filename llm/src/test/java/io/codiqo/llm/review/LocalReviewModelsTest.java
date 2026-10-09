@@ -319,8 +319,27 @@ class LocalReviewModelsTest {
         assertEquals(6, model.getRequiresSeniorReview());
         assertEquals(List.of("changes a shared contract"), model.getSeniorReviewReasons());
     }
+    /**
+     * A method moved into a nested class leaves a deleted unit and a new one with the same name in the same file: the
+     * label is the new unit's, and a deleted unit, which is priced as a deletion, is never labelled.
+     */
+    @Test
+    void aDeletedUnitNeverTakesTheLabelOfANewOneWithItsName() {
+        CodeUnitModel removed = unit("report()").signature("Watchdog.report()V").operation(CodeUnitModel.OperationEnum.DELETE);
+        CodeUnitModel added = unit("report()").signature("Watchdog$Task.report()V").operation(CodeUnitModel.OperationEnum.NEW);
+        AnalysisSubmissionModel submission = new AnalysisSubmissionModel().files(List.of(
+                new FileChangeModel().path("src/main/java/com/example/Watchdog.java").codeUnits(List.of(removed, added))));
+
+        LocalReviewModels.Labelling labelling = LocalReviewModels.applyBlockCategories(submission, assessed(
+                label("src/main/java/com/example/Watchdog.java", "report()", LlmScoringResponse.CodeBlockCategory.SUBSTANTIVE)));
+
+        assertEquals(CodeUnitModel.CategoryEnum.SUBSTANTIVE, added.getCategory());
+        assertNull(removed.getCategory());
+        assertEquals(1, labelling.getApplied());
+        assertEquals(1, labelling.getUnits());
+    }
     private static CodeUnitModel unit(String name) {
-        return new CodeUnitModel().name(name).signature("sig:" + name);
+        return new CodeUnitModel().name(name).signature("sig:" + name).operation(CodeUnitModel.OperationEnum.MODIFY);
     }
     private static LlmScoringResponse.CodeBlockCategoryView label(String file, String signature, LlmScoringResponse.CodeBlockCategory category) {
         return LlmScoringResponse.CodeBlockCategoryView.builder().file(file).signature(signature).category(category).build();
