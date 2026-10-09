@@ -668,8 +668,9 @@ public class RunArgs {
 
     /**
      * Comma-separated author emails to analyze, matched <b>exactly</b> — no wildcards, unlike
-     * {@link #excludeAuthorEmails}. Empty accepts everyone. On a merge node the filter sees the side-branch sole
-     * author rather than whoever clicked merge, so a bot merge does not drop a developer's work.
+     * {@link #excludeAuthorEmails}. Empty accepts everyone. On a merge node the filter sees the author the merge
+     * is credited to ({@code JGit.creditedAuthor}) rather than whoever clicked merge, so a bot merge does not drop a
+     * developer's work.
      */
     @Nullable
     private String includeAuthorEmails;
