@@ -441,6 +441,13 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
 
         log.info("identified %d potentially affected symbols and %d removed code units", identified.get(), removed);
     }
+    /**
+     * the extensions of the languages a registry loads, known before one is built: a commit that changes none of them
+     * (and no supported config file) is excluded after the build, so the local review is not started for it
+     */
+    public static Set<String> supportedExtensions() {
+        return Sets.newHashSet(JavaLanguageSpec.supportedExtensions());
+    }
     private static int identifyRemoved(LanguageSpec processor, ProjectSpec owner, Map<GitFileAnalysis, Set<Integer>> removedLinesByFile) throws IOException {
         List<PreviousRevision> revisions = removedLinesByFile.keySet().stream()
                 .map(gitAnalysis -> new PreviousRevision(gitAnalysis.getFile(), gitAnalysis.getOldPath(), gitAnalysis.getContentBefore()))

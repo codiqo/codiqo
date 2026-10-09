@@ -116,7 +116,7 @@ public class AnalysisEngine {
         Log log = logFactory.getLogger(AnalysisEngine.class);
         try (Repository git = JGit.openRepository(new File(request.getRootDir()))) {
             args.setGit(git);
-            args.setDefaultBranch(JGit.currentBranchOrDefault(git));
+            JGit.currentBranchOrDefault(git).ifPresent(args::setDefaultBranch);
             args.setCommitId(resolveCommitId(request, git));
             args.setHotspotsCommitId(JGit.resolveCommit(git, Optional.ofNullable(request.getHotspotsCommitId()).orElse(Constants.HEAD)));
 

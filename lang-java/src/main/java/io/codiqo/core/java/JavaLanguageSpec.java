@@ -967,6 +967,10 @@ public class JavaLanguageSpec implements LanguageSpec {
 
         return toReturn;
     }
+    /** the file extensions this language reads, known without building a spec */
+    public static List<String> supportedExtensions() {
+        return JavaLanguageModule.getInstance().getExtensions();
+    }
     @VisibleForTesting
     public static boolean expectsCoverage(ProjectSpec project) throws IOException {
         /**
