@@ -42,7 +42,7 @@ jobs:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
-        run: mvn -B -Prelease clean deploy
+        run: mvn -B -Prelease clean deploy -Dmaven.repository.credentialScope=id
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
