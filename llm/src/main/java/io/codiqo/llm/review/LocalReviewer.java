@@ -27,6 +27,7 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.llm.client.LlmJson;
 import io.codiqo.llm.schema.LlmScoringResponse;
+import io.codiqo.util.ProgressStage;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.Value;
@@ -86,55 +87,60 @@ public class LocalReviewer {
         try (OpenCodeServer server = OpenCodeServer.start(args, OpenCodeReviewConfig.build(args, effective, conventionGuidance), workTree, log)) {
             try (OpenCodeClient client = new OpenCodeClient(server.getUrl(), server.getPassword(), args.getReviewTimeout())) {
                 String sessionId = client.createSession(workTree, OpenCodeReviewConfig.COORDINATOR, "codiqo review " + StringUtils.left(sha, SHORT_SHA));
-                log.info("reviewing %s with %s (coordinator session %s) and %s (reviewers)", sha, args.getReviewCoordinatorModel(), sessionId, args.getReviewReviewerModel());
-                client.prompt(sessionId, OpenCodeReviewConfig.reviewPrompt(sha));
-                client.awaitIdle(sessionId);
-
-                String answer = client.finalAnswer(sessionId);
-                Optional<JacksonException> unreadable = unreadable(answer, args.isReviewAssess());
-                if (unreadable.isPresent()) {
-                    /** One slip, such as an unclosed string in a long answer, must not cost a review the agents already finished. */
-                    log.warn("the coordinator's answer is not valid JSON (%s); asking it to correct the answer", unreadable.get().getOriginalMessage());
-                    client.prompt(sessionId, OpenCodeReviewConfig.repairPrompt(unreadable.get().getOriginalMessage()));
+                LocalReview review;
+                try (ProgressStage stage = ProgressStage.start(args, "review")) {
+                    log.info("reviewing %s with %s (coordinator session %s) and %s (reviewers)", sha, args.getReviewCoordinatorModel(), sessionId, args.getReviewReviewerModel());
+                    client.prompt(sessionId, OpenCodeReviewConfig.reviewPrompt(sha));
                     client.awaitIdle(sessionId);
-                    answer = client.finalAnswer(sessionId);
-                }
 
-                List<SessionUsage> sessions = Lists.newArrayList();
-                sessions.add(withConfiguredModel(client.usage(sessionId)));
-                for (SessionUsage child : client.childUsage(sessionId)) {
-                    sessions.add(withConfiguredModel(child));
-                }
-
-                ReviewerAnswers reviewers = reviewerAnswers(client, sessions);
-                if (CollectionUtils.isNotEmpty(reviewers.getUnanswered())) {
-                    log.warn("%d of %d reviewer sessions ended without an answer: %s",
-                            reviewers.getUnanswered().size(),
-                            reviewers.getTotal(),
-                            reviewers.getUnanswered());
-                }
-
-                LlmScoringResponse.Bugs bugs;
-                LlmScoringResponse assessment = null;
-                try {
-                    bugs = readBugs(answer);
-                    if (args.isReviewAssess()) {
-                        assessment = LlmJson.readAnswerIgnoring(answer, LlmScoringResponse.class, BLOCK_CATEGORIES);
-                        assessment.setBlockCategories(reviewers.getBlockCategories());
+                    String answer = client.finalAnswer(sessionId);
+                    Optional<JacksonException> unreadable = unreadable(answer, args.isReviewAssess());
+                    if (unreadable.isPresent()) {
+                        /** One slip, such as an unclosed string in a long answer, must not cost a review the agents already finished. */
+                        log.warn("the coordinator's answer is not valid JSON (%s); asking it to correct the answer", unreadable.get().getOriginalMessage());
+                        client.prompt(sessionId, OpenCodeReviewConfig.repairPrompt(unreadable.get().getOriginalMessage()));
+                        client.awaitIdle(sessionId);
+                        answer = client.finalAnswer(sessionId);
                     }
-                } catch (JacksonException err) {
-                    throw new IOException("the review answer holds no findings object: " + StringUtils.abbreviate(answer, RunArgs.REVIEW_ANSWER_PREVIEW), err);
+
+                    List<SessionUsage> sessions = Lists.newArrayList();
+                    sessions.add(withConfiguredModel(client.usage(sessionId)));
+                    for (SessionUsage child : client.childUsage(sessionId)) {
+                        sessions.add(withConfiguredModel(child));
+                    }
+
+                    ReviewerAnswers reviewers = reviewerAnswers(client, sessions);
+                    if (CollectionUtils.isNotEmpty(reviewers.getUnanswered())) {
+                        log.warn("%d of %d reviewer sessions ended without an answer: %s",
+                                reviewers.getUnanswered().size(),
+                                reviewers.getTotal(),
+                                reviewers.getUnanswered());
+                    }
+
+                    LlmScoringResponse.Bugs bugs;
+                    LlmScoringResponse assessment = null;
+                    try {
+                        bugs = readBugs(answer);
+                        if (args.isReviewAssess()) {
+                            assessment = LlmJson.readAnswerIgnoring(answer, LlmScoringResponse.class, BLOCK_CATEGORIES);
+                            assessment.setBlockCategories(reviewers.getBlockCategories());
+                        }
+                    } catch (JacksonException err) {
+                        throw new IOException("the review answer holds no findings object: " + StringUtils.abbreviate(answer, RunArgs.REVIEW_ANSWER_PREVIEW), err);
+                    }
+                    review = new LocalReview(
+                            sha,
+                            bugs,
+                            sessions,
+                            watch.getDuration(),
+                            answer,
+                            assessment,
+                            reviewers.getTotal(),
+                            reviewers.getUnanswered(),
+                            reviewers.getObservations());
+                    stage.detail(progressDetail(review));
+                    stage.succeeded();
                 }
-                LocalReview review = new LocalReview(
-                        sha,
-                        bugs,
-                        sessions,
-                        watch.getDuration(),
-                        answer,
-                        assessment,
-                        reviewers.getTotal(),
-                        reviewers.getUnanswered(),
-                        reviewers.getObservations());
 
                 Optional<FindingTriage> triage = Optional.empty();
                 if (findings.isPresent()) {
@@ -150,30 +156,45 @@ public class LocalReviewer {
             return Optional.empty();
         }
 
-        String forkId = client.fork(sessionId);
-        log.info("triaging %d static-analysis findings in session %s, a fork of %s", findings.size(), forkId, sessionId);
-        client.prompt(forkId, OpenCodeReviewConfig.triagePrompt(LlmJson.responseMapper().writeValueAsString(findings)));
-        client.awaitIdle(forkId);
-
-        String answer = client.finalAnswer(forkId);
         FindingTriage toReturn;
-        try {
-            toReturn = LlmJson.readAnswer(answer, FindingTriage.class);
-        } catch (JacksonException err) {
-            log.warn("the triage answer is not valid JSON (%s); asking for a corrected answer", err.getOriginalMessage());
-            client.prompt(forkId, OpenCodeReviewConfig.repairPrompt(err.getOriginalMessage()));
+        try (ProgressStage stage = ProgressStage.start(args, "triage")) {
+            String forkId = client.fork(sessionId);
+            log.info("triaging %d static-analysis findings in session %s, a fork of %s", findings.size(), forkId, sessionId);
+            client.prompt(forkId, OpenCodeReviewConfig.triagePrompt(LlmJson.responseMapper().writeValueAsString(findings)));
             client.awaitIdle(forkId);
-            answer = client.finalAnswer(forkId);
+
+            String answer = client.finalAnswer(forkId);
             try {
                 toReturn = LlmJson.readAnswer(answer, FindingTriage.class);
-            } catch (JacksonException again) {
-                throw new IOException("the triage answer holds no verdicts: " + StringUtils.abbreviate(answer, RunArgs.REVIEW_ANSWER_PREVIEW), again);
+            } catch (JacksonException err) {
+                log.warn("the triage answer is not valid JSON (%s); asking for a corrected answer", err.getOriginalMessage());
+                client.prompt(forkId, OpenCodeReviewConfig.repairPrompt(err.getOriginalMessage()));
+                client.awaitIdle(forkId);
+                answer = client.finalAnswer(forkId);
+                try {
+                    toReturn = LlmJson.readAnswer(answer, FindingTriage.class);
+                } catch (JacksonException again) {
+                    throw new IOException("the triage answer holds no verdicts: " + StringUtils.abbreviate(answer, RunArgs.REVIEW_ANSWER_PREVIEW), again);
+                }
             }
+            toReturn.setAnswer(answer);
+            toReturn.setUsage(withConfiguredModel(client.usage(forkId)));
+            toReturn.setFindings(findings);
+            stage.detail(String.format("%d verdicts on %d findings", toReturn.getVerdicts().size(), findings.size()));
+            stage.succeeded();
         }
-        toReturn.setAnswer(answer);
-        toReturn.setUsage(withConfiguredModel(client.usage(forkId)));
-        toReturn.setFindings(findings);
         return Optional.of(toReturn);
+    }
+    @VisibleForTesting
+    public static String progressDetail(LocalReview review) {
+        LlmScoringResponse.Bugs bugs = review.getBugs();
+        return String.format("%d bugs, %d sessions, %d of %d reviewers unanswered, %d input / %d output tokens",
+                bugs.getBlocking().size() + bugs.getMajor().size() + bugs.getMinor().size(),
+                review.getSessions().size(),
+                review.getUnansweredReviewers().size(),
+                review.getReviewers(),
+                review.totalInputTokens(),
+                review.totalOutputTokens());
     }
     private static List<StaticFinding> awaitFindings(FindingsSource source) throws IOException {
         try {
