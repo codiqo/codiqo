@@ -84,8 +84,8 @@ public class LocalReviewModels {
         }
         return toReturn;
     }
-    public int applyBlockCategories(AnalysisSubmissionModel submission, LocalReview review) {
-        Map<Pair<String, String>, LlmScoringResponse.CodeBlockCategoryView> labels = Maps.newHashMap();
+    public Labelling applyBlockCategories(AnalysisSubmissionModel submission, LocalReview review) {
+        Map<Pair<String, String>, LlmScoringResponse.CodeBlockCategoryView> labels = Maps.newLinkedHashMap();
         for (LlmScoringResponse.CodeBlockCategoryView view : CollectionUtils.emptyIfNull(review.getAssessment().getBlockCategories())) {
             if (Objects.nonNull(view.getCategory())) {
                 labels.putIfAbsent(key(view.getFile(), view.getSignature()), view);
@@ -93,11 +93,18 @@ public class LocalReviewModels {
         }
 
         Map<CodeUnitModel, LlmScoringResponse.CodeBlockCategoryView> resolved = new IdentityHashMap<>();
+        Set<Pair<String, String>> matched = Sets.newHashSet();
+        int units = 0;
         for (FileChangeModel file : CollectionUtils.emptyIfNull(submission.getFiles())) {
             for (CodeUnitModel unit : CollectionUtils.emptyIfNull(file.getCodeUnits())) {
-                LlmScoringResponse.CodeBlockCategoryView label = labels.get(key(file.getPath(), unit.getName()));
-                if (BooleanUtils.and(new boolean[] { Objects.nonNull(label), Objects.isNull(unit.getCategory()) })) {
-                    resolved.put(unit, label);
+                units++;
+                Pair<String, String> unitKey = key(file.getPath(), unit.getName());
+                LlmScoringResponse.CodeBlockCategoryView label = labels.get(unitKey);
+                if (Objects.nonNull(label)) {
+                    matched.add(unitKey);
+                    if (Objects.isNull(unit.getCategory())) {
+                        resolved.put(unit, label);
+                    }
                 }
             }
         }
@@ -108,7 +115,12 @@ public class LocalReviewModels {
                 unit.setCategoryReason(StringUtils.trimToNull(label.getReason()));
             }
         });
-        return resolved.size();
+
+        List<String> unmatched = labels.keySet().stream()
+                .filter(labelKey -> BooleanUtils.isFalse(matched.contains(labelKey)))
+                .map(labelKey -> labelKey.getLeft() + "#" + labelKey.getRight())
+                .toList();
+        return new Labelling(labels.size(), resolved.size(), units, unmatched);
     }
     private static String reasoning(LocalReview review, Optional<FindingTriage> triage) {
         Context ctx = new Context();
@@ -276,6 +288,18 @@ public class LocalReviewModels {
         return Pair.of(path, JavaSignatures.comparable(StringUtils.defaultString(signature), FilenameUtils.getBaseName(path)));
     }
 
+    /**
+     * What applying the review's labels did: the labels the reviewers returned, the code units they labelled, the
+     * submission's code units, and the labels that named no code unit (file#signature, as compared), which is the
+     * evidence for signature or path drift between the reviewers and the analysis.
+     */
+    @Value
+    public static class Labelling {
+        int returned;
+        int applied;
+        int units;
+        List<String> unmatched;
+    }
     @Value
     public static class TriageDigest {
         int checked;

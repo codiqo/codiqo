@@ -8,6 +8,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
@@ -50,6 +51,9 @@ import io.codiqo.util.ProgressStage;
         threadSafe = true,
         aggregator = true)
 public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
+    /** enough unmatched labels to show the drift, few enough to keep the log readable */
+    private static final int UNMATCHED_LABEL_SAMPLE = 10;
+
     @Parameter(property = "codiqo.apiUrl", defaultValue = RunArgs.DEFAULT_API_URL)
     private String apiUrl;
 
@@ -181,8 +185,18 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
              */
             LocalReviewModel model = LocalReviewModels.toModel(finished, reviewed.getTriage());
             if (Objects.nonNull(finished.getAssessment())) {
-                int labelled = LocalReviewModels.applyBlockCategories(ctx.getSubmissionModel(), finished);
-                getLog().info(String.format("local review labelled %d of the submission's code units", labelled));
+                LocalReviewModels.Labelling labelling = LocalReviewModels.applyBlockCategories(ctx.getSubmissionModel(), finished);
+                getLog().info(String.format("local review labelled %d of the submission's %d code units, from %d labels",
+                        labelling.getApplied(), labelling.getUnits(), labelling.getReturned()));
+                if (labelling.getReturned() == 0) {
+                    // the server applies the review's judgment, so a review without labels is scored as all MECHANICAL
+                    getLog().warn("the local review returned no code-unit labels: every unit of this commit is scored as MECHANICAL");
+                }
+                if (CollectionUtils.isNotEmpty(labelling.getUnmatched())) {
+                    getLog().warn(String.format("%d local review label(s) named no code unit of the submission and were dropped: %s",
+                            labelling.getUnmatched().size(),
+                            labelling.getUnmatched().stream().limit(UNMATCHED_LABEL_SAMPLE).toList()));
+                }
             }
             ctx.getSubmissionModel().setLocalReview(model);
         }

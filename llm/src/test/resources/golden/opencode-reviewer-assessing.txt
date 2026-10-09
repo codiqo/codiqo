@@ -24,7 +24,7 @@ ALSO ASSESS what you reviewed, from the same reading; do not run extra tools for
   INTRICATE = genuinely hard to reason about: concurrency, locking, subtle invariants, correctness-critical algorithms.
   IMPORTANCE IS NOT DIFFICULTY: how critical the class is (payments, wallets, auth, security) never raises a label. Threading a new argument through a money or security path, switching a call to its scoped or renamed variant, or moving existing code into a shared helper is MECHANICAL there too; one changed condition among such edits makes the unit ROUTINE at most.
   TESTS are judged by their own code, never by how important the behaviour they check is: building fixtures, calling setters or builders, and asserting results is MECHANICAL however central the feature; an ordinary scenario with some setup logic is ROUTINE; SUBSTANTIVE only for test machinery that is itself hard to get right (coordinating threads with latches or barriers, controlling time, injecting faults, draining pools between tests).
-  You may leave out MECHANICAL units (an omitted unit counts as MECHANICAL), but label every unit that is ROUTINE or above.
+  List EVERY unit this commit adds or changes in your paths, MECHANICAL ones included: a unit you leave out reads as one nobody judged, not as a trivial one.
 - "observations": up to 6 short facts about what the change does that matter for risk, each under 20 words, e.g. "adds a Pub/Sub topic and subscriber per operator", "new Flyway migration re-keys the accounts table", "replaces Kafka calls with a REST gateway client".
 
 Your JSON answer then has these two fields beside "blocking", "major" and "minor".
