@@ -3,6 +3,8 @@ package io.codiqo.core;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.nio.file.Path;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.eclipse.jgit.api.Git;
 import org.junit.jupiter.api.Test;
@@ -29,5 +31,12 @@ class DefaultLanguageProcessorsExtensionsTest {
                 assertEquals(DefaultLanguageProcessors.supportedExtensions(), Sets.newHashSet(processors.extensions()));
             }
         }
+    }
+    /** a language registered without its review language would be reviewed as one of no registered language */
+    @Test
+    void everySupportedExtensionHasAReviewLanguage() {
+        Set<String> reviewed = DefaultLanguageProcessors.reviewLanguages().stream().flatMap(language -> language.extensions().stream()).collect(Collectors.toSet());
+
+        assertEquals(DefaultLanguageProcessors.supportedExtensions(), reviewed);
     }
 }

@@ -1,6 +1,7 @@
 package io.codiqo.llm;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
@@ -9,11 +10,15 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.apache.commons.lang3.tuple.Pair;
 
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import io.codiqo.llm.client.LlmJson;
 import io.codiqo.llm.schema.LlmScoringResponse;
+import io.codiqo.llm.schema.LlmScoringResponse.CodeBlockCategorySource;
+import io.codiqo.llm.schema.LlmScoringResponse.CodeBlockCategoryView;
 import io.codiqo.llm.schema.LlmScoringResponse.DimensionScore;
 import io.codiqo.llm.schema.LlmScoringResponse.QualityDimensions;
 import lombok.experimental.UtilityClass;
@@ -25,7 +30,7 @@ import lombok.experimental.UtilityClass;
  * <p>What the agents cannot see stays with the response: testing coverage needs the build's coverage, and the diff
  * classification needs the numbered diff. A gate verdict the response already has is kept per dimension even when the
  * score is replaced, the review's own verdict fills a dimension the response did not judge, and a dimension the review
- * did not score keeps the response's.
+ * did not score keeps the response's. A code unit the review did not label keeps the response's label.
  */
 @UtilityClass
 public class LocalAssessment {
@@ -60,8 +65,7 @@ public class LocalAssessment {
         if (Objects.nonNull(local.getQualityDimensions())) {
             overlayDimensions(target, local.getQualityDimensions());
         }
-        /** The review's labels are the whole judgment: a unit it left out is MECHANICAL, as one the prompt left out was. */
-        target.setBlockCategories(CollectionUtils.emptyIfNull(local.getBlockCategories()).stream().toList());
+        target.setBlockCategories(blockCategories(target, local));
         if (Objects.nonNull(local.getQualityMultiplier()) && Objects.nonNull(local.getQualityMultiplier().getArchitectureAnalysis())) {
             overlayArchitecture(target, local.getQualityMultiplier().getArchitectureAnalysis());
         }
@@ -81,6 +85,35 @@ public class LocalAssessment {
     /** A copy to score separately, for comparing the two scores without either computation touching the other. */
     public LlmScoringResponse copy(LlmScoringResponse response) {
         return LlmJson.responseMapper().convertValue(response, LlmScoringResponse.class);
+    }
+    /**
+     * The review's labels, and the response's for the units the review left unlabelled, each marked with its source: a
+     * review that labels few units, or none, does not discount the rest to MECHANICAL while the prompt judged them. Without
+     * a prompt (the response is empty) a unit the review left out stays MECHANICAL.
+     *
+     * <p>One label per unit leaves here, the last one either source gave for it. The scoring
+     * ({@code FinalScoreCalculator.buildPerBlockCoeff}) and the server's {@code persistBlockCategories} both keep the last
+     * of repeated labels; keeping the first here made a prompt that repeated a unit price it with one category while the
+     * stored label said another, so a review that labelled nothing still changed the score (67.0 against 37.0 for a
+     * unit labelled MECHANICAL, then INTRICATE).
+     */
+    private static List<CodeBlockCategoryView> blockCategories(LlmScoringResponse target, LlmScoringResponse local) {
+        Map<Pair<String, String>, CodeBlockCategoryView> labels = Maps.newLinkedHashMap();
+        for (CodeBlockCategoryView view : CollectionUtils.emptyIfNull(local.getBlockCategories())) {
+            if (Objects.nonNull(view.getCategory())) {
+                labels.put(VolumeScoreCalculator.blockKey(view.getFile(), view.getSignature()), view.toBuilder().source(CodeBlockCategorySource.LOCAL_REVIEW).build());
+            }
+        }
+
+        Map<Pair<String, String>, CodeBlockCategoryView> prompted = Maps.newLinkedHashMap();
+        for (CodeBlockCategoryView view : CollectionUtils.emptyIfNull(target.getBlockCategories())) {
+            Pair<String, String> key = VolumeScoreCalculator.blockKey(view.getFile(), view.getSignature());
+            if (BooleanUtils.and(new boolean[] { Objects.nonNull(view.getCategory()), !labels.containsKey(key) })) {
+                prompted.put(key, view.toBuilder().source(CodeBlockCategorySource.PROMPT).build());
+            }
+        }
+        labels.putAll(prompted);
+        return Lists.newArrayList(labels.values());
     }
     /** The review's findings; what they cost is computed from them, never copied. */
     private static void overlayArchitecture(LlmScoringResponse target, LlmScoringResponse.ArchitectureAnalysis local) {

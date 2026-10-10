@@ -1,6 +1,9 @@
 package io.codiqo.llm.review;
 
+import static java.util.function.Predicate.not;
+
 import java.nio.file.Paths;
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -19,12 +22,15 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.thymeleaf.context.Context;
 
+import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.MultimapBuilder;
 import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
-import io.codiqo.api.code.JavaSignatures;
+import io.codiqo.api.review.ReviewLanguage;
+import io.codiqo.api.review.UnitName;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.BugModel;
 import io.codiqo.client.model.BugsModel;
@@ -37,6 +43,7 @@ import io.codiqo.client.model.LocalReviewSessionModel;
 import io.codiqo.llm.FindingKey;
 import io.codiqo.llm.LlmResponseMapper;
 import io.codiqo.llm.PromptTemplates;
+import io.codiqo.llm.StaticAnalysisLists;
 import io.codiqo.llm.client.LlmJson;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import lombok.Data;
@@ -91,32 +98,72 @@ public class LocalReviewModels {
         }
         return toReturn;
     }
-    public Labelling applyBlockCategories(AnalysisSubmissionModel submission, LocalReview review) {
-        Map<Pair<String, String>, LlmScoringResponse.CodeBlockCategoryView> labels = Maps.newLinkedHashMap();
+    /**
+     * A label names its unit by file and member, compared in the form the file's language gives both, and the containers
+     * the reviewer wrote choose among the file's added or changed units of that member, in three rounds: first the
+     * labels whose containers name exactly one unit, then those that name one once an anonymous class is read as any
+     * name, and last a label whose member only one unit has, whatever containers it wrote. A unit an earlier round
+     * labelled is not offered again, so a label naming a unit exactly is never displaced by one that only guessed it.
+     * Several anonymous units the containers cannot tell apart (two enum constants' bodies) carry nothing in their
+     * descriptors a reviewer could write, but the compiler numbers them in source order, the order reviewers list them
+     * in: each label takes the first of them still free, and the ones no label took share the last label given to the
+     * group. Several named ones take nothing, rather than a label each was not given. A label repeated for one name
+     * keeps its last category, as the scoring does.
+     */
+    public Labelling applyBlockCategories(AnalysisSubmissionModel submission, LocalReview review, Collection<ReviewLanguage> languages) {
+        ListMultimap<Pair<String, String>, Pair<UnitName, CodeUnitModel>> byMember = MultimapBuilder.hashKeys().arrayListValues().build();
+        int units = 0;
+        for (FileChangeModel file : CollectionUtils.emptyIfNull(submission.getFiles())) {
+            String path = normalized(file.getPath());
+            ReviewLanguage language = ReviewLanguages.of(path, languages);
+            for (CodeUnitModel unit : CollectionUtils.emptyIfNull(file.getCodeUnits())) {
+                if (LABELLED_OPERATIONS.contains(unit.getOperation())) {
+                    units++;
+                    UnitName name = language.unit(unit.getName(), unit.getSignature(), path);
+                    byMember.put(Pair.of(path, name.getMember()), Pair.of(name, unit));
+                }
+            }
+        }
+
+        Map<Pair<String, UnitName>, LlmScoringResponse.CodeBlockCategoryView> labels = Maps.newLinkedHashMap();
         for (LlmScoringResponse.CodeBlockCategoryView view : CollectionUtils.emptyIfNull(review.getAssessment().getBlockCategories())) {
             if (Objects.nonNull(view.getCategory())) {
-                labels.putIfAbsent(key(view.getFile(), view.getSignature()), view);
+                String path = normalized(view.getFile());
+                labels.put(Pair.of(path, ReviewLanguages.of(path, languages).labelled(view.getSignature(), path)), view);
             }
         }
 
         Map<CodeUnitModel, LlmScoringResponse.CodeBlockCategoryView> resolved = new IdentityHashMap<>();
-        Set<Pair<String, String>> matched = Sets.newHashSet();
-        int units = 0;
-        for (FileChangeModel file : CollectionUtils.emptyIfNull(submission.getFiles())) {
-            for (CodeUnitModel unit : CollectionUtils.emptyIfNull(file.getCodeUnits())) {
-                if (LABELLED_OPERATIONS.contains(unit.getOperation())) {
-                    units++;
-                    Pair<String, String> unitKey = key(file.getPath(), unit.getName());
-                    LlmScoringResponse.CodeBlockCategoryView label = labels.get(unitKey);
-                    if (Objects.nonNull(label)) {
-                        matched.add(unitKey);
-                        if (Objects.isNull(unit.getCategory())) {
-                            resolved.put(unit, label);
-                        }
-                    }
+        Set<CodeUnitModel> claimed = Sets.newIdentityHashSet();
+        Map<CodeUnitModel, LlmScoringResponse.CodeBlockCategoryView> shared = new IdentityHashMap<>();
+        Map<Pair<String, UnitName>, LlmScoringResponse.CodeBlockCategoryView> pending = Maps.newLinkedHashMap(labels);
+        for (EnumSet<UnitName.Match> accepted : List.of(EnumSet.of(UnitName.Match.EXACT), EnumSet.of(UnitName.Match.EXACT, UnitName.Match.LOOSE))) {
+            pending.entrySet().removeIf(entry -> {
+                UnitName named = entry.getKey().getRight();
+                List<Pair<UnitName, CodeUnitModel>> candidates = byMember.get(Pair.of(entry.getKey().getLeft(), named.getMember())).stream()
+                        .filter(candidate -> accepted.contains(candidate.getLeft().match(named)))
+                        .filter(not(candidate -> claimed.contains(candidate.getRight())))
+                        .toList();
+                boolean chosen = BooleanUtils.or(new boolean[] { candidates.size() == 1, candidates.size() > 1 && candidates.stream().allMatch(candidate -> candidate.getLeft().isAnonymous()) });
+                if (chosen) {
+                    claim(candidates.getFirst().getRight(), entry.getValue(), claimed, resolved);
+                    candidates.stream().skip(1).forEach(candidate -> shared.put(candidate.getRight(), entry.getValue()));
                 }
-            }
+                return chosen;
+            });
         }
+
+        List<String> unmatched = Lists.newArrayList();
+        pending.forEach((labelKey, label) -> {
+            UnitName named = labelKey.getRight();
+            List<Pair<UnitName, CodeUnitModel>> candidates = byMember.get(Pair.of(labelKey.getLeft(), named.getMember()));
+            if (candidates.size() == 1 && claim(candidates.getFirst().getRight(), label, claimed, resolved)) {
+                return;
+            }
+            String container = named.getContainer().stream().map(step -> step + '.').collect(Collectors.joining());
+            unmatched.add(labelKey.getLeft() + "#" + container + named.getMember());
+        });
+        shared.forEach((unit, label) -> claim(unit, label, claimed, resolved));
         resolved.forEach((unit, label) -> {
             unit.setCategory(CodeUnitModel.CategoryEnum.fromValue(label.getCategory().name()));
             /** a reason is asked for only above MECHANICAL; one the model gave anyway says nothing a reader needs */
@@ -124,11 +171,6 @@ public class LocalReviewModels {
                 unit.setCategoryReason(StringUtils.trimToNull(label.getReason()));
             }
         });
-
-        List<String> unmatched = labels.keySet().stream()
-                .filter(labelKey -> BooleanUtils.isFalse(matched.contains(labelKey)))
-                .map(labelKey -> labelKey.getLeft() + "#" + labelKey.getRight())
-                .toList();
         return new Labelling(labels.size(), resolved.size(), units, unmatched);
     }
     private static String reasoning(LocalReview review, Optional<FindingTriage> triage) {
@@ -196,27 +238,33 @@ public class LocalReviewModels {
         for (FindingVerdict verdict : triage.getVerdicts()) {
             StaticFinding finding = asked.remove(FindingKey.of(verdict.getTool(), verdict.getRule(), verdict.getFile(), verdict.getLine()));
             if (BooleanUtils.and(new boolean[] { Objects.nonNull(finding), Objects.nonNull(verdict.getVerdict()) })) {
-                boolean pmd = DiagnosticModel.ToolEnum.PMD.getValue().equals(finding.getTool());
-                LlmScoringResponse.FindingSeverity toolSeverity = findingSeverity(finding.getSeverity());
-                LlmScoringResponse.FindingSeverity severity = toolSeverity;
-                List<LlmScoringResponse.StaticAnalysisFinding> list = pmd ? toReturn.getPmdInChangedLines() : toReturn.getSpotbugsInChangedLines();
-                if (verdict.getVerdict() == FindingVerdict.Verdict.FALSE_POSITIVE) {
-                    list = pmd ? toReturn.getPmdFalsePositives() : toReturn.getSpotbugsFalsePositives();
-                    severity = LlmScoringResponse.FindingSeverity.INFO;
-                } else if (verdict.getVerdict() == FindingVerdict.Verdict.HARMLESS) {
-                    severity = LlmScoringResponse.FindingSeverity.INFO;
-                }
-                list.add(LlmScoringResponse.StaticAnalysisFinding.builder()
-                        .rule(finding.getRule())
-                        .file(finding.getFile())
-                        .line(finding.getLine())
-                        .assessment(verdict.getReason())
-                        .severity(severity)
-                        .toolSeverity(toolSeverity)
-                        .build());
+                StaticAnalysisLists.of(finding.getTool()).ifPresent(lists -> place(toReturn, lists, finding, verdict));
             }
         }
         return toReturn;
+    }
+    /**
+     * A verdict goes into its tool's list, a false positive into the tool's false-positive list. A finding of a tool
+     * without lists ({@link StaticAnalysisLists}) has no place: {@link StaticFindings} never asks about one, and one a
+     * user-supplied findings file carries is left out of the review rather than failing the submission after the triage.
+     */
+    private static void place(LlmScoringResponse.StaticAnalysisReview review, StaticAnalysisLists.ToolLists lists, StaticFinding finding, FindingVerdict verdict) {
+        LlmScoringResponse.FindingSeverity toolSeverity = findingSeverity(finding.getSeverity());
+        LlmScoringResponse.FindingSeverity severity = toolSeverity;
+        boolean falsePositive = verdict.getVerdict() == FindingVerdict.Verdict.FALSE_POSITIVE;
+        if (falsePositive) {
+            severity = LlmScoringResponse.FindingSeverity.INFO;
+        } else if (verdict.getVerdict() == FindingVerdict.Verdict.HARMLESS) {
+            severity = LlmScoringResponse.FindingSeverity.INFO;
+        }
+        (falsePositive ? lists.getFalsePositives() : lists.getInChangedLines()).apply(review).add(LlmScoringResponse.StaticAnalysisFinding.builder()
+                .rule(finding.getRule())
+                .file(finding.getFile())
+                .line(finding.getLine())
+                .assessment(verdict.getReason())
+                .severity(severity)
+                .toolSeverity(toolSeverity)
+                .build());
     }
     private static LocalAssessmentModel toModel(LlmScoringResponse assessment) {
         LocalAssessmentModel toReturn = new LocalAssessmentModel();
@@ -292,16 +340,26 @@ public class LocalReviewModels {
         toReturn.setReasoningTokens(session.getReasoningTokens());
         return toReturn;
     }
-    private static Pair<String, String> key(String file, String signature) {
-        String path = FilenameUtils.separatorsToUnix(Paths.get(StringUtils.defaultString(file)).normalize().toString());
-        return Pair.of(path, JavaSignatures.comparable(StringUtils.defaultString(signature), FilenameUtils.getBaseName(path)));
+    /**
+     * A unit a label names is not offered to another label, and takes the label unless it was labelled before the
+     * review. Whether the unit was still free to claim is returned.
+     */
+    private static boolean claim(CodeUnitModel unit, LlmScoringResponse.CodeBlockCategoryView label, Set<CodeUnitModel> claimed, Map<CodeUnitModel, LlmScoringResponse.CodeBlockCategoryView> resolved) {
+        boolean toReturn = claimed.add(unit);
+        if (BooleanUtils.and(new boolean[] { toReturn, Objects.isNull(unit.getCategory()) })) {
+            resolved.put(unit, label);
+        }
+        return toReturn;
+    }
+    private static String normalized(String file) {
+        return FilenameUtils.separatorsToUnix(Paths.get(StringUtils.defaultString(file)).normalize().toString());
     }
 
     /**
      * What applying the review's labels did: the labels the reviewers returned, the code units they labelled, the
-     * submission's units a review labels (added or changed), and the labels that named no such unit
-     * (file#signature, as compared), which is the evidence for signature or path drift between the reviewers and the
-     * analysis.
+     * submission's units a review labels (added or changed), and the labels that named no such unit, or several without
+     * a container to choose between them (file#signature, as compared), which is the evidence for signature or
+     * path drift between the reviewers and the analysis.
      */
     @Value
     public static class Labelling {

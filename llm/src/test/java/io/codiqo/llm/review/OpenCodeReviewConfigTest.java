@@ -15,23 +15,23 @@ import org.junit.jupiter.api.Test;
 
 import com.google.common.collect.Lists;
 
+import io.codiqo.llm.client.LlmJson;
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.GoldenText;
 import io.codiqo.llm.PromptFences;
-
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.node.ArrayNode;
-import tools.jackson.databind.node.JsonNodeFactory;
 import tools.jackson.databind.node.ObjectNode;
 
 class OpenCodeReviewConfigTest {
+    private static final List<String> NAMING_RULES = List.of("For a file of the test language, the signature is Container.member(params).");
+
     @Test
     void agentsUseTheConfiguredModelsAndProvider() throws Exception {
         RunArgs args = new RunArgs();
         args.setReviewCoordinatorModel("coordinator-model");
         args.setReviewReviewerModel("reviewer-model");
 
-        ObjectNode config = OpenCodeReviewConfig.build(args, endpoint("http://127.0.0.1:9/v1", null), StringUtils.EMPTY);
+        ObjectNode config = OpenCodeReviewConfig.build(args, endpoint("http://127.0.0.1:9/v1", null), StringUtils.EMPTY, NAMING_RULES);
 
         JsonNode provider = config.path("providers").path(OpenCodeReviewConfig.PROVIDER);
         assertEquals("http://127.0.0.1:9/v1", provider.path("settings").path("baseURL").asString());
@@ -46,9 +46,9 @@ class OpenCodeReviewConfigTest {
     }
     @Test
     void aKeyIsGivenToTheProviderOnlyWhenThereIsOne() throws Exception {
-        JsonNode withKey = OpenCodeReviewConfig.build(new RunArgs(), endpoint(RunArgs.DEFAULT_LLM_PROXY_URL, "relay-secret"), StringUtils.EMPTY)
+        JsonNode withKey = OpenCodeReviewConfig.build(new RunArgs(), endpoint(RunArgs.DEFAULT_LLM_PROXY_URL, "relay-secret"), StringUtils.EMPTY, NAMING_RULES)
                 .path("providers").path(OpenCodeReviewConfig.PROVIDER).path("settings");
-        JsonNode withoutKey = OpenCodeReviewConfig.build(new RunArgs(), endpoint(RunArgs.DEFAULT_LOCAL_LLM_URL, null), StringUtils.EMPTY)
+        JsonNode withoutKey = OpenCodeReviewConfig.build(new RunArgs(), endpoint(RunArgs.DEFAULT_LOCAL_LLM_URL, null), StringUtils.EMPTY, NAMING_RULES)
                 .path("providers").path(OpenCodeReviewConfig.PROVIDER).path("settings");
 
         assertEquals("relay-secret", withKey.path("apiKey").asString());
@@ -105,17 +105,25 @@ class OpenCodeReviewConfigTest {
     }
     @Test
     void theTriagePromptCarriesTheFindingsTheVerdictsAndTheSeverityRules() throws Exception {
-        ArrayNode findings = JsonNodeFactory.instance.arrayNode();
-        findings.addObject().put("rule", "NP_NONNULL_PARAM_VIOLATION");
-        String prompt = OpenCodeReviewConfig.triagePrompt(findings.toString());
+        List<StaticFinding> findings = List.of(new StaticFinding("spotbugs", "NP_NONNULL_PARAM_VIOLATION", "warning", "a/Service.java", 2, "flagged"));
+        String prompt = OpenCodeReviewConfig.triagePrompt(findings);
 
-        assertTrue(prompt.endsWith(findings.toString()), prompt);
+        assertTrue(prompt.endsWith(LlmJson.responseMapper().writeValueAsString(findings)), prompt);
+        assertTrue(prompt.contains("SpotBugs reported the findings below"), "the prompt names the tools of the findings it asks about");
         assertTrue(prompt.contains("\"verdict\":\"defect|harmless|false_positive\""), prompt);
         assertTrue(prompt.contains("Severity follows certainty and harm") && prompt.contains("JSON RULES"), "the same rules as the review");
         assertTrue(prompt.contains("SECURITY|"), "bug types are offered from BugType");
         for (String placeholder : List.of("[(", "[#", "[/]", "${")) {
             assertFalse(prompt.contains(placeholder), "unfilled placeholder " + placeholder);
         }
+    }
+    /** a findings file given to the review goal may name any tool, or none */
+    @Test
+    void theTriagePromptNamesEveryToolReadably() {
+        assertTrue(OpenCodeReviewConfig.triagePrompt(List.of(finding("pmd"), finding("spotbugs"), finding("checkstyle"), finding("pmd")))
+                .startsWith("The build has finished. PMD, SpotBugs and checkstyle reported the findings below"));
+        assertTrue(OpenCodeReviewConfig.triagePrompt(List.of(finding(null)))
+                .startsWith("The build has finished. Static analysis reported the findings below"));
     }
     @Test
     void anAssessingReviewAsksBothAgentsForTheirPiecesAndAPlainOneAsksNeither() throws Exception {
@@ -188,30 +196,33 @@ class OpenCodeReviewConfigTest {
                         "a reviewer must not start sub-agents of its own"));
     }
     private static JsonNode build(RunArgs args, String conventionGuidance) {
-        return OpenCodeReviewConfig.build(args, endpoint(args.getReviewBaseUrl(), null), conventionGuidance).path("agents");
+        return OpenCodeReviewConfig.build(args, endpoint(args.getReviewBaseUrl(), null), conventionGuidance, NAMING_RULES).path("agents");
     }
     /** the agents' prompts decide what a review finds, so each shape of them is pinned whole */
     @Test
     void theAgentPromptsAreRenderedExactly() throws Exception {
         RunArgs plain = new RunArgs();
         plain.setReviewAssess(false);
-        JsonNode bare = OpenCodeReviewConfig.build(plain, endpoint(RunArgs.DEFAULT_LOCAL_LLM_URL, null), StringUtils.EMPTY).path("agents");
+        JsonNode bare = OpenCodeReviewConfig.build(plain, endpoint(RunArgs.DEFAULT_LOCAL_LLM_URL, null), StringUtils.EMPTY, NAMING_RULES).path("agents");
         RunArgs assessing = new RunArgs();
         assessing.setReviewAssess(true);
-        JsonNode guided = OpenCodeReviewConfig.build(assessing, endpoint(RunArgs.DEFAULT_LOCAL_LLM_URL, null), "\n### AGENTS.md\n\nPrefer Optional over null returns.\n")
+        JsonNode guided = OpenCodeReviewConfig.build(assessing, endpoint(RunArgs.DEFAULT_LOCAL_LLM_URL, null), "\n### AGENTS.md\n\nPrefer Optional over null returns.\n", NAMING_RULES)
                 .path("agents");
 
         GoldenText.assertMatches("opencode-coordinator", bare.path(OpenCodeReviewConfig.COORDINATOR).path("system").asString());
         GoldenText.assertMatches("opencode-reviewer", bare.path(OpenCodeReviewConfig.REVIEWER).path("system").asString());
         GoldenText.assertMatches("opencode-coordinator-assessing", guided.path(OpenCodeReviewConfig.COORDINATOR).path("system").asString());
         GoldenText.assertMatches("opencode-reviewer-assessing", guided.path(OpenCodeReviewConfig.REVIEWER).path("system").asString());
-        GoldenText.assertMatches("opencode-triage", OpenCodeReviewConfig.triagePrompt("[{\"tool\":\"pmd\",\"rule\":\"GodClass\"}]"));
+        GoldenText.assertMatches("opencode-triage", OpenCodeReviewConfig.triagePrompt(List.of(new StaticFinding("pmd", "GodClass", "warning", "a/Service.java", 3, "possible God Class"))));
     }
     @Test
     void theTurnsSentToASessionReadAsBefore() {
         assertEquals("Review commit 1a2b3c of this repository.", OpenCodeReviewConfig.reviewPrompt("1a2b3c"));
         assertEquals("Your last answer is not valid JSON: Unexpected character ('}' (code 125)) at 1:7. Reply with the same answer as one corrected JSON object "
                 + "and nothing else. Do not review again and do not call any tool.", OpenCodeReviewConfig.repairPrompt("Unexpected character ('}' (code 125)) at 1:7"));
+    }
+    private static StaticFinding finding(String tool) {
+        return new StaticFinding(tool, "Rule", "warning", "a/Service.java", 2, "flagged");
     }
     private static ReviewEndpoint endpoint(String baseUrl, String apiKey) {
         return new ReviewEndpoint(baseUrl, apiKey, null);

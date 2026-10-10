@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.maven.plugin.AbstractMojo;
@@ -18,6 +19,8 @@ import org.apache.maven.plugins.annotations.Parameter;
 import com.google.common.collect.Maps;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.core.DefaultLanguageProcessors;
+import io.codiqo.llm.StaticAnalysisLists;
 import io.codiqo.llm.review.FindingTriage;
 import io.codiqo.llm.review.FindingVerdict;
 import io.codiqo.llm.review.LocalReview;
@@ -115,9 +118,10 @@ public class ReviewCommitMojo extends AbstractMojo {
             Optional<LocalReviewer.FindingsSource> source = Optional.empty();
             if (Objects.nonNull(findings)) {
                 List<StaticFinding> given = JsonMapper.builder().build().readerForListOf(StaticFinding.class).readValue(findings);
+                warnUnlisted(given);
                 source = Optional.of(() -> given);
             }
-            LocalReviewer reviewer = new LocalReviewer(args, endpoint, LocalReviewGuidance.read(directory, getLog()),
+            LocalReviewer reviewer = new LocalReviewer(args, endpoint, LocalReviewGuidance.read(directory, getLog()), DefaultLanguageProcessors.reviewLanguages(),
                     new MavenLogFactory(getLog()).getLogger(LocalReviewer.class));
             LocalReviewer.ReviewAndTriage result = reviewer.reviewThenTriage(directory.toPath(), commit, source);
             logFindings(result.getReview());
@@ -125,6 +129,22 @@ public class ReviewCommitMojo extends AbstractMojo {
             writeReport(result.getReview(), result.getTriage());
         } catch (Exception err) {
             throw new MojoExecutionException("local review of " + commit + " failed: " + err.getMessage(), err);
+        }
+    }
+    /**
+     * A findings file may name a tool the static analysis review keeps no lists for: the triage still judges its findings
+     * and a defect still becomes a bug, but no other verdict on them is recorded.
+     */
+    private void warnUnlisted(List<StaticFinding> given) {
+        List<String> unlisted = given.stream()
+                .map(StaticFinding::getTool)
+                .distinct()
+                .filter(tool -> StaticAnalysisLists.of(tool).isEmpty())
+                .map(String::valueOf)
+                .toList();
+        if (CollectionUtils.isNotEmpty(unlisted)) {
+            getLog().warn(String.format("the static analysis review keeps no lists for %s: a defect among their findings is reported as a bug,"
+                    + " every other verdict on them is left out of the review", unlisted));
         }
     }
     private void logFindings(LocalReview review) {

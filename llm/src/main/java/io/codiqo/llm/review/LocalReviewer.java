@@ -14,6 +14,7 @@ import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.apache.commons.lang3.tuple.ImmutableTriple;
 import org.apache.commons.lang3.tuple.Pair;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
@@ -26,8 +27,10 @@ import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
+import io.codiqo.api.review.ReviewLanguage;
 import io.codiqo.llm.client.LlmJson;
 import io.codiqo.llm.schema.LlmScoringResponse;
+import io.codiqo.util.JGit;
 import io.codiqo.util.ProgressStage;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -49,12 +52,14 @@ public class LocalReviewer {
     private final RunArgs args;
     private final ReviewEndpoint endpoint;
     private final String conventionGuidance;
+    private final List<ReviewLanguage> languages;
     private final Log log;
 
-    public LocalReviewer(RunArgs args, ReviewEndpoint endpoint, String conventionGuidance, Log log) {
+    public LocalReviewer(RunArgs args, ReviewEndpoint endpoint, String conventionGuidance, List<ReviewLanguage> languages, Log log) {
         this.args = Objects.requireNonNull(args);
         this.endpoint = Objects.requireNonNull(endpoint);
         this.conventionGuidance = Objects.requireNonNull(conventionGuidance);
+        this.languages = List.copyOf(languages);
         this.log = Objects.requireNonNull(log);
     }
     public LocalReview review(Path directory, String commit) throws IOException {
@@ -67,25 +72,48 @@ public class LocalReviewer {
      * to happen here and not in a later run.
      */
     public ReviewAndTriage reviewThenTriage(Path directory, String commit, Optional<FindingsSource> findings) throws IOException {
+        ReviewTarget target = target(directory, commit);
+        return runReview(target.getWorkTree(), target.getSha(), target.getNamingRules(), findings);
+    }
+    /**
+     * The commit and the naming rules of the languages it changes, read with a repository that is closed again before
+     * the review starts: listing the changes loads the clone's pack indexes, which would otherwise stay in memory for the
+     * whole review and, with the triage, until the build finishes (about 13 MB on a large repository).
+     */
+    private ReviewTarget target(Path directory, String commit) throws IOException {
         try (Repository repository = new FileRepositoryBuilder().findGitDir(directory.toFile()).setMustExist(true).build()) {
             ObjectId resolved = repository.resolve(commit);
             if (Objects.nonNull(resolved)) {
-                return runReview(repository.getWorkTree().toPath(), resolved.name(), findings);
+                return new ReviewTarget(repository.getWorkTree().toPath(), resolved.name(), ReviewLanguages.namingRules(changedFiles(repository, resolved.name()), languages));
             }
             throw new IOException("unknown commit " + commit + " in " + repository.getWorkTree());
         }
     }
-    private ReviewAndTriage runReview(Path workTree, String sha, Optional<FindingsSource> findings) throws IOException {
+    /**
+     * The files the commit changes, which only choose the naming rules the agents are given. The review itself needs no
+     * local diff, since OpenCode's git fetches what a partial clone lacks, so a diff that cannot be computed here (a
+     * {@code --filter=tree:0} clone has no parent tree to compare, and JGit does not fetch it) must not fail the review:
+     * no files means every registered rule is given.
+     */
+    private List<String> changedFiles(Repository repository, String sha) {
+        try {
+            return JGit.changedFileNames(repository, sha);
+        } catch (IOException err) {
+            log.warn("could not list the files %s changes (%s); the reviewers are given the naming rules of every language", sha, err.getMessage());
+            return List.of();
+        }
+    }
+    private ReviewAndTriage runReview(Path workTree, String sha, List<String> namingRules, Optional<FindingsSource> findings) throws IOException {
         if (Objects.nonNull(endpoint.getAuthorizer())) {
             try (LlmRelay relay = LlmRelay.start(args, endpoint, log)) {
-                return runReview(workTree, sha, new ReviewEndpoint(relay.getUrl(), relay.getSecret(), null), findings);
+                return runReview(workTree, sha, namingRules, new ReviewEndpoint(relay.getUrl(), relay.getSecret(), null), findings);
             }
         }
-        return runReview(workTree, sha, endpoint, findings);
+        return runReview(workTree, sha, namingRules, endpoint, findings);
     }
-    private ReviewAndTriage runReview(Path workTree, String sha, ReviewEndpoint effective, Optional<FindingsSource> findings) throws IOException {
+    private ReviewAndTriage runReview(Path workTree, String sha, List<String> namingRules, ReviewEndpoint effective, Optional<FindingsSource> findings) throws IOException {
         StopWatch watch = StopWatch.createStarted();
-        try (OpenCodeServer server = OpenCodeServer.start(args, OpenCodeReviewConfig.build(args, effective, conventionGuidance), workTree, log)) {
+        try (OpenCodeServer server = OpenCodeServer.start(args, OpenCodeReviewConfig.build(args, effective, conventionGuidance, namingRules), workTree, log)) {
             try (OpenCodeClient client = new OpenCodeClient(server.getUrl(), server.getPassword(), args.getReviewTimeout())) {
                 String sessionId = client.createSession(workTree, OpenCodeReviewConfig.COORDINATOR, "codiqo review " + StringUtils.left(sha, SHORT_SHA));
                 LocalReview review;
@@ -161,7 +189,7 @@ public class LocalReviewer {
         try (ProgressStage stage = ProgressStage.start(args, "triage")) {
             String forkId = client.fork(sessionId);
             log.info("triaging %d static-analysis findings in session %s, a fork of %s", findings.size(), forkId, sessionId);
-            client.prompt(forkId, OpenCodeReviewConfig.triagePrompt(LlmJson.responseMapper().writeValueAsString(findings)));
+            client.prompt(forkId, OpenCodeReviewConfig.triagePrompt(findings));
             client.awaitIdle(forkId);
 
             String answer = client.finalAnswer(forkId);
@@ -316,6 +344,20 @@ public class LocalReviewer {
         List<StaticFinding> await() throws Exception;
     }
 
+    private static final class ReviewTarget extends ImmutableTriple<Path, String, List<String>> {
+        private ReviewTarget(Path workTree, String sha, List<String> namingRules) {
+            super(workTree, sha, namingRules);
+        }
+        public Path getWorkTree() {
+            return getLeft();
+        }
+        public String getSha() {
+            return getMiddle();
+        }
+        public List<String> getNamingRules() {
+            return getRight();
+        }
+    }
     public static final class ReviewAndTriage extends ImmutablePair<LocalReview, Optional<FindingTriage>> {
         private ReviewAndTriage(LocalReview review, Optional<FindingTriage> triage) {
             super(review, triage);

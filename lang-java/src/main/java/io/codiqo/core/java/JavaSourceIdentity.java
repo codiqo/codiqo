@@ -5,7 +5,6 @@ import java.util.Objects;
 
 import com.google.common.collect.ImmutableList;
 
-import io.codiqo.api.code.JavaSignatures;
 import lombok.Value;
 import lombok.experimental.UtilityClass;
 import net.sourceforge.pmd.lang.ast.Node;

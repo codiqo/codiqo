@@ -5,11 +5,19 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
+import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 
+import com.google.common.base.Splitter;
+import com.google.common.collect.Lists;
+
+import io.codiqo.api.review.ReviewLanguage;
+import io.codiqo.api.review.UnitName;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.BugModel;
 import io.codiqo.client.model.CodeUnitModel;
@@ -26,6 +34,32 @@ import tools.jackson.databind.node.JsonNodeFactory;
 import tools.jackson.databind.node.ObjectNode;
 
 class LocalReviewModelsTest {
+    /** a made-up language whose units are named Container.member, as its index signature spells them */
+    private static final ReviewLanguage DOTTED = new ReviewLanguage() {
+        @Override
+        public Collection<String> extensions() {
+            return List.of("dotted");
+        }
+        @Override
+        public String namingRule() {
+            return "Write Container.member(params).";
+        }
+        @Override
+        public UnitName labelled(String signature, String path) {
+            List<String> steps = Lists.newArrayList(Splitter.on('.').split(StringUtils.substringBefore(signature, "(")));
+            return new UnitName(steps.subList(0, steps.size() - 1), steps.getLast() + signature.substring(StringUtils.substringBefore(signature, "(").length()));
+        }
+        @Override
+        public UnitName unit(String name, String signature, String path) {
+            List<String> steps = Splitter.on('.').splitToList(signature);
+            return new UnitName(steps.subList(0, steps.size() - 1), name);
+        }
+        @Override
+        public Set<String> triagedTools() {
+            return Set.of();
+        }
+    };
+
     @Test
     void everyBugIsTaggedAsALocalReviewFinding() {
         LlmScoringResponse.Bug bug = LlmScoringResponse.Bug.builder()
@@ -190,7 +224,7 @@ class LocalReviewModelsTest {
         LlmScoringResponse.CodeBlockCategoryView name = label("a/Service.java", "name()", LlmScoringResponse.CodeBlockCategory.MECHANICAL);
         name.setReason("an accessor");
 
-        LocalReviewModels.applyBlockCategories(submission, assessed(pay, name));
+        LocalReviewModels.applyBlockCategories(submission, assessed(pay, name), List.of());
 
         assertEquals("splits the refund across two ledgers in one transaction", file.getCodeUnits().get(0).getCategoryReason());
         assertNull(file.getCodeUnits().get(1).getCategoryReason());
@@ -241,27 +275,21 @@ class LocalReviewModelsTest {
     @Test
     void labelsLandOnTheCodeUnitsTheyName() {
         CodeUnitModel handler = unit("handle(List, Optional)");
-        CodeUnitModel constructor = unit("Totals(Config, Clock)");
         CodeUnitModel alreadyLabelled = unit("sum(List)").category(CodeUnitModel.CategoryEnum.MECHANICAL);
         CodeUnitModel unnamed = unit("helper()");
-        CodeUnitModel nested = unit("put(Map, Optional)");
         AnalysisSubmissionModel submission = new AnalysisSubmissionModel().files(List.of(
-                new FileChangeModel().path("src/main/java/com/example/Totals.java").codeUnits(List.of(handler, constructor, alreadyLabelled, unnamed, nested))));
+                new FileChangeModel().path("src/main/java/com/example/Totals.java").codeUnits(List.of(handler, alreadyLabelled, unnamed))));
 
         LocalReviewModels.Labelling labelling = LocalReviewModels.applyBlockCategories(submission, assessed(
-                label("src/main/java/com/example/Totals.java", "handle(java.util.List<String>, Optional<Long>)", LlmScoringResponse.CodeBlockCategory.SUBSTANTIVE),
-                label("./src/main/java/com/example/Totals.java", "<init>(Config,Clock)", LlmScoringResponse.CodeBlockCategory.ROUTINE),
+                label("./src/main/java/com/example/Totals.java", "handle(List,Optional)", LlmScoringResponse.CodeBlockCategory.SUBSTANTIVE),
                 label("src/main/java/com/example/Totals.java", "sum(List)", LlmScoringResponse.CodeBlockCategory.INTRICATE),
-                label("src/main/java/com/example/Gone.java", "deleted()", LlmScoringResponse.CodeBlockCategory.ROUTINE),
-                label("src/main/java/com/example/Totals.java", "put(Map<String, List<Integer>>, Optional<Map<K, V>>)", LlmScoringResponse.CodeBlockCategory.INTRICATE)));
+                label("src/main/java/com/example/Gone.java", "deleted()", LlmScoringResponse.CodeBlockCategory.ROUTINE)), List.of());
 
-        assertEquals(3, labelling.getApplied());
-        assertEquals(5, labelling.getReturned());
-        assertEquals(5, labelling.getUnits());
+        assertEquals(1, labelling.getApplied());
+        assertEquals(3, labelling.getReturned());
+        assertEquals(3, labelling.getUnits());
         assertEquals(List.of("src/main/java/com/example/Gone.java#deleted()"), labelling.getUnmatched(), "a label naming no unit is reported, not lost silently");
-        assertEquals(CodeUnitModel.CategoryEnum.INTRICATE, nested.getCategory(), "nested type arguments are erased whole");
-        assertEquals(CodeUnitModel.CategoryEnum.SUBSTANTIVE, handler.getCategory());
-        assertEquals(CodeUnitModel.CategoryEnum.ROUTINE, constructor.getCategory());
+        assertEquals(CodeUnitModel.CategoryEnum.SUBSTANTIVE, handler.getCategory(), "the path is normalized, and a language without a naming of its own matches the exact name");
         assertEquals(CodeUnitModel.CategoryEnum.MECHANICAL, alreadyLabelled.getCategory(), "a unit already labelled keeps its label");
         assertNull(unnamed.getCategory(), "a unit no label names stays unlabelled, which prices as MECHANICAL");
     }
@@ -331,12 +359,46 @@ class LocalReviewModelsTest {
                 new FileChangeModel().path("src/main/java/com/example/Watchdog.java").codeUnits(List.of(removed, added))));
 
         LocalReviewModels.Labelling labelling = LocalReviewModels.applyBlockCategories(submission, assessed(
-                label("src/main/java/com/example/Watchdog.java", "report()", LlmScoringResponse.CodeBlockCategory.SUBSTANTIVE)));
+                label("src/main/java/com/example/Watchdog.java", "report()", LlmScoringResponse.CodeBlockCategory.SUBSTANTIVE)), List.of());
 
         assertEquals(CodeUnitModel.CategoryEnum.SUBSTANTIVE, added.getCategory());
         assertNull(removed.getCategory());
         assertEquals(1, labelling.getApplied());
         assertEquals(1, labelling.getUnits());
+    }
+    /** two live units of one name in one file, of the outer container and a nested one, each take the label naming its container */
+    @Test
+    void theContainerPicksBetweenUnitsOfOneName() {
+        CodeUnitModel outer = unit("report()").signature("Watchdog.report");
+        CodeUnitModel nested = unit("report()").signature("Watchdog.Task.report").operation(CodeUnitModel.OperationEnum.NEW);
+        AnalysisSubmissionModel submission = new AnalysisSubmissionModel().files(List.of(
+                new FileChangeModel().path("src/watchdog.dotted").codeUnits(List.of(outer, nested))));
+
+        LocalReviewModels.Labelling labelling = LocalReviewModels.applyBlockCategories(submission, assessed(
+                label("src/watchdog.dotted", "Watchdog.report()", LlmScoringResponse.CodeBlockCategory.MECHANICAL),
+                label("src/watchdog.dotted", "Watchdog.Task.report()", LlmScoringResponse.CodeBlockCategory.SUBSTANTIVE)), List.of(DOTTED));
+
+        assertEquals(CodeUnitModel.CategoryEnum.MECHANICAL, outer.getCategory());
+        assertEquals(CodeUnitModel.CategoryEnum.SUBSTANTIVE, nested.getCategory());
+        assertEquals(2, labelling.getApplied());
+        assertEquals(List.of(), labelling.getUnmatched());
+    }
+    /** without a container to choose by, a label naming two units is reported rather than handed to both */
+    @Test
+    void aLabelThatCannotChooseBetweenUnitsOfOneNameIsNotApplied() {
+        CodeUnitModel outer = unit("report()").signature("Watchdog.report");
+        CodeUnitModel nested = unit("report()").signature("Watchdog.Task.report");
+        AnalysisSubmissionModel submission = new AnalysisSubmissionModel().files(List.of(
+                new FileChangeModel().path("src/watchdog.dotted").codeUnits(List.of(outer, nested))));
+
+        LocalReviewModels.Labelling labelling = LocalReviewModels.applyBlockCategories(submission, assessed(
+                label("src/watchdog.dotted", "report()", LlmScoringResponse.CodeBlockCategory.SUBSTANTIVE),
+                label("src/watchdog.dotted", "Other.report()", LlmScoringResponse.CodeBlockCategory.ROUTINE)), List.of(DOTTED));
+
+        assertNull(outer.getCategory());
+        assertNull(nested.getCategory());
+        assertEquals(0, labelling.getApplied());
+        assertEquals(List.of("src/watchdog.dotted#report()", "src/watchdog.dotted#Other.report()"), labelling.getUnmatched());
     }
     private static CodeUnitModel unit(String name) {
         return new CodeUnitModel().name(name).signature("sig:" + name).operation(CodeUnitModel.OperationEnum.MODIFY);

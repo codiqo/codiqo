@@ -153,7 +153,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
                 if (endpoint.isProxiedBy(resourceUrl)) {
                     endpoint = new ReviewEndpoint(args.getReviewBaseUrl(), null, credential());
                 }
-                LocalReviewer reviewer = new LocalReviewer(args, endpoint, LocalReviewGuidance.read(args, getLog()),
+                LocalReviewer reviewer = new LocalReviewer(args, endpoint, LocalReviewGuidance.read(args, getLog()), DefaultLanguageProcessors.reviewLanguages(),
                         new MavenLogFactory(getLog()).getLogger(LocalReviewer.class));
                 Path workTree = clone.getWorkTree().toPath();
                 String commit = args.getCommitId();
@@ -175,7 +175,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
     @Override
     protected void doLlmScoring(SubmissionContext ctx) throws Exception {
         if (Objects.nonNull(backgroundReview)) {
-            buildFindings.complete(StaticFindings.introduced(ctx.getSubmissionModel()));
+            buildFindings.complete(StaticFindings.introduced(ctx.getSubmissionModel(), DefaultLanguageProcessors.reviewLanguages()));
             LocalReviewer.ReviewAndTriage reviewed = backgroundReview.await(LocalReviewer.longestReview(ctx.getArgs(), ctx.getArgs().isReviewTriage()));
             LocalReview finished = reviewed.getReview();
             reviewed.getTriage().ifPresent(this::logTriage);
@@ -185,15 +185,15 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
              */
             LocalReviewModel model = LocalReviewModels.toModel(finished, reviewed.getTriage());
             if (Objects.nonNull(finished.getAssessment())) {
-                LocalReviewModels.Labelling labelling = LocalReviewModels.applyBlockCategories(ctx.getSubmissionModel(), finished);
+                LocalReviewModels.Labelling labelling = LocalReviewModels.applyBlockCategories(ctx.getSubmissionModel(), finished, DefaultLanguageProcessors.reviewLanguages());
                 getLog().info(String.format("local review labelled %d of the submission's %d code units, from %d labels",
                         labelling.getApplied(), labelling.getUnits(), labelling.getReturned()));
                 if (labelling.getReturned() == 0) {
-                    // the server applies the review's judgment, so a review without labels is scored as all MECHANICAL
-                    getLog().warn("the local review returned no code-unit labels: every unit of this commit is scored as MECHANICAL");
+                    getLog().warn("the local review returned no code-unit labels: every unit of this commit is scored with the prompt's label,"
+                            + " or as MECHANICAL for an organisation scored without the prompt");
                 }
                 if (CollectionUtils.isNotEmpty(labelling.getUnmatched())) {
-                    getLog().warn(String.format("%d local review label(s) named no code unit of the submission and were dropped: %s",
+                    getLog().warn(String.format("%d local review label(s) named no code unit of the submission, or several without a container to choose by, and were dropped: %s",
                             labelling.getUnmatched().size(),
                             labelling.getUnmatched().stream().limit(UNMATCHED_LABEL_SAMPLE).toList()));
                 }

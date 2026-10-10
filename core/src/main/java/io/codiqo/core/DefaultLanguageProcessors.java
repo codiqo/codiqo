@@ -70,9 +70,11 @@ import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
+import io.codiqo.api.review.ReviewLanguage;
 import io.codiqo.core.diff.GitDiffHunk;
 import io.codiqo.core.diff.GitFileAnalysis;
 import io.codiqo.core.java.JavaLanguageSpec;
+import io.codiqo.core.java.JavaReviewLanguage;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.lang.spec.PmdAffectedSymbolInfo;
 import io.codiqo.util.Fetch;
@@ -447,6 +449,10 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
      */
     public static Set<String> supportedExtensions() {
         return Sets.newHashSet(JavaLanguageSpec.supportedExtensions());
+    }
+    /** what the local review needs to know about each registered language, known before a registry is built */
+    public static List<ReviewLanguage> reviewLanguages() {
+        return List.of(new JavaReviewLanguage());
     }
     private static int identifyRemoved(LanguageSpec processor, ProjectSpec owner, Map<GitFileAnalysis, Set<Integer>> removedLinesByFile) throws IOException {
         List<PreviousRevision> revisions = removedLinesByFile.keySet().stream()

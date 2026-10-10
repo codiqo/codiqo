@@ -1531,10 +1531,22 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
 
 - `codiqo.review` runs OpenCode next to the build, in the analysis clone, so every analysed commit is reviewed (a backlog
   pays for one review per commit); `codiqo.review.assess` adds the
-  judgment (labels with a reason above MECHANICAL, task types, dimensions, senior review, blast radius);
+  judgment (labels with a reason above MECHANICAL, task types, dimensions, senior review, blast radius). A unit the
+  review leaves unlabelled keeps the prompt's label when the assessment is put over a response
+  (`LocalAssessment.overlay`, each label marked with its source);
   `codiqo.review.triage` asks a fork of the coordinator session, after the build, which PMD and SpotBugs findings on
   added lines are defects (`StaticFindings.introduced`). A confirmed defect becomes a bug unless the review already
   reported one on that line; every verdict places its finding in `LocalAssessmentModel.staticAnalysisReview`.
+- **The review knows no language.** What it needs from one comes from that language's module through
+  `io.codiqo.api.review.ReviewLanguage` (`JavaReviewLanguage` in lang-java, listed by
+  `DefaultLanguageProcessors.reviewLanguages()`): the rule telling reviewers how to write a unit's signature (the
+  prompt carries the rules of the languages the commit changes), how that text and an indexed unit reduce to a
+  `UnitName` (member, plus the path of containers that tells units of one name apart, an anonymous class being a
+  step that matches any written name), and which tools' findings the triage judges. `ReviewLanguages.of` resolves a
+  file by extension; a file of no registered language matches labels by the exact name, adds no naming rule and has
+  nothing triaged. Never parse a signature, a descriptor or a path convention in `llm`: add it to the language. Labels
+  are applied exact match first, then loose, then sole candidate (`LocalReviewModels.applyBlockCategories`). A triaged
+  tool needs a row in `StaticAnalysisLists`, the one table of the static analysis review's per-tool lists.
 - The reviewers' `observations` are collected from their own answers (`LocalReviewer.reviewerAnswers`), and
   `LocalReviewModels.toModel` writes a Markdown `reasoning` digest (the coordinator's areas, the observations, the
   triage) that the commit page shows.

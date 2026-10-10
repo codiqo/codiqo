@@ -295,7 +295,7 @@ public class LlmScoringResponse {
     }
 
     @Data
-    @Builder
+    @Builder(toBuilder = true)
     @NoArgsConstructor
     @AllArgsConstructor
     public static class CodeBlockCategoryView {
@@ -304,6 +304,13 @@ public class LlmScoringResponse {
         private CodeBlockCategory category;
         /** the local review's one-sentence reason for a label above MECHANICAL; the scoring prompt gives none */
         private String reason;
+        /** whose judgment the label is, set when a local assessment is put over the response; never asked of a model */
+        private CodeBlockCategorySource source;
+    }
+
+    public enum CodeBlockCategorySource {
+        LOCAL_REVIEW,
+        PROMPT
     }
 
     @Data
