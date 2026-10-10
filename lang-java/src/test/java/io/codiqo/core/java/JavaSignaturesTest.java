@@ -1,4 +1,4 @@
-package io.codiqo.api.code;
+package io.codiqo.core.java;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 

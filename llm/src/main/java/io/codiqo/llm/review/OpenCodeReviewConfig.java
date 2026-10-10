@@ -11,6 +11,8 @@ import com.google.common.base.Joiner;
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.PromptFences;
 import io.codiqo.llm.PromptTemplates;
+import io.codiqo.llm.StaticAnalysisLists;
+import io.codiqo.llm.client.LlmJson;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import lombok.experimental.UtilityClass;
 import tools.jackson.databind.json.JsonMapper;
@@ -55,7 +57,8 @@ public class OpenCodeReviewConfig {
             LlmScoringResponse.Confidence.MEDIUM);
     private static final String BUG_SHAPE = bugShape();
 
-    public ObjectNode build(RunArgs args, ReviewEndpoint endpoint, String conventionGuidance) {
+    /** @param namingRules how a reviewer writes a unit's signature, one rule per language the commit changes */
+    public ObjectNode build(RunArgs args, ReviewEndpoint endpoint, String conventionGuidance, List<String> namingRules) {
         JsonMapper mapper = JsonMapper.builder().build();
         ObjectNode toReturn = mapper.createObjectNode();
         toReturn.put("share", "disabled");
@@ -85,7 +88,7 @@ public class OpenCodeReviewConfig {
         reviewer.put("description", "Reviews part of a commit with read-only git and file tools and returns confirmed defects as JSON");
         reviewer.put("model", PROVIDER + "/" + args.getReviewReviewerModel());
         reviewer.put("steps", args.getReviewReviewerSteps());
-        reviewer.put("system", prompt("opencode/module-reviewer", args.getReviewReviewerSteps(), args, conventionGuidance));
+        reviewer.put("system", prompt("opencode/module-reviewer", args.getReviewReviewerSteps(), args, conventionGuidance, namingRules));
         addReadOnlyPermissions(reviewer.putArray("permissions"));
 
         ObjectNode coordinator = agents.putObject(COORDINATOR);
@@ -93,7 +96,7 @@ public class OpenCodeReviewConfig {
         coordinator.put("description", "Plans a whole-commit review, runs reviewer sub-agents in parallel and merges their findings");
         coordinator.put("model", PROVIDER + "/" + args.getReviewCoordinatorModel());
         coordinator.put("steps", args.getReviewCoordinatorSteps());
-        coordinator.put("system", prompt("opencode/review-coordinator", args.getReviewCoordinatorSteps(), args, conventionGuidance));
+        coordinator.put("system", prompt("opencode/review-coordinator", args.getReviewCoordinatorSteps(), args, conventionGuidance, namingRules));
         ArrayNode coordinatorPermissions = coordinator.putArray("permissions");
         addReadOnlyPermissions(coordinatorPermissions);
         rule(coordinatorPermissions, "subagent", "*", "deny");
@@ -125,10 +128,12 @@ public class OpenCodeReviewConfig {
         rule.put("resource", resource);
         rule.put("effect", effect);
     }
-    public static String triagePrompt(String findingsJson) {
+    /** @param findings the findings asked about, whose tools the prompt names */
+    public static String triagePrompt(List<StaticFinding> findings) {
         Context ctx = new Context();
+        ctx.setVariable("reporters", reporters(findings));
         ctx.setVariable("bugTypes", List.of(LlmScoringResponse.BugType.values()));
-        ctx.setVariable("findings", findingsJson);
+        ctx.setVariable("findings", LlmJson.responseMapper().writeValueAsString(findings));
         return PromptTemplates.process("opencode/triage-findings", ctx).strip();
     }
     public static String reviewPrompt(String sha) {
@@ -142,6 +147,26 @@ public class OpenCodeReviewConfig {
         return PromptTemplates.process("opencode/repair-answer", ctx).strip();
     }
     /**
+     * The subject of the triage prompt's first sentence: "PMD", "PMD and SpotBugs", "PMD, SpotBugs and Checkstyle". A
+     * findings file given to the review goal may name a tool without lists, or none at all, so such a tool is named as
+     * written and a findings list without any tool reads "Static analysis".
+     */
+    private static String reporters(List<StaticFinding> findings) {
+        List<String> names = findings.stream()
+                .map(StaticFinding::getTool)
+                .filter(StringUtils::isNotBlank)
+                .distinct()
+                .map(tool -> StaticAnalysisLists.of(tool).map(StaticAnalysisLists.ToolLists::getDisplayName).orElse(tool))
+                .toList();
+        if (names.isEmpty()) {
+            return "Static analysis";
+        }
+        if (names.size() == 1) {
+            return names.getFirst();
+        }
+        return Joiner.on(", ").join(names.subList(0, names.size() - 1)) + " and " + names.getLast();
+    }
+    /**
      * One bug in the shape {@link LlmScoringResponse.Bug} reads, each value describing what goes there. The types are
      * taken from {@link LlmScoringResponse.BugType}, so a type added there is offered to the agents too.
      */
@@ -149,7 +174,7 @@ public class OpenCodeReviewConfig {
         ObjectNode toReturn = JsonMapper.builder().build().createObjectNode();
         toReturn.put("type", Joiner.on('|').join(LlmScoringResponse.BugType.values()));
         toReturn.put("title", "...");
-        toReturn.put("description", "what is wrong, the input or path that triggers it, and the lines you checked as File.java:line");
+        toReturn.put("description", "what is wrong, the input or path that triggers it, and the lines you checked as path:line");
         toReturn.put("file", "repository-relative path");
         toReturn.put("line", "new-file line number, as a JSON number");
         toReturn.put("confidence", Joiner.on('|').join(REPORTED_CONFIDENCE));
@@ -167,8 +192,9 @@ public class OpenCodeReviewConfig {
      * The fence is the scoring prompt's own, which {@code ConventionGuidance} strips from every file, so a file cannot
      * close it early; Thymeleaf inserts a value as it is, so a {@code [(...)]} inside one is not evaluated.
      */
-    private static String prompt(String template, int steps, RunArgs args, String conventionGuidance) {
+    private static String prompt(String template, int steps, RunArgs args, String conventionGuidance, List<String> namingRules) {
         Context ctx = new Context();
+        ctx.setVariable("namingRules", namingRules);
         ctx.setVariable("assess", args.isReviewAssess());
         ctx.setVariable("maxTasks", args.getReviewMaxTasks());
         ctx.setVariable("reviewer", REVIEWER);

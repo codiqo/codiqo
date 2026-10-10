@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import io.codiqo.llm.schema.LlmScoringResponse.CodeBlockCategory;
+import io.codiqo.llm.schema.LlmScoringResponse.CodeBlockCategorySource;
 import io.codiqo.llm.schema.LlmScoringResponse.CodeBlockCategoryView;
 import io.codiqo.llm.schema.LlmScoringResponse.DimensionScore;
 import io.codiqo.llm.schema.LlmScoringResponse.QualityDimensions;
@@ -45,7 +46,7 @@ class LocalAssessmentTest {
         assertEquals(4, prompt.getTaskComplexityNew());
         assertEquals(6, prompt.getQualityDimensions().getIntegrationSurface().getScore());
         assertEquals("adds a topic", prompt.getQualityDimensions().getIntegrationSurface().getRationale());
-        assertEquals(List.of(block(CodeBlockCategory.SUBSTANTIVE)), prompt.getBlockCategories());
+        assertEquals(List.of(reviewed(block(CodeBlockCategory.SUBSTANTIVE))), prompt.getBlockCategories());
     }
     /** the review cannot see coverage, so gates and testing coverage are the prompt's; so is a dimension it left out */
     @Test
@@ -67,7 +68,57 @@ class LocalAssessmentTest {
 
         assertEquals("prompt summary", prompt.getSummary());
         assertEquals(8, prompt.getTaskComplexity());
-        assertEquals(List.of(block(CodeBlockCategory.ROUTINE)), prompt.getBlockCategories());
+        assertEquals(List.of(reviewed(block(CodeBlockCategory.ROUTINE))), prompt.getBlockCategories());
+    }
+    /** a unit the review left unlabelled keeps the prompt's label, marked as the prompt's, and is scored by it */
+    @Test
+    void aUnitTheReviewDidNotLabelKeepsThePromptsLabel() {
+        LlmScoringResponse prompt = prompt();
+        CodeBlockCategoryView other = CodeBlockCategoryView.builder().file("Foo.java").signature("other()").category(CodeBlockCategory.INTRICATE).build();
+        prompt.setBlockCategories(List.of(block(CodeBlockCategory.MECHANICAL), other));
+
+        LocalAssessment.overlay(prompt, review());
+
+        assertEquals(List.of(reviewed(block(CodeBlockCategory.SUBSTANTIVE)), other.toBuilder().source(CodeBlockCategorySource.PROMPT).build()), prompt.getBlockCategories());
+    }
+    /** a review that labelled nothing leaves every label the prompt's, so its score keeps the prompt's difficulty */
+    @Test
+    void aReviewWithoutLabelsIsScoredWithThePromptsLabels() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
+
+        LlmScoringResponse prompt = prompt();
+        prompt.setBlockCategories(List.of(block(CodeBlockCategory.SUBSTANTIVE)));
+        LlmScoringResponse unlabelled = review();
+        unlabelled.setBlockCategories(List.of());
+        LlmScoringResponse local = LocalAssessment.copy(prompt);
+        LocalAssessment.overlay(local, unlabelled);
+        calculator.apply(prompt, FinalScoreCalculatorTest.scoresWithFileEffort("Foo.java", 100.0), null);
+        calculator.apply(local, FinalScoreCalculatorTest.scoresWithFileEffort("Foo.java", 100.0), null);
+
+        assertEquals(CodeBlockCategorySource.PROMPT, local.getBlockCategories().getFirst().getSource());
+        assertEquals(Math.round(Math.pow(100.0 * args.getCategorySubstantiveCoeff(), args.getVolumeExponent())), local.getScore(), 0.001);
+    }
+    /**
+     * A unit the prompt labelled twice is scored with its last label, and so must the review-less copy be: the overlay
+     * passing on the first made the two scores differ (67.0 against 37.0) for a review that labelled nothing.
+     */
+    @Test
+    void aRepeatedPromptLabelKeepsItsLastCategoryAsTheScoringDoes() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
+
+        LlmScoringResponse prompt = prompt();
+        prompt.setBlockCategories(List.of(block(CodeBlockCategory.MECHANICAL), block(CodeBlockCategory.INTRICATE)));
+        LlmScoringResponse unlabelled = review();
+        unlabelled.setBlockCategories(List.of());
+        LlmScoringResponse local = LocalAssessment.copy(prompt);
+        LocalAssessment.overlay(local, unlabelled);
+        calculator.apply(prompt, FinalScoreCalculatorTest.scoresWithFileEffort("Foo.java", 100.0), null);
+        calculator.apply(local, FinalScoreCalculatorTest.scoresWithFileEffort("Foo.java", 100.0), null);
+
+        assertEquals(List.of(block(CodeBlockCategory.INTRICATE).toBuilder().source(CodeBlockCategorySource.PROMPT).build()), local.getBlockCategories());
+        assertEquals(prompt.getScore(), local.getScore(), 0.001);
     }
     /** the triage's static-analysis review replaces the prompt's; without one the prompt's stays */
     @Test
@@ -194,6 +245,9 @@ class LocalAssessmentTest {
         toReturn.setQualityDimensions(dims);
         toReturn.setBlockCategories(List.of(block(CodeBlockCategory.SUBSTANTIVE)));
         return toReturn;
+    }
+    private static CodeBlockCategoryView reviewed(CodeBlockCategoryView view) {
+        return view.toBuilder().source(CodeBlockCategorySource.LOCAL_REVIEW).build();
     }
     private static CodeBlockCategoryView block(CodeBlockCategory category) {
         return CodeBlockCategoryView.builder().file("Foo.java").signature("doStuff()").category(category).build();

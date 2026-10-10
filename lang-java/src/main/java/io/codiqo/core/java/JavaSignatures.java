@@ -1,4 +1,4 @@
-package io.codiqo.api.code;
+package io.codiqo.core.java;
 
 import java.lang.constant.ConstantDescs;
 import java.util.Objects;
@@ -23,6 +23,12 @@ public class JavaSignatures {
     private static final String VARARGS = "...";
     private static final String ARRAY = "[]";
     private static final String NESTED_TYPE = "#";
+    /**
+     * PMD prints a parameter type it could not resolve on the module's auxiliary classpath (a missing dependency,
+     * generated sources that were not compiled, a broken build) with this prefix, as {@code a(*Unknown)}. A reviewer
+     * reading the source writes {@code a(Unknown)}, so unless the marker goes, no label can name such a unit.
+     */
+    private static final String UNRESOLVED_TYPE = "*";
 
     /**
      * {@code name(Types)} without whitespace, type arguments or type parameters, every name simple, and a constructor
@@ -44,13 +50,18 @@ public class JavaSignatures {
         }
         return erased;
     }
+    /** the text without annotations or type arguments, whitespace kept: {@code @Override Map<K, V> Totals.run()} is {@code  Map Totals.run()} */
+    public String declaration(String signature) {
+        return eraseTypeArguments(TYPE_ANNOTATION.matcher(signature).replaceAll(StringUtils.EMPTY));
+    }
     /**
-     * {@code @Nullable java.util.Map<String, List<Integer>>} is {@code Map}, {@code String...} is {@code String[]}, and
-     * a nested type the index prints as {@code Outer#Inner} is {@code Inner}, as a reviewer writes it
+     * {@code @Nullable java.util.Map<String, List<Integer>>} is {@code Map}, {@code String...} is {@code String[]}, a
+     * nested type the index prints as {@code Outer#Inner} is {@code Inner}, and a type PMD could not resolve,
+     * {@code *Unknown}, is {@code Unknown}, as a reviewer writes it
      */
     public String simpleTypeName(String type) {
-        String compact = StringUtils.deleteWhitespace(TYPE_ANNOTATION.matcher(eraseTypeArguments(type)).replaceAll(StringUtils.EMPTY)).replace(VARARGS, ARRAY);
-        return compact.substring(StringUtils.lastIndexOfAny(compact, ".", NESTED_TYPE) + 1);
+        String compact = StringUtils.deleteWhitespace(declaration(type)).replace(VARARGS, ARRAY);
+        return Strings.CS.removeStart(compact.substring(StringUtils.lastIndexOfAny(compact, ".", NESTED_TYPE) + 1), UNRESOLVED_TYPE);
     }
     private static String eraseTypeArguments(String text) {
         StringBuilder toReturn = new StringBuilder();

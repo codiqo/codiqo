@@ -49,10 +49,6 @@ import io.codiqo.llm.schema.LlmScoringResponse.StaticAnalysisReview;
  * <p>{@link FinalScoreCalculator} still clamps the multiplier and turns impact and quality factor into bonus points.
  */
 public class QualityRules {
-    /** each tool's lists: a finding is judged once it sits in any of its tool's lists */
-    private static final List<List<Function<StaticAnalysisReview, List<StaticAnalysisFinding>>>> TOOL_LISTS = List.of(
-            List.of(StaticAnalysisReview::getPmdInChangedLines, StaticAnalysisReview::getPmdPreExisting, StaticAnalysisReview::getPmdFalsePositives),
-            List.of(StaticAnalysisReview::getSpotbugsInChangedLines, StaticAnalysisReview::getSpotbugsPreExisting, StaticAnalysisReview::getSpotbugsFalsePositives));
     /** the dimensions whose gate is judgment (is there a fitting test?); architecture's is coverage, testing coverage has none */
     private static final List<Gate> JUDGMENT_GATES = List.of(
             new Gate("concurrencyRisk", QualityDimensions::getConcurrencyRisk, RunArgs::getConcurrencyRiskThreshold),
@@ -268,14 +264,14 @@ public class QualityRules {
                 .spotbugsPreExisting(Lists.newArrayList(CollectionUtils.emptyIfNull(judged.getSpotbugsPreExisting())))
                 .spotbugsFalsePositives(Lists.newArrayList(CollectionUtils.emptyIfNull(judged.getSpotbugsFalsePositives())))
                 .build();
-        for (List<Function<StaticAnalysisReview, List<StaticAnalysisFinding>>> tool : TOOL_LISTS) {
+        for (StaticAnalysisLists.ToolLists tool : StaticAnalysisLists.all()) {
             Set<Triple<String, String, Integer>> seen = Sets.newHashSet();
-            for (Function<StaticAnalysisReview, List<StaticAnalysisFinding>> list : tool) {
+            for (Function<StaticAnalysisReview, List<StaticAnalysisFinding>> list : tool.lists()) {
                 for (StaticAnalysisFinding finding : list.apply(toReturn)) {
                     seen.add(findingKey(finding));
                 }
             }
-            for (Function<StaticAnalysisReview, List<StaticAnalysisFinding>> list : tool) {
+            for (Function<StaticAnalysisReview, List<StaticAnalysisFinding>> list : tool.lists()) {
                 for (StaticAnalysisFinding finding : list.apply(placed)) {
                     if (seen.add(findingKey(finding))) {
                         list.apply(toReturn).add(finding);
