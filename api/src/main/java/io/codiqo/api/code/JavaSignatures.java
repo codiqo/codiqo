@@ -22,6 +22,7 @@ public class JavaSignatures {
     private static final Pattern TYPE_ANNOTATION = Pattern.compile("@[\\w.]+(\\([^)]*\\))?");
     private static final String VARARGS = "...";
     private static final String ARRAY = "[]";
+    private static final String NESTED_TYPE = "#";
 
     /**
      * {@code name(Types)} without whitespace, type arguments or type parameters, every name simple, and a constructor
@@ -43,10 +44,13 @@ public class JavaSignatures {
         }
         return erased;
     }
-    /** {@code @Nullable java.util.Map<String, List<Integer>>} is {@code Map}, and {@code String...} is {@code String[]} */
+    /**
+     * {@code @Nullable java.util.Map<String, List<Integer>>} is {@code Map}, {@code String...} is {@code String[]}, and
+     * a nested type the index prints as {@code Outer#Inner} is {@code Inner}, as a reviewer writes it
+     */
     public String simpleTypeName(String type) {
         String compact = StringUtils.deleteWhitespace(TYPE_ANNOTATION.matcher(eraseTypeArguments(type)).replaceAll(StringUtils.EMPTY)).replace(VARARGS, ARRAY);
-        return compact.substring(compact.lastIndexOf('.') + 1);
+        return compact.substring(StringUtils.lastIndexOfAny(compact, ".", NESTED_TYPE) + 1);
     }
     private static String eraseTypeArguments(String text) {
         StringBuilder toReturn = new StringBuilder();

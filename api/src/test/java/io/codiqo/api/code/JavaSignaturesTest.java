@@ -15,6 +15,8 @@ class JavaSignaturesTest {
         assertEquals("Totals(Config,Clock)", JavaSignatures.comparable("Totals(Config, Clock)", "Totals"));
         assertEquals("join(String[])", JavaSignatures.comparable("join(@Nullable java.lang.String...)", "Totals"));
         assertEquals("entry(Entry)", JavaSignatures.comparable("entry(Map.Entry<K, V>)", "Totals"));
+        assertEquals("replace(Migration)", JavaSignatures.comparable("replace(Watchdog#Migration)", "Watchdog"));
+        assertEquals("replace(Migration)", JavaSignatures.comparable("replace(Migration)", "Watchdog"));
         assertEquals("name()", JavaSignatures.comparable("name()", "Totals"));
         assertEquals("name", JavaSignatures.comparable("name", "Totals"));
     }
