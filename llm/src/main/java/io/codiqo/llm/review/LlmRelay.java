@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -26,6 +27,11 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.math.NumberUtils;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.openai.core.ObjectMappers;
+import com.openai.models.ErrorObject;
+import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
@@ -36,10 +42,6 @@ import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaderValues;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import okhttp3.HttpUrl;
-import tools.jackson.core.JacksonException;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.json.JsonMapper;
-import tools.jackson.databind.node.ObjectNode;
 
 /**
  * A loop back end point the review's agents call instead of the model's end point, which forwards each request with
@@ -78,7 +80,7 @@ public final class LlmRelay implements AutoCloseable {
      * {@code /v1x} or {@code /v1/../api/...} through with any method.
      */
     private static final Set<String> FORWARDED_CALLS = Set.of("POST " + CHAT_COMPLETIONS, "GET /models");
-    private static final JsonMapper MAPPER = JsonMapper.builder().build();
+    private static final JsonMapper OPENAI = ObjectMappers.jsonMapper();
 
     private final HttpServer server;
     private final ExecutorService executor;
@@ -232,22 +234,23 @@ public final class LlmRelay implements AutoCloseable {
             }
         }
     }
-    /** the request with the scoring prompt's sampling set; a body that is not a JSON object is the provider's to refuse, and goes on as it came */
+    /**
+     * The request with the scoring prompt's sampling set, read and written as the OpenAI SDK's own request body, which
+     * keeps every field it does not model ({@code stream} among them) as it came. A body that is not a chat completion
+     * request is the provider's to refuse, and goes on as it came.
+     */
+    @SuppressWarnings("deprecation") // OpenAI deprecated seed; Ollama, which serves the review's models, still honours it
     private byte[] sampled(byte[] body) {
-        JsonNode request;
         try {
-            request = MAPPER.readTree(body);
-        } catch (JacksonException err) {
-            log.warn("llm relay: a chat completion that is not JSON goes on without the scoring prompt's sampling: %s", err.getOriginalMessage());
+            ChatCompletionCreateParams.Body.Builder chat = OPENAI.readValue(body, ChatCompletionCreateParams.Body.class).toBuilder();
+            Optional.ofNullable(temperature).ifPresent(chat::temperature);
+            Optional.ofNullable(topP).ifPresent(chat::topP);
+            Optional.ofNullable(seed).ifPresent(value -> chat.seed(value.longValue()));
+            return OPENAI.writeValueAsBytes(chat.build());
+        } catch (IOException err) {
+            log.warn("llm relay: a chat completion that is not a JSON object goes on without the scoring prompt's sampling: %s", err.getMessage());
             return body;
         }
-        if (request instanceof ObjectNode chat) {
-            Optional.ofNullable(temperature).ifPresent(value -> chat.put("temperature", value));
-            Optional.ofNullable(topP).ifPresent(value -> chat.put("top_p", value));
-            Optional.ofNullable(seed).ifPresent(value -> chat.put("seed", value));
-            return MAPPER.writeValueAsBytes(chat);
-        }
-        return body;
     }
     private Duration backoff(int attempt) {
         return retryBackoff.multipliedBy(1L << attempt);
@@ -280,10 +283,9 @@ public final class LlmRelay implements AutoCloseable {
             }
         };
     }
-    private static String error(String message, String type) {
-        ObjectNode toReturn = MAPPER.createObjectNode();
-        toReturn.putObject("error").put("message", message).put("type", type);
-        return MAPPER.writeValueAsString(toReturn);
+    /** the error body an OpenAI client reads, the SDK's own {@code {"error": ErrorObject}} */
+    private static String error(String message, String type) throws JsonProcessingException {
+        return OPENAI.writeValueAsString(Map.of("error", ErrorObject.builder().message(message).type(type).code(Optional.empty()).param(Optional.empty()).build()));
     }
     private static void respond(HttpExchange exchange, int status, String json) throws IOException {
         byte[] bytes = json.getBytes(StandardCharsets.UTF_8);

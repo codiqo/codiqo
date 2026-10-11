@@ -39,6 +39,15 @@
             <groupId>tools.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
+        <!-- Jackson 2, as the OpenAI SDK's own mapper is: its request and answer models are read and written with it -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.openai</groupId>
             <artifactId>openai-java-client-okhttp</artifactId>

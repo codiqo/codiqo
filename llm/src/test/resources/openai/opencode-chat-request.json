@@ -1,0 +1,46 @@
+{
+  "model": "reviewer-model",
+  "messages": [
+    {"role": "system", "content": "You review one area of a commit."},
+    {"role": "user", "content": "Review the changes to src/main/java/com/example/Cache.java."},
+    {
+      "role": "assistant",
+      "content": null,
+      "reasoning": "I will read the diff first.",
+      "tool_calls": [
+        {"id": "call_1", "type": "function", "function": {"name": "shell", "arguments": "{\"command\":\"git show abc123 -- src/main/java/com/example/Cache.java\"}"}}
+      ]
+    },
+    {"role": "tool", "tool_call_id": "call_1", "content": "diff --git a/src/main/java/com/example/Cache.java b/src/main/java/com/example/Cache.java\n+    private final Map<String, Long> entries = new HashMap<>();"},
+    {
+      "role": "assistant",
+      "content": "The map is not thread-safe.",
+      "reasoning_content": "A plain HashMap is shared by the request threads.",
+      "tool_calls": []
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "grep",
+        "description": "Search file contents.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "pattern": {"type": "string", "description": "The regular expression."},
+            "limit": {"type": "integer", "exclusiveMinimum": 0, "description": "At most this many matches."}
+          },
+          "required": ["pattern"],
+          "additionalProperties": false
+        },
+        "strict": false
+      }
+    }
+  ],
+  "stream": true,
+  "stream_options": {"include_usage": true},
+  "store": false,
+  "max_completion_tokens": 32768,
+  "temperature": 0.7
+}
