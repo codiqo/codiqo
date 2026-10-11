@@ -61,7 +61,7 @@ public class LocalReviewModels {
      * labelled, and it may share its name with a new one (a method moved into a nested class), which would hand the new
      * unit's label to it as well.
      */
-    private static final EnumSet<CodeUnitModel.OperationEnum> LABELLED_OPERATIONS = EnumSet.of(CodeUnitModel.OperationEnum.NEW, CodeUnitModel.OperationEnum.MODIFY);
+    public static final Set<CodeUnitModel.OperationEnum> LABELLED_OPERATIONS = Sets.immutableEnumSet(CodeUnitModel.OperationEnum.NEW, CodeUnitModel.OperationEnum.MODIFY);
 
     public LocalReviewModel toModel(LocalReview review) {
         return toModel(review, Optional.empty());
@@ -111,6 +111,19 @@ public class LocalReviewModels {
      * keeps its last category, as the scoring does.
      */
     public Labelling applyBlockCategories(AnalysisSubmissionModel submission, LocalReview review, Collection<ReviewLanguage> languages) {
+        Pair<Map<CodeUnitModel, LlmScoringResponse.CodeBlockCategoryView>, Labelling> matched = matchBlockCategories(submission, review, languages);
+        matched.getLeft().forEach((unit, label) -> {
+            unit.setCategory(CodeUnitModel.CategoryEnum.fromValue(label.getCategory().name()));
+            /** a reason is asked for only above MECHANICAL; one the model gave anyway says nothing a reader needs */
+            if (label.getCategory() != LlmScoringResponse.CodeBlockCategory.MECHANICAL) {
+                unit.setCategoryReason(StringUtils.trimToNull(label.getReason()));
+            }
+        });
+        return matched.getRight();
+    }
+    /** what {@link #applyBlockCategories} would label, without labelling anything: the reviewers' coverage beside the labelling turn's */
+    public Pair<Map<CodeUnitModel, LlmScoringResponse.CodeBlockCategoryView>, Labelling> matchBlockCategories(AnalysisSubmissionModel submission, LocalReview review,
+            Collection<ReviewLanguage> languages) {
         ListMultimap<Pair<String, String>, Pair<UnitName, CodeUnitModel>> byMember = MultimapBuilder.hashKeys().arrayListValues().build();
         int units = 0;
         for (FileChangeModel file : CollectionUtils.emptyIfNull(submission.getFiles())) {
@@ -164,14 +177,7 @@ public class LocalReviewModels {
             unmatched.add(labelKey.getLeft() + "#" + container + named.getMember());
         });
         shared.forEach((unit, label) -> claim(unit, label, claimed, resolved));
-        resolved.forEach((unit, label) -> {
-            unit.setCategory(CodeUnitModel.CategoryEnum.fromValue(label.getCategory().name()));
-            /** a reason is asked for only above MECHANICAL; one the model gave anyway says nothing a reader needs */
-            if (label.getCategory() != LlmScoringResponse.CodeBlockCategory.MECHANICAL) {
-                unit.setCategoryReason(StringUtils.trimToNull(label.getReason()));
-            }
-        });
-        return new Labelling(labels.size(), resolved.size(), units, unmatched);
+        return Pair.of(resolved, new Labelling(labels.size(), resolved.size(), units, unmatched));
     }
     private static String reasoning(LocalReview review, Optional<FindingTriage> triage) {
         Context ctx = new Context();

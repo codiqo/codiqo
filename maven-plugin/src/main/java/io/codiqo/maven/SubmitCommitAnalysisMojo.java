@@ -20,6 +20,7 @@ import com.google.common.collect.Multiset;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisAcceptedModel;
+import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.HotspotSnapshotModel;
@@ -34,8 +35,11 @@ import io.codiqo.llm.review.LocalReview;
 import io.codiqo.llm.review.LocalReviewModels;
 import io.codiqo.llm.review.LocalReviewer;
 import io.codiqo.llm.review.ReviewEndpoint;
+import io.codiqo.llm.review.ReviewUnit;
 import io.codiqo.llm.review.StaticFinding;
 import io.codiqo.llm.review.StaticFindings;
+import io.codiqo.llm.review.UnitLabelling;
+import io.codiqo.llm.review.UnitLabels;
 import io.codiqo.maven.auth.MavenCredentials;
 import io.codiqo.maven.logging.MavenLogFactory;
 import io.codiqo.maven.logging.MavenMessageReporter;
@@ -113,7 +117,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
     @Parameter(property = "codiqo.review.triage")
     private Boolean reviewTriage;
 
-    private BackgroundReview<LocalReviewer.ReviewAndTriage> backgroundReview;
+    private BackgroundReview<LocalReviewer.ReviewOutcome> backgroundReview;
     /**
      * Resolved once per run and shared by every call to Codiqo. Each call used to resolve its own, so a developer with
      * no stored login got one browser login from the fix-commit lookup in the middle of the analysis, while the
@@ -122,6 +126,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
     private CodiqoCredential credential;
     /** completed with the analysis's findings just before the review is joined; the review waits for it to triage */
     private final CompletableFuture<List<StaticFinding>> buildFindings = new CompletableFuture<>();
+    private final CompletableFuture<List<ReviewUnit>> buildUnits = new CompletableFuture<>();
 
     @Override
     protected void doBeforeAnalysis(RunArgs args) throws Exception {
@@ -157,8 +162,9 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
                         new MavenLogFactory(getLog()).getLogger(LocalReviewer.class));
                 Path workTree = clone.getWorkTree().toPath();
                 String commit = args.getCommitId();
-                Optional<LocalReviewer.FindingsSource> findings = args.isReviewTriage() ? Optional.of(buildFindings::get) : Optional.empty();
-                backgroundReview = BackgroundReview.start(() -> reviewer.reviewThenTriage(workTree, commit, findings));
+                Optional<LocalReviewer.BuildSource<ReviewUnit>> units = args.isReviewAssess() ? Optional.of(buildUnits::get) : Optional.empty();
+                Optional<LocalReviewer.BuildSource<StaticFinding>> findings = args.isReviewTriage() ? Optional.of(buildFindings::get) : Optional.empty();
+                backgroundReview = BackgroundReview.start(() -> reviewer.reviewThenFollowUp(workTree, commit, units, findings));
                 getLog().info("local review of " + args.getCommitId() + " started next to the analysis");
             } else {
                 getLog().info("local review skipped: " + args.getCommitId() + " changes no file the analysis reads");
@@ -175,8 +181,10 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
     @Override
     protected void doLlmScoring(SubmissionContext ctx) throws Exception {
         if (Objects.nonNull(backgroundReview)) {
+            UnitLabelling.Checklist checklist = UnitLabelling.checklist(ctx.getSubmissionModel());
+            buildUnits.complete(checklist.getListed());
             buildFindings.complete(StaticFindings.introduced(ctx.getSubmissionModel(), DefaultLanguageProcessors.reviewLanguages()));
-            LocalReviewer.ReviewAndTriage reviewed = backgroundReview.await(LocalReviewer.longestReview(ctx.getArgs(), ctx.getArgs().isReviewTriage()));
+            LocalReviewer.ReviewOutcome reviewed = backgroundReview.await(LocalReviewer.longestReview(ctx.getArgs(), ctx.getArgs().isReviewAssess(), ctx.getArgs().isReviewTriage()));
             LocalReview finished = reviewed.getReview();
             reviewed.getTriage().ifPresent(this::logTriage);
             /**
@@ -185,17 +193,12 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
              */
             LocalReviewModel model = LocalReviewModels.toModel(finished, reviewed.getTriage());
             if (Objects.nonNull(finished.getAssessment())) {
-                LocalReviewModels.Labelling labelling = LocalReviewModels.applyBlockCategories(ctx.getSubmissionModel(), finished, DefaultLanguageProcessors.reviewLanguages());
-                getLog().info(String.format("local review labelled %d of the submission's %d code units, from %d labels",
-                        labelling.getApplied(), labelling.getUnits(), labelling.getReturned()));
-                if (labelling.getReturned() == 0) {
-                    getLog().warn("the local review returned no code-unit labels: every unit of this commit is scored with the prompt's label,"
-                            + " or as MECHANICAL for an organisation scored without the prompt");
+                int labelled = 0;
+                if (reviewed.getLabels().isPresent()) {
+                    labelled = labelById(ctx.getSubmissionModel(), checklist, finished, reviewed.getLabels().get());
                 }
-                if (CollectionUtils.isNotEmpty(labelling.getUnmatched())) {
-                    getLog().warn(String.format("%d local review label(s) named no code unit of the submission, or several without a container to choose by, and were dropped: %s",
-                            labelling.getUnmatched().size(),
-                            labelling.getUnmatched().stream().limit(UNMATCHED_LABEL_SAMPLE).toList()));
+                if (labelled == 0) {
+                    labelByName(ctx.getSubmissionModel(), finished);
                 }
             }
             ctx.getSubmissionModel().setLocalReview(model);
@@ -218,6 +221,43 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
             credential = MavenCredentials.resolve(apiKey, authUrl, resourceUrl, getLog());
         }
         return credential;
+    }
+    /**
+     * The labelling turn's labels, by id; returns the units they labelled. The reviewers' own labels are only matched
+     * here, so the log shows how much of the commit each would have labelled. An answer that labels nothing (an empty
+     * list, another key, only ids or categories that do not exist) still parses, since unknown fields and enum values
+     * are read leniently; the caller then applies the reviewers' labels, as it does when the turn failed, instead of
+     * leaving every unit of the commit without a local label.
+     */
+    private int labelById(AnalysisSubmissionModel submission, UnitLabelling.Checklist checklist, LocalReview finished, UnitLabels labels) {
+        LocalReviewModels.Labelling byName = LocalReviewModels.matchBlockCategories(submission, finished, DefaultLanguageProcessors.reviewLanguages()).getRight();
+        UnitLabelling.Applied applied = UnitLabelling.apply(checklist, labels);
+        getLog().info(String.format("local review labelled %d of the submission's %d code units by id, from %d labels; the reviewers' own labels would have named %d",
+                applied.getLabelled(), applied.getUnits(), labels.getLabels().size(), byName.getApplied()));
+        if (CollectionUtils.isNotEmpty(applied.getUnknownIds())) {
+            getLog().warn(String.format("%d label(s) named an id the review was not given and were dropped: %s",
+                    applied.getUnknownIds().size(),
+                    applied.getUnknownIds().stream().limit(UNMATCHED_LABEL_SAMPLE).toList()));
+        }
+        if (applied.getLabelled() == 0) {
+            getLog().warn("the labelling turn labelled none of the submission's code units; the reviewers' own labels are used instead");
+        }
+        return applied.getLabelled();
+    }
+    /** the reviewers' own labels, matched by the names they wrote: the labelling turn did not run, failed or labelled nothing */
+    private void labelByName(AnalysisSubmissionModel submission, LocalReview finished) {
+        LocalReviewModels.Labelling labelling = LocalReviewModels.applyBlockCategories(submission, finished, DefaultLanguageProcessors.reviewLanguages());
+        getLog().info(String.format("local review labelled %d of the submission's %d code units, from %d labels",
+                labelling.getApplied(), labelling.getUnits(), labelling.getReturned()));
+        if (labelling.getReturned() == 0) {
+            getLog().warn("the local review returned no code-unit labels: every unit of this commit is scored with the prompt's label,"
+                    + " or as MECHANICAL for an organisation scored without the prompt");
+        }
+        if (CollectionUtils.isNotEmpty(labelling.getUnmatched())) {
+            getLog().warn(String.format("%d local review label(s) named no code unit of the submission, or several without a container to choose by, and were dropped: %s",
+                    labelling.getUnmatched().size(),
+                    labelling.getUnmatched().stream().limit(UNMATCHED_LABEL_SAMPLE).toList()));
+        }
     }
     private void logTriage(FindingTriage triage) {
         Multiset<FindingVerdict.Verdict> verdicts = HashMultiset.create(triage.getVerdicts().stream().map(FindingVerdict::getVerdict).toList());

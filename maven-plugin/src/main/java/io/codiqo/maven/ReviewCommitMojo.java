@@ -7,29 +7,46 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.client.model.AnalysisSubmissionModel;
+import io.codiqo.client.model.CodeUnitModel;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.llm.StaticAnalysisLists;
 import io.codiqo.llm.review.FindingTriage;
 import io.codiqo.llm.review.FindingVerdict;
 import io.codiqo.llm.review.LocalReview;
+import io.codiqo.llm.review.LocalReviewModels;
 import io.codiqo.llm.review.LocalReviewer;
 import io.codiqo.llm.review.ReviewEndpoint;
+import io.codiqo.llm.review.ReviewUnit;
+import io.codiqo.llm.review.SessionUsage;
 import io.codiqo.llm.review.StaticFinding;
+import io.codiqo.llm.review.UnitLabelling;
+import io.codiqo.llm.review.UnitLabels;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import io.codiqo.maven.auth.MavenCredentials;
 import io.codiqo.maven.logging.MavenLogFactory;
+import lombok.Value;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.SerializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -44,6 +61,8 @@ import tools.jackson.databind.json.JsonMapper;
  */
 @Mojo(name = "review", requiresProject = false, aggregator = true, threadSafe = true)
 public class ReviewCommitMojo extends AbstractMojo {
+    private static final Set<String> YAML_EXTENSIONS = Set.of("yaml", "yml");
+
     @Parameter(property = "codiqo.review.commit", defaultValue = "HEAD")
     private String commit;
 
@@ -88,6 +107,14 @@ public class ReviewCommitMojo extends AbstractMojo {
     @Parameter(property = "codiqo.review.findings")
     private File findings;
 
+    /**
+     * A submission {@code analyze-commit} wrote for this commit ({@code codiqo-submission-<sha>.yaml} or {@code .json}): with
+     * {@code codiqo.review.assess}, a fork of the review's session labels its code units by id after the review, and the
+     * report compares those labels, unit by unit, with what the reviewers' own labels name.
+     */
+    @Parameter(property = "codiqo.review.submission")
+    private File submission;
+
     @Parameter(property = "codiqo.apiKey")
     private String apiKey;
 
@@ -115,7 +142,7 @@ public class ReviewCommitMojo extends AbstractMojo {
         }
 
         try {
-            Optional<LocalReviewer.FindingsSource> source = Optional.empty();
+            Optional<LocalReviewer.BuildSource<StaticFinding>> source = Optional.empty();
             if (Objects.nonNull(findings)) {
                 List<StaticFinding> given = JsonMapper.builder().build().readerForListOf(StaticFinding.class).readValue(findings);
                 warnUnlisted(given);
@@ -123,10 +150,33 @@ public class ReviewCommitMojo extends AbstractMojo {
             }
             LocalReviewer reviewer = new LocalReviewer(args, endpoint, LocalReviewGuidance.read(directory, getLog()), DefaultLanguageProcessors.reviewLanguages(),
                     new MavenLogFactory(getLog()).getLogger(LocalReviewer.class));
-            LocalReviewer.ReviewAndTriage result = reviewer.reviewThenTriage(directory.toPath(), commit, source);
+            Optional<AnalysisSubmissionModel> analysed = Optional.empty();
+            if (Objects.nonNull(submission)) {
+                if (args.isReviewAssess()) {
+                    /** {@code analyze-commit} writes YAML unless told otherwise */
+                    ObjectMapper mapper = JsonMapper.builder().build();
+                    if (YAML_EXTENSIONS.contains(FilenameUtils.getExtension(submission.getName()))) {
+                        mapper = SubmitAnalysisFileMojo.yamlMapper();
+                    }
+                    AnalysisSubmissionModel read = mapper.readerFor(AnalysisSubmissionModel.class).without(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES).readValue(submission);
+                    requireReviewedCommit(read);
+                    analysed = Optional.of(read);
+                } else {
+                    getLog().warn("codiqo.review.submission is ignored without codiqo.review.assess: only an assessing review labels the submission's code units");
+                }
+            }
+            Optional<UnitLabelling.Checklist> checklist = analysed.map(UnitLabelling::checklist);
+            Optional<LocalReviewer.BuildSource<ReviewUnit>> units = checklist.map(listed -> listed::getListed);
+
+            LocalReviewer.ReviewOutcome result = reviewer.reviewThenFollowUp(directory.toPath(), commit, units, source);
             logFindings(result.getReview());
             result.getTriage().ifPresent(this::logTriage);
-            writeReport(result.getReview(), result.getTriage());
+
+            Optional<LabellingReport> labelling = Optional.empty();
+            if (BooleanUtils.and(new boolean[] { analysed.isPresent(), Objects.nonNull(result.getReview().getAssessment()) })) {
+                labelling = Optional.of(compare(analysed.get(), checklist.get(), result));
+            }
+            writeReport(result.getReview(), result.getTriage(), labelling);
         } catch (Exception err) {
             throw new MojoExecutionException("local review of " + commit + " failed: " + err.getMessage(), err);
         }
@@ -184,7 +234,55 @@ public class ReviewCommitMojo extends AbstractMojo {
                     verdict.getReason()));
         }
     }
-    private void writeReport(LocalReview review, Optional<FindingTriage> triage) throws IOException {
+    /**
+     * A submission written for another commit would have the labelling turn label units the review never read, and the
+     * report compare labels of two different commits; nothing in either would show it.
+     */
+    private void requireReviewedCommit(AnalysisSubmissionModel read) throws IOException {
+        ObjectId resolved;
+        try (Repository repository = new FileRepositoryBuilder().findGitDir(directory).setMustExist(true).build()) {
+            resolved = repository.resolve(commit);
+        }
+        if (Objects.isNull(resolved)) {
+            throw new IOException("unknown commit " + commit + " in " + directory);
+        }
+
+        String submitted = Objects.isNull(read.getCommit()) ? null : read.getCommit().getSha();
+        if (resolved.name().equals(submitted)) {
+            return;
+        }
+        throw new IOException("the submission " + submission + " is of commit " + submitted + ", not of the reviewed commit " + resolved.name());
+    }
+    /**
+     * Every listed unit with the label the reviewers' own labels give it by name and the one the labelling turn gave it
+     * by id, and the counts of both, for comparing the two ways of labelling on one review.
+     */
+    private LabellingReport compare(AnalysisSubmissionModel analysed, UnitLabelling.Checklist checklist, LocalReviewer.ReviewOutcome result) {
+        Map<CodeUnitModel, LlmScoringResponse.CodeBlockCategoryView> byName = LocalReviewModels.matchBlockCategories(analysed, result.getReview(), DefaultLanguageProcessors.reviewLanguages()).getLeft();
+        Map<String, UnitLabels.UnitLabel> byId = Maps.newHashMap();
+        result.getLabels().ifPresent(found -> found.getLabels().stream()
+                .filter(label -> Objects.nonNull(label.getCategory()))
+                .forEach(label -> byId.put(StringUtils.strip(label.getId()), label)));
+
+        List<LabelledUnit> units = Lists.newArrayList();
+        int named = 0;
+        int identified = 0;
+        int agreed = 0;
+        for (ReviewUnit unit : checklist.getListed()) {
+            LlmScoringResponse.CodeBlockCategoryView reviewers = byName.get(checklist.getUnits().get(unit.getId()));
+            UnitLabels.UnitLabel turn = byId.get(unit.getId());
+            LlmScoringResponse.CodeBlockCategory reviewersCategory = Objects.nonNull(reviewers) ? reviewers.getCategory() : null;
+            LlmScoringResponse.CodeBlockCategory turnCategory = Objects.nonNull(turn) ? turn.getCategory() : null;
+            named += Objects.nonNull(reviewersCategory) ? 1 : 0;
+            identified += Objects.nonNull(turnCategory) ? 1 : 0;
+            agreed += BooleanUtils.and(new boolean[] { Objects.nonNull(reviewersCategory), reviewersCategory == turnCategory }) ? 1 : 0;
+            units.add(new LabelledUnit(unit.getId(), unit.getPath(), unit.getName(), unit.getOperation(), reviewersCategory, turnCategory));
+        }
+        getLog().info(String.format("labelling of %d code units: the reviewers' labels name %d, the labelling turn labels %d, and they agree on %d of the units both labelled",
+                units.size(), named, identified, agreed));
+        return new LabellingReport(units.size(), named, identified, agreed, result.getLabels().map(UnitLabels::getUsage), units);
+    }
+    private void writeReport(LocalReview review, Optional<FindingTriage> triage, Optional<LabellingReport> labelling) throws IOException {
         Map<String, Object> report = Maps.newLinkedHashMap();
         report.put("commit", review.getCommit());
         report.put("tookSeconds", review.getTook().toSeconds());
@@ -197,9 +295,30 @@ public class ReviewCommitMojo extends AbstractMojo {
             report.put("assessment", review.getAssessment());
         }
         triage.ifPresent(found -> report.put("triage", found));
+        labelling.ifPresent(found -> report.put("labelling", found));
 
         FileUtils.forceMkdirParent(output);
         JsonMapper.builder().enable(SerializationFeature.INDENT_OUTPUT).build().writeValue(output, report);
         getLog().info("review report written to " + output);
+    }
+
+    @Value
+    private static class LabellingReport {
+        int units;
+        int reviewersLabelled;
+        int turnLabelled;
+        int agreed;
+        Optional<SessionUsage> turnUsage;
+        List<LabelledUnit> labels;
+    }
+
+    @Value
+    private static class LabelledUnit {
+        String id;
+        String path;
+        String name;
+        String operation;
+        LlmScoringResponse.CodeBlockCategory reviewers;
+        LlmScoringResponse.CodeBlockCategory turn;
     }
 }

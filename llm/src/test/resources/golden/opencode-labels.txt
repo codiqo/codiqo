@@ -1,0 +1,24 @@
+The build has finished. The analysis found the 2 functions, methods and constructors listed below, which this commit adds (NEW) or changes (MODIFY); each has an id, its file, its name and its lines in the new file. Label every one of them. The reviewers' "blockCategories" in their reports are your starting point; where a unit has none, or you are unsure, read its changed lines with read-only tools (for example `git show 1a2b3c -- <path>`). Do not start subagents.
+
+Judge each unit from its changed lines as the reviewers did:
+  Judge ONLY the changed lines, never the method they live in: "if I saw only the +/- lines, how hard would they be to get right?"
+  MECHANICAL = trivial regardless of size: renames, import or constant swaps, parameter propagation, call-site updates, copied or moved code, delegation, boilerplate, accessors, constructors, wiring. New but trivial is still MECHANICAL.
+  ROUTINE = real but unremarkable logic: ordinary CRUD, validation, glue.
+  SUBSTANTIVE = a genuine design choice or careful edge-case handling.
+  INTRICATE = genuinely hard to reason about: concurrency, locking, subtle invariants, correctness-critical algorithms.
+  IMPORTANCE IS NOT DIFFICULTY: how critical the class is (payments, wallets, auth, security) never raises a label. Threading a new argument through a money or security path, switching a call to its scoped or renamed variant, or moving existing code into a shared helper is MECHANICAL there too; one changed condition among such edits makes the unit ROUTINE at most.
+  TESTS are judged by their own code, never by how important the behaviour they check is: building fixtures, calling setters or builders, and asserting results is MECHANICAL however central the feature; an ordinary scenario with some setup logic is ROUTINE; SUBSTANTIVE only for test machinery that is itself hard to get right (coordinating threads with latches or barriers, controlling time, injecting faults, draining pools between tests).
+
+Answer with one JSON object and nothing else, one entry per id below, the id copied exactly:
+{"labels":[{"id":"U1","category":"MECHANICAL|ROUTINE|SUBSTANTIVE|INTRICATE","reason":"one sentence naming what in the changed lines makes it ROUTINE or harder; leave it out for MECHANICAL"}]}
+JSON RULES: the answer is read by a program, and malformed JSON loses the whole review.
+1. The answer is one JSON object and nothing else: no markdown code fences, no text before or after it.
+2. Every field name is double-quoted; no trailing commas; every array element is a complete object, never null.
+3. Leave an optional field out rather than writing null; an empty array is the right value when nothing was found.
+4. Inside strings a backslash may only come before one of " \ / n r t b f u. Write a newline as \n, a quote in code as \", a backslash in code as \; a regex such as \s is written \\s.
+5. Describe a fix in words rather than quoting code that contains quotes or backslashes.
+6. Write all text in English.
+
+id | file | unit | change | lines
+U1 | a/Service.java | handle(Request) | MODIFY | 12-30
+U2 | a/Service.java | Builder(String) | NEW | 41-44

@@ -108,8 +108,8 @@ public class RunArgs {
     public static final int REVIEW_ANSWER_PREVIEW = 512;
     /** the agent turns of a local review: the coordinator's review and its repair round */
     public static final int REVIEW_TURNS = 2;
-    /** the agent turns of a local review with triage: the review's two, then the triage and its repair round */
-    public static final int REVIEW_TURNS_WITH_TRIAGE = 4;
+    /** the agent turns of each follow-up after the build (the labelling, the triage): its prompt and its repair round */
+    public static final int REVIEW_FOLLOW_UP_TURNS = 2;
 
     public static final int SCORE_PRECISION = 2;
     /** the 0-10 scale of the quality dimensions, the architecture impact and the senior-review score */
