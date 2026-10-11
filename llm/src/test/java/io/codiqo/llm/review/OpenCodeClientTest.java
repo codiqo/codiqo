@@ -13,18 +13,22 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import com.google.common.collect.Maps;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.llm.NoopLog;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.JsonNodeFactory;
@@ -38,6 +42,8 @@ class OpenCodeClientTest {
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
     private static final JsonNodeFactory JSON = JsonNodeFactory.instance;
     private static final String EMPTY_FINDINGS = emptyFindings();
+    private static final Pattern TRACED_MESSAGES = Pattern.compile("GET /api/session/(ses_\\w+)/message");
+    private static final Pattern TRACED_SESSION = Pattern.compile("GET /api/session/(ses_\\w+)");
 
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final Map<String, String> requestBodies = Maps.newConcurrentMap();
@@ -94,6 +100,29 @@ class OpenCodeClientTest {
             assertEquals(3_000, children.stream().mapToLong(SessionUsage::getCachedInputTokens).sum());
         }
     }
+    /**
+     * every session the review ran, its messages in order across pages, and a tool's long output cut: a page that is not
+     * the last still carries a cursor, so the empty page after the last ends the list
+     */
+    @Test
+    void theTraceHoldsEverySessionWithItsToolCalls(@TempDir Path directory) throws Exception {
+        RunArgs args = new RunArgs();
+        args.setReviewTraceDirectory(directory.toFile());
+        try (OpenCodeClient client = new OpenCodeClient(url, PASSWORD, TIMEOUT)) {
+            ReviewTrace.write(args, client, "abcdef0123456789", SESSION, List.of("ses_fork"), new NoopLog());
+        }
+
+        JsonNode trace = mapper.readTree(directory.resolve("codiqo-review-trace-abcdef01.json").toFile());
+        assertEquals("abcdef0123456789", trace.path("commit").asString());
+        assertEquals(List.of(SESSION, "ses_a", "ses_b", "ses_fork"), trace.path("sessions").valueStream().map(session -> session.path("session").path("id").asString()).toList());
+
+        JsonNode messages = trace.path("sessions").get(1).path("messages");
+        assertEquals(2, messages.size());
+        JsonNode tool = messages.get(0).path("content").get(0);
+        assertEquals("git show", tool.path("state").path("input").path("command").asString());
+        assertEquals(4_000, tool.path("state").path("content").get(0).path("text").asString().length());
+        assertEquals("done", messages.get(1).path("text").asString());
+    }
     @Test
     void aRejectedCallReportsTheRouteAndStatus() {
         try (OpenCodeClient client = new OpenCodeClient(url, "wrong-password", TIMEOUT)) {
@@ -112,6 +141,14 @@ class OpenCodeClientTest {
         respond(exchange, HttpResponseStatus.UNAUTHORIZED.code(), JSON.objectNode().put("_tag", "UnauthorizedError").put("message", "Authentication required").toString());
     }
     private static String body(String route, String query) {
+        Matcher traced = TRACED_MESSAGES.matcher(route);
+        if (BooleanUtils.and(new boolean[] { traced.matches(), BooleanUtils.negate(StringUtils.contains(query, "type=")) })) {
+            return tracePage(query);
+        }
+        Matcher session = TRACED_SESSION.matcher(route);
+        if (session.matches() && BooleanUtils.negate(SESSION.equals(session.group(1)))) {
+            return data(session(session.group(1), OpenCodeReviewConfig.REVIEWER, "reviewer-model", 1, 1, 0, 0));
+        }
         return switch (route) {
             case "POST /api/session" -> data(JSON.objectNode().put("id", SESSION));
             case "POST /api/session/" + SESSION + "/prompt" -> data(JSON.objectNode().put("id", "msg_1"));
@@ -129,18 +166,38 @@ class OpenCodeClientTest {
     }
     /**
      * newest first and paged, as OpenCode 2.0.20 serves it: the answer is on the second page, after a text-less step.
-     * Every page must ask for the order, the cursor is not trusted to keep it.
+     * The cursor carries the order and OpenCode refuses a page that names it again, but the type filter goes with every
+     * page.
      */
     private static String messagePage(String query) {
-        if (BooleanUtils.and(new boolean[] { query.contains("type=assistant"), query.contains("order=desc") })) {
-            if (query.contains("cursor=page-2")) {
-                ObjectNode answer = assistant(200);
-                answer.putArray("content").add(part("reasoning", "thinking")).add(part("text", EMPTY_FINDINGS));
-                return page(null, List.of(answer, assistant(100).put("text", "I will start by listing the changed files.")));
-            }
+        if (BooleanUtils.and(new boolean[] { query.contains("type=assistant"), query.contains("cursor=page-2"), BooleanUtils.negate(query.contains("order=")) })) {
+            ObjectNode answer = assistant(200);
+            answer.putArray("content").add(part("reasoning", "thinking")).add(part("text", EMPTY_FINDINGS));
+            return page(null, List.of(answer, assistant(100).put("text", "I will start by listing the changed files.")));
+        }
+        if (BooleanUtils.and(new boolean[] { query.contains("type=assistant"), query.contains("order=desc"), BooleanUtils.negate(query.contains("cursor=")) })) {
             return page("page-2", List.of(assistant(300).put("text", StringUtils.EMPTY)));
         }
         throw new IllegalArgumentException("unexpected message query " + query);
+    }
+    /** a tool call whose output is longer than the trace keeps, then a text answer, then the empty page after the last */
+    private static String tracePage(String query) {
+        if (BooleanUtils.and(new boolean[] { StringUtils.contains(query, "cursor="), StringUtils.contains(query, "order=") })) {
+            throw new IllegalArgumentException("Cursor cannot be combined with order");
+        }
+        if (StringUtils.contains(query, "cursor=trace-3")) {
+            return page("trace-4", List.of());
+        }
+        if (StringUtils.contains(query, "cursor=trace-2")) {
+            return page("trace-3", List.of(assistant(200).put("text", "done")));
+        }
+        ObjectNode tool = JSON.objectNode().put("type", "tool").put("name", "bash");
+        ObjectNode state = tool.putObject("state").put("status", "completed");
+        state.putObject("input").put("command", "git show");
+        state.putArray("content").add(part("text", StringUtils.repeat('x', 10_000)));
+        ObjectNode message = assistant(100);
+        message.putArray("content").add(tool);
+        return page("trace-2", List.of(message));
     }
     private static void respond(HttpExchange exchange, int status, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
