@@ -1,5 +1,6 @@
 package io.codiqo.maven;
 
+import java.io.File;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -119,6 +120,13 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
     @Parameter(property = "codiqo.review.triage")
     private Boolean reviewTriage;
 
+    /** writes every session of the review, the sub-agents' tool calls included, to {@code codiqo-review-trace-<sha>.json} */
+    @Parameter(property = "codiqo.review.trace")
+    private Boolean reviewTrace;
+
+    @Parameter(property = "codiqo.review.traceDirectory", defaultValue = "${project.build.directory}/codiqo")
+    private File reviewTraceDirectory;
+
     private BackgroundReview<LocalReviewer.ReviewOutcome> backgroundReview;
     /**
      * Resolved once per run and shared by every call to Codiqo. Each call used to resolve its own, so a developer with
@@ -135,6 +143,8 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
         Optional.ofNullable(review).ifPresent(args::setReviewEnabled);
         Optional.ofNullable(reviewAssess).ifPresent(args::setReviewAssess);
         Optional.ofNullable(reviewTriage).ifPresent(args::setReviewTriage);
+        Optional.ofNullable(reviewTrace).ifPresent(args::setReviewTrace);
+        Optional.ofNullable(reviewTraceDirectory).ifPresent(args::setReviewTraceDirectory);
         Optional.ofNullable(reviewExecutable).ifPresent(args::setReviewExecutable);
         Optional.ofNullable(reviewBaseUrl).ifPresent(args::setReviewBaseUrl);
         Optional.ofNullable(reviewCoordinatorModel).ifPresent(args::setReviewCoordinatorModel);

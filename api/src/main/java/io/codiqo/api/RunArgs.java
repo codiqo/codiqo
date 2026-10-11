@@ -576,6 +576,16 @@ public class RunArgs {
     /** Local review: after the build, have a fork of the coordinator session judge the PMD and SpotBugs findings on added lines. */
     private transient boolean reviewTriage;
 
+    /**
+     * Local review: before OpenCode's home and its session database are deleted, write every session the review ran,
+     * the sub-agents' tool calls included, to {@code codiqo-review-trace-<sha>.json} in {@link #reviewTraceDirectory}.
+     */
+    private transient boolean reviewTrace = true;
+
+    /** Local review: where the trace goes; unset writes it to the temp directory, whose path is logged. */
+    @Nullable
+    private transient File reviewTraceDirectory;
+
     private transient String reviewExecutable = "opencode";
 
     /** Local review: the OpenAI-compatible endpoint the agents call; the backend's proxy, or {@link #DEFAULT_LOCAL_LLM_URL}. */

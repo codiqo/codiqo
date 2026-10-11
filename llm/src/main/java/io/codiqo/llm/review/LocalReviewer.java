@@ -122,92 +122,103 @@ public class LocalReviewer {
         try (OpenCodeServer server = OpenCodeServer.start(args, OpenCodeReviewConfig.build(args, effective, conventionGuidance, namingRules, tags), workTree, log)) {
             try (OpenCodeClient client = new OpenCodeClient(server.getUrl(), server.getPassword(), args.getReviewTimeout())) {
                 String sessionId = client.createSession(workTree, OpenCodeReviewConfig.COORDINATOR, "codiqo review " + StringUtils.left(sha, SHORT_SHA));
-                LocalReview review;
-                try (ProgressStage stage = ProgressStage.start(args, "review")) {
-                    log.info("reviewing %s with %s (coordinator session %s) and %s (reviewers)", sha, args.getReviewCoordinatorModel(), sessionId, args.getReviewReviewerModel());
-                    client.prompt(sessionId, OpenCodeReviewConfig.reviewPrompt(sha));
-                    client.awaitIdle(sessionId);
-
-                    String answer = client.finalAnswer(sessionId);
-                    Optional<JacksonException> unreadable = unreadable(answer, args.isReviewAssess());
-                    if (unreadable.isPresent()) {
-                        /** One slip, such as an unclosed string in a long answer, must not cost a review the agents already finished. */
-                        log.warn("the coordinator's answer is not valid JSON (%s); asking it to correct the answer", unreadable.get().getOriginalMessage());
-                        client.prompt(sessionId, OpenCodeReviewConfig.repairPrompt(unreadable.get().getOriginalMessage()));
-                        client.awaitIdle(sessionId);
-                        answer = client.finalAnswer(sessionId);
-                    }
-
-                    List<SessionUsage> sessions = Lists.newArrayList();
-                    sessions.add(withConfiguredModel(client.usage(sessionId)));
-                    for (SessionUsage child : client.childUsage(sessionId)) {
-                        sessions.add(withConfiguredModel(child));
-                    }
-
-                    ReviewerAnswers reviewers = reviewerAnswers(client, sessions);
-                    if (CollectionUtils.isNotEmpty(reviewers.getUnanswered())) {
-                        log.warn("%d of %d reviewer sessions ended without an answer: %s",
-                                reviewers.getUnanswered().size(),
-                                reviewers.getTotal(),
-                                reviewers.getUnanswered());
-                    }
-
-                    LlmScoringResponse.Bugs bugs;
-                    LlmScoringResponse assessment = null;
-                    try {
-                        bugs = readBugs(answer);
-                        if (args.isReviewAssess()) {
-                            assessment = LlmJson.readAnswerIgnoring(answer, LlmScoringResponse.class, BLOCK_CATEGORIES);
-                            assessment.setBlockCategories(reviewers.getBlockCategories());
-                        }
-                    } catch (JacksonException err) {
-                        throw new IOException("the review answer holds no findings object: " + StringUtils.abbreviate(answer, RunArgs.REVIEW_ANSWER_PREVIEW), err);
-                    }
-                    review = new LocalReview(
-                            sha,
-                            bugs,
-                            sessions,
-                            watch.getDuration(),
-                            answer,
-                            assessment,
-                            reviewers.getTotal(),
-                            reviewers.getUnanswered(),
-                            reviewers.getObservations());
-                    stage.detail(progressDetail(review));
-                    stage.succeeded();
-                }
-
-                Optional<UnitLabels> labels = Optional.empty();
-                if (BooleanUtils.and(new boolean[] { units.isPresent(), args.isReviewAssess() })) {
-                    List<ReviewUnit> listed = awaitBuild(units.get(), "code units");
-                    /**
-                     * A failed labelling costs the labels only: the reviewers' own labels stand in, and the review is kept.
-                     * An interrupt is not such a failure but the cancellation of the whole review (a failed or excluded
-                     * build closes it): swallowed here, a review with triage went on to wait for findings the cancelled
-                     * build never delivers, and its OpenCode server outlived the checkout it was reading. The thread's
-                     * flag tells the two apart, never the exception's type: OkHttp reports a turn that outran the review
-                     * timeout as an InterruptedIOException too, and that is a failed labelling like any other.
-                     */
-                    try {
-                        labels = label(client, sessionId, sha, listed);
-                    } catch (IOException err) {
-                        if (Thread.currentThread().isInterrupted()) {
-                            throw err;
-                        }
-                        log.warn("the labelling turn failed (%s); the reviewers' own labels are used instead", err.getMessage());
+                List<String> forkIds = Lists.newArrayList();
+                try {
+                    return review(client, sessionId, forkIds, workTree, sha, units, findings, watch);
+                } finally {
+                    if (args.isReviewTrace()) {
+                        ReviewTrace.write(args, client, sha, sessionId, forkIds, log);
                     }
                 }
-
-                Optional<FindingTriage> triage = Optional.empty();
-                if (findings.isPresent()) {
-                    triage = triage(client, sessionId, awaitBuild(findings.get(), "static-analysis findings"));
-                }
-                return new ReviewOutcome(review, labels, triage);
             }
         }
     }
+    private ReviewOutcome review(OpenCodeClient client, String sessionId, List<String> forkIds, Path workTree, String sha, Optional<BuildSource<ReviewUnit>> units,
+            Optional<BuildSource<StaticFinding>> findings, StopWatch watch) throws IOException {
+        LocalReview review;
+        try (ProgressStage stage = ProgressStage.start(args, "review")) {
+            log.info("reviewing %s with %s (coordinator session %s) and %s (reviewers)", sha, args.getReviewCoordinatorModel(), sessionId, args.getReviewReviewerModel());
+            client.prompt(sessionId, OpenCodeReviewConfig.reviewPrompt(sha));
+            client.awaitIdle(sessionId);
+
+            String answer = client.finalAnswer(sessionId);
+            Optional<JacksonException> unreadable = unreadable(answer, args.isReviewAssess());
+            if (unreadable.isPresent()) {
+                /** One slip, such as an unclosed string in a long answer, must not cost a review the agents already finished. */
+                log.warn("the coordinator's answer is not valid JSON (%s); asking it to correct the answer", unreadable.get().getOriginalMessage());
+                client.prompt(sessionId, OpenCodeReviewConfig.repairPrompt(unreadable.get().getOriginalMessage()));
+                client.awaitIdle(sessionId);
+                answer = client.finalAnswer(sessionId);
+            }
+
+            List<SessionUsage> sessions = Lists.newArrayList();
+            sessions.add(withConfiguredModel(client.usage(sessionId)));
+            for (SessionUsage child : client.childUsage(sessionId)) {
+                sessions.add(withConfiguredModel(child));
+            }
+
+            ReviewerAnswers reviewers = reviewerAnswers(client, sessions);
+            if (CollectionUtils.isNotEmpty(reviewers.getUnanswered())) {
+                log.warn("%d of %d reviewer sessions ended without an answer: %s",
+                        reviewers.getUnanswered().size(),
+                        reviewers.getTotal(),
+                        reviewers.getUnanswered());
+            }
+
+            LlmScoringResponse.Bugs bugs;
+            LlmScoringResponse assessment = null;
+            try {
+                bugs = readBugs(answer);
+                if (args.isReviewAssess()) {
+                    assessment = LlmJson.readAnswerIgnoring(answer, LlmScoringResponse.class, BLOCK_CATEGORIES);
+                    assessment.setBlockCategories(reviewers.getBlockCategories());
+                }
+            } catch (JacksonException err) {
+                throw new IOException("the review answer holds no findings object: " + StringUtils.abbreviate(answer, RunArgs.REVIEW_ANSWER_PREVIEW), err);
+            }
+            review = new LocalReview(
+                    sha,
+                    bugs,
+                    sessions,
+                    watch.getDuration(),
+                    answer,
+                    assessment,
+                    reviewers.getTotal(),
+                    reviewers.getUnanswered(),
+                    reviewers.getObservations());
+            stage.detail(progressDetail(review));
+            stage.succeeded();
+        }
+
+        Optional<UnitLabels> labels = Optional.empty();
+        if (BooleanUtils.and(new boolean[] { units.isPresent(), args.isReviewAssess() })) {
+            List<ReviewUnit> listed = awaitBuild(units.get(), "code units");
+            /**
+             * A failed labelling costs the labels only: the reviewers' own labels stand in, and the review is kept.
+             * An interrupt is not such a failure but the cancellation of the whole review (a failed or excluded
+             * build closes it): swallowed here, a review with triage went on to wait for findings the cancelled
+             * build never delivers, and its OpenCode server outlived the checkout it was reading. The thread's
+             * flag tells the two apart, never the exception's type: OkHttp reports a turn that outran the review
+             * timeout as an InterruptedIOException too, and that is a failed labelling like any other.
+             */
+            try {
+                labels = label(client, sessionId, forkIds, sha, listed);
+            } catch (IOException err) {
+                if (Thread.currentThread().isInterrupted()) {
+                    throw err;
+                }
+                log.warn("the labelling turn failed (%s); the reviewers' own labels are used instead", err.getMessage());
+            }
+        }
+
+        Optional<FindingTriage> triage = Optional.empty();
+        if (findings.isPresent()) {
+            triage = triage(client, sessionId, forkIds, awaitBuild(findings.get(), "static-analysis findings"));
+        }
+        return new ReviewOutcome(review, labels, triage);
+    }
     /** Asks a fork of the coordinator's session to label the analysis's units, listed by id. */
-    private Optional<UnitLabels> label(OpenCodeClient client, String sessionId, String sha, List<ReviewUnit> units) throws IOException {
+    private Optional<UnitLabels> label(OpenCodeClient client, String sessionId, List<String> forkIds, String sha, List<ReviewUnit> units) throws IOException {
         if (CollectionUtils.isEmpty(units)) {
             log.info("the analysis found no added or changed code units; nothing to label");
             return Optional.empty();
@@ -216,6 +227,7 @@ public class LocalReviewer {
         UnitLabels toReturn;
         try (ProgressStage stage = ProgressStage.start(args, "labels")) {
             String forkId = client.fork(sessionId);
+            forkIds.add(forkId);
             log.info("labelling %d code units in session %s, a fork of %s", units.size(), forkId, sessionId);
             ForkAnswer<UnitLabels> answer = ask(client, forkId, OpenCodeReviewConfig.labelPrompt(sha, units), UnitLabels.class, "labelling");
 
@@ -233,7 +245,7 @@ public class LocalReviewer {
         }
         return Optional.of(toReturn);
     }
-    private Optional<FindingTriage> triage(OpenCodeClient client, String sessionId, List<StaticFinding> findings) throws IOException {
+    private Optional<FindingTriage> triage(OpenCodeClient client, String sessionId, List<String> forkIds, List<StaticFinding> findings) throws IOException {
         if (CollectionUtils.isEmpty(findings)) {
             log.info("no static-analysis findings on the commit's added lines; nothing to triage");
             return Optional.empty();
@@ -242,6 +254,7 @@ public class LocalReviewer {
         FindingTriage toReturn;
         try (ProgressStage stage = ProgressStage.start(args, "triage")) {
             String forkId = client.fork(sessionId);
+            forkIds.add(forkId);
             log.info("triaging %d static-analysis findings in session %s, a fork of %s", findings.size(), forkId, sessionId);
             ForkAnswer<FindingTriage> answer = ask(client, forkId, OpenCodeReviewConfig.triagePrompt(findings), FindingTriage.class, "triage");
 

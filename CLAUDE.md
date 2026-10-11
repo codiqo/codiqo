@@ -1540,6 +1540,15 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   `codiqo.review.triage` asks a fork of the coordinator session, after the build, which PMD and SpotBugs findings on
   added lines are defects (`StaticFindings.introduced`). A confirmed defect becomes a bug unless the review already
   reported one on that line; every verdict places its finding in `LocalAssessmentModel.staticAnalysisReview`.
+- **Every review leaves a trace** (`codiqo.review.trace`, default on): `ReviewTrace` writes the coordinator, its
+  sub-agents (listed again at the end, since a failed review never listed them) and the labelling and triage forks, each
+  session's messages as OpenCode recorded them, tool calls with input and status, every tool output cut to 4,000
+  characters, to `codiqo-review-trace-<sha>.json` in `codiqo.review.traceDirectory` (the build's `target/codiqo`; the
+  `review` goal writes beside its report; the GitHub Action puts it with the logs it redacts and uploads). It is written
+  in the review's `finally`, before `OpenCodeServer.close()` deletes the home and its session database, and also while
+  the review is being cancelled (the interrupt is held back for those local reads). A trace that fails costs only the
+  trace. It holds source code the agents read, so it stays a local file or a private CI artifact; nothing sends it to
+  the backend.
 - **The review knows no language.** What it needs from one comes from that language's module through
   `io.codiqo.api.review.ReviewLanguage` (`JavaReviewLanguage` in lang-java, listed by
   `DefaultLanguageProcessors.reviewLanguages()`): the rule telling reviewers how to write a unit's signature (the

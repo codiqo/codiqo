@@ -101,6 +101,14 @@ public class ReviewCommitMojo extends AbstractMojo {
     @Parameter(property = "codiqo.review.assess")
     private Boolean assess;
 
+    /** writes every session of the review, the sub-agents' tool calls included, to {@code codiqo-review-trace-<sha>.json} */
+    @Parameter(property = "codiqo.review.trace")
+    private Boolean trace;
+
+    /** unset writes the trace beside the report */
+    @Parameter(property = "codiqo.review.traceDirectory")
+    private File traceDirectory;
+
     /**
      * A JSON array of static-analysis findings on the commit's added lines ({@code StaticFinding}): when given, a fork
      * of the review's session judges each one after the review, and the verdicts go into the report as {@code triage}.
@@ -129,6 +137,8 @@ public class ReviewCommitMojo extends AbstractMojo {
     public void execute() throws MojoExecutionException {
         RunArgs args = new RunArgs();
         Optional.ofNullable(assess).ifPresent(args::setReviewAssess);
+        Optional.ofNullable(trace).ifPresent(args::setReviewTrace);
+        args.setReviewTraceDirectory(Optional.ofNullable(traceDirectory).orElse(output.getAbsoluteFile().getParentFile()));
         Optional.ofNullable(executable).ifPresent(args::setReviewExecutable);
         Optional.ofNullable(baseUrl).ifPresent(args::setReviewBaseUrl);
         Optional.ofNullable(coordinatorModel).ifPresent(args::setReviewCoordinatorModel);

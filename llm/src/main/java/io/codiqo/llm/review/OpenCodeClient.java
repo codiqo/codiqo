@@ -7,9 +7,11 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
@@ -41,6 +43,9 @@ public class OpenCodeClient implements Closeable {
     private static final String USER = "opencode";
     private static final MediaType JSON = MediaType.get(HttpHeaderValues.APPLICATION_JSON.toString());
     private static final int PAGE = 100;
+    private static final String ASSISTANT = "assistant";
+    private static final String ORDER_NEWEST_FIRST = "desc";
+    private static final String ORDER_OLDEST_FIRST = "asc";
 
     private final OkHttpClient http;
     private final HttpUrl base;
@@ -71,36 +76,26 @@ public class OpenCodeClient implements Closeable {
         post(path("api", "experimental", "session", sessionId, "wait"), mapper.createObjectNode());
     }
     /**
-     * The text of the newest assistant message that has any. The list is asked for assistant messages newest first,
-     * as OpenCode 2.0.20's OpenAPI document offers ({@code type=assistant}, {@code order=desc}), and followed page by
-     * page, each page asking for that order again since nothing says the cursor keeps it: a single unordered page of
-     * 100 messages, with tool results and the repair turn counted in, could hold only the oldest messages of a long
-     * coordinator session and miss its actual answer.
+     * The text of the newest assistant message that has any, read from the assistant messages newest first and
+     * followed page by page: a single unordered page of 100 messages, with tool results and the repair turn counted in,
+     * could hold only the oldest messages of a long coordinator session and miss its actual answer.
      */
     public String finalAnswer(String sessionId) throws IOException {
-        HttpUrl messages = path("api", "session", sessionId, "message").newBuilder()
-                .addQueryParameter("type", "assistant")
-                .addQueryParameter("limit", Integer.toString(PAGE))
-                .addQueryParameter("order", "desc")
-                .build();
-        JsonNode page = get(messages);
-        for (;;) {
+        Optional<String> cursor = Optional.empty();
+        do {
+            JsonNode page = messagePage(sessionId, Optional.of(ASSISTANT), ORDER_NEWEST_FIRST, cursor);
             for (JsonNode message : page.path("data")) {
                 String text = text(message);
                 if (StringUtils.isNotBlank(text)) {
                     return text;
                 }
             }
-            JsonNode next = page.path("cursor").path("next");
-            if (next.isString()) {
-                page = get(messages.newBuilder().addQueryParameter("cursor", next.asString()).build());
-            } else {
-                throw new IOException("session " + sessionId + " finished without an answer");
-            }
-        }
+            cursor = nextPage(page);
+        } while (cursor.isPresent());
+        throw new IOException("session " + sessionId + " finished without an answer");
     }
     public SessionUsage usage(String sessionId) throws IOException {
-        return toUsage(get(path("api", "session", sessionId)).path("data"));
+        return toUsage(session(sessionId));
     }
     public List<SessionUsage> childUsage(String sessionId) throws IOException {
         HttpUrl url = path("api", "session").newBuilder()
@@ -111,6 +106,20 @@ public class OpenCodeClient implements Closeable {
         for (JsonNode session : get(url).path("data")) {
             toReturn.add(toUsage(session));
         }
+        return toReturn;
+    }
+    public JsonNode session(String sessionId) throws IOException {
+        return get(path("api", "session", sessionId)).path("data");
+    }
+    /** every message of the session, oldest first, as OpenCode records it: text, reasoning and tool calls with their input and output */
+    public List<JsonNode> messages(String sessionId) throws IOException {
+        List<JsonNode> toReturn = Lists.newArrayList();
+        Optional<String> cursor = Optional.empty();
+        do {
+            JsonNode page = messagePage(sessionId, Optional.empty(), ORDER_OLDEST_FIRST, cursor);
+            page.path("data").forEach(toReturn::add);
+            cursor = nextPage(page);
+        } while (cursor.isPresent());
         return toReturn;
     }
     @Override
@@ -162,12 +171,35 @@ public class OpenCodeClient implements Closeable {
         }
         throw new IOException(response.request().method() + " " + response.request().url().encodedPath() + " failed with " + response.code() + ": " + text);
     }
+    /**
+     * One page of a session's messages, as OpenCode 2.0.20 serves them: the first page names the order and a cursor
+     * carries it, so a later page that names it again is refused ("Cursor cannot be combined with order"), while a
+     * filter such as {@code type} is not carried and goes with every page.
+     */
+    private JsonNode messagePage(String sessionId, Optional<String> type, String order, Optional<String> cursor) throws IOException {
+        HttpUrl.Builder url = path("api", "session", sessionId, "message").newBuilder().addQueryParameter("limit", Integer.toString(PAGE));
+        type.ifPresent(value -> url.addQueryParameter("type", value));
+        if (cursor.isPresent()) {
+            url.addQueryParameter("cursor", cursor.get());
+        } else {
+            url.addQueryParameter("order", order);
+        }
+        return get(url.build());
+    }
     private HttpUrl path(String... segments) {
         HttpUrl.Builder toReturn = base.newBuilder();
         for (String segment : segments) {
             toReturn.addPathSegment(segment);
         }
         return toReturn.build();
+    }
+    /** the last page still carries a cursor, so an empty page ends the list as well as a missing cursor does */
+    private static Optional<String> nextPage(JsonNode page) {
+        JsonNode next = page.path("cursor").path("next");
+        if (BooleanUtils.and(new boolean[] { next.isString(), page.path("data").size() > 0 })) {
+            return Optional.of(next.asString());
+        }
+        return Optional.empty();
     }
     private static SessionUsage toUsage(JsonNode session) {
         JsonNode tokens = session.path("tokens");
