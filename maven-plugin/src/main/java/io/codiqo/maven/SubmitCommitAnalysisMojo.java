@@ -35,6 +35,7 @@ import io.codiqo.llm.review.LocalReview;
 import io.codiqo.llm.review.LocalReviewModels;
 import io.codiqo.llm.review.LocalReviewer;
 import io.codiqo.llm.review.ReviewEndpoint;
+import io.codiqo.llm.review.ReviewTags;
 import io.codiqo.llm.review.ReviewUnit;
 import io.codiqo.llm.review.StaticFinding;
 import io.codiqo.llm.review.StaticFindings;
@@ -44,6 +45,7 @@ import io.codiqo.maven.auth.MavenCredentials;
 import io.codiqo.maven.logging.MavenLogFactory;
 import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.submit.AnalysisSubmitter;
+import io.codiqo.submit.ProjectTags;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.submit.auth.CodiqoCredential;
 import io.codiqo.submit.hotspots.FixCommits;
@@ -94,11 +96,11 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
     @Parameter(property = "codiqo.review.timeoutMinutes")
     private Integer reviewTimeoutMinutes;
 
-    /** retries of a call through the Codiqo proxy that failed on the way (network error, timeout, 429 or 5xx) */
+    /** retries of a call through the relay, to the Codiqo proxy or a direct endpoint, that failed on the way (network error, timeout, 429 or 5xx) */
     @Parameter(property = "codiqo.review.relayRetries")
     private Integer reviewRelayRetries;
 
-    /** how long a call through the Codiqo proxy may take to start answering */
+    /** how long a call through the relay, to the Codiqo proxy or a direct endpoint, may take to start answering */
     @Parameter(property = "codiqo.review.relayTimeoutSeconds")
     private Integer reviewRelayTimeoutSeconds;
 
@@ -158,18 +160,35 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
                 if (endpoint.isProxiedBy(resourceUrl)) {
                     endpoint = new ReviewEndpoint(args.getReviewBaseUrl(), null, credential());
                 }
-                LocalReviewer reviewer = new LocalReviewer(args, endpoint, LocalReviewGuidance.read(args, getLog()), DefaultLanguageProcessors.reviewLanguages(),
-                        new MavenLogFactory(getLog()).getLogger(LocalReviewer.class));
+                ReviewEndpoint reviewed = endpoint;
+                String guidance = LocalReviewGuidance.read(args, getLog());
                 Path workTree = clone.getWorkTree().toPath();
                 String commit = args.getCommitId();
                 Optional<LocalReviewer.BuildSource<ReviewUnit>> units = args.isReviewAssess() ? Optional.of(buildUnits::get) : Optional.empty();
                 Optional<LocalReviewer.BuildSource<StaticFinding>> findings = args.isReviewTriage() ? Optional.of(buildFindings::get) : Optional.empty();
-                backgroundReview = BackgroundReview.start(() -> reviewer.reviewThenFollowUp(workTree, commit, units, findings));
+                /** the project's tags are asked for on the review's own thread: a server slow to answer must not hold the build */
+                backgroundReview = BackgroundReview.start(() -> {
+                    ReviewTags tags = args.isReviewAssess() ? projectTags() : ReviewTags.NONE;
+                    LocalReviewer reviewer = new LocalReviewer(args, reviewed, guidance, tags, DefaultLanguageProcessors.reviewLanguages(),
+                            new MavenLogFactory(getLog()).getLogger(LocalReviewer.class));
+                    return reviewer.reviewThenFollowUp(workTree, commit, units, findings);
+                });
                 getLog().info("local review of " + args.getCommitId() + " started next to the analysis");
             } else {
                 getLog().info("local review skipped: " + args.getCommitId() + " changes no file the analysis reads");
             }
         }
+    }
+    /** the project's tags, for the assessing coordinator to reuse; a server that cannot answer leaves it coining them freely */
+    private ReviewTags projectTags() {
+        ReviewTags toReturn = ReviewTags.NONE;
+        try {
+            toReturn = ProjectTags.fetch(apiUrl, credential(), connectTimeoutSeconds, readTimeoutSeconds, project.getGroupId() + ":" + project.getArtifactId(),
+                    new MavenMessageReporter(getLog()));
+        } catch (Exception err) {
+            getLog().warn("the project's tags could not be read (" + err.getMessage() + "); the local review coins its tags without them");
+        }
+        return toReturn;
     }
     /** a review still running when the analysis ends (a failed build, an exclusion) is stopped before its tree is deleted */
     @Override

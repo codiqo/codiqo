@@ -32,6 +32,8 @@ import com.sun.net.httpserver.HttpServer;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.NoopLog;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.JsonNodeFactory;
 import tools.jackson.databind.node.ObjectNode;
 import io.netty.handler.codec.http.HttpResponseStatus;
@@ -84,6 +86,38 @@ class LlmRelayTest {
         assertEquals(HttpResponseStatus.OK.code(), response.statusCode());
         assertEquals(CREDENTIAL, upstreamAuthorization.get(), "the secret never leaves the machine; the credential replaces it");
         assertEquals("/v1/models", upstreamPath.get());
+    }
+    /** OpenCode sends no sampling, so every chat completion leaves with the scoring prompt's, whatever the agent sent */
+    @Test
+    void aChatCompletionLeavesWithTheScoringPromptsSampling() throws Exception {
+        firstChunkRead.countDown();
+        HttpRequest request = HttpRequest.newBuilder(URI.create(relay.getUrl() + "/chat/completions"))
+                .header(HttpHeaderNames.AUTHORIZATION.toString(), RequestAuthorizer.bearer(relay.getSecret()))
+                .header(HttpHeaderNames.CONTENT_TYPE.toString(), HttpHeaderValues.APPLICATION_JSON.toString())
+                .POST(HttpRequest.BodyPublishers.ofString(JSON.objectNode().put("model", "m").put("stream", true).put("temperature", 1.0).toString()))
+                .build();
+        HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+
+        RunArgs args = relayArgs();
+        JsonNode forwarded = JsonMapper.builder().build().readTree(upstreamBody.get());
+        assertEquals(HttpResponseStatus.OK.code(), response.statusCode());
+        assertEquals(args.getLlmTemperature(), forwarded.path("temperature").asDouble());
+        assertEquals(args.getLlmTopP(), forwarded.path("top_p").asDouble());
+        assertEquals(args.getLlmSeed(), forwarded.path("seed").asInt());
+        assertEquals("m", forwarded.path("model").asString(), "the rest of the request is untouched");
+    }
+    /** a direct end point gets its own key as the bearer token, and nothing when it has none, as a local daemon */
+    @Test
+    void aDirectEndPointGetsItsOwnKeyOrNone() throws Exception {
+        String base = RunArgs.loopbackUrl(upstream.getAddress().getPort()).encodedPath("/v1").build().toString();
+        try (LlmRelay keyed = LlmRelay.start(relayArgs(), new ReviewEndpoint(base, "provider-key", null), new NoopLog())) {
+            getModels(keyed);
+            assertEquals(RequestAuthorizer.bearer("provider-key"), upstreamAuthorization.get());
+        }
+        try (LlmRelay local = LlmRelay.start(relayArgs(), new ReviewEndpoint(base, null, null), new NoopLog())) {
+            getModels(local);
+            assertNull(upstreamAuthorization.get());
+        }
     }
     /** another process on the machine can reach the port; without the secret it spends nothing */
     @Test
@@ -221,7 +255,7 @@ class LlmRelayTest {
 
         assertEquals(HttpResponseStatus.OK.code(), response.statusCode());
         assertTrue(response.headers().firstValue(HttpHeaderNames.CONTENT_TYPE.toString()).orElseThrow().startsWith(HttpHeaderValues.TEXT_EVENT_STREAM.toString()));
-        assertEquals(CHAT_REQUEST, upstreamBody.get(), "the body reaches the proxy byte for byte");
+        assertEquals("m", JsonMapper.builder().build().readTree(upstreamBody.get()).path("model").asString(), "the request reaches the proxy");
     }
     private HttpRequest.Builder get(String path) {
         return HttpRequest.newBuilder(URI.create(relay.getUrl() + path)).GET();

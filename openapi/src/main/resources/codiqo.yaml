@@ -515,6 +515,34 @@ paths:
         - apiKey: []
         - bearerAuth: []
 
+  /api/v1/projects/{projectId}/tags:
+    get:
+      operationId: listProjectTags
+      tags: [Analysis]
+      summary: The project's tag vocabulary
+      description: |
+        The tags the project's recent scored commits carry most often, most used first, so a local review reuses them
+        instead of coining near-duplicates. Built from the project's own commits only, never from a member's tags in
+        other organizations.
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The most used technical and functional tags
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExistingTagsModel'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - apiKey: []
+        - bearerAuth: []
+
   /api/v1/projects/{projectId}/commits/{commitSha}:
     get:
       operationId: getCommitStatus
