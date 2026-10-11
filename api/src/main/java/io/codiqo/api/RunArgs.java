@@ -611,10 +611,14 @@ public class RunArgs {
 
     private transient Duration reviewStartupTimeout = Duration.ofSeconds(60);
 
-    /** Local review: retries of a call through the Codiqo proxy that failed on the way (a network error, a timeout, a 429 or 5xx). */
+    /** Local review: retries of a call through the relay, to the Codiqo proxy or a direct endpoint, that failed on the way (a network error, a timeout, a 429 or 5xx). */
     private transient int reviewRelayRetries = 3;
 
-    /** Local review: how long a call through the Codiqo proxy may take to start answering; a stream then runs as long as it streams. */
+    /**
+     * Local review: how long a call through the relay to the Codiqo proxy may take to start answering; a stream then runs
+     * as long as it streams. A direct endpoint, such as a local Ollama daemon evaluating a long prompt before its first
+     * token, is given the whole {@link #reviewTimeout} instead.
+     */
     private transient Duration reviewRelayRequestTimeout = Duration.ofMinutes(5);
 
     /** Local review: wait before the relay's first retry, doubled for each one after; a {@code Retry-After} answer wins. */

@@ -2,7 +2,6 @@ package io.codiqo.llm.review;
 
 import java.util.EnumSet;
 import java.util.List;
-import java.util.Optional;
 
 import org.apache.commons.lang3.StringUtils;
 import org.thymeleaf.context.Context;
@@ -59,7 +58,7 @@ public class OpenCodeReviewConfig {
     private static final String BUG_SHAPE = bugShape();
 
     /** @param namingRules how a reviewer writes a unit's signature, one rule per language the commit changes */
-    public ObjectNode build(RunArgs args, ReviewEndpoint endpoint, String conventionGuidance, List<String> namingRules) {
+    public ObjectNode build(RunArgs args, ReviewEndpoint endpoint, String conventionGuidance, List<String> namingRules, ReviewTags tags) {
         JsonMapper mapper = JsonMapper.builder().build();
         ObjectNode toReturn = mapper.createObjectNode();
         toReturn.put("share", "disabled");
@@ -72,9 +71,7 @@ public class OpenCodeReviewConfig {
         provider.put("package", PROVIDER_PACKAGE);
         ObjectNode settings = provider.putObject("settings");
         settings.put("baseURL", endpoint.getBaseUrl());
-        if (StringUtils.isNotBlank(endpoint.getApiKey())) {
-            settings.put("apiKey", endpoint.getApiKey());
-        }
+        settings.put("apiKey", endpoint.getApiKey());
         ObjectNode models = provider.putObject("models");
         for (String model : List.of(args.getReviewCoordinatorModel(), args.getReviewReviewerModel())) {
             ObjectNode limit = models.putObject(model).putObject("limit");
@@ -89,8 +86,7 @@ public class OpenCodeReviewConfig {
         reviewer.put("description", "Reviews part of a commit with read-only git and file tools and returns confirmed defects as JSON");
         reviewer.put("model", PROVIDER + "/" + args.getReviewReviewerModel());
         reviewer.put("steps", args.getReviewReviewerSteps());
-        reviewer.put("system", prompt("opencode/module-reviewer", args.getReviewReviewerSteps(), args, conventionGuidance, namingRules));
-        sampling(reviewer, args);
+        reviewer.put("system", prompt("opencode/module-reviewer", args.getReviewReviewerSteps(), args, conventionGuidance, namingRules, tags));
         addReadOnlyPermissions(reviewer.putArray("permissions"));
 
         ObjectNode coordinator = agents.putObject(COORDINATOR);
@@ -98,8 +94,7 @@ public class OpenCodeReviewConfig {
         coordinator.put("description", "Plans a whole-commit review, runs reviewer sub-agents in parallel and merges their findings");
         coordinator.put("model", PROVIDER + "/" + args.getReviewCoordinatorModel());
         coordinator.put("steps", args.getReviewCoordinatorSteps());
-        coordinator.put("system", prompt("opencode/review-coordinator", args.getReviewCoordinatorSteps(), args, conventionGuidance, namingRules));
-        sampling(coordinator, args);
+        coordinator.put("system", prompt("opencode/review-coordinator", args.getReviewCoordinatorSteps(), args, conventionGuidance, namingRules, tags));
         ArrayNode coordinatorPermissions = coordinator.putArray("permissions");
         addReadOnlyPermissions(coordinatorPermissions);
         rule(coordinatorPermissions, "subagent", "*", "deny");
@@ -130,17 +125,6 @@ public class OpenCodeReviewConfig {
         rule.put("action", action);
         rule.put("resource", resource);
         rule.put("effect", effect);
-    }
-    /**
-     * The scoring prompt's sampling: temperature, nucleus cut-off and seed, sent in each agent's request body, which
-     * OpenCode merges into every chat completion it sends for that agent, so two reviews of one commit differ as little
-     * as the provider allows.
-     */
-    private static void sampling(ObjectNode agent, RunArgs args) {
-        ObjectNode body = agent.putObject("request").putObject("body");
-        Optional.ofNullable(args.getLlmTemperature()).ifPresent(value -> body.put("temperature", value));
-        Optional.ofNullable(args.getLlmTopP()).ifPresent(value -> body.put("top_p", value));
-        Optional.ofNullable(args.getLlmSeed()).ifPresent(value -> body.put("seed", value));
     }
     /** @param findings the findings asked about, whose tools the prompt names */
     public static String triagePrompt(List<StaticFinding> findings) {
@@ -213,10 +197,12 @@ public class OpenCodeReviewConfig {
      * The fence is the scoring prompt's own, which {@code ConventionGuidance} strips from every file, so a file cannot
      * close it early; Thymeleaf inserts a value as it is, so a {@code [(...)]} inside one is not evaluated.
      */
-    private static String prompt(String template, int steps, RunArgs args, String conventionGuidance, List<String> namingRules) {
+    private static String prompt(String template, int steps, RunArgs args, String conventionGuidance, List<String> namingRules, ReviewTags tags) {
         Context ctx = new Context();
         ctx.setVariable("namingRules", namingRules);
         ctx.setVariable("assess", args.isReviewAssess());
+        ctx.setVariable("technicalTags", tags.getTechnical());
+        ctx.setVariable("functionalTags", tags.getFunctional());
         ctx.setVariable("maxTasks", args.getReviewMaxTasks());
         ctx.setVariable("reviewer", REVIEWER);
         ctx.setVariable("steps", steps);

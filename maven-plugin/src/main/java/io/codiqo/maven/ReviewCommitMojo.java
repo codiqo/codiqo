@@ -36,6 +36,7 @@ import io.codiqo.llm.review.LocalReview;
 import io.codiqo.llm.review.LocalReviewModels;
 import io.codiqo.llm.review.LocalReviewer;
 import io.codiqo.llm.review.ReviewEndpoint;
+import io.codiqo.llm.review.ReviewTags;
 import io.codiqo.llm.review.ReviewUnit;
 import io.codiqo.llm.review.SessionUsage;
 import io.codiqo.llm.review.StaticFinding;
@@ -88,11 +89,11 @@ public class ReviewCommitMojo extends AbstractMojo {
     @Parameter(property = "codiqo.review.timeoutMinutes")
     private Integer timeoutMinutes;
 
-    /** retries of a call through the Codiqo proxy that failed on the way (network error, timeout, 429 or 5xx) */
+    /** retries of a call through the relay, to the Codiqo proxy or a direct endpoint, that failed on the way (network error, timeout, 429 or 5xx) */
     @Parameter(property = "codiqo.review.relayRetries")
     private Integer relayRetries;
 
-    /** how long a call through the Codiqo proxy may take to start answering */
+    /** how long a call through the relay, to the Codiqo proxy or a direct endpoint, may take to start answering */
     @Parameter(property = "codiqo.review.relayTimeoutSeconds")
     private Integer relayTimeoutSeconds;
 
@@ -148,7 +149,7 @@ public class ReviewCommitMojo extends AbstractMojo {
                 warnUnlisted(given);
                 source = Optional.of(() -> given);
             }
-            LocalReviewer reviewer = new LocalReviewer(args, endpoint, LocalReviewGuidance.read(directory, getLog()), DefaultLanguageProcessors.reviewLanguages(),
+            LocalReviewer reviewer = new LocalReviewer(args, endpoint, LocalReviewGuidance.read(directory, getLog()), ReviewTags.NONE, DefaultLanguageProcessors.reviewLanguages(),
                     new MavenLogFactory(getLog()).getLogger(LocalReviewer.class));
             Optional<AnalysisSubmissionModel> analysed = Optional.empty();
             if (Objects.nonNull(submission)) {

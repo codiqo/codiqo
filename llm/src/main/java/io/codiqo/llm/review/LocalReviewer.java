@@ -52,13 +52,16 @@ public class LocalReviewer {
     private final RunArgs args;
     private final ReviewEndpoint endpoint;
     private final String conventionGuidance;
+    private final ReviewTags tags;
     private final List<ReviewLanguage> languages;
     private final Log log;
 
-    public LocalReviewer(RunArgs args, ReviewEndpoint endpoint, String conventionGuidance, List<ReviewLanguage> languages, Log log) {
+    /** @param tags the project's tag vocabulary for an assessing coordinator, {@link ReviewTags#NONE} when none is known */
+    public LocalReviewer(RunArgs args, ReviewEndpoint endpoint, String conventionGuidance, ReviewTags tags, List<ReviewLanguage> languages, Log log) {
         this.args = Objects.requireNonNull(args);
         this.endpoint = Objects.requireNonNull(endpoint);
         this.conventionGuidance = Objects.requireNonNull(conventionGuidance);
+        this.tags = Objects.requireNonNull(tags);
         this.languages = List.copyOf(languages);
         this.log = Objects.requireNonNull(log);
     }
@@ -105,17 +108,18 @@ public class LocalReviewer {
     }
     private ReviewOutcome runReview(Path workTree, String sha, List<String> namingRules, Optional<BuildSource<ReviewUnit>> units, Optional<BuildSource<StaticFinding>> findings)
             throws IOException {
-        if (Objects.nonNull(endpoint.getAuthorizer())) {
-            try (LlmRelay relay = LlmRelay.start(args, endpoint, log)) {
-                return runReview(workTree, sha, namingRules, new ReviewEndpoint(relay.getUrl(), relay.getSecret(), null), units, findings);
-            }
+        /**
+         * Every review goes through the relay, a direct endpoint as well as the Codiqo proxy: it is where the agents'
+         * requests get the scoring prompt's sampling, which OpenCode drops from every place its configuration offers.
+         */
+        try (LlmRelay relay = LlmRelay.start(args, endpoint, log)) {
+            return runReview(workTree, sha, namingRules, new ReviewEndpoint(relay.getUrl(), relay.getSecret(), null), units, findings);
         }
-        return runReview(workTree, sha, namingRules, endpoint, units, findings);
     }
     private ReviewOutcome runReview(Path workTree, String sha, List<String> namingRules, ReviewEndpoint effective, Optional<BuildSource<ReviewUnit>> units,
             Optional<BuildSource<StaticFinding>> findings) throws IOException {
         StopWatch watch = StopWatch.createStarted();
-        try (OpenCodeServer server = OpenCodeServer.start(args, OpenCodeReviewConfig.build(args, effective, conventionGuidance, namingRules), workTree, log)) {
+        try (OpenCodeServer server = OpenCodeServer.start(args, OpenCodeReviewConfig.build(args, effective, conventionGuidance, namingRules, tags), workTree, log)) {
             try (OpenCodeClient client = new OpenCodeClient(server.getUrl(), server.getPassword(), args.getReviewTimeout())) {
                 String sessionId = client.createSession(workTree, OpenCodeReviewConfig.COORDINATOR, "codiqo review " + StringUtils.left(sha, SHORT_SHA));
                 LocalReview review;

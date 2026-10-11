@@ -1519,9 +1519,12 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   `BrowserLogin.SCOPES`; `codiqo:llm` and `codiqo:submit` are the ones the backend requires.
 - Access tokens live minutes, so `OAuthCredential` refreshes per request and stores the rotated refresh token
   atomically. Build API clients with `CodiqoApiClients.newApiClient`, which authorises each request as it is sent.
-- The local review calls the backend's LLM proxy (`codiqo.review.baseUrl`, default `RunArgs.DEFAULT_LLM_PROXY_URL`)
-  through `LlmRelay`, a loopback relay that adds the credential per request and refuses callers without its per-review
-  secret. A loopback base URL (a local Ollama daemon) is called directly, with no credential.
+- Every local review calls its model (`codiqo.review.baseUrl`, default `RunArgs.DEFAULT_LLM_PROXY_URL`) through
+  `LlmRelay`, a loopback relay that refuses callers without its per-review secret. For the backend's LLM proxy it adds
+  the credential per request; a direct endpoint (a local Ollama daemon) gets its own key, or none, and the whole review
+  timeout to start answering instead of the relay's first-byte limit. The relay also sets the scoring prompt's sampling
+  (`temperature`, `top_p`, `seed` from `RunArgs`) on every chat completion: OpenCode 2.0 sends none of them, wherever
+  its configuration puts them (checked on 2.0.20 and 2.0.25).
 - A credential refresh that fails on the network is retried by the relay like any call; only a refusal that survives the
   retries answers 401. A stream cut after the answer started ends with an error event, since its status was already
   sent. A stored login is adopted from disk only when it has this login's OAuth client (another organization's login
@@ -1557,8 +1560,11 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   the 0-10 scale are left out, since the server would reject the whole submission over them.
 - **Every default lives in `RunArgs`.** The review's settings are `transient` `review*` fields (local to the run, never
   in the submission), and `LocalReviewer` reads them from `RunArgs` itself. Only what the run supplies is passed
-  beside it: the convention guidance and a `ReviewEndpoint` (base URL, key, credential), which the relay swaps for its
-  own loopback URL and secret. A mojo parameter has no `defaultValue`: it is a nullable wrapper that overrides the `RunArgs`
+  beside it: the convention guidance, the project's `ReviewTags` and a `ReviewEndpoint` (base URL, key, credential),
+  which the relay swaps for its own loopback URL and secret. `ReviewTags` are the tags the project's scored commits
+  carry most (`GET /api/v1/projects/{projectId}/tags`, read on the review's thread so the build never waits; 404 or
+  405 means none), which an assessing coordinator reuses before it coins one. They are model output going into a system
+  prompt, so `ReviewTags.of` keeps only lowercase hyphenated labels. A mojo parameter has no `defaultValue`: it is a nullable wrapper that overrides the `RunArgs`
   field only when set. Settings with no `RunArgs` instance at hand (the login, the loopback host, the upload batch,
   the 0-10 score scale and the rounding precision) are `RunArgs` constants. Protocol names (headers, paths, rule ids)
   stay beside the code that speaks the protocol.

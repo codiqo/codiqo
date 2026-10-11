@@ -36,13 +36,20 @@ import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaderValues;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import okhttp3.HttpUrl;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * A loop back end point the review's agents call instead of the backend's LLM proxy, which forwards each request with
- * the member's current credential. The token is refreshed as it ages, so a review out lasting it keeps going, and it
- * never reaches OpenCode's configuration on disk.
+ * A loop back end point the review's agents call instead of the model's end point, which forwards each request with
+ * the member's current credential when the end point is the backend's LLM proxy. The token is refreshed as it ages, so
+ * a review out lasting it keeps going, and it never reaches OpenCode's configuration on disk.
+ *
+ * <p>
+ * Each chat completion leaves with the scoring prompt's sampling ({@code temperature}, {@code top_p}, {@code seed}):
+ * OpenCode 2.0 sends none of them, wherever its configuration puts them, so two reviews of one commit varied far more
+ * than the provider requires.
  *
  * <p>
  * Other processes on the machine can reach a loop back port, so the agents must present a secret made for this
@@ -63,13 +70,14 @@ public final class LlmRelay implements AutoCloseable {
             HttpResponseStatus.BAD_GATEWAY.code(),
             HttpResponseStatus.SERVICE_UNAVAILABLE.code(),
             HttpResponseStatus.GATEWAY_TIMEOUT.code());
+    private static final String CHAT_COMPLETIONS = "/chat/completions";
     /**
      * The only calls an OpenAI-compatible provider makes, as method and path after {@value #API_PREFIX}, matched exactly.
      * The relay attaches the member's credential, whose scopes reach far more of the backend than the LLM proxy, so it
      * must not forward whatever a caller asks for: the server context matches by string prefix, which let
      * {@code /v1x} or {@code /v1/../api/...} through with any method.
      */
-    private static final Set<String> FORWARDED_CALLS = Set.of("POST /chat/completions", "GET /models");
+    private static final Set<String> FORWARDED_CALLS = Set.of("POST " + CHAT_COMPLETIONS, "GET /models");
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
     private final HttpServer server;
@@ -80,6 +88,9 @@ public final class LlmRelay implements AutoCloseable {
     private final int retries;
     private final Duration requestTimeout;
     private final Duration retryBackoff;
+    private final Double temperature;
+    private final Double topP;
+    private final Integer seed;
     private final String secret;
     private final Log log;
 
@@ -88,10 +99,17 @@ public final class LlmRelay implements AutoCloseable {
         this.executor = Objects.requireNonNull(executor);
         this.http = HttpClient.newBuilder().connectTimeout(args.getReviewRelayConnectTimeout()).executor(executor).build();
         this.upstream = HttpUrl.get(upstream.getBaseUrl());
-        this.authorizer = Objects.requireNonNull(upstream.getAuthorizer());
+        this.authorizer = Optional.ofNullable(upstream.getAuthorizer()).orElseGet(() -> direct(upstream.getApiKey()));
         this.retries = Math.max(0, args.getReviewRelayRetries());
-        this.requestTimeout = Objects.requireNonNull(args.getReviewRelayRequestTimeout());
+        /**
+         * The relay's own first-byte limit catches a proxy that hangs. A direct endpoint keeps the wait OpenCode gave it
+         * before every review went through the relay: a local model evaluating a long prompt can take minutes to answer.
+         */
+        this.requestTimeout = Objects.isNull(upstream.getAuthorizer()) ? args.getReviewTimeout() : Objects.requireNonNull(args.getReviewRelayRequestTimeout());
         this.retryBackoff = Objects.requireNonNull(args.getReviewRelayRetryBackoff());
+        this.temperature = args.getLlmTemperature();
+        this.topP = args.getLlmTopP();
+        this.seed = args.getLlmSeed();
         this.log = Objects.requireNonNull(log);
 
         this.secret = RandomStringUtils.secure().nextAlphanumeric(SECRET_LENGTH);
@@ -125,6 +143,9 @@ public final class LlmRelay implements AutoCloseable {
     private void forward(HttpExchange exchange, String path) throws IOException {
         URI target = upstream.newBuilder().addPathSegments(Strings.CS.removeStart(path, "/")).encodedQuery(exchange.getRequestURI().getRawQuery()).build().uri();
         byte[] body = exchange.getRequestBody().readAllBytes();
+        if (CHAT_COMPLETIONS.equals(path)) {
+            body = sampled(body);
+        }
 
         HttpResponse<InputStream> response = null;
         try {
@@ -176,7 +197,7 @@ public final class LlmRelay implements AutoCloseable {
                     } else {
                         log.warn("llm relay: %s %s failed after %d retries: %s", exchange.getRequestMethod(), path, retries, err.getMessage());
                         boolean timedOut = err instanceof HttpTimeoutException;
-                        respond(exchange, (timedOut ? HttpResponseStatus.GATEWAY_TIMEOUT : HttpResponseStatus.BAD_GATEWAY).code(), error(timedOut ? "the Codiqo LLM proxy did not answer in time" : "the Codiqo LLM proxy could not be reached", "api_error"));
+                        respond(exchange, (timedOut ? HttpResponseStatus.GATEWAY_TIMEOUT : HttpResponseStatus.BAD_GATEWAY).code(), error(timedOut ? "the model's end point did not answer in time" : "the model's end point could not be reached", "api_error"));
                         return;
                     }
                 }
@@ -205,11 +226,28 @@ public final class LlmRelay implements AutoCloseable {
                  */
                 log.warn("llm relay: %s %s was cut short after the answer started: %s", exchange.getRequestMethod(), path, err.getMessage());
                 if (streamed) {
-                    out.write((StringUtils.LF + "data: " + error("the Codiqo LLM proxy's answer was cut short", "api_error") + EVENT_END).getBytes(StandardCharsets.UTF_8));
+                    out.write((StringUtils.LF + "data: " + error("the model's answer was cut short", "api_error") + EVENT_END).getBytes(StandardCharsets.UTF_8));
                 }
                 throw err;
             }
         }
+    }
+    /** the request with the scoring prompt's sampling set; a body that is not a JSON object is the provider's to refuse, and goes on as it came */
+    private byte[] sampled(byte[] body) {
+        JsonNode request;
+        try {
+            request = MAPPER.readTree(body);
+        } catch (JacksonException err) {
+            log.warn("llm relay: a chat completion that is not JSON goes on without the scoring prompt's sampling: %s", err.getOriginalMessage());
+            return body;
+        }
+        if (request instanceof ObjectNode chat) {
+            Optional.ofNullable(temperature).ifPresent(value -> chat.put("temperature", value));
+            Optional.ofNullable(topP).ifPresent(value -> chat.put("top_p", value));
+            Optional.ofNullable(seed).ifPresent(value -> chat.put("seed", value));
+            return MAPPER.writeValueAsBytes(chat);
+        }
+        return body;
     }
     private Duration backoff(int attempt) {
         return retryBackoff.multipliedBy(1L << attempt);
@@ -233,6 +271,14 @@ public final class LlmRelay implements AutoCloseable {
         server.createContext(API_PREFIX, toReturn::relay);
         server.start();
         return toReturn;
+    }
+    /** a direct end point takes the configured key, if it has one, as the bearer token an OpenAI client would send */
+    private static RequestAuthorizer direct(String apiKey) {
+        return header -> {
+            if (StringUtils.isNotBlank(apiKey)) {
+                header.accept(HttpHeaderNames.AUTHORIZATION.toString(), RequestAuthorizer.bearer(apiKey));
+            }
+        };
     }
     private static String error(String message, String type) {
         ObjectNode toReturn = MAPPER.createObjectNode();
