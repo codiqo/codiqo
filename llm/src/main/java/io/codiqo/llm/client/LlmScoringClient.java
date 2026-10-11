@@ -37,7 +37,6 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.llm.DefaultLlmTokenizers;
 import io.codiqo.llm.FinalScoreCalculator;
-import io.codiqo.llm.LocalAssessment;
 import io.codiqo.llm.PromptBuilder.PromptContext;
 import io.codiqo.llm.PromptBuilder.UserMessageResult;
 import io.codiqo.llm.PromptBuilder;
@@ -333,33 +332,11 @@ public class LlmScoringClient implements ScoringClient {
                 }
             }
 
-            /**
-             * The local assessment is scored on a copy either way, so the two scores can be compared; the copy
-             * becomes the result only when the caller applies it. Each copy goes through the calculator once.
-             */
-            Double localAssessmentScore = null;
-            LlmScoringResponse local = null;
-            if (Objects.nonNull(params.getLocalAssessment())) {
-                local = LocalAssessment.copy(scoringResponse);
-                LocalAssessment.overlay(local, params.getLocalAssessment());
-                finalScoreCalculator.apply(local, preComputedScores, request);
-                localAssessmentScore = local.getScore();
-            }
             finalScoreCalculator.apply(scoringResponse, preComputedScores, request);
-            double promptScore = scoringResponse.getScore();
-            if (Objects.nonNull(localAssessmentScore)) {
-                log.info(String.format(Locale.ROOT, "local assessment %s: score %.2f from the local review, %.2f from the prompt",
-                        params.isApplyLocalAssessment() ? "applied" : "compared", localAssessmentScore, promptScore));
-                if (params.isApplyLocalAssessment()) {
-                    scoringResponse = local;
-                }
-            }
             removeTestCodeEstimates(scoringResponse, request);
 
             ScoringResult result = ScoringResult.builder()
                     .response(scoringResponse)
-                    .localAssessmentScore(localAssessmentScore)
-                    .promptScore(promptScore)
                     .preComputedScores(preComputedScores)
                     .rawJson(rawContent)
                     .thinking(scoringResponse.getThinking())

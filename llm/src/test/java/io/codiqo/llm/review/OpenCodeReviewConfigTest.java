@@ -123,28 +123,21 @@ class OpenCodeReviewConfigTest {
         assertTrue(OpenCodeReviewConfig.triagePrompt(List.of(finding(null)))
                 .startsWith("The build has finished. Static analysis reported the findings below"));
     }
+    /** local mode judges the commit with the review alone, so every review asks both agents for their pieces of it */
     @Test
-    void anAssessingReviewAsksBothAgentsForTheirPiecesAndAPlainOneAsksNeither() throws Exception {
-        RunArgs assess = new RunArgs();
-        assess.setReviewAssess(true);
-        JsonNode assessing = build(assess, StringUtils.EMPTY);
-        JsonNode plain = build(new RunArgs(), StringUtils.EMPTY);
+    void everyReviewAsksBothAgentsForTheirPiecesOfTheAssessment() throws Exception {
+        JsonNode agents = build(new RunArgs(), StringUtils.EMPTY);
 
-        String reviewer = assessing.path(OpenCodeReviewConfig.REVIEWER).path("system").asString();
-        String coordinator = assessing.path(OpenCodeReviewConfig.COORDINATOR).path("system").asString();
+        String reviewer = agents.path(OpenCodeReviewConfig.REVIEWER).path("system").asString();
+        String coordinator = agents.path(OpenCodeReviewConfig.COORDINATOR).path("system").asString();
         assertTrue(reviewer.contains("\"blockCategories\"") && reviewer.contains("\"observations\""), reviewer);
         assertTrue(coordinator.contains("\"qualityDimensions\"") && coordinator.contains("\"taskTypes\""), coordinator);
         assertTrue(reviewer.indexOf("ALSO ASSESS") < reviewer.indexOf("JSON RULES"), "the JSON rules close the prompt");
-
-        for (String agent : List.of(OpenCodeReviewConfig.COORDINATOR, OpenCodeReviewConfig.REVIEWER)) {
-            assertFalse(plain.path(agent).path("system").asString().contains("ALSO ASSESS"), agent);
-        }
     }
     /** the coordinator reuses the project's tags; with none known it is given no list at all, not an empty one */
     @Test
-    void anAssessingCoordinatorIsGivenTheProjectsTags() throws Exception {
+    void theCoordinatorIsGivenTheProjectsTags() throws Exception {
         RunArgs assess = new RunArgs();
-        assess.setReviewAssess(true);
         String untagged = coordinator(assess, ReviewTags.NONE);
         String tagged = coordinator(assess, ReviewTags.of(List.of("kafka", "caching"), List.of("messaging")));
         String technicalOnly = coordinator(assess, ReviewTags.of(List.of("kafka", "caching"), List.of()));
@@ -227,18 +220,14 @@ class OpenCodeReviewConfigTest {
     /** the agents' prompts decide what a review finds, so each shape of them is pinned whole */
     @Test
     void theAgentPromptsAreRenderedExactly() throws Exception {
-        RunArgs plain = new RunArgs();
-        plain.setReviewAssess(false);
-        JsonNode bare = OpenCodeReviewConfig.build(plain, endpoint(RunArgs.DEFAULT_LOCAL_LLM_URL, null), StringUtils.EMPTY, NAMING_RULES, ReviewTags.NONE).path("agents");
-        RunArgs assessing = new RunArgs();
-        assessing.setReviewAssess(true);
-        JsonNode guided = OpenCodeReviewConfig.build(assessing, endpoint(RunArgs.DEFAULT_LOCAL_LLM_URL, null), "\n### AGENTS.md\n\nPrefer Optional over null returns.\n", NAMING_RULES, ReviewTags.NONE)
+        JsonNode bare = OpenCodeReviewConfig.build(new RunArgs(), endpoint(RunArgs.DEFAULT_LOCAL_LLM_URL, null), StringUtils.EMPTY, NAMING_RULES, ReviewTags.NONE).path("agents");
+        JsonNode guided = OpenCodeReviewConfig.build(new RunArgs(), endpoint(RunArgs.DEFAULT_LOCAL_LLM_URL, null), "\n### AGENTS.md\n\nPrefer Optional over null returns.\n", NAMING_RULES, ReviewTags.NONE)
                 .path("agents");
 
         GoldenText.assertMatches("opencode-coordinator", bare.path(OpenCodeReviewConfig.COORDINATOR).path("system").asString());
         GoldenText.assertMatches("opencode-reviewer", bare.path(OpenCodeReviewConfig.REVIEWER).path("system").asString());
-        GoldenText.assertMatches("opencode-coordinator-assessing", guided.path(OpenCodeReviewConfig.COORDINATOR).path("system").asString());
-        GoldenText.assertMatches("opencode-reviewer-assessing", guided.path(OpenCodeReviewConfig.REVIEWER).path("system").asString());
+        GoldenText.assertMatches("opencode-coordinator-guided", guided.path(OpenCodeReviewConfig.COORDINATOR).path("system").asString());
+        GoldenText.assertMatches("opencode-reviewer-guided", guided.path(OpenCodeReviewConfig.REVIEWER).path("system").asString());
         GoldenText.assertMatches("opencode-triage", OpenCodeReviewConfig.triagePrompt(List.of(new StaticFinding("pmd", "GodClass", "warning", "a/Service.java", 3, "possible God Class"))));
         GoldenText.assertMatches("opencode-labels", OpenCodeReviewConfig.labelPrompt("1a2b3c", List.of(
                 new ReviewUnit("U1", "a/Service.java", "handle(Request)", "MODIFY", "12-30"),

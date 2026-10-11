@@ -97,15 +97,7 @@ public class ReviewCommitMojo extends AbstractMojo {
     @Parameter(property = "codiqo.review.relayTimeoutSeconds")
     private Integer relayTimeoutSeconds;
 
-    /** also have the agents assess the commit (block categories, summary, tags, task types, quality dimensions) */
-    @Parameter(property = "codiqo.review.assess")
-    private Boolean assess;
-
-    /** writes every session of the review, the sub-agents' tool calls included, to {@code codiqo-review-trace-<sha>.json} */
-    @Parameter(property = "codiqo.review.trace")
-    private Boolean trace;
-
-    /** unset writes the trace beside the report */
+    /** where the trace of every session and tool call goes; unset writes it beside the report */
     @Parameter(property = "codiqo.review.traceDirectory")
     private File traceDirectory;
 
@@ -117,9 +109,9 @@ public class ReviewCommitMojo extends AbstractMojo {
     private File findings;
 
     /**
-     * A submission {@code analyze-commit} wrote for this commit ({@code codiqo-submission-<sha>.yaml} or {@code .json}): with
-     * {@code codiqo.review.assess}, a fork of the review's session labels its code units by id after the review, and the
-     * report compares those labels, unit by unit, with what the reviewers' own labels name.
+     * A submission {@code analyze-commit} wrote for this commit ({@code codiqo-submission-<sha>.yaml} or {@code .json}): a
+     * fork of the review's session labels its code units by id after the review, and the report compares those labels,
+     * unit by unit, with what the reviewers' own labels name.
      */
     @Parameter(property = "codiqo.review.submission")
     private File submission;
@@ -136,8 +128,6 @@ public class ReviewCommitMojo extends AbstractMojo {
     @Override
     public void execute() throws MojoExecutionException {
         RunArgs args = new RunArgs();
-        Optional.ofNullable(assess).ifPresent(args::setReviewAssess);
-        Optional.ofNullable(trace).ifPresent(args::setReviewTrace);
         args.setReviewTraceDirectory(Optional.ofNullable(traceDirectory).orElse(output.getAbsoluteFile().getParentFile()));
         Optional.ofNullable(executable).ifPresent(args::setReviewExecutable);
         Optional.ofNullable(baseUrl).ifPresent(args::setReviewBaseUrl);
@@ -163,18 +153,14 @@ public class ReviewCommitMojo extends AbstractMojo {
                     new MavenLogFactory(getLog()).getLogger(LocalReviewer.class));
             Optional<AnalysisSubmissionModel> analysed = Optional.empty();
             if (Objects.nonNull(submission)) {
-                if (args.isReviewAssess()) {
-                    /** {@code analyze-commit} writes YAML unless told otherwise */
-                    ObjectMapper mapper = JsonMapper.builder().build();
-                    if (YAML_EXTENSIONS.contains(FilenameUtils.getExtension(submission.getName()))) {
-                        mapper = SubmitAnalysisFileMojo.yamlMapper();
-                    }
-                    AnalysisSubmissionModel read = mapper.readerFor(AnalysisSubmissionModel.class).without(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES).readValue(submission);
-                    requireReviewedCommit(read);
-                    analysed = Optional.of(read);
-                } else {
-                    getLog().warn("codiqo.review.submission is ignored without codiqo.review.assess: only an assessing review labels the submission's code units");
+                /** {@code analyze-commit} writes YAML unless told otherwise */
+                ObjectMapper mapper = JsonMapper.builder().build();
+                if (YAML_EXTENSIONS.contains(FilenameUtils.getExtension(submission.getName()))) {
+                    mapper = SubmitAnalysisFileMojo.yamlMapper();
                 }
+                AnalysisSubmissionModel read = mapper.readerFor(AnalysisSubmissionModel.class).without(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES).readValue(submission);
+                requireReviewedCommit(read);
+                analysed = Optional.of(read);
             }
             Optional<UnitLabelling.Checklist> checklist = analysed.map(UnitLabelling::checklist);
             Optional<LocalReviewer.BuildSource<ReviewUnit>> units = checklist.map(listed -> listed::getListed);

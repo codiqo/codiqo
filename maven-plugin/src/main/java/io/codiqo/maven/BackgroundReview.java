@@ -13,8 +13,9 @@ import org.apache.maven.plugin.MojoExecutionException;
  * A local review running next to the analysis of the same commit. It needs only git and the agents, so it is started
  * before the build and joined just before the submission: a review that takes as long as the build adds no time.
  *
- * <p>A review that was asked for and failed or ran out of time fails the build: dropping it silently would submit the
- * commit as if no review had been asked for, and hide an LLM call that keeps failing. Closing cancels a review that is
+ * <p>A review that was asked for and failed or ran out of time is reported to the caller, never dropped: submitting the
+ * commit without it would hand the review's judgment to the server's prompt and hide an LLM call that keeps failing.
+ * Closing cancels a review that is
  * still running; the interrupt makes the reviewer stop its OpenCode server and delete the server's home, which a
  * review abandoned without the interrupt would leave running after Maven exits.
  */

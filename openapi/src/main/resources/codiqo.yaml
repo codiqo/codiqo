@@ -658,7 +658,7 @@ components:
           type: string
           description: Optional human-readable reason for excluding this analysis
         category:
-          description: Structured exclusion category (build/dependency failure, revert commit, reverted original, merge commit, branch/author filter, no relevant files, duplicate commit, author-requested skip, incomplete local history)
+          description: Structured exclusion category (build/dependency failure, revert commit, reverted original, merge commit, branch/author filter, no relevant files, duplicate commit, author-requested skip, incomplete local history, failed local review)
           allOf:
             - $ref: '#/components/schemas/AnalysisExcludeCategory'
         detail:
@@ -689,6 +689,7 @@ components:
         - DUPLICATE_COMMIT
         - SELF_EXCLUDED
         - INCOMPLETE_HISTORY
+        - LOCAL_REVIEW_FAILURE
 
     AnalysisBuildFailureModel:
       type: object

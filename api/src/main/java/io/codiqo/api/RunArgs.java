@@ -563,26 +563,16 @@ public class RunArgs {
     private Duration llmReadTimeout = Duration.ofMinutes(10);
 
     /**
-     * Local review: run OpenCode agents on the commit next to the analysis and attach their bugs and token usage. The
-     * agents read the analysis clone, so every analysed commit is reviewed. The review fields are local to the run: none of them travels
+     * Local review, the one switch of local mode: OpenCode agents review and assess every analysed commit in the
+     * analysis clone, judge the PMD and SpotBugs findings on its added lines after the build, and leave a trace of every
+     * session, and the server scores the commit from that assessment alone. A review that fails excludes the commit
+     * rather than letting the server's prompt judge it. The review fields are local to the run: none of them travels
      * with the submission. The defaults are the pairing measured on real commits: a 270-file commit reviewed for about
      * $0.50-0.60 and a mid-size one for about $0.15-0.30.
      */
     private transient boolean reviewEnabled;
 
-    /** Local review: also have the agents assess the commit (code-unit difficulty, summary, tags, task types, quality dimensions). */
-    private transient boolean reviewAssess;
-
-    /** Local review: after the build, have a fork of the coordinator session judge the PMD and SpotBugs findings on added lines. */
-    private transient boolean reviewTriage;
-
-    /**
-     * Local review: before OpenCode's home and its session database are deleted, write every session the review ran,
-     * the sub-agents' tool calls included, to {@code codiqo-review-trace-<sha>.json} in {@link #reviewTraceDirectory}.
-     */
-    private transient boolean reviewTrace = true;
-
-    /** Local review: where the trace goes; unset writes it to the temp directory, whose path is logged. */
+    /** Local review: where the trace of every session goes, {@code codiqo-review-trace-<sha>.json}; unset writes it to the temp directory, whose path is logged. */
     @Nullable
     private transient File reviewTraceDirectory;
 

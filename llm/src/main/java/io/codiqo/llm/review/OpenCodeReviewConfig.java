@@ -200,7 +200,6 @@ public class OpenCodeReviewConfig {
     private static String prompt(String template, int steps, RunArgs args, String conventionGuidance, List<String> namingRules, ReviewTags tags) {
         Context ctx = new Context();
         ctx.setVariable("namingRules", namingRules);
-        ctx.setVariable("assess", args.isReviewAssess());
         ctx.setVariable("technicalTags", tags.getTechnical());
         ctx.setVariable("functionalTags", tags.getFunctional());
         ctx.setVariable("maxTasks", args.getReviewMaxTasks());

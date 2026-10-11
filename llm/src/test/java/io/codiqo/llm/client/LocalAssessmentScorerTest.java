@@ -32,7 +32,6 @@ class LocalAssessmentScorerTest {
         assertEquals(1.0 + clean + args.getCoverageGoodBonus(), response.getQualityMultiplier().getFinalMultiplier(), 1e-9);
         assertNotNull(response.getRiskAssessment());
         assertNull(response.getBugs(), "the review's bugs are stored with the submission, never again from the response");
-        assertNull(result.getPromptScore(), "no prompt was scored");
         assertEquals(0, result.getTotalTokens());
     }
     @Test
