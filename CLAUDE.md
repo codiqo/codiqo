@@ -1524,7 +1524,10 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   the credential per request; a direct endpoint (a local Ollama daemon) gets its own key, or none, and the whole review
   timeout to start answering instead of the relay's first-byte limit. The relay also sets the scoring prompt's sampling
   (`temperature`, `top_p`, `seed` from `RunArgs`) on every chat completion: OpenCode 2.0 sends none of them, wherever
-  its configuration puts them (checked on 2.0.20 and 2.0.25).
+  its configuration puts them (checked on 2.0.20 and 2.0.25). It sets them on the OpenAI SDK's own request body
+  (`ChatCompletionCreateParams.Body`, read and written with `ObjectMappers.jsonMapper()`), which keeps every field it
+  does not model as OpenCode sent it; its error bodies are the SDK's `ErrorObject`. Write OpenAI JSON with the SDK's
+  models, never by hand.
 - A credential refresh that fails on the network is retried by the relay like any call; only a refusal that survives the
   retries answers 401. A stream cut after the answer started ends with an error event, since its status was already
   sent. A stored login is adopted from disk only when it has this login's OAuth client (another organization's login

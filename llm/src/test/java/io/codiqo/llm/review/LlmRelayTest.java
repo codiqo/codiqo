@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -105,6 +106,40 @@ class LlmRelayTest {
         assertEquals(args.getLlmTopP(), forwarded.path("top_p").asDouble());
         assertEquals(args.getLlmSeed(), forwarded.path("seed").asInt());
         assertEquals("m", forwarded.path("model").asString(), "the rest of the request is untouched");
+    }
+    /**
+     * The request is read and written as the OpenAI SDK's request body: everything OpenCode sends that the SDK does not
+     * model (stream, the reasoning a model returned, a tool's JSON schema) leaves exactly as it came, and only the
+     * sampling changes.
+     */
+    @Test
+    void onlyTheSamplingOfAnOpenCodeRequestChanges() throws Exception {
+        firstChunkRead.countDown();
+        String sent = IOUtils.resourceToString("/openai/opencode-chat-request.json", StandardCharsets.UTF_8);
+        HttpRequest request = HttpRequest.newBuilder(URI.create(relay.getUrl() + "/chat/completions"))
+                .header(HttpHeaderNames.AUTHORIZATION.toString(), RequestAuthorizer.bearer(relay.getSecret()))
+                .header(HttpHeaderNames.CONTENT_TYPE.toString(), HttpHeaderValues.APPLICATION_JSON.toString())
+                .POST(HttpRequest.BodyPublishers.ofString(sent))
+                .build();
+        assertEquals(HttpResponseStatus.OK.code(), http.send(request, HttpResponse.BodyHandlers.ofString()).statusCode());
+
+        RunArgs args = relayArgs();
+        JsonMapper mapper = JsonMapper.builder().build();
+        ObjectNode expected = (ObjectNode) mapper.readTree(sent);
+        expected.put("temperature", args.getLlmTemperature()).put("top_p", args.getLlmTopP()).put("seed", args.getLlmSeed());
+        assertEquals(expected, mapper.readTree(upstreamBody.get()));
+    }
+    /** a body that is not a chat completion request is the provider's to refuse, so it is forwarded as it came */
+    @Test
+    void aBodyThatIsNotAnObjectGoesOnAsItCame() throws Exception {
+        firstChunkRead.countDown();
+        HttpRequest request = HttpRequest.newBuilder(URI.create(relay.getUrl() + "/chat/completions"))
+                .header(HttpHeaderNames.AUTHORIZATION.toString(), RequestAuthorizer.bearer(relay.getSecret()))
+                .POST(HttpRequest.BodyPublishers.ofString("[1, 2]"))
+                .build();
+        http.send(request, HttpResponse.BodyHandlers.ofString());
+
+        assertEquals("[1, 2]", upstreamBody.get());
     }
     /** a direct end point gets its own key as the bearer token, and nothing when it has none, as a local daemon */
     @Test
