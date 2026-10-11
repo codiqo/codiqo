@@ -1,6 +1,7 @@
 package io.codiqo.llm.review;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
@@ -13,7 +14,6 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.StopWatch;
-import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.ImmutableTriple;
 import org.apache.commons.lang3.tuple.Pair;
 import org.eclipse.jgit.lib.ObjectId;
@@ -63,17 +63,17 @@ public class LocalReviewer {
         this.log = Objects.requireNonNull(log);
     }
     public LocalReview review(Path directory, String commit) throws IOException {
-        return reviewThenTriage(directory, commit, Optional.empty()).getReview();
+        return reviewThenFollowUp(directory, commit, Optional.empty(), Optional.empty()).getReview();
     }
     /**
-     * Reviews the commit, then, while the review's server is still up, waits for the build's static-analysis findings
-     * and asks a fork of the coordinator's session which of them are real defects. The fork keeps everything the
-     * coordinator read, and the server's home (with every session) is deleted when the review closes, so the triage has
-     * to happen here and not in a later run.
+     * Reviews the commit, then, while the review's server is still up, waits for what the build produced and asks forks
+     * of the coordinator's session about it: one labels the analysis's own code units by id, another judges which
+     * static-analysis findings are real defects. A fork keeps everything the coordinator read, and the server's home
+     * (with every session) is deleted when the review closes, so both have to happen here and not in a later run.
      */
-    public ReviewAndTriage reviewThenTriage(Path directory, String commit, Optional<FindingsSource> findings) throws IOException {
+    public ReviewOutcome reviewThenFollowUp(Path directory, String commit, Optional<BuildSource<ReviewUnit>> units, Optional<BuildSource<StaticFinding>> findings) throws IOException {
         ReviewTarget target = target(directory, commit);
-        return runReview(target.getWorkTree(), target.getSha(), target.getNamingRules(), findings);
+        return runReview(target.getWorkTree(), target.getSha(), target.getNamingRules(), units, findings);
     }
     /**
      * The commit and the naming rules of the languages it changes, read with a repository that is closed again before
@@ -103,15 +103,17 @@ public class LocalReviewer {
             return List.of();
         }
     }
-    private ReviewAndTriage runReview(Path workTree, String sha, List<String> namingRules, Optional<FindingsSource> findings) throws IOException {
+    private ReviewOutcome runReview(Path workTree, String sha, List<String> namingRules, Optional<BuildSource<ReviewUnit>> units, Optional<BuildSource<StaticFinding>> findings)
+            throws IOException {
         if (Objects.nonNull(endpoint.getAuthorizer())) {
             try (LlmRelay relay = LlmRelay.start(args, endpoint, log)) {
-                return runReview(workTree, sha, namingRules, new ReviewEndpoint(relay.getUrl(), relay.getSecret(), null), findings);
+                return runReview(workTree, sha, namingRules, new ReviewEndpoint(relay.getUrl(), relay.getSecret(), null), units, findings);
             }
         }
-        return runReview(workTree, sha, namingRules, endpoint, findings);
+        return runReview(workTree, sha, namingRules, endpoint, units, findings);
     }
-    private ReviewAndTriage runReview(Path workTree, String sha, List<String> namingRules, ReviewEndpoint effective, Optional<FindingsSource> findings) throws IOException {
+    private ReviewOutcome runReview(Path workTree, String sha, List<String> namingRules, ReviewEndpoint effective, Optional<BuildSource<ReviewUnit>> units,
+            Optional<BuildSource<StaticFinding>> findings) throws IOException {
         StopWatch watch = StopWatch.createStarted();
         try (OpenCodeServer server = OpenCodeServer.start(args, OpenCodeReviewConfig.build(args, effective, conventionGuidance, namingRules), workTree, log)) {
             try (OpenCodeClient client = new OpenCodeClient(server.getUrl(), server.getPassword(), args.getReviewTimeout())) {
@@ -171,13 +173,61 @@ public class LocalReviewer {
                     stage.succeeded();
                 }
 
+                Optional<UnitLabels> labels = Optional.empty();
+                if (BooleanUtils.and(new boolean[] { units.isPresent(), args.isReviewAssess() })) {
+                    List<ReviewUnit> listed = awaitBuild(units.get(), "code units");
+                    /**
+                     * A failed labelling costs the labels only: the reviewers' own labels stand in, and the review is kept.
+                     * An interrupt is not such a failure but the cancellation of the whole review (a failed or excluded
+                     * build closes it): swallowed here, a review with triage went on to wait for findings the cancelled
+                     * build never delivers, and its OpenCode server outlived the checkout it was reading. The thread's
+                     * flag tells the two apart, never the exception's type: OkHttp reports a turn that outran the review
+                     * timeout as an InterruptedIOException too, and that is a failed labelling like any other.
+                     */
+                    try {
+                        labels = label(client, sessionId, sha, listed);
+                    } catch (IOException err) {
+                        if (Thread.currentThread().isInterrupted()) {
+                            throw err;
+                        }
+                        log.warn("the labelling turn failed (%s); the reviewers' own labels are used instead", err.getMessage());
+                    }
+                }
+
                 Optional<FindingTriage> triage = Optional.empty();
                 if (findings.isPresent()) {
-                    triage = triage(client, sessionId, awaitFindings(findings.get()));
+                    triage = triage(client, sessionId, awaitBuild(findings.get(), "static-analysis findings"));
                 }
-                return new ReviewAndTriage(review, triage);
+                return new ReviewOutcome(review, labels, triage);
             }
         }
+    }
+    /** Asks a fork of the coordinator's session to label the analysis's units, listed by id. */
+    private Optional<UnitLabels> label(OpenCodeClient client, String sessionId, String sha, List<ReviewUnit> units) throws IOException {
+        if (CollectionUtils.isEmpty(units)) {
+            log.info("the analysis found no added or changed code units; nothing to label");
+            return Optional.empty();
+        }
+
+        UnitLabels toReturn;
+        try (ProgressStage stage = ProgressStage.start(args, "labels")) {
+            String forkId = client.fork(sessionId);
+            log.info("labelling %d code units in session %s, a fork of %s", units.size(), forkId, sessionId);
+            ForkAnswer<UnitLabels> answer = ask(client, forkId, OpenCodeReviewConfig.labelPrompt(sha, units), UnitLabels.class, "labelling");
+
+            toReturn = answer.getParsed();
+            /**
+             * A model writes "labels": null, or a null among the labels, now and then although the JSON rules forbid it.
+             * Either is no label; read as one, it threw a NullPointerException past the labelling's own failure handling,
+             * which failed the whole review and with it the build.
+             */
+            toReturn.setLabels(CollectionUtils.emptyIfNull(toReturn.getLabels()).stream().filter(Objects::nonNull).toList());
+            toReturn.setAnswer(answer.getAnswer());
+            toReturn.setUsage(answer.getUsage());
+            stage.detail(String.format("%d labels for %d units", toReturn.getLabels().size(), units.size()));
+            stage.succeeded();
+        }
+        return Optional.of(toReturn);
     }
     private Optional<FindingTriage> triage(OpenCodeClient client, String sessionId, List<StaticFinding> findings) throws IOException {
         if (CollectionUtils.isEmpty(findings)) {
@@ -189,30 +239,41 @@ public class LocalReviewer {
         try (ProgressStage stage = ProgressStage.start(args, "triage")) {
             String forkId = client.fork(sessionId);
             log.info("triaging %d static-analysis findings in session %s, a fork of %s", findings.size(), forkId, sessionId);
-            client.prompt(forkId, OpenCodeReviewConfig.triagePrompt(findings));
-            client.awaitIdle(forkId);
+            ForkAnswer<FindingTriage> answer = ask(client, forkId, OpenCodeReviewConfig.triagePrompt(findings), FindingTriage.class, "triage");
 
-            String answer = client.finalAnswer(forkId);
-            try {
-                toReturn = LlmJson.readAnswer(answer, FindingTriage.class);
-            } catch (JacksonException err) {
-                log.warn("the triage answer is not valid JSON (%s); asking for a corrected answer", err.getOriginalMessage());
-                client.prompt(forkId, OpenCodeReviewConfig.repairPrompt(err.getOriginalMessage()));
-                client.awaitIdle(forkId);
-                answer = client.finalAnswer(forkId);
-                try {
-                    toReturn = LlmJson.readAnswer(answer, FindingTriage.class);
-                } catch (JacksonException again) {
-                    throw new IOException("the triage answer holds no verdicts: " + StringUtils.abbreviate(answer, RunArgs.REVIEW_ANSWER_PREVIEW), again);
-                }
-            }
-            toReturn.setAnswer(answer);
-            toReturn.setUsage(withConfiguredModel(client.usage(forkId)));
+            toReturn = answer.getParsed();
+            toReturn.setAnswer(answer.getAnswer());
+            toReturn.setUsage(answer.getUsage());
             toReturn.setFindings(findings);
             stage.detail(String.format("%d verdicts on %d findings", toReturn.getVerdicts().size(), findings.size()));
             stage.succeeded();
         }
         return Optional.of(toReturn);
+    }
+    /**
+     * Sends one follow-up prompt to a fork and reads its answer. Only broken JSON is sent back, once, as for the review:
+     * what the answer leaves out stays out, and what it says is recorded as it is.
+     */
+    private <T> ForkAnswer<T> ask(OpenCodeClient client, String forkId, String prompt, Class<T> type, String name) throws IOException {
+        client.prompt(forkId, prompt);
+        client.awaitIdle(forkId);
+
+        String answer = client.finalAnswer(forkId);
+        T parsed;
+        try {
+            parsed = LlmJson.readAnswer(answer, type);
+        } catch (JacksonException err) {
+            log.warn("the %s answer is not valid JSON (%s); asking for a corrected answer", name, err.getOriginalMessage());
+            client.prompt(forkId, OpenCodeReviewConfig.repairPrompt(err.getOriginalMessage()));
+            client.awaitIdle(forkId);
+            answer = client.finalAnswer(forkId);
+            try {
+                parsed = LlmJson.readAnswer(answer, type);
+            } catch (JacksonException again) {
+                throw new IOException("the " + name + " answer is not the JSON object asked for: " + StringUtils.abbreviate(answer, RunArgs.REVIEW_ANSWER_PREVIEW), again);
+            }
+        }
+        return new ForkAnswer<>(parsed, answer, withConfiguredModel(client.usage(forkId)));
     }
     @VisibleForTesting
     public static String progressDetail(LocalReview review) {
@@ -225,13 +286,23 @@ public class LocalReviewer {
                 review.totalInputTokens(),
                 review.totalOutputTokens());
     }
-    private static List<StaticFinding> awaitFindings(FindingsSource source) throws IOException {
+    /**
+     * Waits for what the build hands a follow-up. An interrupt is the review being cancelled: it is kept on the thread
+     * and thrown as {@link InterruptedIOException}, since a future's wait clears the flag and a caller that saw only
+     * "never arrived" would carry on into the next wait, which a cancelled build never ends.
+     */
+    private static <T> List<T> awaitBuild(BuildSource<T> source, String what) throws IOException {
         try {
             return source.await();
         } catch (IOException err) {
             throw err;
+        } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
+            InterruptedIOException toThrow = new InterruptedIOException("interrupted while waiting for the build's " + what);
+            toThrow.initCause(err);
+            throw toThrow;
         } catch (Exception err) {
-            throw new IOException("the build's static-analysis findings never arrived", err);
+            throw new IOException("the build's " + what + " never arrived", err);
         }
     }
     /**
@@ -296,12 +367,19 @@ public class LocalReviewer {
     /**
      * The longest a review can legitimately take, for a caller that waits for it. Every turn the agents take is one
      * {@link OpenCodeClient#awaitIdle} call, bounded on its own by {@link RunArgs#getReviewTimeout()}: the coordinator's
-     * review, its optional repair round and, with triage, the triage and its optional repair round. The other requests
+     * review, its optional repair round and, for each follow-up after the build (the labelling of an assessing review,
+     * the triage), its prompt and optional repair round. The other requests
      * read finished sessions and return at once. A caller that allowed only one review timeout failed the build while
      * every turn was still inside its own limit, for example a 28-minute review followed by a 6-minute triage.
      */
-    public static Duration longestReview(RunArgs args, boolean triage) {
-        int turns = triage ? RunArgs.REVIEW_TURNS_WITH_TRIAGE : RunArgs.REVIEW_TURNS;
+    public static Duration longestReview(RunArgs args, boolean labelling, boolean triage) {
+        int turns = RunArgs.REVIEW_TURNS;
+        if (labelling) {
+            turns += RunArgs.REVIEW_FOLLOW_UP_TURNS;
+        }
+        if (triage) {
+            turns += RunArgs.REVIEW_FOLLOW_UP_TURNS;
+        }
         return args.getReviewStartupTimeout().plus(args.getReviewTimeout().multipliedBy(turns));
     }
     /** a severity the coordinator left out, or wrote as null, is a severity with no findings */
@@ -340,8 +418,8 @@ public class LocalReviewer {
     }
 
     @FunctionalInterface
-    public interface FindingsSource {
-        List<StaticFinding> await() throws Exception;
+    public interface BuildSource<T> {
+        List<T> await() throws Exception;
     }
 
     private static final class ReviewTarget extends ImmutableTriple<Path, String, List<String>> {
@@ -358,12 +436,29 @@ public class LocalReviewer {
             return getRight();
         }
     }
-    public static final class ReviewAndTriage extends ImmutablePair<LocalReview, Optional<FindingTriage>> {
-        private ReviewAndTriage(LocalReview review, Optional<FindingTriage> triage) {
-            super(review, triage);
+    private static final class ForkAnswer<T> extends ImmutableTriple<T, String, SessionUsage> {
+        private ForkAnswer(T parsed, String answer, SessionUsage usage) {
+            super(parsed, answer, usage);
+        }
+        public T getParsed() {
+            return getLeft();
+        }
+        public String getAnswer() {
+            return getMiddle();
+        }
+        public SessionUsage getUsage() {
+            return getRight();
+        }
+    }
+    public static final class ReviewOutcome extends ImmutableTriple<LocalReview, Optional<UnitLabels>, Optional<FindingTriage>> {
+        private ReviewOutcome(LocalReview review, Optional<UnitLabels> labels, Optional<FindingTriage> triage) {
+            super(review, labels, triage);
         }
         public LocalReview getReview() {
             return getLeft();
+        }
+        public Optional<UnitLabels> getLabels() {
+            return getMiddle();
         }
         public Optional<FindingTriage> getTriage() {
             return getRight();

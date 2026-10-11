@@ -77,7 +77,8 @@ public class SubmitAnalysisFileMojo extends AbstractMojo {
             throw new MojoExecutionException(err);
         }
     }
-    private static ObjectMapper yamlMapper() {
+    /** reads a submission {@code analyze-commit} wrote, whose size is often several times the YAML parser's default 3 MB limit */
+    public static ObjectMapper yamlMapper() {
         LoadSettings loadSettings = LoadSettings.builder().setCodePointLimit(Integer.MAX_VALUE).build();
 
         YAMLFactory yamlFactory = YAMLFactory.builder().loadSettings(loadSettings).build();

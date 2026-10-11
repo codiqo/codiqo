@@ -29,8 +29,9 @@ class LocalReviewerTest {
         args.setReviewTimeout(Duration.ofMinutes(30));
         args.setReviewStartupTimeout(Duration.ofMinutes(1));
 
-        assertEquals(Duration.ofMinutes(61), LocalReviewer.longestReview(args, false));
-        assertEquals(Duration.ofMinutes(121), LocalReviewer.longestReview(args, true));
+        assertEquals(Duration.ofMinutes(61), LocalReviewer.longestReview(args, false, false));
+        assertEquals(Duration.ofMinutes(121), LocalReviewer.longestReview(args, false, true));
+        assertEquals(Duration.ofMinutes(181), LocalReviewer.longestReview(args, true, true));
     }
     /** the review's progress line counts every severity and adds reasoning to the output tokens, as the usage does */
     @Test

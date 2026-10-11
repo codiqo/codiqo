@@ -214,6 +214,22 @@ class OpenCodeReviewConfigTest {
         GoldenText.assertMatches("opencode-coordinator-assessing", guided.path(OpenCodeReviewConfig.COORDINATOR).path("system").asString());
         GoldenText.assertMatches("opencode-reviewer-assessing", guided.path(OpenCodeReviewConfig.REVIEWER).path("system").asString());
         GoldenText.assertMatches("opencode-triage", OpenCodeReviewConfig.triagePrompt(List.of(new StaticFinding("pmd", "GodClass", "warning", "a/Service.java", 3, "possible God Class"))));
+        GoldenText.assertMatches("opencode-labels", OpenCodeReviewConfig.labelPrompt("1a2b3c", List.of(
+                new ReviewUnit("U1", "a/Service.java", "handle(Request)", "MODIFY", "12-30"),
+                new ReviewUnit("U2", "a/Service.java", "Builder(String)", "NEW", "41-44"))));
+    }
+    /** the agents sample as the scoring prompt does, so two reviews of one commit differ as little as the provider allows */
+    @Test
+    void bothAgentsSampleAsTheScoringPromptDoes() throws Exception {
+        RunArgs args = new RunArgs();
+        JsonNode agents = OpenCodeReviewConfig.build(args, endpoint(RunArgs.DEFAULT_LOCAL_LLM_URL, null), StringUtils.EMPTY, NAMING_RULES).path("agents");
+
+        for (String agent : List.of(OpenCodeReviewConfig.COORDINATOR, OpenCodeReviewConfig.REVIEWER)) {
+            JsonNode body = agents.path(agent).path("request").path("body");
+            assertEquals(args.getLlmTemperature(), body.path("temperature").asDouble(), agent);
+            assertEquals(args.getLlmTopP(), body.path("top_p").asDouble(), agent);
+            assertEquals(args.getLlmSeed(), body.path("seed").asInt(), agent);
+        }
     }
     @Test
     void theTurnsSentToASessionReadAsBefore() {
