@@ -8,6 +8,20 @@ Answer with one JSON object and nothing else:
 {"blocking":[BUG],"major":[BUG],"minor":[BUG]}
 BUG is {"type":"SECURITY|CONCURRENCY|DATA_CORRUPTION|LOGIC|RESOURCE_LEAK|NULL_POINTER|ARCHITECTURE|OTHER","title":"...","description":"what is wrong, the input or path that triggers it, and the lines you checked as path:line","file":"repository-relative path","line":"new-file line number, as a JSON number","confidence":"HIGH|MEDIUM","suggestedFix":"one line","suggestedFileFix":"how to fix it"}. blocking = will break production or corrupt data; major = real defect with limited impact; minor = small real defect. Confidence "HIGH": you traced the path from the changed lines to the wrong behaviour, a race included when you can describe its interleaving step by step; "MEDIUM": the defect depends on code or context you could not see. Empty arrays are the right answer when nothing is wrong.
 
+ALSO ASSESS what you reviewed, from the same reading; do not run extra tools for it.
+- "blockCategories": one entry per function, method or constructor this commit adds or changes in your paths: {"file":"repository-relative path","signature":"the unit's name and its parameter list as the declaration writes them, unless a rule after this entry says otherwise","category":"MECHANICAL|ROUTINE|SUBSTANTIVE|INTRICATE","reason":"one sentence naming what in the changed lines makes it ROUTINE or harder; leave it out for MECHANICAL"}. For a file of the test language, the signature is Container.member(params).
+  Judge ONLY the changed lines, never the method they live in: "if I saw only the +/- lines, how hard would they be to get right?"
+  MECHANICAL = trivial regardless of size: renames, import or constant swaps, parameter propagation, call-site updates, copied or moved code, delegation, boilerplate, accessors, constructors, wiring. New but trivial is still MECHANICAL.
+  ROUTINE = real but unremarkable logic: ordinary CRUD, validation, glue.
+  SUBSTANTIVE = a genuine design choice or careful edge-case handling.
+  INTRICATE = genuinely hard to reason about: concurrency, locking, subtle invariants, correctness-critical algorithms.
+  IMPORTANCE IS NOT DIFFICULTY: how critical the class is (payments, wallets, auth, security) never raises a label. Threading a new argument through a money or security path, switching a call to its scoped or renamed variant, or moving existing code into a shared helper is MECHANICAL there too; one changed condition among such edits makes the unit ROUTINE at most.
+  TESTS are judged by their own code, never by how important the behaviour they check is: building fixtures, calling setters or builders, and asserting results is MECHANICAL however central the feature; an ordinary scenario with some setup logic is ROUTINE; SUBSTANTIVE only for test machinery that is itself hard to get right (coordinating threads with latches or barriers, controlling time, injecting faults, draining pools between tests).
+  List EVERY unit this commit adds or changes in your paths, MECHANICAL ones included: a unit you leave out reads as one nobody judged, not as a trivial one.
+- "observations": up to 6 short facts about what the change does that matter for risk, each under 20 words, e.g. "adds a Pub/Sub topic and subscriber per operator", "new Flyway migration re-keys the accounts table", "replaces Kafka calls with a REST gateway client".
+
+Your JSON answer then has these two fields beside "blocking", "major" and "minor".
+
 JSON RULES: the answer is read by a program, and malformed JSON loses the whole review.
 1. The answer is one JSON object and nothing else: no markdown code fences, no text before or after it.
 2. Every field name is double-quoted; no trailing commas; every array element is a complete object, never null.

@@ -48,6 +48,8 @@ import tools.jackson.core.JacksonException;
 public class LocalReviewer {
     private static final int SHORT_SHA = 8;
     private static final String BLOCK_CATEGORIES = "blockCategories";
+    /** the labelling and the triage, each a follow-up turn after the build */
+    private static final int FOLLOW_UPS = 2;
 
     private final RunArgs args;
     private final ReviewEndpoint endpoint;
@@ -126,9 +128,7 @@ public class LocalReviewer {
                 try {
                     return review(client, sessionId, forkIds, workTree, sha, units, findings, watch);
                 } finally {
-                    if (args.isReviewTrace()) {
-                        ReviewTrace.write(args, client, sha, sessionId, forkIds, log);
-                    }
+                    ReviewTrace.write(args, client, sha, sessionId, forkIds, log);
                 }
             }
         }
@@ -142,7 +142,7 @@ public class LocalReviewer {
             client.awaitIdle(sessionId);
 
             String answer = client.finalAnswer(sessionId);
-            Optional<JacksonException> unreadable = unreadable(answer, args.isReviewAssess());
+            Optional<JacksonException> unreadable = unreadable(answer);
             if (unreadable.isPresent()) {
                 /** One slip, such as an unclosed string in a long answer, must not cost a review the agents already finished. */
                 log.warn("the coordinator's answer is not valid JSON (%s); asking it to correct the answer", unreadable.get().getOriginalMessage());
@@ -169,10 +169,8 @@ public class LocalReviewer {
             LlmScoringResponse assessment = null;
             try {
                 bugs = readBugs(answer);
-                if (args.isReviewAssess()) {
-                    assessment = LlmJson.readAnswerIgnoring(answer, LlmScoringResponse.class, BLOCK_CATEGORIES);
-                    assessment.setBlockCategories(reviewers.getBlockCategories());
-                }
+                assessment = LlmJson.readAnswerIgnoring(answer, LlmScoringResponse.class, BLOCK_CATEGORIES);
+                assessment.setBlockCategories(reviewers.getBlockCategories());
             } catch (JacksonException err) {
                 throw new IOException("the review answer holds no findings object: " + StringUtils.abbreviate(answer, RunArgs.REVIEW_ANSWER_PREVIEW), err);
             }
@@ -191,7 +189,7 @@ public class LocalReviewer {
         }
 
         Optional<UnitLabels> labels = Optional.empty();
-        if (BooleanUtils.and(new boolean[] { units.isPresent(), args.isReviewAssess() })) {
+        if (units.isPresent()) {
             List<ReviewUnit> listed = awaitBuild(units.get(), "code units");
             /**
              * A failed labelling costs the labels only: the reviewers' own labels stand in, and the review is kept.
@@ -347,7 +345,7 @@ public class LocalReviewer {
                         }
                     }
                     List<LlmScoringResponse.CodeBlockCategoryView> sessionLabels = readLabels(session.getSessionId(), text);
-                    if (BooleanUtils.and(new boolean[] { args.isReviewAssess(), sessionLabels.isEmpty() })) {
+                    if (sessionLabels.isEmpty()) {
                         log.warn("reviewer session %s labelled none of its code units", session.getSessionId());
                     }
                     sessionLabels.forEach(block -> labels.putIfAbsent(Pair.of(block.getFile(), block.getSignature()), block));
@@ -384,19 +382,13 @@ public class LocalReviewer {
     /**
      * The longest a review can legitimately take, for a caller that waits for it. Every turn the agents take is one
      * {@link OpenCodeClient#awaitIdle} call, bounded on its own by {@link RunArgs#getReviewTimeout()}: the coordinator's
-     * review, its optional repair round and, for each follow-up after the build (the labelling of an assessing review,
-     * the triage), its prompt and optional repair round. The other requests
-     * read finished sessions and return at once. A caller that allowed only one review timeout failed the build while
-     * every turn was still inside its own limit, for example a 28-minute review followed by a 6-minute triage.
+     * review, its optional repair round and, for each follow-up after the build (the labelling and the triage), its
+     * prompt and optional repair round. The other requests read finished sessions and return at once. A caller that
+     * allowed only one review timeout failed the build while every turn was still inside its own limit, for example a
+     * 28-minute review followed by a 6-minute triage.
      */
-    public static Duration longestReview(RunArgs args, boolean labelling, boolean triage) {
-        int turns = RunArgs.REVIEW_TURNS;
-        if (labelling) {
-            turns += RunArgs.REVIEW_FOLLOW_UP_TURNS;
-        }
-        if (triage) {
-            turns += RunArgs.REVIEW_FOLLOW_UP_TURNS;
-        }
+    public static Duration longestReview(RunArgs args) {
+        int turns = RunArgs.REVIEW_TURNS + FOLLOW_UPS * RunArgs.REVIEW_FOLLOW_UP_TURNS;
         return args.getReviewStartupTimeout().plus(args.getReviewTimeout().multipliedBy(turns));
     }
     /** a severity the coordinator left out, or wrote as null, is a severity with no findings */
@@ -408,12 +400,10 @@ public class LocalReviewer {
         toReturn.setMinor(Lists.newArrayList(CollectionUtils.emptyIfNull(toReturn.getMinor())));
         return toReturn;
     }
-    private static Optional<JacksonException> unreadable(String answer, boolean assess) {
+    private static Optional<JacksonException> unreadable(String answer) {
         try {
             LlmJson.readAnswer(answer, LlmScoringResponse.Bugs.class);
-            if (assess) {
-                LlmJson.readAnswerIgnoring(answer, LlmScoringResponse.class, BLOCK_CATEGORIES);
-            }
+            LlmJson.readAnswerIgnoring(answer, LlmScoringResponse.class, BLOCK_CATEGORIES);
             return Optional.empty();
         } catch (JacksonException err) {
             return Optional.of(err);

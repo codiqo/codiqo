@@ -18,9 +18,8 @@ public class LocalReview {
     String answer;
 
     /**
-     * The pieces of a scoring response the agents judged from the same reading, when the review was asked to assess
-     * ({@link io.codiqo.api.RunArgs#isReviewAssess()}): block categories, summary, tags, task types and complexity, quality
-     * dimensions. Null otherwise.
+     * The pieces of a scoring response the agents judged from the same reading: block categories, summary, tags, task
+     * types and complexity, quality dimensions.
      */
     LlmScoringResponse assessment;
 

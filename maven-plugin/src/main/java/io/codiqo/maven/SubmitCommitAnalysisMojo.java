@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
@@ -74,9 +75,10 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
     private String resourceUrl;
 
     /**
-     * Runs a local agent review of the commit next to the analysis and attaches its bugs and token usage to the
-     * submission. The agents read the analysis clone, which holds exactly the commit, so every analysed commit is
-     * reviewed, a backlog of historical ones included; each one is a review the organization pays for.
+     * Local mode, the one review switch: agents review and assess the commit next to the analysis, judge its static
+     * findings after the build and leave a trace, and the server scores the commit from that assessment alone. The
+     * agents read the analysis clone, which holds exactly the commit, so every analysed commit is reviewed, a backlog of
+     * historical ones included; each one is a review the organization pays for. A review that fails excludes the commit.
      */
     @Parameter(property = "codiqo.review")
     private Boolean review;
@@ -105,25 +107,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
     @Parameter(property = "codiqo.review.relayTimeoutSeconds")
     private Integer reviewRelayTimeoutSeconds;
 
-    /**
-     * Also has the review assess the commit (code-unit difficulty, summary, tags, task types, quality dimensions);
-     * the server scores from it once the organization is switched over, and only compares it until then.
-     */
-    @Parameter(property = "codiqo.review.assess")
-    private Boolean reviewAssess;
-
-    /**
-     * After the build, ask a fork of the review's coordinator session which PMD and SpotBugs findings on added lines
-     * are real defects. A confirmed one joins the review's bugs; every verdict places its finding in the assessment's
-     * static-analysis review, so this needs {@code codiqo.review.assess} for anything but the defects.
-     */
-    @Parameter(property = "codiqo.review.triage")
-    private Boolean reviewTriage;
-
-    /** writes every session of the review, the sub-agents' tool calls included, to {@code codiqo-review-trace-<sha>.json} */
-    @Parameter(property = "codiqo.review.trace")
-    private Boolean reviewTrace;
-
+    /** where the review's trace of every session and tool call goes */
     @Parameter(property = "codiqo.review.traceDirectory", defaultValue = "${project.build.directory}/codiqo")
     private File reviewTraceDirectory;
 
@@ -141,9 +125,6 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
     @Override
     protected void doBeforeAnalysis(RunArgs args) throws Exception {
         Optional.ofNullable(review).ifPresent(args::setReviewEnabled);
-        Optional.ofNullable(reviewAssess).ifPresent(args::setReviewAssess);
-        Optional.ofNullable(reviewTriage).ifPresent(args::setReviewTriage);
-        Optional.ofNullable(reviewTrace).ifPresent(args::setReviewTrace);
         Optional.ofNullable(reviewTraceDirectory).ifPresent(args::setReviewTraceDirectory);
         Optional.ofNullable(reviewExecutable).ifPresent(args::setReviewExecutable);
         Optional.ofNullable(reviewBaseUrl).ifPresent(args::setReviewBaseUrl);
@@ -174,14 +155,11 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
                 String guidance = LocalReviewGuidance.read(args, getLog());
                 Path workTree = clone.getWorkTree().toPath();
                 String commit = args.getCommitId();
-                Optional<LocalReviewer.BuildSource<ReviewUnit>> units = args.isReviewAssess() ? Optional.of(buildUnits::get) : Optional.empty();
-                Optional<LocalReviewer.BuildSource<StaticFinding>> findings = args.isReviewTriage() ? Optional.of(buildFindings::get) : Optional.empty();
                 /** the project's tags are asked for on the review's own thread: a server slow to answer must not hold the build */
                 backgroundReview = BackgroundReview.start(() -> {
-                    ReviewTags tags = args.isReviewAssess() ? projectTags() : ReviewTags.NONE;
-                    LocalReviewer reviewer = new LocalReviewer(args, reviewed, guidance, tags, DefaultLanguageProcessors.reviewLanguages(),
+                    LocalReviewer reviewer = new LocalReviewer(args, reviewed, guidance, projectTags(), DefaultLanguageProcessors.reviewLanguages(),
                             new MavenLogFactory(getLog()).getLogger(LocalReviewer.class));
-                    return reviewer.reviewThenFollowUp(workTree, commit, units, findings);
+                    return reviewer.reviewThenFollowUp(workTree, commit, Optional.of(buildUnits::get), Optional.of(buildFindings::get));
                 });
                 getLog().info("local review of " + args.getCommitId() + " started next to the analysis");
             } else {
@@ -189,7 +167,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
             }
         }
     }
-    /** the project's tags, for the assessing coordinator to reuse; a server that cannot answer leaves it coining them freely */
+    /** the project's tags, for the coordinator to reuse; a server that cannot answer leaves it coining them freely */
     private ReviewTags projectTags() {
         ReviewTags toReturn = ReviewTags.NONE;
         try {
@@ -213,7 +191,23 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
             UnitLabelling.Checklist checklist = UnitLabelling.checklist(ctx.getSubmissionModel());
             buildUnits.complete(checklist.getListed());
             buildFindings.complete(StaticFindings.introduced(ctx.getSubmissionModel(), DefaultLanguageProcessors.reviewLanguages()));
-            LocalReviewer.ReviewOutcome reviewed = backgroundReview.await(LocalReviewer.longestReview(ctx.getArgs(), ctx.getArgs().isReviewAssess(), ctx.getArgs().isReviewTriage()));
+            LocalReviewer.ReviewOutcome reviewed;
+            try {
+                reviewed = backgroundReview.await(LocalReviewer.longestReview(ctx.getArgs()));
+            } catch (MojoExecutionException err) {
+                /**
+                 * Local mode judges a commit with the review alone, so a review that failed or ran out of time leaves
+                 * the commit unjudged: it is excluded, which keeps the next run from paying for the review again and
+                 * the server's prompt from judging it in the review's place. Deleting the analysis retries it. An
+                 * interrupt is the run being stopped, not a failed review: the thread's flag tells the two apart.
+                 */
+                if (Thread.currentThread().isInterrupted()) {
+                    throw err;
+                }
+                getLog().error(String.format("commit %s excluded: %s", ctx.getArgs().getCommitId(), err.getMessage()), err);
+                doExcludeAnalysis(ctx.getArgs().getCommitId(), err.getMessage(), AnalysisExcludeCategory.LOCAL_REVIEW_FAILURE, ExceptionUtils.getStackTrace(err));
+                return;
+            }
             LocalReview finished = reviewed.getReview();
             reviewed.getTriage().ifPresent(this::logTriage);
             /**
@@ -221,14 +215,12 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
              * nothing, so a failure while mapping leaves no half-attached review behind on a submission that is sent.
              */
             LocalReviewModel model = LocalReviewModels.toModel(finished, reviewed.getTriage());
-            if (Objects.nonNull(finished.getAssessment())) {
-                int labelled = 0;
-                if (reviewed.getLabels().isPresent()) {
-                    labelled = labelById(ctx.getSubmissionModel(), checklist, finished, reviewed.getLabels().get());
-                }
-                if (labelled == 0) {
-                    labelByName(ctx.getSubmissionModel(), finished);
-                }
+            int labelled = 0;
+            if (reviewed.getLabels().isPresent()) {
+                labelled = labelById(ctx.getSubmissionModel(), checklist, finished, reviewed.getLabels().get());
+            }
+            if (labelled == 0) {
+                labelByName(ctx.getSubmissionModel(), finished);
             }
             ctx.getSubmissionModel().setLocalReview(model);
         }

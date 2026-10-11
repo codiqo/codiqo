@@ -27,7 +27,7 @@ class BackgroundReviewTest {
         }
     }
     @Test
-    void aFailedReviewFailsTheBuild() throws Exception {
+    void aFailedReviewIsReportedToTheCaller() throws Exception {
         try (BackgroundReview<LocalReview> background = BackgroundReview.start(() -> {
             throw new IOException("opencode serve exited with code 1");
         })) {
@@ -36,7 +36,7 @@ class BackgroundReviewTest {
         }
     }
     @Test
-    void aReviewThatRunsOutOfTimeFailsTheBuild() throws Exception {
+    void aReviewThatRunsOutOfTimeIsReportedToTheCaller() throws Exception {
         CountDownLatch release = new CountDownLatch(1);
         try (BackgroundReview<LocalReview> background = BackgroundReview.start(() -> {
             release.await();

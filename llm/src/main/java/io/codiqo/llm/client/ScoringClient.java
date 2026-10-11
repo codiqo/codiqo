@@ -20,15 +20,6 @@ public interface ScoringClient extends Scorer<ScoringClient.Params, ScoringClien
         LlmScoringRequest request;
         PromptContext context;
         StreamingHandler handler;
-
-        /** the local review's assessment of the commit, when the submission carried one */
-        LlmScoringResponse localAssessment;
-
-        /**
-         * Score from the local assessment rather than the prompt's judgment. Without it a local assessment is only
-         * compared: the score it would give is reported next to the prompt's, which stays the one recorded.
-         */
-        boolean applyLocalAssessment;
     }
 
     @Override
@@ -47,11 +38,8 @@ public interface ScoringClient extends Scorer<ScoringClient.Params, ScoringClien
         @Builder.Default
         List<String> toolCallsMade = Lists.newArrayList();
 
-        /** the score the local assessment gives, whether or not it was applied; null without one */
+        /** the score the local assessment gave a commit scored from it alone; null for a commit the prompt scored */
         Double localAssessmentScore;
-
-        /** the score the prompt's own judgment gives; differs from the response's when the local one was applied */
-        Double promptScore;
 
         public int getPromptTokens() {
             return usage.getPromptTokens();

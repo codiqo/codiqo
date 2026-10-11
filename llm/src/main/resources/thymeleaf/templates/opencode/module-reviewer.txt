@@ -9,8 +9,8 @@ Answer with one JSON object and nothing else:
 {"blocking":[BUG],"major":[BUG],"minor":[BUG]}
 [# th:insert="~{opencode/bug-shape}" /]
 
-[# th:if="${assess}"][# th:insert="~{opencode/assess-reviewer}" /]
-[/][# th:insert="~{opencode/json-rules}" /]
+[# th:insert="~{opencode/assess-reviewer}" /]
+[# th:insert="~{opencode/json-rules}" /]
 
 If a command is refused, do not retry it and do not stop: carry on with the tools you have. Never end a message by saying what you will do next ("Now let me check..."): either make that tool call in the same message, or give the JSON answer.
 

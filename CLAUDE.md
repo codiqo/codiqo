@@ -1535,15 +1535,18 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
 
 ## Local Review — Switches and What Travels
 
-- `codiqo.review` runs OpenCode next to the build, in the analysis clone, so every analysed commit is reviewed (a backlog
-  pays for one review per commit); `codiqo.review.assess` adds the
-  judgment (labels with a reason above MECHANICAL, task types, dimensions, senior review, blast radius). A unit the
-  review leaves unlabelled keeps the prompt's label when the assessment is put over a response
-  (`LocalAssessment.overlay`, each label marked with its source);
-  `codiqo.review.triage` asks a fork of the coordinator session, after the build, which PMD and SpotBugs findings on
-  added lines are defects (`StaticFindings.introduced`). A confirmed defect becomes a bug unless the review already
-  reported one on that line; every verdict places its finding in `LocalAssessmentModel.staticAnalysisReview`.
-- **Every review leaves a trace** (`codiqo.review.trace`, default on): `ReviewTrace` writes the coordinator, its
+- **`codiqo.review` is the one switch of local mode.** On, OpenCode reviews every analysed commit next to the build, in
+  the analysis clone (a backlog pays for one review per commit), and always does all of it: the judgment (labels with a
+  reason above MECHANICAL, task types, dimensions, senior review, blast radius), the labelling of the analysis's own
+  units by id, the triage of the PMD and SpotBugs findings on added lines (`StaticFindings.introduced`; a confirmed
+  defect becomes a bug unless the review already reported one on that line, and every verdict places its finding in
+  `LocalAssessmentModel.staticAnalysisReview`) and the trace. The server scores such a commit from the assessment alone
+  and never builds the prompt. Off, nothing of the review runs and the server scores with its prompt as before. There
+  are no sub-switches: never add one, and never let a commit of local mode fall back to the prompt.
+- **A review that fails excludes the commit** (`LOCAL_REVIEW_FAILURE`, the error as the exclusion's detail): submitting
+  it without the review would hand its judgment to the prompt, and leaving it unsubmitted would make the next run pay
+  for the review again. Deleting the analysis retries it. An interrupt is the run being stopped, not a failed review.
+- **Every review leaves a trace**: `ReviewTrace` writes the coordinator, its
   sub-agents (listed again at the end, since a failed review never listed them) and the labelling and triage forks, each
   session's messages as OpenCode recorded them, tool calls with input and status, every tool output cut to 4,000
   characters, to `codiqo-review-trace-<sha>.json` in `codiqo.review.traceDirectory` (the build's `target/codiqo`; the
@@ -1575,7 +1578,7 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   beside it: the convention guidance, the project's `ReviewTags` and a `ReviewEndpoint` (base URL, key, credential),
   which the relay swaps for its own loopback URL and secret. `ReviewTags` are the tags the project's scored commits
   carry most (`GET /api/v1/projects/{projectId}/tags`, read on the review's thread so the build never waits; 404 or
-  405 means none), which an assessing coordinator reuses before it coins one. They are model output going into a system
+  405 means none), which the coordinator reuses before it coins one. They are model output going into a system
   prompt, so `ReviewTags.of` keeps only lowercase hyphenated labels. A mojo parameter has no `defaultValue`: it is a nullable wrapper that overrides the `RunArgs`
   field only when set. Settings with no `RunArgs` instance at hand (the login, the loopback host, the upload batch,
   the 0-10 score scale and the rounding precision) are `RunArgs` constants. Protocol names (headers, paths, rule ids)
