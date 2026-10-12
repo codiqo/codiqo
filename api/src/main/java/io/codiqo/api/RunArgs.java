@@ -104,6 +104,8 @@ public class RunArgs {
      */
     public static final Duration OAUTH_ASSUMED_ACCESS_TOKEN_LIFETIME = Duration.ofMinutes(5);
     public static final long UPLOAD_BATCH_BYTES = 4L * 1024 * 1024;
+    /** the server keeps a review trace up to this size (its submission.review-trace.max-bytes); a larger one is not sent */
+    public static final long REVIEW_TRACE_MAX_BYTES = 16L * 1024 * 1024;
     /** how much of a rejected review answer an error or a warning quotes: enough to tell prose from broken JSON */
     public static final int REVIEW_ANSWER_PREVIEW = 512;
     /** the agent turns of a local review: the coordinator's review and its repair round */

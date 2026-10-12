@@ -38,6 +38,7 @@ import io.codiqo.llm.review.LocalReviewModels;
 import io.codiqo.llm.review.LocalReviewer;
 import io.codiqo.llm.review.ReviewEndpoint;
 import io.codiqo.llm.review.ReviewTags;
+import io.codiqo.llm.review.ReviewTrace;
 import io.codiqo.llm.review.ReviewUnit;
 import io.codiqo.llm.review.StaticFinding;
 import io.codiqo.llm.review.StaticFindings;
@@ -247,13 +248,27 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
         }
 
         try (ProgressStage stage = ProgressStage.start(ctx.getArgs(), "submit")) {
-            AnalysisAcceptedModel response = AnalysisSubmitter.submit(
-                    apiUrl,
-                    credential(),
-                    connectTimeoutSeconds,
-                    readTimeoutSeconds,
-                    ctx.getSubmissionModel(),
-                    new MavenMessageReporter(getLog()));
+            /** the review wrote its trace before it was joined; it goes with the review it explains, never alone */
+            File reviewTrace = ReviewTrace.file(ctx.getArgs(), ctx.getArgs().getCommitId());
+            AnalysisAcceptedModel response;
+            if (BooleanUtils.and(new boolean[] { Objects.nonNull(ctx.getSubmissionModel().getLocalReview()), reviewTrace.isFile() })) {
+                response = AnalysisSubmitter.submit(
+                        apiUrl,
+                        credential(),
+                        connectTimeoutSeconds,
+                        readTimeoutSeconds,
+                        ctx.getSubmissionModel(),
+                        reviewTrace,
+                        new MavenMessageReporter(getLog()));
+            } else {
+                response = AnalysisSubmitter.submit(
+                        apiUrl,
+                        credential(),
+                        connectTimeoutSeconds,
+                        readTimeoutSeconds,
+                        ctx.getSubmissionModel(),
+                        new MavenMessageReporter(getLog()));
+            }
             getLog().info(String.format("accepted analysis id: %s status: %s", response.getAnalysisId(), response.getStatus()));
             stage.succeeded();
         }
