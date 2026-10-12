@@ -11,7 +11,6 @@ import java.util.Optional;
 import java.util.Set;
 
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.commons.lang3.tuple.ImmutableTriple;
@@ -74,7 +73,6 @@ public class LocalReviewer {
     private final List<ReviewLanguage> languages;
     private final Log log;
 
-    /** @param tags the project's tag vocabulary for an assessing coordinator, {@link ReviewTags#NONE} when none is known */
     public LocalReviewer(RunArgs args, ReviewEndpoint endpoint, String conventionGuidance, ReviewTags tags, List<ReviewLanguage> languages, Log log) {
         this.args = Objects.requireNonNull(args);
         this.endpoint = Objects.requireNonNull(endpoint);
@@ -86,21 +84,10 @@ public class LocalReviewer {
     public LocalReview review(Path directory, String commit) throws IOException {
         return reviewThenFollowUp(directory, commit, Optional.empty(), Optional.empty()).getReview();
     }
-    /**
-     * Reviews the commit, then, while the review's server is still up, waits for what the build produced and asks forks
-     * of the coordinator's session about it: one labels the analysis's own code units by id, another judges which
-     * static-analysis findings are real defects. A fork keeps everything the coordinator read, and the server's home
-     * (with every session) is deleted when the review closes, so both have to happen here and not in a later run.
-     */
     public ReviewOutcome reviewThenFollowUp(Path directory, String commit, Optional<BuildSource<ReviewUnit>> units, Optional<BuildSource<StaticFinding>> findings) throws IOException {
         ReviewTarget target = target(directory, commit);
         return runReview(target.getWorkTree(), target.getSha(), target.getNamingRules(), units, findings);
     }
-    /**
-     * The commit and the naming rules of the languages it changes, read with a repository that is closed again before
-     * the review starts: listing the changes loads the clone's pack indexes, which would otherwise stay in memory for the
-     * whole review and, with the triage, until the build finishes (about 13 MB on a large repository).
-     */
     private ReviewTarget target(Path directory, String commit) throws IOException {
         try (Repository repository = new FileRepositoryBuilder().findGitDir(directory.toFile()).setMustExist(true).build()) {
             ObjectId resolved = repository.resolve(commit);
@@ -110,12 +97,6 @@ public class LocalReviewer {
             throw new IOException("unknown commit " + commit + " in " + repository.getWorkTree());
         }
     }
-    /**
-     * The files the commit changes, which only choose the naming rules the agents are given. The review itself needs no
-     * local diff, since OpenCode's git fetches what a partial clone lacks, so a diff that cannot be computed here (a
-     * {@code --filter=tree:0} clone has no parent tree to compare, and JGit does not fetch it) must not fail the review:
-     * no files means every registered rule is given.
-     */
     private List<String> changedFiles(Repository repository, String sha) {
         try {
             return JGit.changedFileNames(repository, sha);
@@ -124,17 +105,22 @@ public class LocalReviewer {
             return List.of();
         }
     }
-    private ReviewOutcome runReview(Path workTree, String sha, List<String> namingRules, Optional<BuildSource<ReviewUnit>> units, Optional<BuildSource<StaticFinding>> findings)
-            throws IOException {
-        /**
-         * Every review goes through the relay, a direct endpoint as well as the Codiqo proxy: it is where the agents'
-         * requests get the scoring prompt's sampling, which OpenCode drops from every place its configuration offers.
-         */
+    private ReviewOutcome runReview(
+            Path workTree,
+            String sha,
+            List<String> namingRules,
+            Optional<BuildSource<ReviewUnit>> units,
+            Optional<BuildSource<StaticFinding>> findings) throws IOException {
         try (LlmRelay relay = LlmRelay.start(args, endpoint, log)) {
             return runReview(workTree, sha, namingRules, new ReviewEndpoint(relay.getUrl(), relay.getSecret(), null), units, findings);
         }
     }
-    private ReviewOutcome runReview(Path workTree, String sha, List<String> namingRules, ReviewEndpoint effective, Optional<BuildSource<ReviewUnit>> units,
+    private ReviewOutcome runReview(
+            Path workTree,
+            String sha,
+            List<String> namingRules,
+            ReviewEndpoint effective,
+            Optional<BuildSource<ReviewUnit>> units,
             Optional<BuildSource<StaticFinding>> findings) throws IOException {
         StopWatch watch = StopWatch.createStarted();
         try (OpenCodeServer server = OpenCodeServer.start(args, OpenCodeReviewConfig.build(args, effective, conventionGuidance, namingRules, tags), workTree, log)) {
@@ -149,8 +135,15 @@ public class LocalReviewer {
             }
         }
     }
-    private ReviewOutcome review(OpenCodeClient client, String sessionId, List<String> forkIds, Path workTree, String sha, Optional<BuildSource<ReviewUnit>> units,
-            Optional<BuildSource<StaticFinding>> findings, StopWatch watch) throws IOException {
+    private ReviewOutcome review(
+            OpenCodeClient client,
+            String sessionId,
+            List<String> forkIds,
+            Path workTree,
+            String sha,
+            Optional<BuildSource<ReviewUnit>> units,
+            Optional<BuildSource<StaticFinding>> findings,
+            StopWatch watch) throws IOException {
         LocalReview review;
         try (ProgressStage stage = ProgressStage.start(args, "review")) {
             log.info("reviewing %s with %s (coordinator session %s) and %s (reviewers)", sha, args.getReviewCoordinatorModel(), sessionId, args.getReviewReviewerModel());
@@ -229,7 +222,6 @@ public class LocalReviewer {
         }
         return new ReviewOutcome(review, labels, triage);
     }
-    /** Asks a fork of the coordinator's session to label the analysis's units, listed by id. */
     private Optional<UnitLabels> label(OpenCodeClient client, String sessionId, List<String> forkIds, String sha, List<ReviewUnit> units) throws IOException {
         if (CollectionUtils.isEmpty(units)) {
             log.info("the analysis found no added or changed code units; nothing to label");
@@ -279,10 +271,6 @@ public class LocalReviewer {
         }
         return Optional.of(toReturn);
     }
-    /**
-     * Sends one follow-up prompt to a fork and reads its answer. Only broken JSON is sent back, once, as for the review:
-     * what the answer leaves out stays out, and what it says is recorded as it is.
-     */
     private <T> ForkAnswer<T> ask(OpenCodeClient client, String forkId, String prompt, Class<T> type, String name) throws IOException {
         turn(client, forkId, prompt, log);
 
@@ -313,11 +301,6 @@ public class LocalReviewer {
                 review.totalInputTokens(),
                 review.totalOutputTokens());
     }
-    /**
-     * Waits for what the build hands a follow-up. An interrupt is the review being cancelled: it is kept on the thread
-     * and thrown as {@link InterruptedIOException}, since a future's wait clears the flag and a caller that saw only
-     * "never arrived" would carry on into the next wait, which a cancelled build never ends.
-     */
     private static <T> List<T> awaitBuild(BuildSource<T> source, String what) throws IOException {
         try {
             return source.await();
@@ -332,13 +315,6 @@ public class LocalReviewer {
             throw new IOException("the build's " + what + " never arrived", err);
         }
     }
-    /**
-     * Every reviewer's own answer, read once: whether it answered at all, and the code units it labelled. Repeating
-     * the labels through the coordinator costs an output token per label and, when it was tried, lost which unit a
-     * label belonged to. The observations and the labels are read separately, so a malformed {@code blockCategories}
-     * (a list of strings where objects were asked for) loses only that reviewer's labels: reading both as one
-     * {@link LlmScoringResponse} dropped its observations as well and counted a reviewer that did answer as unanswered.
-     */
     private ReviewerAnswers reviewerAnswers(OpenCodeClient client, List<SessionUsage> sessions) {
         Map<Pair<String, String>, LlmScoringResponse.CodeBlockCategoryView> labels = Maps.newLinkedHashMap();
         /** the coordinator is told not to repeat them, so the reviewers' own answers are the only place they exist */
@@ -380,8 +356,8 @@ public class LocalReviewer {
         try {
             return CollectionUtils.emptyIfNull(LlmJson.readAnswer(answer, LlmScoringResponse.class).getBlockCategories()).stream().toList();
         } catch (JacksonException err) {
-            log.warn("reviewer session %s labelled its code units in an unreadable shape (%s); its labels are left out", sessionId, err.getOriginalMessage());
-            return List.of();
+            log.error("reviewer session %s labelled its code units in an unreadable shape (%s); its labels are left out", sessionId, err.getOriginalMessage());
+            throw err;
         }
     }
     private SessionUsage withConfiguredModel(SessionUsage usage) {
@@ -424,7 +400,6 @@ public class LocalReviewer {
             client.awaitIdle(sessionId);
         }
     }
-    /** a severity the coordinator left out, or wrote as null, is a severity with no findings */
     @VisibleForTesting
     public static LlmScoringResponse.Bugs readBugs(String answer) {
         LlmScoringResponse.Bugs toReturn = LlmJson.readAnswer(answer, LlmScoringResponse.Bugs.class);
@@ -458,7 +433,7 @@ public class LocalReviewer {
     }
 
     @FunctionalInterface
-    public interface BuildSource<T> {
+    public static interface BuildSource<T> {
         List<T> await() throws Exception;
     }
 
