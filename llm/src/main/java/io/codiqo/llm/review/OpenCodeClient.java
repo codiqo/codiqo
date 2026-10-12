@@ -94,6 +94,17 @@ public class OpenCodeClient implements Closeable {
         } while (cursor.isPresent());
         throw new IOException("session " + sessionId + " finished without an answer");
     }
+    /**
+     * The error the session's last turn ended with, when it failed: OpenCode records it on the newest assistant
+     * message ({@code finish} {@code error}, {@code error.type} such as {@code provider.invalid-output}) and goes idle.
+     */
+    public Optional<JsonNode> turnError(String sessionId) throws IOException {
+        JsonNode newest = messagePage(sessionId, Optional.of(ASSISTANT), ORDER_NEWEST_FIRST, Optional.empty()).path("data").path(0);
+        if (newest.path("error").isObject()) {
+            return Optional.of(newest.path("error"));
+        }
+        return Optional.empty();
+    }
     public SessionUsage usage(String sessionId) throws IOException {
         return toUsage(session(sessionId));
     }
