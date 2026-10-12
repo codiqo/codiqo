@@ -298,9 +298,11 @@ public class LlmScoringClient implements ScoringClient {
                 throw lastError;
             }
 
+            boolean validated = false;
             for (int validationAttempt = 0; validationAttempt < validationMaxRetries; validationAttempt++) {
                 FinalScoreCalculator.ValidationReport report = finalScoreCalculator.validate(scoringResponse, request);
                 if (BooleanUtils.negate(report.hasFailures())) {
+                    validated = true;
                     break;
                 }
                 log.warn(String.format(Locale.ROOT, "diffClassification validation failed (%d unrecoverable file(s)); validation retry %d/%d",
@@ -330,6 +332,16 @@ public class LlmScoringClient implements ScoringClient {
                     log.warn("validation retry response failed to parse: " + err.getMessage() + "; keeping prior response");
                     break;
                 }
+            }
+            /** re-validated only off the happy path: the last retry's response was never checked inside the loop */
+            int unrecoverable = 0;
+            if (BooleanUtils.and(new boolean[] { validationMaxRetries > 0, BooleanUtils.negate(validated) })) {
+                unrecoverable = finalScoreCalculator.validate(scoringResponse, request).getFailures().size();
+            }
+            if (unrecoverable > 0) {
+                log.error(String.format(Locale.ROOT, "diffClassification still fails validation (%d unrecoverable file(s)) after %d validation retries; scoring the last response that parsed",
+                        unrecoverable,
+                        validationMaxRetries));
             }
 
             finalScoreCalculator.apply(scoringResponse, preComputedScores, request);

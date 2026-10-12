@@ -28,8 +28,7 @@ public class ProjectTags {
         AnalysisApi client = new AnalysisApi(CodiqoApiClients.newApiClient(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds));
         ReviewTags toReturn = ReviewTags.NONE;
         try {
-            /** one attempt: the tags only steer the review's wording */
-            ExistingTagsModel known = client.listProjectTags(projectId);
+            ExistingTagsModel known = ApiRetry.call(log, "listProjectTags", apiUrl, () -> client.listProjectTags(projectId));
             toReturn = ReviewTags.of(known.getTechnical(), known.getFunctional());
             log.info("project tags: %d technical and %d functional for the local review to reuse", toReturn.getTechnical().size(), toReturn.getFunctional().size());
         } catch (ApiException err) {

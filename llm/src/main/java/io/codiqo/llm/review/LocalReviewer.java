@@ -197,23 +197,7 @@ public class LocalReviewer {
 
         Optional<UnitLabels> labels = Optional.empty();
         if (units.isPresent()) {
-            List<ReviewUnit> listed = awaitBuild(units.get(), "code units");
-            /**
-             * A failed labelling costs the labels only: the reviewers' own labels stand in, and the review is kept.
-             * An interrupt is not such a failure but the cancellation of the whole review (a failed or excluded
-             * build closes it): swallowed here, a review with triage went on to wait for findings the cancelled
-             * build never delivers, and its OpenCode server outlived the checkout it was reading. The thread's
-             * flag tells the two apart, never the exception's type: OkHttp reports a turn that outran the review
-             * timeout as an InterruptedIOException too, and that is a failed labelling like any other.
-             */
-            try {
-                labels = label(client, sessionId, forkIds, sha, listed);
-            } catch (IOException err) {
-                if (Thread.currentThread().isInterrupted()) {
-                    throw err;
-                }
-                log.warn("the labelling turn failed (%s); the reviewers' own labels are used instead", err.getMessage());
-            }
+            labels = label(client, sessionId, forkIds, sha, awaitBuild(units.get(), "code units"));
         }
 
         Optional<FindingTriage> triage = Optional.empty();
@@ -324,28 +308,25 @@ public class LocalReviewer {
         for (SessionUsage session : sessions) {
             if (OpenCodeReviewConfig.REVIEWER.equals(session.getAgent())) {
                 total++;
-                String text = null;
+                String text;
                 try {
                     text = client.finalAnswer(session.getSessionId());
-                    for (String observation : CollectionUtils.emptyIfNull(LlmJson.readAnswer(text, Observations.class).getObservations())) {
-                        if (StringUtils.isNotBlank(observation)) {
-                            observations.add(observation.strip());
-                        }
-                    }
-                    List<LlmScoringResponse.CodeBlockCategoryView> sessionLabels = readLabels(session.getSessionId(), text);
-                    if (sessionLabels.isEmpty()) {
-                        log.warn("reviewer session %s labelled none of its code units", session.getSessionId());
-                    }
-                    sessionLabels.forEach(block -> labels.putIfAbsent(Pair.of(block.getFile(), block.getSignature()), block));
                 } catch (IOException err) {
                     log.warn("reviewer session %s ended with no answer at all: %s", session.getSessionId(), err.getMessage());
                     unanswered.add(session.getSessionId());
-                } catch (JacksonException err) {
-                    log.warn("reviewer session %s answered something that is not the JSON object (%s), starting: %s",
-                            session.getSessionId(),
-                            err.getOriginalMessage(),
-                            StringUtils.abbreviate(text, RunArgs.REVIEW_ANSWER_PREVIEW));
-                    unanswered.add(session.getSessionId());
+                    continue;
+                }
+
+                List<LlmScoringResponse.CodeBlockCategoryView> sessionLabels = readLabels(session.getSessionId(), text);
+                if (sessionLabels.isEmpty()) {
+                    log.warn("reviewer session %s labelled none of its code units", session.getSessionId());
+                }
+                sessionLabels.forEach(block -> labels.putIfAbsent(Pair.of(block.getFile(), block.getSignature()), block));
+
+                for (String observation : CollectionUtils.emptyIfNull(LlmJson.readAnswer(text, Observations.class).getObservations())) {
+                    if (StringUtils.isNotBlank(observation)) {
+                        observations.add(observation.strip());
+                    }
                 }
             }
         }
@@ -356,7 +337,7 @@ public class LocalReviewer {
         try {
             return CollectionUtils.emptyIfNull(LlmJson.readAnswer(answer, LlmScoringResponse.class).getBlockCategories()).stream().toList();
         } catch (JacksonException err) {
-            log.error("reviewer session %s labelled its code units in an unreadable shape (%s); its labels are left out", sessionId, err.getOriginalMessage());
+            log.error("reviewer session %s labelled its code units in an unreadable shape (%s); the review fails", sessionId, err.getOriginalMessage());
             throw err;
         }
     }
@@ -433,7 +414,7 @@ public class LocalReviewer {
     }
 
     @FunctionalInterface
-    public static interface BuildSource<T> {
+    public interface BuildSource<T> {
         List<T> await() throws Exception;
     }
 

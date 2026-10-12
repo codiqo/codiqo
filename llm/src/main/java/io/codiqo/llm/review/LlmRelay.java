@@ -146,7 +146,14 @@ public final class LlmRelay implements AutoCloseable {
         URI target = upstream.newBuilder().addPathSegments(Strings.CS.removeStart(path, "/")).encodedQuery(exchange.getRequestURI().getRawQuery()).build().uri();
         byte[] body = exchange.getRequestBody().readAllBytes();
         if (CHAT_COMPLETIONS.equals(path)) {
-            body = sampled(body);
+            try {
+                body = sampled(body);
+            } catch (IOException err) {
+                log.error("llm relay: refused a chat completion that is not a JSON request, which would leave without the scoring prompt's sampling: %s",
+                        err.getMessage());
+                respond(exchange, HttpResponseStatus.BAD_REQUEST.code(), error("not a chat completion request", "invalid_request_error"));
+                return;
+            }
         }
 
         HttpResponse<InputStream> response = null;
@@ -236,21 +243,15 @@ public final class LlmRelay implements AutoCloseable {
     }
     /**
      * The request with the scoring prompt's sampling set, read and written as the OpenAI SDK's own request body, which
-     * keeps every field it does not model ({@code stream} among them) as it came. A body that is not a chat completion
-     * request is the provider's to refuse, and goes on as it came.
+     * keeps every field it does not model ({@code stream} among them) as it came.
      */
     @SuppressWarnings("deprecation") // OpenAI deprecated seed; Ollama, which serves the review's models, still honours it
-    private byte[] sampled(byte[] body) {
-        try {
-            ChatCompletionCreateParams.Body.Builder chat = OPENAI.readValue(body, ChatCompletionCreateParams.Body.class).toBuilder();
-            Optional.ofNullable(temperature).ifPresent(chat::temperature);
-            Optional.ofNullable(topP).ifPresent(chat::topP);
-            Optional.ofNullable(seed).ifPresent(value -> chat.seed(value.longValue()));
-            return OPENAI.writeValueAsBytes(chat.build());
-        } catch (IOException err) {
-            log.warn("llm relay: a chat completion that is not a JSON object goes on without the scoring prompt's sampling: %s", err.getMessage());
-            return body;
-        }
+    private byte[] sampled(byte[] body) throws IOException {
+        ChatCompletionCreateParams.Body.Builder chat = OPENAI.readValue(body, ChatCompletionCreateParams.Body.class).toBuilder();
+        Optional.ofNullable(temperature).ifPresent(chat::temperature);
+        Optional.ofNullable(topP).ifPresent(chat::topP);
+        Optional.ofNullable(seed).ifPresent(value -> chat.seed(value.longValue()));
+        return OPENAI.writeValueAsBytes(chat.build());
     }
     private Duration backoff(int attempt) {
         return retryBackoff.multipliedBy(1L << attempt);
