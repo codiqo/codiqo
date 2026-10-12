@@ -1526,7 +1526,8 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   (`temperature`, `top_p`, `seed` from `RunArgs`) on every chat completion: OpenCode 2.0 sends none of them, wherever
   its configuration puts them (checked on 2.0.20 and 2.0.25). It sets them on the OpenAI SDK's own request body
   (`ChatCompletionCreateParams.Body`, read and written with `ObjectMappers.jsonMapper()`), which keeps every field it
-  does not model as OpenCode sent it; its error bodies are the SDK's `ErrorObject`. Write OpenAI JSON with the SDK's
+  does not model as OpenCode sent it; its error bodies are the SDK's `ErrorObject`. A chat completion it cannot read is
+  refused with 400, since it would leave without that sampling. Write OpenAI JSON with the SDK's
   models, never by hand.
 - A credential refresh that fails on the network is retried by the relay like any call; only a refusal that survives the
   retries answers 401. A stream cut after the answer started ends with an error event, since its status was already
@@ -1546,6 +1547,8 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
 - **A review that fails excludes the commit** (`LOCAL_REVIEW_FAILURE`, the error as the exclusion's detail): submitting
   it without the review would hand its judgment to the prompt, and leaving it unsubmitted would make the next run pay
   for the review again. Deleting the analysis retries it. An interrupt is the run being stopped, not a failed review.
+  A failed labelling or triage turn, a reviewer answer that is not JSON and a tag vocabulary the server cannot give
+  after its retries fail the review as well: none of them falls back to a review that judges with less.
 - **Every review leaves a trace**: `ReviewTrace` writes the coordinator, its
   sub-agents (listed again at the end, since a failed review never listed them) and the labelling and triage forks, each
   session's messages as OpenCode recorded them, tool calls with input and status, every tool output cut to 4,000
@@ -1578,7 +1581,7 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   beside it: the convention guidance, the project's `ReviewTags` and a `ReviewEndpoint` (base URL, key, credential),
   which the relay swaps for its own loopback URL and secret. `ReviewTags` are the tags the project's scored commits
   carry most (`GET /api/v1/projects/{projectId}/tags`, read on the review's thread so the build never waits; 404 or
-  405 means none), which the coordinator reuses before it coins one. They are model output going into a system
+  405 means none, anything else is retried like a submission and then fails the review), which the coordinator reuses before it coins one. They are model output going into a system
   prompt, so `ReviewTags.of` keeps only lowercase hyphenated labels. A mojo parameter has no `defaultValue`: it is a nullable wrapper that overrides the `RunArgs`
   field only when set. Settings with no `RunArgs` instance at hand (the login, the loopback host, the upload batch,
   the 0-10 score scale and the rounding precision) are `RunArgs` constants. Protocol names (headers, paths, rule ids)

@@ -129,17 +129,17 @@ class LlmRelayTest {
         expected.put("temperature", args.getLlmTemperature()).put("top_p", args.getLlmTopP()).put("seed", args.getLlmSeed());
         assertEquals(expected, mapper.readTree(upstreamBody.get()));
     }
-    /** a body that is not a chat completion request is the provider's to refuse, so it is forwarded as it came */
+    /** it could not leave with the scoring prompt's sampling, so the turn fails rather than going on unseeded */
     @Test
-    void aBodyThatIsNotAnObjectGoesOnAsItCame() throws Exception {
+    void aBodyThatIsNotAChatCompletionRequestIsRefused() throws Exception {
         firstChunkRead.countDown();
         HttpRequest request = HttpRequest.newBuilder(URI.create(relay.getUrl() + "/chat/completions"))
                 .header(HttpHeaderNames.AUTHORIZATION.toString(), RequestAuthorizer.bearer(relay.getSecret()))
                 .POST(HttpRequest.BodyPublishers.ofString("[1, 2]"))
                 .build();
-        http.send(request, HttpResponse.BodyHandlers.ofString());
 
-        assertEquals("[1, 2]", upstreamBody.get());
+        assertEquals(HttpResponseStatus.BAD_REQUEST.code(), http.send(request, HttpResponse.BodyHandlers.ofString()).statusCode());
+        assertNull(upstreamBody.get(), "nothing reaches the provider");
     }
     /** a direct end point gets its own key as the bearer token, and nothing when it has none, as a local daemon */
     @Test

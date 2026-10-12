@@ -29,6 +29,7 @@ import com.google.common.collect.MultimapBuilder;
 import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.logging.Log;
 import io.codiqo.api.review.ReviewLanguage;
 import io.codiqo.api.review.UnitName;
 import io.codiqo.client.model.AnalysisSubmissionModel;
@@ -63,10 +64,10 @@ public class LocalReviewModels {
      */
     public static final Set<CodeUnitModel.OperationEnum> LABELLED_OPERATIONS = Sets.immutableEnumSet(CodeUnitModel.OperationEnum.NEW, CodeUnitModel.OperationEnum.MODIFY);
 
-    public LocalReviewModel toModel(LocalReview review) {
-        return toModel(review, Optional.empty());
+    public LocalReviewModel toModel(LocalReview review, Log log) {
+        return toModel(review, Optional.empty(), log);
     }
-    public LocalReviewModel toModel(LocalReview review, Optional<FindingTriage> triage) {
+    public LocalReviewModel toModel(LocalReview review, Optional<FindingTriage> triage, Log log) {
         LlmScoringResponse.Bugs found = LlmScoringResponse.Bugs.builder()
                 .blocking(Lists.newArrayList(CollectionUtils.emptyIfNull(review.getBugs().getBlocking())))
                 .major(Lists.newArrayList(CollectionUtils.emptyIfNull(review.getBugs().getMajor())))
@@ -90,7 +91,7 @@ public class LocalReviewModels {
             toReturn.addSessionsItem(toModel(session));
         }
         toReturn.setObservations(CollectionUtils.emptyIfNull(review.getObservations()).stream().toList());
-        toReturn.setReasoning(reasoning(review, triage));
+        toReturn.setReasoning(reasoning(review, triage, log));
         if (Objects.nonNull(review.getAssessment())) {
             LocalAssessmentModel assessment = toModel(review.getAssessment());
             triage.ifPresent(t -> assessment.setStaticAnalysisReview(LlmResponseMapper.mapStaticAnalysisReview(staticAnalysisReview(t))));
@@ -179,9 +180,9 @@ public class LocalReviewModels {
         shared.forEach((unit, label) -> claim(unit, label, claimed, resolved));
         return Pair.of(resolved, new Labelling(labels.size(), resolved.size(), units, unmatched));
     }
-    private static String reasoning(LocalReview review, Optional<FindingTriage> triage) {
+    private static String reasoning(LocalReview review, Optional<FindingTriage> triage, Log log) {
         Context ctx = new Context();
-        ctx.setVariable("tasks", tasks(review.getAnswer()));
+        ctx.setVariable("tasks", tasks(review.getAnswer(), log));
         ctx.setVariable("reviewers", review.getReviewers());
         ctx.setVariable("unanswered", CollectionUtils.size(review.getUnansweredReviewers()));
         ctx.setVariable("observations", CollectionUtils.emptyIfNull(review.getObservations()));
@@ -194,7 +195,7 @@ public class LocalReviewModels {
      * reaches here from an otherwise good answer. Such a plan leaves the areas out of the digest; letting it throw would
      * fail the whole submission over a summary the commit page shows for information only.
      */
-    private static List<Task> tasks(String answer) {
+    private static List<Task> tasks(String answer, Log log) {
         try {
             return CollectionUtils.emptyIfNull(LlmJson.readAnswer(answer, Plan.class).getTasks())
                     .stream()
@@ -202,6 +203,7 @@ public class LocalReviewModels {
                     .filter(task -> CollectionUtils.isNotEmpty(task.getPaths()))
                     .toList();
         } catch (JacksonException err) {
+            log.warn("the coordinator's work split is unreadable (%s); the review's digest leaves its areas out", err.getOriginalMessage());
             return List.of();
         }
     }

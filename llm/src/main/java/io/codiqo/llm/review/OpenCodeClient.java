@@ -17,6 +17,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import com.google.common.collect.Lists;
 
+import io.codiqo.api.RunArgs;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaderValues;
 import okhttp3.Call;
@@ -40,6 +41,14 @@ import tools.jackson.databind.node.ObjectNode;
  * which for a coordinator includes every foreground sub-agent it started; a pinned OpenCode version keeps it stable.
  */
 public class OpenCodeClient implements Closeable {
+    /** without an id every later call goes to {@code /api/session//...} and fails with a 404 that names nothing */
+    private static String sessionId(JsonNode answer, String what) throws IOException {
+        String toReturn = answer.path("data").path("id").asString();
+        if (StringUtils.isNotBlank(toReturn)) {
+            return toReturn;
+        }
+        throw new IOException("OpenCode created " + what + " without an id: " + StringUtils.abbreviate(answer.toString(), RunArgs.REVIEW_ANSWER_PREVIEW));
+    }
     private static final String USER = "opencode";
     private static final MediaType JSON = MediaType.get(HttpHeaderValues.APPLICATION_JSON.toString());
     private static final int PAGE = 100;
@@ -62,10 +71,10 @@ public class OpenCodeClient implements Closeable {
         body.putObject("location").put("directory", directory.toAbsolutePath().toString());
         body.put("agent", agent);
         body.put("title", title);
-        return post(path("api", "session"), body).path("data").path("id").asString();
+        return sessionId(post(path("api", "session"), body), "a new session");
     }
     public String fork(String sessionId) throws IOException {
-        return post(path("api", "session", sessionId, "fork"), mapper.createObjectNode()).path("data").path("id").asString();
+        return sessionId(post(path("api", "session", sessionId, "fork"), mapper.createObjectNode()), "a fork of " + sessionId);
     }
     public void prompt(String sessionId, String text) throws IOException {
         ObjectNode body = mapper.createObjectNode();
