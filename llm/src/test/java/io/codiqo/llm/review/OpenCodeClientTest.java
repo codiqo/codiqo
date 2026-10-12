@@ -18,6 +18,7 @@ import java.util.regex.Pattern;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,12 +30,12 @@ import com.sun.net.httpserver.HttpServer;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.NoopLog;
+import io.netty.handler.codec.http.HttpHeaderNames;
+import io.netty.handler.codec.http.HttpResponseStatus;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.JsonNodeFactory;
 import tools.jackson.databind.node.ObjectNode;
-import io.netty.handler.codec.http.HttpResponseStatus;
-import io.netty.handler.codec.http.HttpHeaderNames;
 
 class OpenCodeClientTest {
     private static final String PASSWORD = "test-password";
@@ -142,7 +143,7 @@ class OpenCodeClientTest {
     }
     private static String body(String route, String query) {
         Matcher traced = TRACED_MESSAGES.matcher(route);
-        if (BooleanUtils.and(new boolean[] { traced.matches(), BooleanUtils.negate(StringUtils.contains(query, "type=")) })) {
+        if (BooleanUtils.and(new boolean[] { traced.matches(), BooleanUtils.negate(Strings.CS.contains(query, "type=")) })) {
             return tracePage(query);
         }
         Matcher session = TRACED_SESSION.matcher(route);
@@ -182,13 +183,13 @@ class OpenCodeClientTest {
     }
     /** a tool call whose output is longer than the trace keeps, then a text answer, then the empty page after the last */
     private static String tracePage(String query) {
-        if (BooleanUtils.and(new boolean[] { StringUtils.contains(query, "cursor="), StringUtils.contains(query, "order=") })) {
+        if (BooleanUtils.and(new boolean[] { Strings.CS.contains(query, "cursor="), Strings.CS.contains(query, "order=") })) {
             throw new IllegalArgumentException("Cursor cannot be combined with order");
         }
-        if (StringUtils.contains(query, "cursor=trace-3")) {
+        if (Strings.CS.contains(query, "cursor=trace-3")) {
             return page("trace-4", List.of());
         }
-        if (StringUtils.contains(query, "cursor=trace-2")) {
+        if (Strings.CS.contains(query, "cursor=trace-2")) {
             return page("trace-3", List.of(assistant(200).put("text", "done")));
         }
         ObjectNode tool = JSON.objectNode().put("type", "tool").put("name", "bash");
