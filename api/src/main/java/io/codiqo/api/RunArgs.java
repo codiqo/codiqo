@@ -455,7 +455,7 @@ public class RunArgs {
 
     /** Model id for scoring. Also selects the tokenizer used for prompt-budget estimates, so it affects how aggressively {@link #llmMaxCallersPerBlock} is trimmed. */
     @Nullable
-    private String llmModel = System.getProperty("ollama.model", "deepseek-v4-pro:cloud");
+    private String llmModel = System.getProperty("ollama.model", LlmModelUsageIntent.COMMIT_SCORING.model().id());
 
     /** Base URL of the OpenAI-compatible endpoint. Unset falls back to the SDK's own default rather than to a codiqo default. */
     @Nullable
@@ -582,9 +582,9 @@ public class RunArgs {
     private transient String reviewBaseUrl = DEFAULT_LLM_PROXY_URL;
 
     /** Local review: the coordinator's model, which plans the review and writes the commit-level answer. */
-    private transient String reviewCoordinatorModel = "deepseek-v4.1-flash:cloud";
+    private transient String reviewCoordinatorModel = LlmModelUsageIntent.LOCAL_REVIEW_COORDINATOR.model().id();
 
-    private transient String reviewReviewerModel = "glm-5.3-flash:cloud";
+    private transient String reviewReviewerModel = LlmModelUsageIntent.LOCAL_REVIEW_SUB_AGENT.model().id();
 
     private transient int reviewCoordinatorSteps = 40;
 
