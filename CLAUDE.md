@@ -1544,6 +1544,14 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   `LocalAssessmentModel.staticAnalysisReview`) and the trace. The server scores such a commit from the assessment alone
   and never builds the prompt. Off, nothing of the review runs and the server scores with its prompt as before. There
   are no sub-switches: never add one, and never let a commit of local mode fall back to the prompt.
+- **A build the author broke does not exclude a commit whose review started** (`SubmitCommitAnalysisMojo.scoresFailedBuild`):
+  with `codiqo.skipOnBuildFailure` on (the default; off, a failed build fails the run), a `BUILD_FAILURE` that is not a
+  timeout goes the degraded path even with `codiqo.scoreOnBuildFailure` off, as a source-only submission carrying
+  `buildFailure` and the review's assessment, since the reviewers read the code through git. The server scores it by
+  rules as a degraded commit (penalties only, no bonus) and counts the failed build as a blocking finding when it
+  alerts. A dependency that could not be resolved or a build that timed out is the environment's failure and stays
+  excluded. A review that fails on such a commit excludes it under its build failure, files and metrics included, not
+  as `LOCAL_REVIEW_FAILURE`: the server keeps an operator's re-inclusion of a build failure only under that category.
 - **A review that fails excludes the commit** (`LOCAL_REVIEW_FAILURE`, the error as the exclusion's detail): submitting
   it without the review would hand its judgment to the prompt, and leaving it unsubmitted would make the next run pay
   for the review again. Deleting the analysis retries it. An interrupt is the run being stopped, not a failed review.
