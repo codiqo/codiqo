@@ -236,6 +236,9 @@ class OpenCodeReviewConfigTest {
     @Test
     void theTurnsSentToASessionReadAsBefore() {
         assertEquals("Review commit 1a2b3c of this repository.", OpenCodeReviewConfig.reviewPrompt("1a2b3c"));
+        assertEquals("Your last step failed on the way from the model: provider.invalid-output: stream cut. Continue the task from where it stopped. "
+                + "Keep everything you have already done and do not repeat finished work; end with the answer the task asks for.",
+                OpenCodeReviewConfig.resumePrompt("provider.invalid-output: stream cut"));
         assertEquals("Your last answer is not valid JSON: Unexpected character ('}' (code 125)) at 1:7. Reply with the same answer as one corrected JSON object "
                 + "and nothing else. Do not review again and do not call any tool.", OpenCodeReviewConfig.repairPrompt("Unexpected character ('}' (code 125)) at 1:7"));
     }

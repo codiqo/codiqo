@@ -22,14 +22,14 @@ class LocalReviewerTest {
         assertEquals(List.of(), bugs.getMajor());
         assertEquals(List.of(), bugs.getMinor());
     }
-    /** each turn the agents take has its own timeout, so the wait covers every turn: the review, the labelling and the triage, each with its repair */
+    /** each turn the agents take has its own timeout, so the wait covers every turn: the review, the labelling and the triage, each with its repair and resumes */
     @Test
     void theWaitCoversEveryTurn() {
         RunArgs args = new RunArgs();
         args.setReviewTimeout(Duration.ofMinutes(30));
         args.setReviewStartupTimeout(Duration.ofMinutes(1));
 
-        assertEquals(Duration.ofMinutes(181), LocalReviewer.longestReview(args));
+        assertEquals(Duration.ofMinutes(1 + 30 * 6 * 3), LocalReviewer.longestReview(args));
     }
     /** the review's progress line counts every severity and adds reasoning to the output tokens, as the usage does */
     @Test

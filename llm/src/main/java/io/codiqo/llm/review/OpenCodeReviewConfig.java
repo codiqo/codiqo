@@ -151,6 +151,11 @@ public class OpenCodeReviewConfig {
         ctx.setVariable("problem", problem);
         return PromptTemplates.process("opencode/repair-answer", ctx).strip();
     }
+    public static String resumePrompt(String problem) {
+        Context ctx = new Context();
+        ctx.setVariable("problem", problem);
+        return PromptTemplates.process("opencode/resume-turn", ctx).strip();
+    }
     /**
      * The subject of the triage prompt's first sentence: "PMD", "PMD and SpotBugs", "PMD, SpotBugs and Checkstyle". A
      * findings file given to the review goal may name a tool without lists, or none at all, so such a tool is named as

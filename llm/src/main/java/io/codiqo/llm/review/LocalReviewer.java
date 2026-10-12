@@ -36,6 +36,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.Value;
 import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
 
 /**
  * Reviews one commit with OpenCode: a coordinator agent is given only the repository root and the commit id, works out
@@ -50,6 +51,21 @@ public class LocalReviewer {
     private static final String BLOCK_CATEGORIES = "blockCategories";
     /** the labelling and the triage, each a follow-up turn after the build */
     private static final int FOLLOW_UPS = 2;
+    /**
+     * How many times a turn whose model answer failed on the way is resumed. OpenCode retries a provider error itself,
+     * up to ten times, and continues an answer the relay reported cut short ({@code provider.internal}), but an answer
+     * it reads as broken ({@code provider.invalid-output}) fails the turn at once, and a failed coordinator turn would
+     * fail the whole review.
+     */
+    private static final int TURN_RESUMES = 2;
+    /** the errors of a request that was fine and an answer that broke on the way; a refused request is not resumed */
+    private static final Set<String> RESUMABLE_ERRORS = Set.of(
+            "provider.transport",
+            "provider.internal",
+            "provider.invalid-output",
+            "provider.rate-limit",
+            "provider.timeout",
+            "provider.unknown");
 
     private final RunArgs args;
     private final ReviewEndpoint endpoint;
@@ -138,16 +154,14 @@ public class LocalReviewer {
         LocalReview review;
         try (ProgressStage stage = ProgressStage.start(args, "review")) {
             log.info("reviewing %s with %s (coordinator session %s) and %s (reviewers)", sha, args.getReviewCoordinatorModel(), sessionId, args.getReviewReviewerModel());
-            client.prompt(sessionId, OpenCodeReviewConfig.reviewPrompt(sha));
-            client.awaitIdle(sessionId);
+            turn(client, sessionId, OpenCodeReviewConfig.reviewPrompt(sha), log);
 
             String answer = client.finalAnswer(sessionId);
             Optional<JacksonException> unreadable = unreadable(answer);
             if (unreadable.isPresent()) {
                 /** One slip, such as an unclosed string in a long answer, must not cost a review the agents already finished. */
                 log.warn("the coordinator's answer is not valid JSON (%s); asking it to correct the answer", unreadable.get().getOriginalMessage());
-                client.prompt(sessionId, OpenCodeReviewConfig.repairPrompt(unreadable.get().getOriginalMessage()));
-                client.awaitIdle(sessionId);
+                turn(client, sessionId, OpenCodeReviewConfig.repairPrompt(unreadable.get().getOriginalMessage()), log);
                 answer = client.finalAnswer(sessionId);
             }
 
@@ -270,8 +284,7 @@ public class LocalReviewer {
      * what the answer leaves out stays out, and what it says is recorded as it is.
      */
     private <T> ForkAnswer<T> ask(OpenCodeClient client, String forkId, String prompt, Class<T> type, String name) throws IOException {
-        client.prompt(forkId, prompt);
-        client.awaitIdle(forkId);
+        turn(client, forkId, prompt, log);
 
         String answer = client.finalAnswer(forkId);
         T parsed;
@@ -279,8 +292,7 @@ public class LocalReviewer {
             parsed = LlmJson.readAnswer(answer, type);
         } catch (JacksonException err) {
             log.warn("the %s answer is not valid JSON (%s); asking for a corrected answer", name, err.getOriginalMessage());
-            client.prompt(forkId, OpenCodeReviewConfig.repairPrompt(err.getOriginalMessage()));
-            client.awaitIdle(forkId);
+            turn(client, forkId, OpenCodeReviewConfig.repairPrompt(err.getOriginalMessage()), log);
             answer = client.finalAnswer(forkId);
             try {
                 parsed = LlmJson.readAnswer(answer, type);
@@ -383,13 +395,34 @@ public class LocalReviewer {
      * The longest a review can legitimately take, for a caller that waits for it. Every turn the agents take is one
      * {@link OpenCodeClient#awaitIdle} call, bounded on its own by {@link RunArgs#getReviewTimeout()}: the coordinator's
      * review, its optional repair round and, for each follow-up after the build (the labelling and the triage), its
-     * prompt and optional repair round. The other requests read finished sessions and return at once. A caller that
+     * prompt and optional repair round, each of them resumed up to {@value #TURN_RESUMES} times. The other requests
+     * read finished sessions and return at once. A caller that
      * allowed only one review timeout failed the build while every turn was still inside its own limit, for example a
      * 28-minute review followed by a 6-minute triage.
      */
     public static Duration longestReview(RunArgs args) {
-        int turns = RunArgs.REVIEW_TURNS + FOLLOW_UPS * RunArgs.REVIEW_FOLLOW_UP_TURNS;
+        int turns = (RunArgs.REVIEW_TURNS + FOLLOW_UPS * RunArgs.REVIEW_FOLLOW_UP_TURNS) * (1 + TURN_RESUMES);
         return args.getReviewStartupTimeout().plus(args.getReviewTimeout().multipliedBy(turns));
+    }
+    /**
+     * One turn of a session, resumed in the same session when its model answer failed on the way: the session keeps
+     * every step already taken, so only the broken step is redone. A turn that keeps failing, or fails on a request
+     * the provider refused, is left as it ended, and reading its answer then fails the review.
+     */
+    @VisibleForTesting
+    public static void turn(OpenCodeClient client, String sessionId, String text, Log log) throws IOException {
+        client.prompt(sessionId, text);
+        client.awaitIdle(sessionId);
+        for (int resume = 1; resume <= TURN_RESUMES; resume++) {
+            Optional<JsonNode> failed = client.turnError(sessionId).filter(error -> RESUMABLE_ERRORS.contains(error.path("type").asString()));
+            if (failed.isEmpty()) {
+                return;
+            }
+            String problem = failed.get().path("type").asString() + ": " + failed.get().path("message").asString();
+            log.warn("session %s: the model's answer failed on the way (%s); resuming the turn, %d of %d", sessionId, problem, resume, TURN_RESUMES);
+            client.prompt(sessionId, OpenCodeReviewConfig.resumePrompt(problem));
+            client.awaitIdle(sessionId);
+        }
     }
     /** a severity the coordinator left out, or wrote as null, is a severity with no findings */
     @VisibleForTesting
