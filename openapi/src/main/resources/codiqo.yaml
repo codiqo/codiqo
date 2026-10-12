@@ -252,6 +252,37 @@ paths:
         - apiKey: []
         - bearerAuth: []
 
+  /api/v1/analyses/uploads/{uploadId}/review-trace:
+    put:
+      operationId: putAnalysisUploadReviewTrace
+      tags: [Analysis]
+      summary: Attach the local review's trace
+      description: |
+        Every session the local review ran, as OpenCode recorded it: the coordinator, its reviewers and the labelling
+        and triage forks, each message in order with its tool calls. The JSON the engine writes to
+        codiqo-review-trace-<sha>.json, sent as it is; the server stores it compressed and reads none of it.
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '204':
+          description: Stored; a repeated call replaces what the previous one stored
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          description: The trace is larger than the server keeps
+      security:
+        - apiKey: []
+        - bearerAuth: []
+
   /api/v1/analyses/uploads/{uploadId}/finalize:
     post:
       operationId: finalizeAnalysisUpload

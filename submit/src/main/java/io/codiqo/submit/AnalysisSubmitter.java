@@ -1,9 +1,11 @@
 package io.codiqo.submit;
 
+import java.io.File;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -42,6 +44,8 @@ import io.codiqo.submit.auth.CodiqoApiClients;
 import io.codiqo.submit.auth.CodiqoCredential;
 import lombok.experimental.UtilityClass;
 import io.netty.handler.codec.http.HttpResponseStatus;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
 
 @UtilityClass
 public class AnalysisSubmitter {
@@ -56,6 +60,27 @@ public class AnalysisSubmitter {
             long readTimeoutSeconds,
             AnalysisSubmissionModel submission,
             Log log) throws ApiException {
+        return submit(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds, submission, Optional.empty(), log);
+    }
+    /** with the local review's trace, which a staged upload carries and a single request does not */
+    public static AnalysisAcceptedModel submit(
+            String apiUrl,
+            CodiqoCredential credential,
+            long connectTimeoutSeconds,
+            long readTimeoutSeconds,
+            AnalysisSubmissionModel submission,
+            File reviewTrace,
+            Log log) throws ApiException {
+        return submit(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds, submission, Optional.of(reviewTrace), log);
+    }
+    private static AnalysisAcceptedModel submit(
+            String apiUrl,
+            CodiqoCredential credential,
+            long connectTimeoutSeconds,
+            long readTimeoutSeconds,
+            AnalysisSubmissionModel submission,
+            Optional<File> reviewTrace,
+            Log log) throws ApiException {
         ApiClient apiClient = CodiqoApiClients.newApiClient(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds);
         AnalysisApi client = new AnalysisApi(apiClient);
         log.info("submitting analysis to " + apiUrl + " (" + describePayloadSize(apiClient, submission) + ")");
@@ -64,13 +89,13 @@ public class AnalysisSubmitter {
         if (uploadId.isEmpty()) {
             return ApiRetry.call(log, "submitAnalysis", apiUrl, () -> client.submitAnalysis(submission));
         }
-        Optional<AnalysisAcceptedModel> accepted = uploadParts(apiClient, client, apiUrl, uploadId.get(), submission, log);
+        Optional<AnalysisAcceptedModel> accepted = uploadParts(apiClient, client, apiUrl, uploadId.get(), submission, reviewTrace, log);
         if (accepted.isEmpty()) {
             /** a re-submission of the same commit is idempotent on the server, so staging it again reads the accepted analysis */
             log.warn("upload " + uploadId.get() + " was finalized by an attempt whose answer was lost; staging the submission again to read the result");
             Optional<UUID> again = openUpload(client, apiUrl, submission, log);
             if (again.isPresent()) {
-                accepted = uploadParts(apiClient, client, apiUrl, again.get(), submission, log);
+                accepted = uploadParts(apiClient, client, apiUrl, again.get(), submission, reviewTrace, log);
             }
         }
         return accepted.orElseThrow(() -> new ApiException(HttpResponseStatus.NOT_FOUND.code(), "the staged upload of the submission could not be finalized"));
@@ -118,7 +143,8 @@ public class AnalysisSubmitter {
      * @return the accepted analysis, or empty when a retried finalize found the upload already applied by an attempt
      *         whose answer was lost
      */
-    private static Optional<AnalysisAcceptedModel> uploadParts(ApiClient apiClient, AnalysisApi client, String apiUrl, UUID uploadId, AnalysisSubmissionModel submission, Log log)
+    private static Optional<AnalysisAcceptedModel> uploadParts(ApiClient apiClient, AnalysisApi client, String apiUrl, UUID uploadId, AnalysisSubmissionModel submission,
+            Optional<File> reviewTrace, Log log)
             throws ApiException {
         List<FileChangeModel> batch = Lists.newArrayList();
         long batchBytes = 0;
@@ -170,6 +196,10 @@ public class AnalysisSubmitter {
             });
         }
 
+        if (reviewTrace.isPresent()) {
+            putReviewTrace(apiClient, client, apiUrl, uploadId, reviewTrace.get(), log);
+        }
+
         /** the server keys files by path, so a path listed twice is stored once */
         int fileCount = (int) CollectionUtils.emptyIfNull(submission.getFiles()).stream().map(FileChangeModel::getPath).distinct().count();
         log.info(String.format("upload %s: %d files in %d batches, finalizing", uploadId, fileCount, batches));
@@ -185,6 +215,32 @@ public class AnalysisSubmitter {
                 return Optional.empty();
             }
             throw err;
+        }
+    }
+    /**
+     * The trace explains the review and judges nothing, so one the server refuses (a server that predates it answers
+     * 404, an oversized one 413) or that cannot be read costs the trace only, never the submission.
+     */
+    @SuppressWarnings("unchecked")
+    private static void putReviewTrace(ApiClient apiClient, AnalysisApi client, String apiUrl, UUID uploadId, File trace, Log log) {
+        if (trace.length() > RunArgs.REVIEW_TRACE_MAX_BYTES) {
+            log.warn(String.format("the review trace %s is %d KB, more than the server keeps; it is not attached", trace, trace.length() / FileUtils.ONE_KB));
+            return;
+        }
+        try {
+            JsonNode document = apiClient.getObjectMapper().readTree(trace);
+            /** the agents' commands ran with the build's environment, and the Action redacts its logs only after the submission */
+            SecretRedaction.redact(document, System.getenv());
+            Map<String, Object> body = apiClient.getObjectMapper().treeToValue(document, Map.class);
+            ApiRetry.callOptional(log, "putAnalysisUploadReviewTrace", apiUrl, () -> {
+                client.putAnalysisUploadReviewTrace(uploadId, body);
+                return uploadId;
+            });
+            log.info(String.format("upload %s: review trace attached (%d KB)", uploadId, trace.length() / FileUtils.ONE_KB));
+        } catch (ApiException err) {
+            log.warn(String.format("the review trace was not attached (HTTP %d): %s", err.getCode(), err.getMessage()));
+        } catch (JacksonException err) {
+            log.warn(String.format("the review trace %s could not be read: %s", trace, err.getMessage()));
         }
     }
     private static void putFiles(AnalysisApi client, String apiUrl, UUID uploadId, List<FileChangeModel> files, Log log) throws ApiException {

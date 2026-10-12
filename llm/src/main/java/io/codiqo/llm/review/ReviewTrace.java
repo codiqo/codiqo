@@ -24,8 +24,8 @@ import tools.jackson.databind.node.ObjectNode;
 /**
  * Every session a review ran, written as OpenCode recorded it before the server's home, and with it the session
  * database, is deleted: the coordinator, its reviewer sub-agents and the forks that labelled and triaged, each with its
- * messages in order, every tool call's input, status and output included. It is for reading what the agents did; nothing
- * reads it back.
+ * messages in order, every tool call's input, status and output included. It is for reading what the agents did: the
+ * submission sends it to the server, which shows it on the commit page; nothing judges by it.
  */
 @UtilityClass
 public class ReviewTrace {
@@ -42,6 +42,8 @@ public class ReviewTrace {
      */
     public void write(RunArgs args, OpenCodeClient client, String sha, String coordinatorId, Collection<String> forkIds, Log log) {
         boolean interrupted = Thread.interrupted();
+        /** an earlier run's trace of the same commit must not pass for this one's when this one cannot be written */
+        FileUtils.deleteQuietly(file(args, sha));
         try {
             /** the sub-agents are listed here rather than taken from the review, which never lists them when it fails */
             List<String> sessionIds = Lists.newArrayList(coordinatorId);
@@ -60,9 +62,8 @@ public class ReviewTrace {
                 }
             }
 
-            File directory = Optional.ofNullable(args.getReviewTraceDirectory()).orElse(FileUtils.getTempDirectory());
-            FileUtils.forceMkdir(directory);
-            File file = new File(directory, FILE_PREFIX + StringUtils.left(sha, SHORT_SHA) + ".json");
+            File file = file(args, sha);
+            FileUtils.forceMkdir(file.getParentFile());
             MAPPER.writeValue(file, trace);
             log.info("review trace of %d sessions written to %s", sessionIds.size(), file);
         } catch (IOException | RuntimeException err) {
@@ -72,6 +73,11 @@ public class ReviewTrace {
                 Thread.currentThread().interrupt();
             }
         }
+    }
+    /** where {@link #write} puts the trace of a commit's review, so the submission can send it to the server */
+    public File file(RunArgs args, String sha) {
+        File directory = Optional.ofNullable(args.getReviewTraceDirectory()).orElse(FileUtils.getTempDirectory());
+        return new File(directory, FILE_PREFIX + StringUtils.left(sha, SHORT_SHA) + ".json");
     }
     private JsonNode abbreviateToolOutput(JsonNode message) {
         for (JsonNode part : message.path("content")) {

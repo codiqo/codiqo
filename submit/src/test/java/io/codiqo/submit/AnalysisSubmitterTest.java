@@ -5,9 +5,12 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -21,6 +24,7 @@ import org.apache.commons.lang3.Strings;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.event.Level;
 
 import com.google.common.collect.Lists;
@@ -210,6 +214,51 @@ class AnalysisSubmitterTest {
         assertEquals(analysisId, response.getAnalysisId());
     }
     @Test
+    void theReviewTraceIsAttachedAsItsOwnPartBeforeFinalizing(@TempDir Path dir) throws Exception {
+        UUID uploadId = UUID.randomUUID();
+        stagingServer(uploadId, UUID.randomUUID(), 204);
+        File trace = trace(dir);
+
+        AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, reviewedSubmission(), trace, LOG);
+
+        String base = "/api/v1/analyses/uploads/" + uploadId;
+        assertEquals(List.of("POST /api/v1/analyses/uploads", "PUT " + base + "/local-review", "PUT " + base + "/review-trace", "POST " + base + "/finalize"),
+                recorded.stream().map(r -> r.method + " " + r.path).toList());
+        assertEquals(MAPPER.readTree(trace), MAPPER.readTree(recorded.get(2).body), "the trace goes as the engine wrote it");
+    }
+    @Test
+    void aTraceTheServerRefusesCostsTheTraceOnly(@TempDir Path dir) throws Exception {
+        UUID analysisId = UUID.randomUUID();
+        stagingServer(UUID.randomUUID(), analysisId, 404);
+
+        AnalysisAcceptedModel response = AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, reviewedSubmission(), trace(dir), LOG);
+
+        assertEquals(analysisId, response.getAnalysisId(), "a server that predates the trace still takes the submission");
+        assertTrue(Strings.CS.endsWith(recorded.get(recorded.size() - 1).path, "/finalize"));
+    }
+    @Test
+    void aTraceTheServerFailsOnIsRetriedOnceThenLeftOut(@TempDir Path dir) throws Exception {
+        UUID analysisId = UUID.randomUUID();
+        stagingServer(UUID.randomUUID(), analysisId, 503);
+
+        AnalysisAcceptedModel response = AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, reviewedSubmission(), trace(dir), LOG);
+
+        assertEquals(analysisId, response.getAnalysisId());
+        assertEquals(2, recorded.stream().filter(r -> Strings.CS.endsWith(r.path, "/review-trace")).count(), "an optional part is tried twice, not ten times");
+    }
+    @Test
+    void anUnreadableTraceIsLeftOut(@TempDir Path dir) throws Exception {
+        UUID analysisId = UUID.randomUUID();
+        stagingServer(UUID.randomUUID(), analysisId, 204);
+        File broken = dir.resolve("codiqo-review-trace-01234567.json").toFile();
+        Files.writeString(broken.toPath(), "{ not json");
+
+        AnalysisAcceptedModel response = AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, reviewedSubmission(), broken, LOG);
+
+        assertEquals(analysisId, response.getAnalysisId());
+        assertTrue(recorded.stream().noneMatch(r -> Strings.CS.endsWith(r.path, "/review-trace")));
+    }
+    @Test
     void submitPropagatesNonRetryableApiErrorWithoutRetries() throws Exception {
         installHandler(400, JSON.objectNode().put("message", "bad submission").toString());
 
@@ -242,6 +291,35 @@ class AnalysisSubmitterTest {
         FileChangeModel toReturn = new FileChangeModel();
         toReturn.setPath(path);
         toReturn.setDiff(diff);
+        return toReturn;
+    }
+    /** opens an upload, answers the trace part with traceStatus and every other part 204, and accepts the finalize */
+    private void stagingServer(UUID uploadId, UUID analysisId, int traceStatus) {
+        server.createContext("/api/v1/analyses", exchange -> {
+            RecordedRequest request = RecordedRequest.from(exchange);
+            recorded.add(request);
+            if (Strings.CS.endsWith(request.path, "/finalize")) {
+                respond(exchange, 201, jsonAcceptedBody(analysisId, "accepted"));
+            } else if ("POST".equals(request.method)) {
+                respond(exchange, 201, JSON.objectNode().put("uploadId", uploadId.toString()).put("expiresAt", "2026-01-02T00:00:00Z").toString());
+            } else if (Strings.CS.endsWith(request.path, "/review-trace")) {
+                respond(exchange, traceStatus, JSON.objectNode().put("message", "status " + traceStatus).toString());
+            } else {
+                exchange.sendResponseHeaders(204, -1);
+                exchange.close();
+            }
+        });
+    }
+    private static AnalysisSubmissionModel reviewedSubmission() {
+        AnalysisSubmissionModel toReturn = sampleSubmission();
+        toReturn.setLocalReview(new LocalReviewModel().bugs(new BugsModel()));
+        return toReturn;
+    }
+    private static File trace(Path dir) throws IOException {
+        ObjectNode trace = JSON.objectNode().put("commit", SHA);
+        trace.putArray("sessions").addObject().putArray("messages").addObject().put("role", "assistant");
+        File toReturn = dir.resolve("codiqo-review-trace-01234567.json").toFile();
+        MAPPER.writeValue(toReturn, trace);
         return toReturn;
     }
     private void installHandler(int status, String responseBody) {

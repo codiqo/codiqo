@@ -1564,8 +1564,13 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   `review` goal writes beside its report; the GitHub Action puts it with the logs it redacts and uploads). It is written
   in the review's `finally`, before `OpenCodeServer.close()` deletes the home and its session database, and also while
   the review is being cancelled (the interrupt is held back for those local reads). A trace that fails costs only the
-  trace. It holds source code the agents read, so it stays a local file or a private CI artifact; nothing sends it to
-  the backend.
+  trace. A submitted commit whose review succeeded sends it as the staged upload's `review-trace` part (JSON as
+  written, `AnalysisSubmitter.putReviewTrace`), so the commit page can show what the review did; a refused, unreadable or
+  oversized (`RunArgs.REVIEW_TRACE_MAX_BYTES`) trace is a warning after one retry (`ApiRetry.callOptional`), never a
+  failed submission, and a single-request submission carries none. Its tool outputs are what commands printed with the
+  build's environment, and the Action redacts its logs only after the submission, so `SecretRedaction` scrubs every
+  string of the trace first (the Action's rules: the variables it names, variables named like secrets, raw and
+  Base64). The server keeps it 90 days and shows it only to those who may act on the commit.
 - **The review knows no language.** What it needs from one comes from that language's module through
   `io.codiqo.api.review.ReviewLanguage` (`JavaReviewLanguage` in lang-java, listed by
   `DefaultLanguageProcessors.reviewLanguages()`): the rule telling reviewers how to write a unit's signature (the
