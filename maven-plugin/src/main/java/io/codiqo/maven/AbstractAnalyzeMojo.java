@@ -1594,18 +1594,24 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         getLog().debug(String.format("no exclusion handler, commit %s would be excluded with reason: %s (category: %s)", commitSha, reason, category));
     }
     /**
-     * with codiqo.scoreOnBuildFailure enabled, a build-pipeline failure does not exclude the commit
+     * when {@link #scoresFailedBuild} holds, a build-pipeline failure does not exclude the commit
      * outright: the change still represents real developer work, so score it in degraded mode instead.
-     * falls back to exclusion when the flag is off (default), when the commit has no analyzable diff files,
+     * falls back to exclusion when it does not (the default), when the commit has no analyzable diff files,
      * and mirrors the revert gate that the successful-build path applies in doExecute. only reachable from
      * historical commit analysis — analyze-uncommitted-changes never forks a build (it analyzes the working
      * tree against the host session's already-resolved reactor), so it has no failure signal to degrade on.
      */
     protected void doDegradedAnalysis(RunArgs args, String reason, AnalysisExcludeCategory category, String detail) throws Exception {
+        doDegradedAnalysis(args, reason, category, detail, false);
+    }
+    protected void doDegradedAnalysis(RunArgs args, BuildOutcome.Skipped skipped) throws Exception {
+        doDegradedAnalysis(args, skipped.getReason(), skipped.getCategory(), skipped.getDetail(), skipped.isTimedOut());
+    }
+    private void doDegradedAnalysis(RunArgs args, String reason, AnalysisExcludeCategory category, String detail, boolean timedOut) throws Exception {
         SubmissionContext ctx = buildDegradedSubmission(args, reason, category, detail);
         List<FileChangeModel> files = ctx.getSubmissionModel().getFiles();
 
-        if (args.isScoreOnBuildFailure()) {
+        if (scoresFailedBuild(args, category, timedOut)) {
             if (CollectionUtils.isEmpty(files)) {
                 getLog().warn(String.format("commit %s skipped: build failed and no analyzable diff — %s", args.getCommitId(), reason));
                 doExcludeAnalysis(args.getCommitId(), reason, category, detail, files, ctx.getSubmissionModel().getProjectMetrics());
@@ -1622,6 +1628,13 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), reason));
             doExcludeAnalysis(args.getCommitId(), reason, category, detail, files, ctx.getSubmissionModel().getProjectMetrics());
         }
+    }
+    /**
+     * The category and the timeout are for a subclass that scores only some failures: a dependency that could not be
+     * resolved or a build that ran out of time is the environment's failure, not the author's.
+     */
+    protected boolean scoresFailedBuild(RunArgs args, AnalysisExcludeCategory category, boolean timedOut) {
+        return args.isScoreOnBuildFailure();
     }
     /**
      * degraded submission for a build-failed commit. a failed build leaves no resolved reactor, so a

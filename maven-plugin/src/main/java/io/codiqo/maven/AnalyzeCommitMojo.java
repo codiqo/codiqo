@@ -252,7 +252,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                     ? buildWithBackoff(args, buildingReq)
                     : buildProject(args, invocationRequest(args, false, Duration.ZERO), buildingReq);
             if (buildOutcome instanceof BuildOutcome.Skipped skipped) {
-                doDegradedAnalysis(args, skipped.getReason(), skipped.getCategory(), skipped.getDetail());
+                doDegradedAnalysis(args, skipped);
                 return;
             }
             ProjectBuildingResult result = ((BuildOutcome.Proceeded) buildOutcome).getResult();
@@ -262,7 +262,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                     result.getProject(), clone.getWorkTree(), buildingReq, args, reactors);
             if (moduleOutcome.isPresent()) {
                 BuildOutcome.Skipped skipped = moduleOutcome.get();
-                doDegradedAnalysis(args, skipped.getReason(), skipped.getCategory(), skipped.getDetail());
+                doDegradedAnalysis(args, skipped);
                 return;
             }
             relaxOutOfModuleResourceDirs(clone.getWorkTree());

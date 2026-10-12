@@ -15,6 +15,7 @@ import java.util.Iterator;
 import java.util.List;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.reflect.FieldUtils;
 import org.apache.maven.project.MavenProject;
@@ -182,6 +183,54 @@ class DegradedAnalysisMojoTest {
         assertNull(submission.getFullProjectCoverage(), "degraded mode captures no coverage — renders n/a, not 0%");
     }
     @Test
+    void aStartedReviewScoresAFailedBuildWithTheFlagOff() throws Exception {
+        commitFile(JAVA_V1, "first");
+        RevCommit second = commitFile(JAVA_V2, "second");
+        mojo.reviewing = true;
+
+        mojo.doDegradedAnalysis(argsFor(second), "[ERROR] COMPILATION ERROR", AnalysisExcludeCategory.BUILD_FAILURE, "cannot find symbol");
+
+        assertTrue(mojo.exclusions.isEmpty(), "a commit whose review runs must not be excluded for its build");
+        assertNotNull(mojo.scoredCtx, "the review's assessment scores the build-failed commit");
+        assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, mojo.scoredCtx.getSubmissionModel().getBuildFailure().getCategory());
+    }
+    @Test
+    void localModeScoresOnlyABuildTheAuthorBrokeOnceItsReviewStarted() throws Exception {
+        SubmitCommitAnalysisMojo submit = new SubmitCommitAnalysisMojo();
+        RunArgs args = new RunArgs();
+        assertFalse(submit.scoresFailedBuild(args, AnalysisExcludeCategory.BUILD_FAILURE, false), "no review started: the flag decides, and it is off");
+
+        try (BackgroundReview<Object> review = BackgroundReview.start(Object::new)) {
+            FieldUtils.writeField(submit, "backgroundReview", review, true);
+            assertTrue(submit.scoresFailedBuild(args, AnalysisExcludeCategory.BUILD_FAILURE, false));
+            assertFalse(submit.scoresFailedBuild(args, AnalysisExcludeCategory.BUILD_FAILURE, true), "a build that ran out of time is not the author's");
+            assertFalse(submit.scoresFailedBuild(args, AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, false), "an unresolvable dependency is not the author's");
+        }
+    }
+    @Test
+    void aFailedReviewOfABuildFailedCommitKeepsTheBuildFailure() throws Exception {
+        commitFile(JAVA_V1, "first");
+        RevCommit second = commitFile(JAVA_V2, "second");
+        RecordingSubmitMojo submit = new RecordingSubmitMojo();
+        submit.project = mojo.project;
+        FieldUtils.writeField(submit, "runtimeInformation", FieldUtils.readField(mojo, "runtimeInformation", true), true);
+
+        try (BackgroundReview<Object> review = BackgroundReview.start(() -> {
+            throw new IOException("the coordinator answered nothing");
+        })) {
+            FieldUtils.writeField(submit, "backgroundReview", review, true);
+            submit.doDegradedAnalysis(argsFor(second), "[ERROR] COMPILATION ERROR", AnalysisExcludeCategory.BUILD_FAILURE, "cannot find symbol");
+        }
+
+        assertEquals(1, submit.exclusions.size());
+        Exclusion exclusion = submit.exclusions.iterator().next();
+        assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, exclusion.getCategory(), "the build failure, not the review's, is what the commit is excluded for");
+        assertEquals("[ERROR] COMPILATION ERROR", exclusion.getReason());
+        assertEquals("cannot find symbol", exclusion.getDetail());
+        assertTrue(CollectionUtils.isNotEmpty(exclusion.getFiles()), "the exclusion keeps the degraded submission's files");
+        assertNotNull(exclusion.getProjectMetrics(), "and its metrics");
+    }
+    @Test
     void flagOnSourceIndexFailureFallsBackToDiffOnly() throws Exception {
         commitFile(JAVA_V1, "first");
         RevCommit second = commitFile(JAVA_V2, "second");
@@ -282,8 +331,13 @@ class DegradedAnalysisMojoTest {
         private SubmissionContext scoredCtx;
         private String notFoundSha;
         private boolean failSourceOnlyIndex;
+        private boolean reviewing;
         private final List<Exclusion> exclusions = Lists.newArrayList();
 
+        @Override
+        protected boolean scoresFailedBuild(RunArgs args, AnalysisExcludeCategory category, boolean timedOut) {
+            return BooleanUtils.or(new boolean[] { reviewing, super.scoresFailedBuild(args, category, timedOut) });
+        }
         @Override
         protected void doLlmScoring(SubmissionContext ctx) {
             scoredCtx = ctx;
@@ -300,6 +354,14 @@ class DegradedAnalysisMojoTest {
             if (commitSha.equals(notFoundSha)) {
                 throw new ApiException(HttpResponseStatus.NOT_FOUND.code(), "analysis not found: " + commitSha);
             }
+            exclusions.add(new Exclusion(commitSha, reason, category, detail, files, projectMetrics));
+        }
+    }
+    private static final class RecordingSubmitMojo extends SubmitCommitAnalysisMojo {
+        private final List<Exclusion> exclusions = Lists.newArrayList();
+
+        @Override
+        protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files, ProjectMetricsModel projectMetrics) {
             exclusions.add(new Exclusion(commitSha, reason, category, detail, files, projectMetrics));
         }
     }

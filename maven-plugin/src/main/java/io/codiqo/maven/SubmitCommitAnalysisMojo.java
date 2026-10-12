@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugins.annotations.Mojo;
@@ -22,6 +23,7 @@ import com.google.common.collect.Multiset;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisAcceptedModel;
+import io.codiqo.client.model.AnalysisBuildFailureModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.FileChangeModel;
@@ -171,6 +173,19 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
             }
         }
     }
+    /**
+     * Local mode judges a commit with its review, which reads the code through git and needs no build, so a commit
+     * whose review was started is scored even when its build fails: by rules, from the review's assessment, as a
+     * build-failed commit. Excluding it would drop a review already paid for. Only a build the author broke counts: an
+     * unresolvable dependency or a build that ran out of time is the environment's, and scoring it would alert on a
+     * failure nobody made, so it stays excluded and is analysed again once the environment is fixed.
+     */
+    @Override
+    protected boolean scoresFailedBuild(RunArgs args, AnalysisExcludeCategory category, boolean timedOut) {
+        boolean authorBrokeTheBuild = BooleanUtils.and(new boolean[] {
+                Objects.nonNull(backgroundReview), AnalysisExcludeCategory.BUILD_FAILURE == category, BooleanUtils.negate(timedOut) });
+        return BooleanUtils.or(new boolean[] { super.scoresFailedBuild(args, category, timedOut), authorBrokeTheBuild });
+    }
     private ReviewTags projectTags() throws Exception {
         return ProjectTags.fetch(apiUrl, credential(), connectTimeoutSeconds, readTimeoutSeconds, project.getGroupId() + ":" + project.getArtifactId(), new MavenMessageReporter(getLog()));
     }
@@ -200,7 +215,18 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
                     throw err;
                 }
                 getLog().error(String.format("commit %s excluded: %s", ctx.getArgs().getCommitId(), err.getMessage()), err);
-                doExcludeAnalysis(ctx.getArgs().getCommitId(), err.getMessage(), AnalysisExcludeCategory.LOCAL_REVIEW_FAILURE, ExceptionUtils.getStackTrace(err));
+                AnalysisBuildFailureModel buildFailure = ctx.getSubmissionModel().getBuildFailure();
+                if (Objects.nonNull(buildFailure)) {
+                    /**
+                     * A build-failed commit keeps its build failure, with its files and metrics, as the exclusion a
+                     * failed build without a review records: an operator's re-inclusion of a build failure survives a
+                     * re-analysis only under that category, and Run degraded needs the files.
+                     */
+                    doExcludeAnalysis(ctx.getArgs().getCommitId(), buildFailure.getReason(), buildFailure.getCategory(), buildFailure.getDetail(),
+                            ctx.getSubmissionModel().getFiles(), ctx.getSubmissionModel().getProjectMetrics());
+                } else {
+                    doExcludeAnalysis(ctx.getArgs().getCommitId(), err.getMessage(), AnalysisExcludeCategory.LOCAL_REVIEW_FAILURE, ExceptionUtils.getStackTrace(err));
+                }
                 return;
             }
             LocalReview finished = reviewed.getReview();
