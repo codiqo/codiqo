@@ -1,8 +1,8 @@
 # Codiqo Gradle Plugin (feasibility PoC)
 
 Runs the Codiqo analysis engine against a **Gradle** build and dumps the analysis submission as
-YAML locally (no backend). It mirrors the Maven plugin's `dump-commit-analysis` goal and reuses
-the shared engine (`codiqo-core`, `codiqo-lang-java`) and submission pipeline (`codiqo-submit`)
+YAML locally (no backend), or submits it (`codiqoSubmitAnalysis`, as the Maven plugin's
+`submit-commit-analysis` goal does). It reuses the shared engine (`codiqo-core`, `codiqo-lang-java`) and submission pipeline (`codiqo-submit`)
 through the build-tool-neutral `JvmProjectSpec` seam.
 
 ## Status
@@ -61,7 +61,7 @@ Config overrides (project properties, or a `codiqo { … }` extension block): `-
 `-Pcodiqo.ignoreDiagnostics`, `-Pcodiqo.ignoreComplexity`, `-Pcodiqo.hotspots`, `-Pcodiqo.hotspotsCommitId`, `-Pcodiqo.testTimeoutMinutes`,
 `-Pcodiqo.perTestTimeoutMinutes`, `-Pcodiqo.importTimeoutMinutes`, `-Pcodiqo.lspQueryTimeoutSeconds`,
 `-Pcodiqo.jdtlsVersion`, `-Pcodiqo.jdtUseSharedIndex`, `-Pcodiqo.failOnUninstrumentedModule`,
-`-Pcodiqo.analysisMaxHeap`, `-Pcodiqo.skipOnBuildFailure`, `-Pcodiqo.scoreOnBuildFailure`,
+`-Pcodiqo.analysisMaxHeap`, `-Pcodiqo.skipOnBuildFailure`,
 `-Pcodiqo.firstParentOnly`, `-Pcodiqo.excludeRevertedCommits`, `-Pcodiqo.includeBranches`,
 `-Pcodiqo.include/excludeAuthorEmails`, `-Pcodiqo.testTimeoutMinutes`,
 `-Pcodiqo.perTestTimeoutMinutes`, `-Pcodiqo.ignoreTestFailures`.
@@ -205,9 +205,8 @@ self-inflicted, and it says nothing about whether the compiled output can be tru
 With the local review running, the failed commit is scored from the review by rules, as a
 build-failed commit (penalties only, no bonus); a review that fails then excludes it as
 `BUILD_FAILURE`, files kept. Without a review the commit is reported excluded as `BUILD_FAILURE`
-with the failing task and failure kind attached. `codiqo.scoreOnBuildFailure=true` scores it from the degraded submission instead,
-and `codiqo.skipOnBuildFailure=false` makes a build failure a hard error rather than an exclusion —
-both as the Maven side behaves. If the source-only index cannot be read, the submission degrades
+with the failing task and failure kind attached, and `codiqo.skipOnBuildFailure=false` makes a
+build failure a hard error rather than an exclusion — both as the Maven side behaves. If the source-only index cannot be read, the submission degrades
 again to diff-only rather than losing the commit.
 
 The detail carries the failing task path and the failure chain, not the per-diagnostic compiler

@@ -35,8 +35,6 @@ class MojoDefaultsDriftTest {
         assertEquals(String.valueOf(reference.getMaxRequests()), defaultValueOf(pluginXml, "maxRequests"));
         assertEquals(String.valueOf(reference.getMaxRequestsPerHost()), defaultValueOf(pluginXml, "maxRequestsPerHost"));
 
-        assertEquals(String.valueOf(reference.isScoreOnBuildFailure()), defaultValueOf(pluginXml, "scoreOnBuildFailure"));
-
         assertEquals(String.valueOf(reference.getBuildTimeout().toMinutes()), defaultValueOf(pluginXml, "buildTimeoutMinutes"));
         assertEquals(String.valueOf(reference.getTestTimeout().toMinutes()), defaultValueOf(pluginXml, "testTimeoutMinutes"));
     }

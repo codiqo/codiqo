@@ -295,19 +295,10 @@ public class RunArgs {
      *
      * <p>Neither setting silently scores the commit: {@code clean} has already wiped {@code target/} for every
      * module the failure stopped, so the reactor left behind reads as a small, clean commit rather than as the
-     * failure it is. Scoring a broken build is opt-in through {@link #scoreOnBuildFailure} instead, which switches
-     * to diff-only inputs rather than trusting the wreckage.
+     * failure it is. A commit whose local review started is scored from that review instead, from a source-only
+     * submission rather than the wreckage.
      */
     private boolean skipOnBuildFailure = true;
-
-    /**
-     * Score a build-failed commit in degraded mode — from the git diff and commit metadata alone — instead of
-     * excluding it. The change still represents real developer work, but coverage, duplication, static analysis,
-     * complexity, code blocks and blast radius are all missing rather than clean, so the quality multiplier is
-     * capped at {@code 1.0} regardless of {@link #qualityMultiplierMax}. Falls back to exclusion when the commit
-     * has no analyzable diff files.
-     */
-    private boolean scoreOnBuildFailure = false;
 
     /**
      * When a revert commit is detected, retro-exclude the commit it reverted as well, so reverted work stops
@@ -352,7 +343,7 @@ public class RunArgs {
 
     /**
      * Wall clock for the whole forked build. Exceeding it is treated as a build failure, so it interacts with
-     * {@link #skipOnBuildFailure} / {@link #scoreOnBuildFailure} rather than merely aborting. Sized below the
+     * {@link #skipOnBuildFailure} rather than merely aborting. Sized below the
      * per-commit deadline of the surrounding pipeline: a value that outlives that deadline converts a slow build
      * into a lost commit instead of a recorded failure.
      */

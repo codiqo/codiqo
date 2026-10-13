@@ -47,7 +47,6 @@ public class AnalysisRequest implements Serializable {
      */
     private String buildFailureDetail;
     private boolean skipOnBuildFailure = true;
-    private boolean scoreOnBuildFailure;
 
     private boolean review = true;
     private String reviewExecutable;

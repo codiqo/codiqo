@@ -325,9 +325,6 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     @Parameter(property = "codiqo.skipOnBuildFailure", defaultValue = "true")
     protected boolean skipOnBuildFailure;
 
-    @Parameter(property = "codiqo.scoreOnBuildFailure", defaultValue = "false")
-    protected boolean scoreOnBuildFailure;
-
     /**
      * Local mode, the one review switch: agents review and assess the commit next to the analysis, judge its static
      * findings after the build and leave a trace, and the server scores the commit from that assessment alone. The
@@ -516,7 +513,6 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         args.setHotspotsCommitId(hotspotsCommitId);
         args.setFailOnJdtlsError(failOnJdtlsError);
         args.setSkipOnBuildFailure(skipOnBuildFailure);
-        args.setScoreOnBuildFailure(scoreOnBuildFailure);
         args.setExcludeRevertedCommits(excludeRevertedCommits);
         args.setBuildErrorCaptureLimit(Math.max(MIN_ABBREVIATE_WIDTH, buildErrorCaptureLimit));
         args.setPmdMinPriority(pmdMinPriority);
@@ -1582,7 +1578,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     /**
      * when {@link #scoresFailedBuild} holds, a build-pipeline failure does not exclude the commit
      * outright: the change still represents real developer work, so score it in degraded mode instead.
-     * falls back to exclusion when it does not (the default), when the commit has no analyzable diff files,
+     * falls back to exclusion when it does not (no review started), when the commit has no analyzable diff files,
      * and mirrors the revert gate that the successful-build path applies in doExecute. only reachable from
      * historical commit analysis — analyze-uncommitted-changes never forks a build (it analyzes the working
      * tree against the host session's already-resolved reactor), so it has no failure signal to degrade on.
@@ -1597,7 +1593,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         SubmissionContext ctx = buildDegradedSubmission(args, reason, category, detail);
         List<FileChangeModel> files = ctx.getSubmissionModel().getFiles();
 
-        if (scoresFailedBuild(args, category, timedOut)) {
+        if (scoresFailedBuild(category, timedOut)) {
             if (CollectionUtils.isEmpty(files)) {
                 getLog().warn(String.format("commit %s skipped: build failed and no analyzable diff — %s", args.getCommitId(), reason));
                 doExcludeAnalysis(args.getCommitId(), reason, category, detail, files, ctx.getSubmissionModel().getProjectMetrics());
@@ -1628,11 +1624,11 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         Optional.ofNullable(reviewRelayTimeoutSeconds).ifPresent(seconds -> args.setReviewRelayRequestTimeout(Duration.ofSeconds(seconds)));
     }
     /**
-     * The category and the timeout are for a subclass that scores only some failures: a dependency that could not be
-     * resolved or a build that ran out of time is the environment's failure, not the author's.
+     * Only a commit whose review started is scored after a failed build, and only for a failure that is the author's:
+     * a dependency that could not be resolved or a build that ran out of time is the environment's failure.
      */
-    protected boolean scoresFailedBuild(RunArgs args, AnalysisExcludeCategory category, boolean timedOut) {
-        return args.isScoreOnBuildFailure();
+    protected boolean scoresFailedBuild(AnalysisExcludeCategory category, boolean timedOut) {
+        return false;
     }
     /**
      * degraded submission for a build-failed commit. a failed build leaves no resolved reactor, so a

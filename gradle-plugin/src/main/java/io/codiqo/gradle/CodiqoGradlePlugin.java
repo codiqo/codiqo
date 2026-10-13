@@ -59,8 +59,8 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
         CodiqoExtension ext = project.getExtensions().create(EXTENSION_NAME, CodiqoExtension.class);
 
         /**
-         * the two analysis tasks differ only in whether the worker posts the result, mirroring the Maven side where
-         * submit-commit-analysis is dump-commit-analysis plus the POST. Run one or the other, never both.
+         * the two analysis tasks differ only in whether the worker posts the result. Run one or the other, never
+         * both.
          */
         registerAnalysisTask(project, DUMP_TASK, false,
                 "Analyze the current checkout and dump the Codiqo analysis submission as YAML");

@@ -15,7 +15,6 @@ import java.util.Iterator;
 import java.util.List;
 
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.reflect.FieldUtils;
 import org.apache.maven.plugin.logging.SystemStreamLog;
@@ -49,8 +48,8 @@ import io.netty.handler.codec.http.HttpResponseStatus;
 import lombok.Value;
 
 /**
- * Behavioral coverage for the build-failure degraded path: scoreOnBuildFailure=false must keep the
- * pre-feature exclude-with-diffs behavior, scoreOnBuildFailure=true must produce a source-only
+ * Behavioral coverage for the build-failure degraded path: without a review the commit keeps the
+ * exclude-with-diffs behavior, with one it must produce a source-only
  * degraded submission (falling back to a diff-only submission when the source index fails) carrying
  * the buildFailure block and invoke scoring, and the revert gate that the successful-build path
  * applies in doExecute must hold in degraded mode too.
@@ -125,13 +124,13 @@ class DegradedAnalysisMojoTest {
         repository.close();
     }
     @Test
-    void flagOffBuildFailureExcludesWithCapturedDiffFiles() throws Exception {
+    void anUnreviewedBuildFailureExcludesWithCapturedDiffFiles() throws Exception {
         commitFile(JAVA_V1, "first");
         RevCommit second = commitFile(JAVA_V2, "second");
 
         mojo.doDegradedAnalysis(argsFor(second), "[ERROR] COMPILATION ERROR", AnalysisExcludeCategory.BUILD_FAILURE, "cannot find symbol");
 
-        assertNull(mojo.scoredCtx, "flag off (default) must not run degraded scoring");
+        assertNull(mojo.scoredCtx, "without a review nothing scores the failed build");
         assertEquals(1, mojo.exclusions.size());
         Exclusion exclusion = mojo.exclusions.iterator().next();
         assertEquals("[ERROR] COMPILATION ERROR", exclusion.getReason());
@@ -149,15 +148,15 @@ class DegradedAnalysisMojoTest {
                 "exclusion projectMetrics must carry a non-empty driver-scaler population");
     }
     @Test
-    void flagOnBuildFailureScoresSourceOnlySubmission() throws Exception {
+    void aReviewedBuildFailureScoresSourceOnlySubmission() throws Exception {
         commitFile(JAVA_V1, "first");
         RevCommit second = commitFile(JAVA_V2, "second");
         RunArgs args = argsFor(second);
-        args.setScoreOnBuildFailure(true);
+        mojo.reviewing = true;
 
         mojo.doDegradedAnalysis(args, "[ERROR] COMPILATION ERROR", AnalysisExcludeCategory.BUILD_FAILURE, "cannot find symbol");
 
-        assertTrue(mojo.exclusions.isEmpty(), "flag on with an analyzable diff must not exclude");
+        assertTrue(mojo.exclusions.isEmpty(), "a reviewed commit with an analyzable diff must not be excluded");
         assertNotNull(mojo.scoredCtx, "degraded scoring must run");
 
         AnalysisSubmissionModel submission = mojo.scoredCtx.getSubmissionModel();
@@ -203,14 +202,13 @@ class DegradedAnalysisMojoTest {
     @Test
     void localModeScoresOnlyABuildTheAuthorBrokeOnceItsReviewStarted() throws Exception {
         SubmitCommitAnalysisMojo submit = new SubmitCommitAnalysisMojo();
-        RunArgs args = new RunArgs();
-        assertFalse(submit.scoresFailedBuild(args, AnalysisExcludeCategory.BUILD_FAILURE, false), "no review started: the flag decides, and it is off");
+        assertFalse(submit.scoresFailedBuild(AnalysisExcludeCategory.BUILD_FAILURE, false), "no review started: nothing judges the commit");
 
         try (BackgroundReview<LocalReviewer.ReviewOutcome> review = BackgroundReview.start(() -> null)) {
             FieldUtils.writeField(submit, "reviewRun", LocalReviewRun.of(review, DefaultLanguageProcessors.reviewLanguages(), new MavenLogFactory(new SystemStreamLog())), true);
-            assertTrue(submit.scoresFailedBuild(args, AnalysisExcludeCategory.BUILD_FAILURE, false));
-            assertFalse(submit.scoresFailedBuild(args, AnalysisExcludeCategory.BUILD_FAILURE, true), "a build that ran out of time is not the author's");
-            assertFalse(submit.scoresFailedBuild(args, AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, false), "an unresolvable dependency is not the author's");
+            assertTrue(submit.scoresFailedBuild(AnalysisExcludeCategory.BUILD_FAILURE, false));
+            assertFalse(submit.scoresFailedBuild(AnalysisExcludeCategory.BUILD_FAILURE, true), "a build that ran out of time is not the author's");
+            assertFalse(submit.scoresFailedBuild(AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, false), "an unresolvable dependency is not the author's");
         }
     }
     @Test
@@ -237,11 +235,11 @@ class DegradedAnalysisMojoTest {
         assertNotNull(exclusion.getProjectMetrics(), "and its metrics");
     }
     @Test
-    void flagOnSourceIndexFailureFallsBackToDiffOnly() throws Exception {
+    void aReviewedSourceIndexFailureFallsBackToDiffOnly() throws Exception {
         commitFile(JAVA_V1, "first");
         RevCommit second = commitFile(JAVA_V2, "second");
         RunArgs args = argsFor(second);
-        args.setScoreOnBuildFailure(true);
+        mojo.reviewing = true;
         mojo.failSourceOnlyIndex = true;
 
         mojo.doDegradedAnalysis(args, "[ERROR] COMPILATION ERROR", AnalysisExcludeCategory.BUILD_FAILURE, "cannot find symbol");
@@ -268,12 +266,12 @@ class DegradedAnalysisMojoTest {
         assertNull(submission.getProjectMetrics(), "diff-only fallback must not carry driver-score statistics");
     }
     @Test
-    void flagOnRevertCommitExcludesRevertAndOriginal() throws Exception {
+    void aReviewedRevertCommitExcludesRevertAndOriginal() throws Exception {
         commitFile(JAVA_V1, "first");
         RevCommit second = commitFile(JAVA_V2, "second");
         RevCommit revert = commitFile(JAVA_V1, "Revert \"second\"\n\nThis reverts commit " + second.getName() + ".");
         RunArgs args = argsFor(revert);
-        args.setScoreOnBuildFailure(true);
+        mojo.reviewing = true;
 
         mojo.doDegradedAnalysis(args, "[ERROR] COMPILATION ERROR", AnalysisExcludeCategory.BUILD_FAILURE, null);
 
@@ -296,7 +294,7 @@ class DegradedAnalysisMojoTest {
         RevCommit second = commitFile(JAVA_V2, "second");
         RevCommit revert = commitFile(JAVA_V1, "Revert \"second\"\n\nThis reverts commit " + second.getName() + ".");
         RunArgs args = argsFor(revert);
-        args.setScoreOnBuildFailure(true);
+        mojo.reviewing = true;
         args.setExcludeRevertedCommits(false);
 
         mojo.doDegradedAnalysis(args, "[ERROR] COMPILATION ERROR", AnalysisExcludeCategory.BUILD_FAILURE, null);
@@ -312,7 +310,7 @@ class DegradedAnalysisMojoTest {
         RevCommit second = commitFile(JAVA_V2, "second");
         RevCommit revert = commitFile(JAVA_V1, "Revert \"second\"\n\nThis reverts commit " + second.getName() + ".");
         RunArgs args = argsFor(revert);
-        args.setScoreOnBuildFailure(true);
+        mojo.reviewing = true;
         mojo.notFoundSha = second.getName();
 
         mojo.doDegradedAnalysis(args, "[ERROR] COMPILATION ERROR", AnalysisExcludeCategory.BUILD_FAILURE, null);
@@ -341,8 +339,8 @@ class DegradedAnalysisMojoTest {
         private final List<Exclusion> exclusions = Lists.newArrayList();
 
         @Override
-        protected boolean scoresFailedBuild(RunArgs args, AnalysisExcludeCategory category, boolean timedOut) {
-            return BooleanUtils.or(new boolean[] { reviewing, super.scoresFailedBuild(args, category, timedOut) });
+        protected boolean scoresFailedBuild(AnalysisExcludeCategory category, boolean timedOut) {
+            return reviewing;
         }
         @Override
         protected void doSubmit(SubmissionContext ctx) {
