@@ -51,6 +51,11 @@ public class OpenCodeReviewConfig {
             "git *-c *",
             "git *--exec*");
     private static final int STEPS_RESERVED_FOR_ANSWER = 3;
+    /**
+     * A reviewer stops calling tools this many steps before its cap. Reviewers lose count of their steps (traces show one
+     * at its 35th step believing it was at about 20), so three steps of slack left some mid tool call when tools were cut.
+     */
+    private static final int REVIEWER_STEPS_RESERVED_FOR_ANSWER = 8;
 
     private static final EnumSet<LlmScoringResponse.Confidence> REPORTED_CONFIDENCE = EnumSet.of(
             LlmScoringResponse.Confidence.HIGH,
@@ -86,7 +91,7 @@ public class OpenCodeReviewConfig {
         reviewer.put("description", "Reviews part of a commit with read-only git and file tools and returns confirmed defects as JSON");
         reviewer.put("model", PROVIDER + "/" + args.getReviewReviewerModel());
         reviewer.put("steps", args.getReviewReviewerSteps());
-        reviewer.put("system", prompt("opencode/module-reviewer", args.getReviewReviewerSteps(), args, conventionGuidance, namingRules, tags));
+        reviewer.put("system", prompt("opencode/module-reviewer", args.getReviewReviewerSteps(), REVIEWER_STEPS_RESERVED_FOR_ANSWER, args, conventionGuidance, namingRules, tags));
         addReadOnlyPermissions(reviewer.putArray("permissions"));
 
         ObjectNode coordinator = agents.putObject(COORDINATOR);
@@ -94,7 +99,7 @@ public class OpenCodeReviewConfig {
         coordinator.put("description", "Plans a whole-commit review, runs reviewer sub-agents in parallel and merges their findings");
         coordinator.put("model", PROVIDER + "/" + args.getReviewCoordinatorModel());
         coordinator.put("steps", args.getReviewCoordinatorSteps());
-        coordinator.put("system", prompt("opencode/review-coordinator", args.getReviewCoordinatorSteps(), args, conventionGuidance, namingRules, tags));
+        coordinator.put("system", prompt("opencode/review-coordinator", args.getReviewCoordinatorSteps(), STEPS_RESERVED_FOR_ANSWER, args, conventionGuidance, namingRules, tags));
         ArrayNode coordinatorPermissions = coordinator.putArray("permissions");
         addReadOnlyPermissions(coordinatorPermissions);
         rule(coordinatorPermissions, "subagent", "*", "deny");
@@ -202,7 +207,7 @@ public class OpenCodeReviewConfig {
      * The fence is the scoring prompt's own, which {@code ConventionGuidance} strips from every file, so a file cannot
      * close it early; Thymeleaf inserts a value as it is, so a {@code [(...)]} inside one is not evaluated.
      */
-    private static String prompt(String template, int steps, RunArgs args, String conventionGuidance, List<String> namingRules, ReviewTags tags) {
+    private static String prompt(String template, int steps, int reserved, RunArgs args, String conventionGuidance, List<String> namingRules, ReviewTags tags) {
         Context ctx = new Context();
         ctx.setVariable("namingRules", namingRules);
         ctx.setVariable("technicalTags", tags.getTechnical());
@@ -210,7 +215,7 @@ public class OpenCodeReviewConfig {
         ctx.setVariable("maxTasks", args.getReviewMaxTasks());
         ctx.setVariable("reviewer", REVIEWER);
         ctx.setVariable("steps", steps);
-        ctx.setVariable("stopBy", steps - STEPS_RESERVED_FOR_ANSWER);
+        ctx.setVariable("stopBy", steps - reserved);
         ctx.setVariable("bugShape", BUG_SHAPE);
         ctx.setVariable("guidance", conventionGuidance.strip());
         ctx.setVariable("begin", PromptFences.CONVENTIONS_BEGIN);

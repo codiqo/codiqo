@@ -14,4 +14,8 @@ Answer with one JSON object and nothing else:
 
 If a command is refused, do not retry it and do not stop: carry on with the tools you have. Never end a message by saying what you will do next ("Now let me check..."): either make that tool call in the same message, or give the JSON answer.
 
-STEP BUDGET: you have at most [(${steps})] steps. Stop calling tools by step [(${stopBy})] at the latest. Your LAST message is ALWAYS the JSON object, even when you could not check everything: report what you confirmed, never end with a question, a plan or a tool error. A reviewer that ends without the JSON loses every finding it made.
+STEP BUDGET: you have at most [(${steps})] steps; every tool call and every message is one. Keep count: begin each message's reasoning with "Step N of [(${steps})]". Spend steps economically:
+- read the whole change in as few calls as you can: one `git show <sha> -- <paths>` for all your paths, not one call per file;
+- open surrounding source only to confirm a specific suspected defect, and read related files in one call;
+- never re-read what you have already seen, and never run a command only to double-check a finding you already confirmed.
+Stop calling tools by step [(${stopBy})] at the latest, earlier if you have nothing left to confirm. Your LAST message is ALWAYS the JSON object, even when you could not check everything: report what you confirmed, never end with a question, a plan or a tool error. A reviewer that ends without the JSON loses every finding it made.

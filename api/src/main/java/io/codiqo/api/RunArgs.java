@@ -587,8 +587,12 @@ public class RunArgs {
 
     private transient int reviewCoordinatorSteps = 40;
 
-    /** Local review: tool steps a reviewer may take; 25 left a quarter of them without an answer on large commits once they also labelled code units. */
-    private transient int reviewReviewerSteps = 35;
+    /**
+     * Local review: tool steps a reviewer may take. 25 left a quarter of them without an answer on large commits once they
+     * also labelled code units; at 35 about a quarter still reached the cap, and the few caught mid tool call lost every
+     * finding (13 Oct 2026: 9 of 253 reviewer sessions).
+     */
+    private transient int reviewReviewerSteps = 64;
 
     /** Local review: reviewer tasks the coordinator may start, each a parallel sub-agent session. */
     private transient int reviewMaxTasks = 8;
