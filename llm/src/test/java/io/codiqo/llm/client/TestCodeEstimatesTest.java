@@ -13,7 +13,7 @@ import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import io.codiqo.llm.schema.LlmScoringResponse.ModifyImpactEstimate;
 
-class LlmScoringClientTest {
+class TestCodeEstimatesTest {
     private static final String PROD_SIGNATURE = "io/example/Service.handle()V";
     private static final String TEST_SIGNATURE = "io/example/ServiceTest.handle()V";
 
@@ -31,7 +31,7 @@ class LlmScoringClientTest {
                         ModifyImpactEstimate.builder().signature(TEST_SIGNATURE).build())))
                 .build();
 
-        LlmScoringClient.removeTestCodeEstimates(response, request);
+        LocalAssessmentScorer.removeTestCodeEstimates(response, request);
 
         assertEquals(1, response.getModifyImpactEstimates().size());
         assertEquals(PROD_SIGNATURE, response.getModifyImpactEstimates().get(0).getSignature());
@@ -48,7 +48,7 @@ class LlmScoringClientTest {
                 .modifyImpactEstimates(null)
                 .build();
 
-        LlmScoringClient.removeTestCodeEstimates(response, request);
+        LocalAssessmentScorer.removeTestCodeEstimates(response, request);
 
         assertNull(response.getModifyImpactEstimates());
     }

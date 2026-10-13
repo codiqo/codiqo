@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.time.Duration;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -19,13 +18,10 @@ import io.codiqo.client.model.AnalysisResultModel;
 import io.codiqo.client.model.BlastRadiusAnalysisModel;
 import io.codiqo.client.model.BugModel;
 import io.codiqo.client.model.ChangeMagnitudeModel;
-import io.codiqo.client.model.LlmAnalysisModel;
 import io.codiqo.client.model.ModifyImpactEstimateModel;
 import io.codiqo.client.model.RiskAssessmentModel;
 import io.codiqo.client.model.SignatureChangesModel;
 import io.codiqo.client.model.StaticAnalysisFindingModel;
-import io.codiqo.llm.client.LlmUsage;
-import io.codiqo.llm.client.ScoringClient.ScoringResult;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import io.codiqo.llm.schema.LlmScoringResponse.ArchitectureEffortBonus;
 import io.codiqo.llm.schema.LlmScoringResponse.BlastRadiusAnalysis;
@@ -524,38 +520,4 @@ class LlmResponseMapperTest {
                 result.getAssessment().getBlastRadiusAnalysis().getRiskLevel().name(),
                 "missing blast-radius riskLevel falls back to LOW");
     }
-
-    @Test
-    void mapLlmAnalysisReportsTokenTotalsAndSkipsToolUsageWhenAbsent() {
-        ScoringResult scoring = ScoringResult.builder()
-                .thinking("chain-of-thought")
-                .promptLength(4096)
-                .usage(LlmUsage.of(1000, 250))
-                .build();
-
-        LlmAnalysisModel analysis = LlmResponseMapper.mapLlmAnalysis(scoring, Duration.ofMillis(1500), "gpt-test");
-
-        assertEquals("gpt-test", analysis.getModel());
-        assertEquals(1500, analysis.getAnalysisTimeMs());
-        assertEquals("chain-of-thought", analysis.getThinking());
-        assertEquals(4096, analysis.getPromptLength());
-        assertEquals(1000, analysis.getTokenUsage().getPromptTokens());
-        assertEquals(250, analysis.getTokenUsage().getCompletionTokens());
-        assertEquals(1250, analysis.getTokenUsage().getTotalTokens());
-        assertNull(analysis.getToolUsage(), "toolUsage is only attached when tools were actually invoked");
-    }
-
-    @Test
-    void mapLlmAnalysisAttachesToolUsageWhenToolsWereCalled() {
-        ScoringResult scoring = ScoringResult.builder()
-                .usage(LlmUsage.of(10, 5))
-                .toolCallsMade(Lists.newArrayList(List.of("web_search", "web_search", "fetch")))
-                .build();
-
-        LlmAnalysisModel analysis = LlmResponseMapper.mapLlmAnalysis(scoring, Duration.ZERO, "gpt-test");
-
-        assertNotNull(analysis.getToolUsage());
-        assertEquals(3, analysis.getToolUsage().getToolCallsCount());
-    }
-
 }

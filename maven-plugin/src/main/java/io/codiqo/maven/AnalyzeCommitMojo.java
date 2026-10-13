@@ -31,9 +31,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.text.StringSubstitutor;
-import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
-import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
 import org.apache.maven.project.ProjectBuildingRequest;
 import org.apache.maven.project.ProjectBuildingResult;
@@ -65,10 +63,7 @@ import io.codiqo.submit.CommitExclusions.Exclusion;
 import io.codiqo.util.JGit;
 import io.codiqo.util.MemoryReport;
 
-@Mojo(name = "analyze-commit",
-        requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
-        threadSafe = true,
-        aggregator = true)
+/** the analysis of one commit; {@code submit-commit-analysis} sends it and {@code dump-commit-analysis} writes it out */
 public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     /**
      * Back-off ladder mirroring how stale a developer's local snapshot copy may have been when the commit was built:

@@ -109,7 +109,7 @@ public class ReviewCommitMojo extends AbstractMojo {
     private File findings;
 
     /**
-     * A submission {@code analyze-commit} wrote for this commit ({@code codiqo-submission-<sha>.yaml} or {@code .json}): a
+     * A submission an analysis goal wrote for this commit ({@code codiqo-submission-<sha>.yaml} or {@code .json}): a
      * fork of the review's session labels its code units by id after the review, and the report compares those labels,
      * unit by unit, with what the reviewers' own labels name.
      */
@@ -153,7 +153,7 @@ public class ReviewCommitMojo extends AbstractMojo {
                     new MavenLogFactory(getLog()).getLogger(LocalReviewer.class));
             Optional<AnalysisSubmissionModel> analysed = Optional.empty();
             if (Objects.nonNull(submission)) {
-                /** {@code analyze-commit} writes YAML unless told otherwise */
+                /** the analysis goals write YAML unless told otherwise */
                 ObjectMapper mapper = JsonMapper.builder().build();
                 if (YAML_EXTENSIONS.contains(FilenameUtils.getExtension(submission.getName()))) {
                     mapper = SubmitAnalysisFileMojo.yamlMapper();

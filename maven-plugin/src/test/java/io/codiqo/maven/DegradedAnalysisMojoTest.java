@@ -345,7 +345,7 @@ class DegradedAnalysisMojoTest {
             return BooleanUtils.or(new boolean[] { reviewing, super.scoresFailedBuild(args, category, timedOut) });
         }
         @Override
-        protected void doLlmScoring(SubmissionContext ctx) {
+        protected void doSubmit(SubmissionContext ctx) {
             scoredCtx = ctx;
         }
         @Override

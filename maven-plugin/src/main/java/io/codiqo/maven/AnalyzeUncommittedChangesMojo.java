@@ -61,7 +61,7 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
     @Parameter(property = "codiqo.resourceUrl", defaultValue = RunArgs.DEFAULT_RESOURCE_URL)
     private String resourceUrl;
 
-    /** off keeps the run entirely local — analysis and the console report, nothing leaves the machine */
+    /** off keeps the run entirely local — the analysis is only written out, nothing leaves the machine */
     @Parameter(property = "codiqo.submit", defaultValue = "true")
     private boolean submit;
 
@@ -131,7 +131,7 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
         return credential;
     }
     @Override
-    protected void doLlmScoring(SubmissionContext ctx) throws Exception {
+    protected void doSubmit(SubmissionContext ctx) throws Exception {
         if (submit) {
             /** a review that failed leaves the changes unjudged: the developer is told, and nothing is sent */
             if (Objects.nonNull(reviewRun)) {
@@ -175,9 +175,6 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
                 throw new MojoFailureException(String.format(
                         "analysis %s was accepted but failed server-side — nothing was scored", response.getAnalysisId()));
             }
-            return;
         }
-
-        super.doLlmScoring(ctx);
     }
 }

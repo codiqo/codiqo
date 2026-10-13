@@ -4,19 +4,11 @@ import java.util.Collections;
 import java.util.List;
 
 import io.codiqo.api.RunArgs;
-import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
-import io.codiqo.llm.schema.LlmScoringRequest;
 import lombok.Builder;
 import lombok.Value;
-import org.apache.commons.lang3.tuple.ImmutablePair;
 
+/** what scoring knows about the commit's project beside the commit itself; the rules read the project's totals from it */
 public interface PromptBuilder {
-    String buildSystemPrompt(PromptContext context);
-    UserMessageResult buildUserMessageWithScores(LlmScoringRequest request, PromptContext context);
-    String buildWebSearchResults(String query, List<WebSearchResultItem> results);
-    String buildValidationFeedback(FinalScoreCalculator.ValidationReport report);
-    int estimateTokens(String model, String text);
-
     @Value
     @Builder
     class PromptContext {
@@ -59,23 +51,4 @@ public interface PromptBuilder {
         }
     }
 
-    final class UserMessageResult extends ImmutablePair<String, PreComputedScores> {
-        public UserMessageResult(String message, PreComputedScores preComputedScores) {
-            super(message, preComputedScores);
-        }
-        public String getMessage() {
-            return getLeft();
-        }
-        public PreComputedScores getPreComputedScores() {
-            return getRight();
-        }
-    }
-
-    @Value
-    @Builder
-    class WebSearchResultItem {
-        String title;
-        String url;
-        String content;
-    }
 }

@@ -23,7 +23,7 @@ import io.codiqo.llm.client.OpenAIClientWrapper.StreamingResult;
 /**
  * one prompt in, one JSON object out, with the sampling knobs and retry policy the module has settled on: the
  * shape every secondary LLM call in codiqo takes — no tools, no multi-turn, no validation loop.
- * {@link LlmScoringClient} deliberately does NOT sit on top of it, since scoring runs a tool-call loop and
+ * the old scoring client deliberately does NOT sit on top of it, since scoring runs a tool-call loop and
  * re-prompts on validation failure.
  */
 public class JsonCompletionClient implements LlmClient {
@@ -84,7 +84,7 @@ public class JsonCompletionClient implements LlmClient {
 
         /**
          * Ollama honours sampling through its native `options` object only — num_ctx has no effect as a
-         * top-level field — so the knobs travel there as well, mirroring {@link LlmScoringClient}. seed
+         * top-level field — so the knobs travel there as well, mirroring the old scoring client. seed
          * belongs here for the same reason it does there: a caller that configured one expects the same
          * answer for the same input, and these calls decide whether a commit is scored at all
          */

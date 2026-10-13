@@ -122,12 +122,10 @@ import io.codiqo.core.ClassGraphWrapper;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.lang.config.ConfigFiles;
-import io.codiqo.util.DaemonExecutors;
 import io.codiqo.maven.coverage.CoverageInjectorConfig;
 import io.codiqo.maven.eventspy.BuildFailureConfig;
 import io.codiqo.maven.eventspy.BuildProgressConfig;
 import io.codiqo.maven.logging.MavenLogFactory;
-import io.codiqo.maven.populator.LlmScoringPopulator;
 import io.codiqo.maven.populator.ProjectModelPopulator;
 import io.codiqo.maven.populator.SubmissionSummaryPrinter;
 import io.codiqo.maven.surefire.SurefireInjectorConfig;
@@ -385,29 +383,8 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     @Parameter(property = "codiqo.spotbugsOmitVisitors")
     protected String spotbugsOmitVisitors;
 
-    @Parameter(property = "codiqo.llm.model", defaultValue = "deepseek-v4-pro:cloud")
-    protected String llmModel;
-
-    @Parameter(property = "codiqo.llm.apiKey")
-    protected String llmApiKey;
-
-    @Parameter(property = "codiqo.llm.baseUrl", defaultValue = "https://ollama.com/v1")
-    protected String llmBaseUrl;
-
     @Parameter(property = "codiqo.llm.temperature", defaultValue = "0.0")
     protected double llmTemperature;
-
-    @Parameter(property = "codiqo.llm.maxTokens", defaultValue = "32767")
-    protected int llmMaxTokens;
-
-    @Parameter(property = "codiqo.llm.numCtx")
-    protected Integer llmNumCtx;
-
-    @Parameter(property = "codiqo.llm.promptTokenBudget")
-    protected int llmPromptTokenBudget;
-
-    @Parameter(property = "codiqo.llm.maxCallersPerBlock")
-    protected int llmMaxCallersPerBlock;
 
     @Parameter(property = "codiqo.llm.conventionFiles")
     protected String llmConventionFiles;
@@ -425,15 +402,6 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
 
     @Parameter(property = "codiqo.llm.seed", defaultValue = "42")
     protected Integer llmSeed;
-
-    @Parameter(property = "codiqo.llm.enableWebSearchTool", defaultValue = "true")
-    protected boolean llmEnableWebSearchTool;
-
-    @Parameter(property = "codiqo.llm.validationMaxRetries", defaultValue = "1")
-    protected short llmValidationMaxRetries;
-
-    @Parameter(property = "codiqo.llm.readTimeoutSeconds", defaultValue = "600")
-    protected long llmReadTimeoutSeconds;
 
     @Parameter(property = "codiqo.outputDirectory")
     protected File outputDirectory;
@@ -557,17 +525,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         }
         args.setSpotbugsPriorityThreshold(spotbugsPriorityThreshold);
         Optional.ofNullable(spotbugsOmitVisitors).ifPresent(args::setSpotbugsOmitVisitors);
-        args.setLlmModel(llmModel);
-        args.setLlmBaseUrl(llmBaseUrl);
         args.setLlmTemperature(llmTemperature);
-        args.setLlmMaxTokens(llmMaxTokens);
-        args.setLlmNumCtx(llmNumCtx);
-        if (llmPromptTokenBudget > 0) {
-            args.setLlmPromptTokenBudget(llmPromptTokenBudget);
-        }
-        if (llmMaxCallersPerBlock > 0) {
-            args.setLlmMaxCallersPerBlock(llmMaxCallersPerBlock);
-        }
         if (StringUtils.isNotBlank(llmConventionFiles)) {
             args.setLlmConventionFiles(Splitter.on(',').trimResults().omitEmptyStrings().splitToList(llmConventionFiles));
         }
@@ -576,9 +534,6 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             args.setLlmConventionFilesMaxChars(llmConventionFilesMaxChars);
         }
         args.setLlmSeed(llmSeed);
-        args.setLlmEnableWebSearchTool(llmEnableWebSearchTool);
-        args.setLlmValidationMaxRetries(llmValidationMaxRetries);
-        args.setLlmReadTimeout(Duration.ofSeconds(llmReadTimeoutSeconds));
         Optional.ofNullable(outputDirectory).ifPresent(args::setOutputDirectory);
         Optional.ofNullable(includeBranches).ifPresent(args::setIncludeBranches);
         Optional.ofNullable(includeAuthorEmails).ifPresent(args::setIncludeAuthorEmails);
@@ -600,7 +555,6 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         args.setMoveSimilarityThreshold(moveSimilarityThreshold);
         args.setMovedLineCoefficient(movedLineCoefficient);
 
-        Env.resolveInto(llmApiKey, args::setLlmApiKey);
         args.validate();
         try (InputStream stream = getClass().getClassLoader().getResourceAsStream("codiqo.versions")) {
             if (Objects.isNull(stream)) {
@@ -1411,7 +1365,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             if (ctx.getAnalysis().isRevertCommit()) {
                 doExcludeRevertCommit(args, ctx);
             } else {
-                doLlmScoring(ctx);
+                doSubmit(ctx);
             }
             doHotspots(ctx);
         }
@@ -1587,13 +1541,8 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         }
         return Optional.empty();
     }
-    protected void doLlmScoring(SubmissionContext ctx) throws Exception {
-        ExecutorService executor = DaemonExecutors.newCachedDaemonPool("codiqo-openai");
-        try {
-            new LlmScoringPopulator(getLog(), executor, preferYaml).accept(ctx);
-        } finally {
-            executor.shutdown();
-        }
+    protected void doSubmit(SubmissionContext ctx) throws Exception {
+        getLog().debug("analysis not submitted: this goal does not submit");
     }
     /**
      * shared revert gate for the successful-build and degraded paths: the revert itself is excluded
@@ -1660,7 +1609,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             }
             getLog().warn(String.format("commit %s: build failed (%s: %s) — running degraded analysis", args.getCommitId(), category, reason));
             new OutputSerializer(preferYaml, ctx.getLogFactory().getLogger(OutputSerializer.class)).accept(ctx);
-            doLlmScoring(ctx);
+            doSubmit(ctx);
         } else {
             getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), reason));
             doExcludeAnalysis(args.getCommitId(), reason, category, detail, files, ctx.getSubmissionModel().getProjectMetrics());

@@ -7,7 +7,6 @@ import java.util.Optional;
  * server that calls another provider translates it to that provider's id.
  */
 public enum LlmModel {
-    DEEPSEEK_V4_PRO("deepseek-v4-pro:cloud", 1024 * 1024),
     DEEPSEEK_V4_1_FLASH("deepseek-v4.1-flash:cloud", RunArgs.DEFAULT_NUM_CTX),
     GLM_5_3_FLASH("glm-5.3-flash:cloud", RunArgs.DEFAULT_NUM_CTX);
 

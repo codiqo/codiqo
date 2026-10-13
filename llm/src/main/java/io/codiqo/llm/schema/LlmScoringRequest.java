@@ -2,7 +2,6 @@ package io.codiqo.llm.schema;
 
 import static java.util.function.Predicate.not;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -62,9 +61,6 @@ public class LlmScoringRequest {
     @Builder.Default
     private DriverScaler constructorScalerTest = DriverScaler.EMPTY;
 
-    @Builder.Default
-    private List<WebSearchContext> webSearchContext = Collections.emptyList();
-
     /**
      * Present when this is a diff-only degraded analysis of a build-breaking commit — no
      * coverage/static-analysis/duplication/code-unit data was collectable.
@@ -77,26 +73,6 @@ public class LlmScoringRequest {
         private String reason;
         private String category;
         private String detail;
-    }
-
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class WebSearchContext {
-        private String query;
-        @Builder.Default
-        private List<WebSearchResultItem> results = Collections.emptyList();
-
-        @Data
-        @Builder
-        @NoArgsConstructor
-        @AllArgsConstructor
-        public static class WebSearchResultItem {
-            private String title;
-            private String url;
-            private String content;
-        }
     }
 
     @Data

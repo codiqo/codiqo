@@ -9,8 +9,6 @@ public enum LlmModelUsageIntent {
     LOCAL_REVIEW_COORDINATOR(LlmModel.DEEPSEEK_V4_1_FLASH, "local_review"),
     /** reviews one part of the commit for the coordinator */
     LOCAL_REVIEW_SUB_AGENT(LlmModel.GLM_5_3_FLASH, "local_review"),
-    /** the single scoring prompt, for a commit without a local review (degraded mode); it needs the large window */
-    COMMIT_SCORING(LlmModel.DEEPSEEK_V4_PRO, "git_analysis"),
     SKIP_REQUEST_DETECTION(LlmModel.DEEPSEEK_V4_1_FLASH, "skip_request_detection"),
     TAG_CONSOLIDATION(LlmModel.DEEPSEEK_V4_1_FLASH, "tag_consolidation"),
     AWARD_RECAP(LlmModel.DEEPSEEK_V4_1_FLASH, "award_recap"),

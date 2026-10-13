@@ -21,8 +21,8 @@ import lombok.Value;
 /**
  * Deterministic commit-wide detector of relocated lines: deleted lines whose content reappears
  * near-identically as an added line elsewhere in the commit (same file or a different one) — the
- * signature of code moved into a new method, class, or file. Candidates are offered to the LLM as
- * hints ({@code user-message.txt}); only confirmed ids ({@code confirmedMoveIds}) are discounted.
+ * signature of code moved into a new method, class, or file. The rules scoring confirms every
+ * candidate ({@code LocalAssessmentScorer}); only confirmed ids ({@code confirmedMoveIds}) are discounted.
  * <p>
  * Similarity is multiset containment {@code |tokens(A)∩tokens(B)| / min(|A|,|B|)} — deliberately
  * NOT Dice/Jaccard. Relocation typically only adds tokens (re-qualified receivers:

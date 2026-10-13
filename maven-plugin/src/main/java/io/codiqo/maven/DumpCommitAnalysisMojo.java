@@ -7,7 +7,6 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 
 import io.codiqo.api.RunArgs;
-import io.codiqo.submit.SubmissionContext;
 
 @Mojo(name = "dump-commit-analysis",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
@@ -20,8 +19,5 @@ public class DumpCommitAnalysisMojo extends AnalyzeCommitMojo {
             throw new MojoFailureException("codiqo.outputDirectory is required for dump-commit-analysis");
         }
         super.doPrepare(args);
-    }
-    @Override
-    protected void doLlmScoring(SubmissionContext ctx) {
     }
 }

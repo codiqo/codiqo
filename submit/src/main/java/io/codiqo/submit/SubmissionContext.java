@@ -1,7 +1,6 @@
 package io.codiqo.submit;
 
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
 
@@ -18,8 +17,6 @@ import io.codiqo.client.model.DependencyRegistryModel;
 import io.codiqo.client.model.HotspotSnapshotModel;
 import io.codiqo.client.model.ModuleFullCoverageModel;
 import io.codiqo.client.model.ProjectModel;
-import io.codiqo.llm.client.ScoringClient.ScoringResult;
-import io.codiqo.llm.schema.LlmScoringResponse;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
@@ -82,15 +79,6 @@ public class SubmissionContext {
     @Setter
     @Builder.Default
     private Optional<HotspotSnapshotModel> hotspotSnapshot = Optional.empty();
-
-    @Setter
-    private LlmScoringResponse llmScoringResponse;
-    @Setter
-    private ScoringResult llmScoringResult;
-    @Setter
-    private Duration llmAnalysisDuration;
-    @Setter
-    private String llmModel;
 
     public ModuleQualityTracker trackerFor(String moduleId) {
         return qualityTrackers.computeIfAbsent(moduleId, key -> new ModuleQualityTracker());

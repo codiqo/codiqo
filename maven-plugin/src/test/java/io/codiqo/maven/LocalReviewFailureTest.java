@@ -42,7 +42,7 @@ class LocalReviewFailureTest {
             throw new IOException("opencode serve exited with code 1");
         });
 
-        mojo.doLlmScoring(context());
+        mojo.doSubmit(context());
 
         assertEquals(List.of(COMMIT + " " + AnalysisExcludeCategory.LOCAL_REVIEW_FAILURE + " local review failed: opencode serve exited with code 1"), excluded);
     }
@@ -57,7 +57,7 @@ class LocalReviewFailureTest {
 
         Thread.currentThread().interrupt();
         try {
-            assertThrows(LocalReviewException.class, () -> mojo.doLlmScoring(context()));
+            assertThrows(LocalReviewException.class, () -> mojo.doSubmit(context()));
         } finally {
             assertTrue(Thread.interrupted(), "the interrupt is kept for the caller");
         }

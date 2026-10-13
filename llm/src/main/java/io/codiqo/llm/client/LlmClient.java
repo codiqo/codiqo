@@ -3,7 +3,7 @@ package io.codiqo.llm.client;
 import java.io.Closeable;
 
 /**
- * root of the client family in this package: scoring, single-shot JSON completion and web search.
+ * root of the client family in this package: scoring and single-shot JSON completion.
  *
  * it narrows {@link Closeable#close()} to not throw, which is the whole point — every implementation here
  * only releases an HTTP client or a connection pool and none of them has ever thrown, so callers get
