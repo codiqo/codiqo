@@ -1,2 +1,3 @@
 io.codiqo.maven.eventspy.BuildFailureEventSpy
 io.codiqo.maven.eventspy.BuildProgressEventSpy
+io.codiqo.maven.compiler.ErrorProneErrorsAsWarnings

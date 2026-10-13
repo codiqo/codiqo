@@ -816,7 +816,8 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
 
         /**
          * codiqo core extensions are loaded on the forked build's maven.ext.class.path. the build-failure EventSpy is
-         * injected on every run so structured failure detail is always captured; the time-machine snapshot resolver
+         * injected on every run so structured failure detail is always captured (its jar also demotes Error Prone's
+         * errors to warnings, see ErrorProneWarnings); the time-machine snapshot resolver
          * (codiqo-maven-time-machine, with the Google/Aether stack), the JaCoCo agent injector
          * (codiqo-maven-coverage-injector), and the per-test timeout injector (codiqo-maven-surefire-injector) are
          * added only when their own feature is active — so a coverage-only run never puts the time-machine resolver on
@@ -1124,6 +1125,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             InvocationRequest request,
             ProjectBuildingRequest buildingRequest) throws Exception {
         File rootPom = new File(args.getGit().getWorkTree(), "pom.xml");
+        args.setCompilerFindings(Lists.newArrayList());
 
         CapturingOutputHandler sysout = new CapturingOutputHandler(new PrintStreamHandler(System.out, false), args.getBuildErrorCaptureLimit());
         CapturingOutputHandler syserr = new CapturingOutputHandler(new PrintStreamHandler(System.err, false), args.getBuildErrorCaptureLimit());
@@ -1184,6 +1186,11 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             } else {
                 throw new MojoExecutionException("maven build failed in fork", result.getExecutionException());
             }
+        }
+
+        args.setCompilerFindings(ErrorProneWarnings.findings(sysout.errorProneWarningLines(), args.getGit().getWorkTree()));
+        if (CollectionUtils.isNotEmpty(args.getCompilerFindings())) {
+            getLog().info(String.format(Locale.ROOT, "the build reported %d Error Prone findings", args.getCompilerFindings().size()));
         }
         return new BuildOutcome.Proceeded(TimeMachineSupport.withHostPinning(args, getLog(), () -> projectBuilder.build(rootPom, buildingRequest)));
     }
@@ -1848,6 +1855,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         private final int captureLimit;
         private final List<String> helpUrlLines = Lists.newArrayList();
         private final Queue<String> capturedLines = EvictingQueue.create(MAX_CAPTURED_ERROR_LINES);
+        private final List<String> errorProneWarningLines = Lists.newArrayList();
         private String firstErrorLine;
         private boolean capturing;
 
@@ -1866,12 +1874,18 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             if (HELP_LINE.matcher(line).find()) {
                 helpUrlLines.add(line);
             }
+            if (ErrorProneWarnings.isWarning(line)) {
+                errorProneWarningLines.add(line);
+            }
         }
         public Optional<String> firstErrorLine() {
             return Optional.ofNullable(firstErrorLine);
         }
         public List<String> helpUrlLines() {
             return helpUrlLines;
+        }
+        public List<String> errorProneWarningLines() {
+            return errorProneWarningLines;
         }
         public Optional<String> capturedDetail() {
             return capturedLines.isEmpty() ? Optional.empty() : Optional.of(StringUtils.abbreviate(Joiner.on(CharUtils.LF).join(capturedLines), captureLimit));

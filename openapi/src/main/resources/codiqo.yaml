@@ -3978,6 +3978,18 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/StaticAnalysisFindingModel'
+        errorproneFalsePositives:
+          type: array
+          items:
+            $ref: '#/components/schemas/StaticAnalysisFindingModel'
+        errorproneInChangedLines:
+          type: array
+          items:
+            $ref: '#/components/schemas/StaticAnalysisFindingModel'
+        errorpronePreExisting:
+          type: array
+          items:
+            $ref: '#/components/schemas/StaticAnalysisFindingModel'
         preExistingIssues:
           type: array
           items:

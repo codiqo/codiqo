@@ -41,6 +41,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
 import edu.umd.cs.findbugs.Priorities;
+import io.codiqo.api.code.CompilerFinding;
 import io.codiqo.util.JGit;
 import lombok.Data;
 import lombok.ToString;
@@ -622,6 +623,13 @@ public class RunArgs {
     /** File module and analysis-stage progress is appended to, for a watcher outside the build; unset writes nothing. */
     @Nullable
     private transient File buildProgressFile;
+
+    /**
+     * The compiler-plugin findings (Error Prone) the successful build of the analysed commit printed, set by the
+     * build tool's integration once that build passed. The fork turns Error Prone's errors into warnings so a check
+     * failing does not exclude a commit that compiles, and these are those warnings, triaged like PMD and SpotBugs.
+     */
+    private transient List<CompilerFinding> compilerFindings = Lists.newArrayList();
 
     /**
      * Comma-separated <b>regular expressions</b> matched against a commit's branches; empty accepts everything.

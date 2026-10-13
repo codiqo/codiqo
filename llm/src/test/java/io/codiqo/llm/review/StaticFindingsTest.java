@@ -69,6 +69,39 @@ class StaticFindingsTest {
                 new StaticFinding("pmd", "NullAssignment", "warning", "a/Service.java", 2, "flagged"),
                 new StaticFinding("spotbugs", "URF_UNREAD_FIELD", "warning", "a/Service.java", 1, "flagged")), findings);
     }
+    /** Error Prone has lists of its own, so a language that triages it gets its findings on added lines asked about */
+    @Test
+    void anErrorProneFindingOnAnAddedLineIsAsked() {
+        ReviewLanguage errorProne = new ReviewLanguage() {
+            @Override
+            public Collection<String> extensions() {
+                return List.of("java");
+            }
+            @Override
+            public String namingRule() {
+                return StringUtils.EMPTY;
+            }
+            @Override
+            public UnitName labelled(String signature, String path) {
+                return new UnitName(List.of(), signature);
+            }
+            @Override
+            public UnitName unit(String name, String signature, String path) {
+                return new UnitName(List.of(), name);
+            }
+            @Override
+            public Set<String> triagedTools() {
+                return Set.of("errorprone");
+            }
+        };
+        FileChangeModel file = new FileChangeModel().path("a/Service.java").diff(DIFF).codeUnits(List.of(
+                new CodeUnitModel().diagnostics(List.of(
+                        diagnostic(DiagnosticModel.ToolEnum.ERRORPRONE, "FormatString", 2, 2),
+                        diagnostic(DiagnosticModel.ToolEnum.ERRORPRONE, "UnusedVariable", 3, 3)))));
+
+        assertEquals(List.of(new StaticFinding("errorprone", "FormatString", "warning", "a/Service.java", 2, "flagged")),
+                StaticFindings.introduced(new AnalysisSubmissionModel().files(List.of(file)), List.of(errorProne)));
+    }
     /** a file of no registered language has no tool its findings would be triaged for */
     @Test
     void aFileOfNoRegisteredLanguageIsNotTriaged() {

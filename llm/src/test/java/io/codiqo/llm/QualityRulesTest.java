@@ -207,7 +207,7 @@ class QualityRulesTest {
         /** as Jackson reads a triaged review: the lists it did not write are null, the one it wrote is fixed */
         StaticAnalysisReview judged = new StaticAnalysisReview(null, null, null, null, null, List.of(StaticAnalysisFinding.builder()
                 .rule("NP_NULL_ON_SOME_PATH").file("a/Service.java").line(12).assessment("the value is checked one line above")
-                .severity(FindingSeverity.INFO).toolSeverity(FindingSeverity.ERROR).build()));
+                .severity(FindingSeverity.INFO).toolSeverity(FindingSeverity.ERROR).build()), null, null, null);
         LlmScoringResponse response = withDimensions(0);
         response.setStaticAnalysisReview(judged);
 

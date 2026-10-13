@@ -6,6 +6,8 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -13,6 +15,7 @@ import java.util.Set;
 import java.util.function.Function;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.eclipse.collections.api.map.primitive.IntObjectMap;
@@ -27,16 +30,20 @@ import org.jacoco.core.analysis.ICounter;
 import org.jacoco.core.analysis.ILine;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Multimaps;
 
 import edu.umd.cs.findbugs.BugInstance;
 import edu.umd.cs.findbugs.BugRankCategory;
 import edu.umd.cs.findbugs.MethodAnnotation;
 import edu.umd.cs.findbugs.Priorities;
 import io.codiqo.api.code.CodeBlockInfo;
+import io.codiqo.api.code.CompilerFinding;
 import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.coverage.CodeBlockCoverage;
 import io.codiqo.api.diff.AffectedSymbolInfo;
+import io.codiqo.api.diff.EffectiveLineParser;
 import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.api.metrics.CodeBlockMetrics;
 import io.codiqo.client.model.CallerModel;
@@ -90,6 +97,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
     @Override
     public void accept(SubmissionContext ctx) {
         Path workTreeRealPath = resolveRealPath(ctx.getWorkTree());
+        ListMultimap<String, CompilerFinding> compilerFindings = Multimaps.index(ctx.getArgs().getCompilerFindings(), CompilerFinding::getPath);
 
         for (FileAnalysis fileAnalysis : ctx.getAnalysis()) {
             FileChangeModel fileChangeModel = new FileChangeModel();
@@ -128,6 +136,11 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
                 }
             }
 
+            List<CompilerFinding> fileFindings = compilerFindings.get(fileChangeModel.getPath());
+            if (BooleanUtils.and(new boolean[] { CollectionUtils.isNotEmpty(fileFindings), Objects.nonNull(fileChangeModel.getDiff()) })) {
+                attachCompilerFindings(fileChangeModel, fileFindings);
+            }
+
             if (fileAnalysis.getLineCoverage().notEmpty()) {
                 fileChangeModel.setCoverage(buildCoverageModel(fileAnalysis.getLineCoverage()));
                 populateChangedLineCoverage(ctx, fileChangeModel, fileAnalysis);
@@ -147,6 +160,40 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         ctx.getSubmissionModel().setConfigOnly(ConfigFiles.isConfigOnly(files.stream().map(FileChangeModel::getPath).toList()));
         ctx.getSubmissionModel().setHasCodeChanges(
                 LanguageCapabilities.hasCodeChanges(files.stream().map(FileChangeModel::getLanguage).toList()));
+    }
+    /**
+     * Attaches the compiler-plugin findings on lines the commit added to the innermost added or changed unit holding
+     * the line, as the PMD and SpotBugs findings of a changed block are, so the local review's triage judges them and a
+     * confirmed one becomes a bug. Only added lines count: the build compiles every file of every module and prints a
+     * finding for each, and one on a line the commit did not write is not its author's. A finding outside every unit (a
+     * field initializer) has no unit to sit on and is dropped. The severity is always {@code warning}: the fork demotes
+     * Error Prone's errors to warnings, so the output no longer says which check was an error, and an {@code error}
+     * diagnostic would carry the static-analysis penalty on a guess.
+     */
+    @VisibleForTesting
+    public static void attachCompilerFindings(FileChangeModel file, Collection<CompilerFinding> findings) {
+        Set<Integer> added = EffectiveLineParser.parseAddedLines(file.getDiff());
+        for (CompilerFinding finding : findings) {
+            if (added.contains(finding.getLine())) {
+                LocationModel location = new LocationModel();
+                location.setStartLine(finding.getLine());
+                location.setEndLine(finding.getLine());
+
+                DiagnosticModel diagnostic = new DiagnosticModel();
+                diagnostic.setTool(DiagnosticModel.ToolEnum.fromValue(finding.getTool()));
+                diagnostic.setRuleId(finding.getRuleId());
+                diagnostic.setMessage(finding.getMessage());
+                diagnostic.setFilePath(file.getPath());
+                diagnostic.setSeverity(DiagnosticModel.SeverityEnum.WARNING);
+                diagnostic.setLocation(location);
+
+                file.getCodeUnits().stream()
+                        .filter(unit -> unit.getOperation() != CodeUnitModel.OperationEnum.DELETE)
+                        .filter(unit -> unit.getLocation().getStartLine() <= finding.getLine() && finding.getLine() <= unit.getLocation().getEndLine())
+                        .min(Comparator.comparingInt(unit -> unit.getLocation().getEndLine() - unit.getLocation().getStartLine()))
+                        .ifPresent(unit -> unit.getDiagnostics().add(diagnostic));
+            }
+        }
     }
     @VisibleForTesting
     public static CodeUnitModel removedCodeUnitModel(SubmissionContext ctx, Language language, JavaCodeBlockInfo javaBlock, Path workTreeRealPath) {

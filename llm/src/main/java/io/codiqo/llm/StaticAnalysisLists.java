@@ -26,7 +26,9 @@ public class StaticAnalysisLists {
             DiagnosticModel.ToolEnum.PMD.getValue(),
             new ToolLists("PMD", StaticAnalysisReview::getPmdInChangedLines, StaticAnalysisReview::getPmdPreExisting, StaticAnalysisReview::getPmdFalsePositives),
             DiagnosticModel.ToolEnum.SPOTBUGS.getValue(),
-            new ToolLists("SpotBugs", StaticAnalysisReview::getSpotbugsInChangedLines, StaticAnalysisReview::getSpotbugsPreExisting, StaticAnalysisReview::getSpotbugsFalsePositives));
+            new ToolLists("SpotBugs", StaticAnalysisReview::getSpotbugsInChangedLines, StaticAnalysisReview::getSpotbugsPreExisting, StaticAnalysisReview::getSpotbugsFalsePositives),
+            DiagnosticModel.ToolEnum.ERRORPRONE.getValue(),
+            new ToolLists("Error Prone", StaticAnalysisReview::getErrorproneInChangedLines, StaticAnalysisReview::getErrorpronePreExisting, StaticAnalysisReview::getErrorproneFalsePositives));
 
     public Optional<ToolLists> of(String tool) {
         return Optional.ofNullable(BY_TOOL.get(tool));
