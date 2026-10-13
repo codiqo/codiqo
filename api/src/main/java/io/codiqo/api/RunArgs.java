@@ -559,8 +559,12 @@ public class RunArgs {
 
     private transient int reviewOutputLimit = 32_768;
 
-    /** Local review: the whole review, coordinator and sub-agents together; a 270-file commit took 13-16 minutes. */
-    private transient Duration reviewTimeout = Duration.ofMinutes(30);
+    /**
+     * Local review: the whole review, coordinator and sub-agents together; a 270-file commit took 13-16 minutes at 35
+     * reviewer steps. At 64 steps reviews average about four times longer and a complexity-8 commit passed 30 minutes,
+     * so the limit doubled with the steps.
+     */
+    private transient Duration reviewTimeout = Duration.ofMinutes(60);
 
     private transient Duration reviewStartupTimeout = Duration.ofSeconds(60);
 
