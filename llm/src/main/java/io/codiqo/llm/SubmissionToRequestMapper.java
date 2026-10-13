@@ -92,10 +92,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
 
     @Override
     public LlmScoringRequest apply(AnalysisSubmissionModel submission) {
-        // untracked files (.sql, model .xml, arbitrary resources) are not scored and must not reach the LLM
-        List<FileChangeModel> files = submission.getFiles().stream()
-                .filter(SubmissionToRequestMapper::isTracked)
-                .collect(Collectors.toList());
+        List<FileChangeModel> files = trackedFiles(submission.getFiles());
         FileContext fileContext = buildFileContext(files);
         DriverScalers scalers = extractScalers(submission);
         List<String> branches = submission.getCommit().getBranches();
@@ -136,6 +133,18 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
                 .constructorScalerProd(scalers.ctorProd())
                 .constructorScalerTest(scalers.ctorTest())
                 .build();
+    }
+    /**
+     * The method and constructor changes a submission is scored on, derived exactly as {@link #apply} derives the
+     * request's {@code codeBlockChanges}: tracked files only, trivial blocks and modify blocks without an effective
+     * change of their own left out, and a MODIFY block's {@code totalLinesChanged} counted from the diff's effective
+     * added and deleted lines. The build's calibration summary prints its driver scores from these blocks, so its
+     * rows agree with the score the server stores only as long as both read this one derivation: a summary that reads
+     * the code units itself sees the signature-inclusive line count and a MODIFY block's added lines alone.
+     */
+    public static List<CodeBlockChange> codeBlockChanges(List<FileChangeModel> files) {
+        List<FileChangeModel> tracked = trackedFiles(files);
+        return mapCodeBlockChanges(tracked, buildFileContext(tracked));
     }
     private static DriverScalers extractScalers(AnalysisSubmissionModel submission) {
         DriverScalers toReturn = new DriverScalers();
@@ -876,6 +885,16 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         }
         String extension = FilenameUtils.getExtension(file.getPath());
         return StringUtils.isNotEmpty(extension) ? extension : null;
+    }
+    /**
+     * Only files of a line-filtering language or a line-count-scored config file are scored: an untracked file (.sql,
+     * a model .xml, an arbitrary resource) has no ineffective-line filter and no scoring rule, so it is kept out of
+     * the request altogether; let in, its raw lines would enter the request's change totals unfiltered.
+     */
+    private static List<FileChangeModel> trackedFiles(List<FileChangeModel> files) {
+        return files.stream()
+                .filter(SubmissionToRequestMapper::isTracked)
+                .collect(Collectors.toList());
     }
     private static boolean isTracked(FileChangeModel file) {
         return LanguageCapabilities.isLineCountScored(file) || LanguageCapabilities.isLineFilteringLanguage(mapLanguage(file));

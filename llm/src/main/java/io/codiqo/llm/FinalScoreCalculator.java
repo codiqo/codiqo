@@ -31,6 +31,7 @@ import com.google.common.collect.Sets;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.JavaInvocationCounter;
 import io.codiqo.api.logging.Log;
+import io.codiqo.api.metrics.DriverScore;
 import io.codiqo.llm.MovedLineDetector.MoveCandidate;
 import io.codiqo.llm.VolumeScoreCalculator.CodeBlockEffort;
 import io.codiqo.llm.VolumeScoreCalculator.FileEffort;
@@ -525,9 +526,10 @@ public class FinalScoreCalculator {
         return toReturn;
     }
     /**
-     * This log line is the only place category coverage is visible. The label is not persisted per block, so
-     * afterwards a commit whose categories were mostly omitted is indistinguishable from one the model judged
-     * mechanical throughout.
+     * Reports category coverage while the commit is scored, and warns when the MECHANICAL fallback covers most of it.
+     * The label is stored with each code unit, and a unit the review left unlabelled is stored without one, so
+     * coverage can also be counted afterwards; this line is where the run itself shows that a commit's score rests
+     * mostly on the fallback rather than on the review's judgment.
      */
     private void logCategoryCoverage(int categorizable, int uncategorized) {
         if (categorizable > 0) {
@@ -868,25 +870,28 @@ public class FinalScoreCalculator {
     }
     /**
      * Expresses the moved-invocation subtraction as a multiplier on the stored driver score. The
-     * driver is the weighted mean of the scaled components (lines [+ ncss] + invocations), so
-     * removing (1 − coeff/2) of the moved invocations' scaled weight from the component sum
-     * scales the driver by exactly this ratio — the operation-specific weight cancels out. The
-     * moved share is recounted by regex ({@link JavaInvocationCounter}) — identical to how the
-     * deleted side was billed, an approximation of the AST count on the added side — and clamped
-     * at the block's whole scaled invocation term.
+     * driver is the weighted mean of the scaled components ({@link DriverScore}: lines and ncss at
+     * full weight, invocations at {@link DriverScore#WEIGHT_INVOCATIONS}), so removing (1 − coeff/2)
+     * of the moved invocations' weighted term from the weighted component sum scales the driver by
+     * exactly this ratio — the operation-specific denominator cancels out. Both sides of the ratio go
+     * through {@link DriverScore#weightedSum}, so each component carries the weight the driver gives it:
+     * a MODIFY block with ten changed lines and ten wholly moved calls at k_I = 1 keeps 0.71 of its
+     * driver, where an unweighted sum would keep 0.56. The moved share is recounted by regex ({@link JavaInvocationCounter}) — identical to how the
+     * deleted side was billed, an approximation of the AST count on the added side — and clamped at
+     * the block's whole scaled invocation term.
      */
     private static double movedFactor(CodeBlockEffort block, int movedInvocations, double movedLineCoefficient) {
         int billedInvocations = block.getOperation() == LlmScoringRequest.Operation.MODIFY
                 ? block.getEffectiveInvocationsChanged()
                 : block.getDirectInvocationCount();
-        double driverComponents = block.getScaledLines() + block.getScaledNcss() + block.getScaledInvocations();
+        double driverComponents = DriverScore.weightedSum(block.getScaledLines(), block.getScaledNcss(), block.getScaledInvocations());
         if (billedInvocations <= 0 || block.getScaledInvocations() <= 0 || driverComponents <= 0) {
             return 1.0;
         }
 
         double invocationsFactor = block.getScaledInvocations() / billedInvocations;
         double movedInvocationsScaled = Math.min(movedInvocations * invocationsFactor, block.getScaledInvocations());
-        return (driverComponents - movedInvocationsScaled * (1.0 - movedLineCoefficient / 2.0)) / driverComponents;
+        return (driverComponents - DriverScore.weightedSum(0.0, 0.0, movedInvocationsScaled * (1.0 - movedLineCoefficient / 2.0))) / driverComponents;
     }
     private static int blockBodySpan(CodeBlockEffort block) {
         return block.getBodyEndLine() - block.getBodyStartLine();

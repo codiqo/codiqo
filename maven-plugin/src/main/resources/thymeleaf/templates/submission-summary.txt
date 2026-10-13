@@ -10,10 +10,11 @@ files:
   by_type:  add: [(${files.added()})], modify: [(${files.modified()})], delete: [(${files.deleted()})], rename: [(${files.renamed()})]
 
 changed_blocks:
-  total:    [(${blocks.total()})]
+[# th:if="${blocks == null}"]  unavailable: the blocks could not be mapped as the server maps them (see the warning above)
+[/][# th:unless="${blocks == null}"]  total:    [(${blocks.total()})]
   by_op:    new: [(${blocks.added()})], modify: [(${blocks.modified()})]   (trivial_skipped: [(${blocks.trivialSkipped()})])
   by_scope: prod: [(${blocks.prod()})], test: [(${blocks.test()})]
-
+[/]
 baseline_populations:
 [# th:each="row : ${rows}"]  [(${#layout.left(row.label() + ':', 17)})]  N=[(${#layout.left(row.scaler().population(), 5)})]  trivials_excluded=[(${row.trivialsExcluded()})]
 [/]
@@ -58,14 +59,16 @@ Trivial changed code blocks (excluded from driver score):
         {'File', 'Block'})})]
 [/]
 Ratio outliers in this commit (block S/L or I/L deviates > [(${#layout.fixed(maxDeviation, 2)})] from bucket median):
-[# th:if="${#lists.isEmpty(outliers)}"]  none[/][# th:unless="${#lists.isEmpty(outliers)}"][(${#tables.grid(
+[# th:if="${blocks == null}"]  unavailable[/][# th:if="${blocks != null and #lists.isEmpty(outliers)}"]  none[/][# th:unless="${#lists.isEmpty(outliers)}"][(${#tables.grid(
         {'File', 'Block', 'Kind', 'Scope', 'Op', 'Driver', 'S/L_dev', 'I/L_dev'},
         {'LEFT', 'LEFT', 'LEFT', 'LEFT', 'LEFT', 'RIGHT', 'RIGHT', 'RIGHT'},
         outliers.{ {file(), block(), kind(), scopeLabel(), operationLabel(), driverLabel(), deviationNcssLabel(), deviationInvocationsLabel()} },
         {'File', 'Block'})})][/]
 
 Ratio outlier counts by bucket:
-  method/prod:       [(${outlierCounts.methodProd()})]
+[# th:if="${blocks == null}"]  unavailable
+[/][# th:unless="${blocks == null}"]  method/prod:       [(${outlierCounts.methodProd()})]
   method/test:       [(${outlierCounts.methodTest()})]
   constructor/prod:  [(${outlierCounts.ctorProd()})]
   constructor/test:  [(${outlierCounts.ctorTest()})]
+[/]

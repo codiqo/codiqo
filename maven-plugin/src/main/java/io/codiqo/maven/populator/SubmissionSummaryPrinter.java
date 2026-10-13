@@ -2,6 +2,7 @@ package io.codiqo.maven.populator;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -15,7 +16,6 @@ import org.apache.commons.lang3.CharUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.tuple.ImmutablePair;
-import org.apache.commons.math3.util.Precision;
 import org.apache.maven.plugin.logging.Log;
 import org.eclipse.lsp4j.SymbolKind;
 import org.thymeleaf.TemplateEngine;
@@ -24,9 +24,9 @@ import org.thymeleaf.templatemode.TemplateMode;
 import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver;
 
 import com.google.common.collect.Lists;
+import com.google.common.collect.Streams;
 
 import io.codiqo.api.metrics.DriverScaler;
-import io.codiqo.api.metrics.DriverScaler.DimensionStats;
 import io.codiqo.api.metrics.DriverScore;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CodeUnitModel;
@@ -36,6 +36,10 @@ import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.MetricsModel;
 import io.codiqo.client.model.ModuleModel;
 import io.codiqo.client.model.SymbolKindModel;
+import io.codiqo.llm.SubmissionToRequestMapper;
+import io.codiqo.llm.VolumeScoreCalculator;
+import io.codiqo.llm.VolumeScoreCalculator.CodeBlockEffort;
+import io.codiqo.llm.schema.LlmScoringRequest.CodeBlockChange;
 import io.codiqo.submit.ModuleQualityTracker;
 import io.codiqo.submit.SampleMaxTracker;
 import io.codiqo.submit.SubmissionContext;
@@ -55,7 +59,6 @@ import lombok.experimental.Accessors;
 public class SubmissionSummaryPrinter implements SubmissionPopulator {
     private static final String TITLE = "Codiqo — Driver Score Calibration";
     private static final String TEMPLATE_NAME = "submission-summary";
-    private static final int ROUNDING = 2;
     private static final int COMMIT_SHA_LENGTH = 12;
     private static final String NONE = "-";
     private static final String NOT_APPLICABLE = "—";
@@ -78,12 +81,28 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
 
     @Override
     public void accept(SubmissionContext ctx) {
-        String text = TEMPLATE_ENGINE.process(TEMPLATE_NAME, templateContext(ctx));
+        String text = TEMPLATE_ENGINE.process(TEMPLATE_NAME, templateContext(ctx, scoredRows(ctx)));
         for (String line : StringUtils.splitPreserveAllTokens(Strings.CS.removeEnd(text, StringUtils.LF), CharUtils.LF)) {
             log.info(line);
         }
     }
-    private static Context templateContext(SubmissionContext ctx) {
+    /**
+     * The scored blocks' rows, or empty when the submission's code blocks cannot be mapped the way the server maps
+     * them (a diff JGit cannot parse, a code unit without metrics or a location). The summary is printed before the
+     * rest of the submission is assembled precisely so that a commit which fails later still leaves it in the log
+     * (see {@code AbstractAnalyzeMojo}), and goals that never submit print it too: a mapping failure must therefore
+     * cost only the block table, reported as a warning naming the cause, never the analysis. The server reports the
+     * same failure when it scores the commit.
+     */
+    private Optional<List<BlockRow>> scoredRows(SubmissionContext ctx) {
+        try {
+            return Optional.of(buildScoredRows(ctx));
+        } catch (RuntimeException err) {
+            log.warn("calibration summary: the changed code blocks could not be mapped as the server maps them, so their table is left out", err);
+            return Optional.empty();
+        }
+    }
+    private static Context templateContext(SubmissionContext ctx, Optional<List<BlockRow>> scoredRows) {
         AnalysisSubmissionModel submission = ctx.getSubmissionModel();
         CommitModel commit = submission.getCommit();
         TrivialCounts trivials = aggregateTrivialCounts(ctx);
@@ -95,7 +114,6 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         toReturn.setVariable("commitSha", Objects.nonNull(commit) ? StringUtils.substring(commit.getSha(), 0, COMMIT_SHA_LENGTH) : null);
         toReturn.setVariable("commitAuthor", Objects.nonNull(commit) ? commit.getAuthor() : null);
         toReturn.setVariable("files", countFiles(submission));
-        toReturn.setVariable("blocks", countChangedBlocks(submission));
 
         toReturn.setVariable("rows", Arrays.asList(
                 new ScalerRow("method/prod", trivials.methodProd(), ctx.getMethodCapQuantileProd(), ctx.getMethodScalerProd(), capMultiplier),
@@ -115,15 +133,17 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
                 maxContributors("constructor/prod", ctx.getConstructorMaxProd()),
                 maxContributors("constructor/test", ctx.getConstructorMaxTest())));
 
-        RowBundle rowBundle = buildChangedBlockRows(ctx, submission);
-        toReturn.setVariable("changedBlocks", rowBundle.nonTrivial());
-        toReturn.setVariable("trivialBlocks", rowBundle.trivial());
-        toReturn.setVariable("outliers", rowBundle.nonTrivial().stream()
+        List<BlockRow> changedBlocks = scoredRows.orElse(Collections.emptyList());
+        List<BlockRow> trivialBlocks = buildTrivialRows(submission);
+        toReturn.setVariable("blocks", scoredRows.map(rows -> countChangedBlocks(rows, trivialBlocks)).orElse(null));
+        toReturn.setVariable("changedBlocks", changedBlocks);
+        toReturn.setVariable("trivialBlocks", trivialBlocks);
+        toReturn.setVariable("outliers", changedBlocks.stream()
                 .filter(BlockRow::outlier)
                 .sorted(Comparator.comparingDouble((BlockRow r) -> Math.max(r.deviationNcss(), r.deviationInvocations())).reversed())
                 .collect(Collectors.toList()));
         toReturn.setVariable("maxDeviation", ctx.getArgs().getDriverFactorMaxDeviation());
-        toReturn.setVariable("outlierCounts", countOutliersByBucket(rowBundle.nonTrivial()));
+        toReturn.setVariable("outlierCounts", countOutliersByBucket(changedBlocks));
         return toReturn;
     }
     private static OutlierBucketCounts countOutliersByBucket(List<BlockRow> rows) {
@@ -168,29 +188,21 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         }
         return counts;
     }
-    private static BlockCounts countChangedBlocks(AnalysisSubmissionModel submission) {
+    /** counted from the rows the tables print, so the header and the tables describe the same blocks */
+    private static BlockCounts countChangedBlocks(List<BlockRow> scoredRows, List<BlockRow> trivialRows) {
         BlockCounts counts = new BlockCounts();
-        for (FileChangeModel file : CollectionUtils.emptyIfNull(submission.getFiles())) {
-            boolean isTest = Boolean.TRUE.equals(file.getIsTest());
-            for (CodeUnitModel unit : CollectionUtils.emptyIfNull(file.getCodeUnits())) {
-                if (BooleanUtils.negate(isMethodOrConstructor(unit.getKind())) || unit.getOperation() == OperationEnum.DELETE) {
-                    continue;
-                }
-                if (Boolean.TRUE.equals(unit.getIsTrivial())) {
-                    counts.trivialSkipped++;
-                    continue;
-                }
-                counts.total++;
-                if (unit.getOperation() == OperationEnum.NEW) {
-                    counts.added++;
-                } else if (unit.getOperation() == OperationEnum.MODIFY) {
-                    counts.modified++;
-                }
-                if (isTest) {
-                    counts.test++;
-                } else {
-                    counts.prod++;
-                }
+        counts.trivialSkipped = trivialRows.size();
+        for (BlockRow row : scoredRows) {
+            counts.total++;
+            if (row.modify()) {
+                counts.modified++;
+            } else {
+                counts.added++;
+            }
+            if (row.test()) {
+                counts.test++;
+            } else {
+                counts.prod++;
             }
         }
         return counts;
@@ -208,27 +220,40 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         }
         return counts;
     }
-    private static RowBundle buildChangedBlockRows(SubmissionContext ctx, AnalysisSubmissionModel submission) {
-        List<BlockRow> nonTrivial = Lists.newArrayList();
-        List<BlockRow> trivial = Lists.newArrayList();
+    /**
+     * One row per block the server scores, from the same {@link CodeBlockChange}s and one
+     * {@link VolumeScoreCalculator#calculateCodeBlockEfforts} pass over them, so the driver column is the server's
+     * driver score before the diff classification, moved-line and category factors. The operation, test and cap
+     * multipliers only shape the effort, which the summary does not print, so they are passed as 1.0. The pass returns
+     * one effort per block in order, skipping only DELETE blocks, which {@code codeBlockChanges} never yields.
+     */
+    private static List<BlockRow> buildScoredRows(SubmissionContext ctx) {
+        List<CodeBlockChange> blocks = SubmissionToRequestMapper.codeBlockChanges(ctx.getSubmissionModel().getFiles());
+        List<CodeBlockEffort> efforts = VolumeScoreCalculator.calculateCodeBlockEfforts(blocks,
+                ctx.getMethodScalerProd(), ctx.getMethodScalerTest(), ctx.getConstructorScalerProd(), ctx.getConstructorScalerTest(),
+                ctx.getMethodCapQuantileProd(), ctx.getMethodCapQuantileTest(), ctx.getConstructorCapQuantileProd(), ctx.getConstructorCapQuantileTest(),
+                1.0, 1.0, 1.0, ctx.getArgs().getDriverFactorMaxDeviation(), false);
+
+        List<BlockRow> toReturn = Streams.zip(blocks.stream(), efforts.stream(), (block, effort) -> scoredRow(ctx, block, effort))
+                .collect(Collectors.toList());
+        toReturn.sort(Comparator.comparingDouble(BlockRow::driver).reversed());
+        return toReturn;
+    }
+    private static List<BlockRow> buildTrivialRows(AnalysisSubmissionModel submission) {
+        List<BlockRow> toReturn = Lists.newArrayList();
         for (FileChangeModel file : CollectionUtils.emptyIfNull(submission.getFiles())) {
-            boolean isTest = Boolean.TRUE.equals(file.getIsTest());
             for (CodeUnitModel unit : CollectionUtils.emptyIfNull(file.getCodeUnits())) {
-                if (BooleanUtils.negate(isMethodOrConstructor(unit.getKind())) || unit.getOperation() == OperationEnum.DELETE) {
-                    continue;
+                if (BooleanUtils.and(new boolean[] {
+                        Boolean.TRUE.equals(unit.getIsTrivial()),
+                        isMethodOrConstructor(unit.getKind()),
+                        unit.getOperation() != OperationEnum.DELETE,
+                        Objects.nonNull(unit.getMetrics()) })) {
+                    toReturn.add(trivialRow(file, unit));
                 }
-                buildRow(ctx, file, unit, isTest).ifPresent(row -> {
-                    if (Boolean.TRUE.equals(unit.getIsTrivial())) {
-                        trivial.add(row);
-                    } else {
-                        nonTrivial.add(row);
-                    }
-                });
             }
         }
-        nonTrivial.sort(Comparator.comparingDouble(BlockRow::driver).reversed());
-        trivial.sort(Comparator.comparingInt(BlockRow::lines).reversed());
-        return new RowBundle(nonTrivial, trivial);
+        toReturn.sort(Comparator.comparingInt(BlockRow::lines).reversed());
+        return toReturn;
     }
     private static MaxContributors maxContributors(String label, SampleMaxTracker tracker) {
         return new MaxContributors(label, Arrays.asList(
@@ -236,86 +261,60 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
                 new MaxRow("ncss", tracker.ncss().value(), tracker.ncss().file(), tracker.ncss().block()),
                 new MaxRow("invocs", tracker.invocations().value(), tracker.invocations().file(), tracker.invocations().block())));
     }
-    private static Optional<BlockRow> buildRow(SubmissionContext ctx, FileChangeModel file, CodeUnitModel unit, boolean isTest) {
+    /** L and I as the driver formula read them: a MODIFY block's changed lines (already clamped to its body) and calls */
+    private static BlockRow scoredRow(SubmissionContext ctx, CodeBlockChange block, CodeBlockEffort effort) {
+        int lines = effort.getBodyCodeLines();
+        int invocations = effort.getDirectInvocationCount();
+        if (block.isModify()) {
+            lines = (int) effort.getScaledLines();
+            invocations = effort.getEffectiveInvocationsChanged();
+        }
+
+        return new BlockRow(
+                shortFileName(block.getFile()),
+                StringUtils.normalizeSpace(Optional.ofNullable(block.getName()).orElse(NONE)),
+                block.isConstructor() ? SymbolKind.Constructor.name() : SymbolKind.Method.name(),
+                block.isTest(),
+                block.isModify() ? OperationEnum.MODIFY : OperationEnum.NEW,
+                lines, effort.getNonCommentCodeStatements(), invocations,
+                effort.getScaledLines(),
+                effort.getScaledNcss(),
+                effort.getScaledInvocations(),
+                effort.getDriverScore(),
+                effort.getBlockRatioDeviationNcss(),
+                effort.getBlockRatioDeviationInvocations(),
+                effort.isBlockRatioOutlier(),
+                selectScaler(ctx, block.isConstructor(), block.isTest()).isEmpty());
+    }
+    /**
+     * A trivial block is never scored, so it has no changed-line count of its own: its row shows the block's size —
+     * body lines, statements and calls — whatever the operation.
+     */
+    private static BlockRow trivialRow(FileChangeModel file, CodeUnitModel unit) {
         MetricsModel metrics = unit.getMetrics();
-        if (Objects.isNull(metrics)) {
-            return Optional.empty();
-        }
-        int lines = Objects.nonNull(metrics.getNonCommentCodeLines()) ? metrics.getNonCommentCodeLines()
-                : Optional.ofNullable(metrics.getCodeLines()).orElse(0);
-        int ncss = Objects.nonNull(metrics.getNonCommentCodeStatements()) ? metrics.getNonCommentCodeStatements() : 0;
-        int invocations = Objects.nonNull(metrics.getDirectInvocationCount()) ? metrics.getDirectInvocationCount() : 0;
+        int lines = Optional.ofNullable(metrics.getBodyCodeLines())
+                .or(() -> Optional.ofNullable(metrics.getNonCommentCodeLines()))
+                .or(() -> Optional.ofNullable(metrics.getCodeLines()))
+                .orElse(0);
 
-        boolean isConstructor = unit.getKind() == SymbolKindModel.CONSTRUCTOR;
-        DriverScaler scaler = selectScaler(ctx, isConstructor, isTest);
-        double maxDeviation = ctx.getArgs().getDriverFactorMaxDeviation();
-
-        boolean modify = unit.getOperation() == OperationEnum.MODIFY;
-        int rowLines = lines;
-        int rowNcss = ncss;
-        int rowInvocations = invocations;
-        double projectedLines;
-        double projectedNcss;
-        double projectedInvocations;
-        double driver;
-        double deviationNcss;
-        double deviationInvocations;
-        if (modify) {
-            int effectiveChanged = Optional.ofNullable(unit.getEffectiveLinesChanged()).orElse(0);
-            rowLines = Math.min(effectiveChanged, lines);
-            rowInvocations = Optional.ofNullable(unit.getEffectiveInvocationsChanged()).orElse(0);
-            driver = DriverScore.forModify(scaler, rowLines, rowInvocations);
-            projectedLines = rowLines;
-            projectedNcss = 0.0;
-            projectedInvocations = rowInvocations * scaler.invocationsFactor();
-            deviationNcss = 0.0;
-            deviationInvocations = 0.0;
-        } else {
-            driver = DriverScore.forNew(scaler, lines, ncss, invocations);
-            projectedLines = lines;
-            projectedNcss = ncss * scaler.ncssFactor();
-            projectedInvocations = invocations * scaler.invocationsFactor();
-            deviationNcss = relativeDeviation(ncss, lines, bucketRatio(scaler.ncss(), scaler.lines()));
-            deviationInvocations = relativeDeviation(invocations, lines, bucketRatio(scaler.invocations(), scaler.lines()));
-        }
-
-        String fileLabel = shortFileName(file.getPath());
-        String blockLabel = StringUtils.normalizeSpace(Optional.ofNullable(unit.getName()).orElse("-"));
-        boolean outlier = deviationNcss > maxDeviation || deviationInvocations > maxDeviation;
-
-        return Optional.of(new BlockRow(
-                fileLabel,
-                blockLabel,
+        return new BlockRow(
+                shortFileName(file.getPath()),
+                StringUtils.normalizeSpace(Optional.ofNullable(unit.getName()).orElse(NONE)),
                 kindLabel(unit.getKind()),
-                isTest,
+                Boolean.TRUE.equals(file.getIsTest()),
                 unit.getOperation(),
-                rowLines, rowNcss, rowInvocations,
-                Precision.round(projectedLines, ROUNDING),
-                Precision.round(projectedNcss, ROUNDING),
-                Precision.round(projectedInvocations, ROUNDING),
-                driver,
-                Precision.round(deviationNcss, ROUNDING),
-                Precision.round(deviationInvocations, ROUNDING),
-                outlier));
-    }
-    private static double bucketRatio(DimensionStats numerator, DimensionStats denominator) {
-        if (denominator.p50() <= 0.0) {
-            return 0.0;
-        }
-        return numerator.p50() / denominator.p50();
-    }
-    private static double relativeDeviation(int blockNumerator, int blockDenominator, double bucketRatio) {
-        if (blockDenominator <= 0 || bucketRatio <= 0.0) {
-            return 0.0;
-        }
-        double blockRatio = (double) blockNumerator / blockDenominator;
-        return Math.abs(blockRatio - bucketRatio) / bucketRatio;
+                lines, Optional.ofNullable(metrics.getNonCommentCodeStatements()).orElse(0),
+                Optional.ofNullable(metrics.getDirectInvocationCount()).orElse(0),
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false, false);
     }
     private static DriverScaler selectScaler(SubmissionContext ctx, boolean isConstructor, boolean isTest) {
         if (isConstructor) {
             return isTest ? ctx.getConstructorScalerTest() : ctx.getConstructorScalerProd();
         }
         return isTest ? ctx.getMethodScalerTest() : ctx.getMethodScalerProd();
+    }
+    private static String weighted(double weight, double projected) {
+        return fixed(weight) + "×" + fixed(projected);
     }
     private static String fixed(double value) {
         return String.format(Locale.ROOT, "%.2f", value);
@@ -386,18 +385,6 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         }
     }
 
-    private static final class RowBundle extends ImmutablePair<List<BlockRow>, List<BlockRow>> {
-        private RowBundle(List<BlockRow> nonTrivial, List<BlockRow> trivial) {
-            super(nonTrivial, trivial);
-        }
-        public List<BlockRow> nonTrivial() {
-            return getLeft();
-        }
-        public List<BlockRow> trivial() {
-            return getRight();
-        }
-    }
-
     @Value
     @Accessors(fluent = true)
     @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
@@ -417,6 +404,7 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         double deviationNcss;
         double deviationInvocations;
         boolean outlier;
+        boolean emptyScaler;
 
         public boolean modify() {
             return operation == OperationEnum.MODIFY;
@@ -440,11 +428,21 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
         public String driverLabel() {
             return fixed(driver);
         }
+        /**
+         * pL, pS and pI are printed unweighted, so the formula applies each {@link DriverScore} weight itself. A bucket
+         * without samples has no scaler and scores 0, which no weighted sum of the printed components reproduces.
+         */
         public String driverFormula() {
-            if (modify()) {
-                return fixed(driver) + " = (" + fixed(projectedLines) + "+" + fixed(projectedInvocations) + ")/2";
+            if (emptyScaler) {
+                return fixed(driver) + " (no baseline samples in this bucket)";
             }
-            return fixed(driver) + " = (" + fixed(projectedLines) + "+" + fixed(projectedNcss) + "+" + fixed(projectedInvocations) + ")/" + fixed(DriverScore.TOTAL_WEIGHT);
+            String lines = weighted(DriverScore.WEIGHT_LINES, projectedLines);
+            String invocations = weighted(DriverScore.WEIGHT_INVOCATIONS, projectedInvocations);
+            if (modify()) {
+                return fixed(driver) + " = (" + lines + "+" + invocations + ")/" + fixed(DriverScore.MODIFY_WEIGHT);
+            }
+            return fixed(driver) + " = (" + lines + "+" + weighted(DriverScore.WEIGHT_NCSS, projectedNcss) + "+" + invocations + ")/"
+                    + fixed(DriverScore.TOTAL_WEIGHT);
         }
         public String deviationNcssLabel() {
             return modify() ? NOT_APPLICABLE : percent(deviationNcss);

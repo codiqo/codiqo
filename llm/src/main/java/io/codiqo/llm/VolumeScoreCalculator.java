@@ -334,7 +334,6 @@ public class VolumeScoreCalculator {
         }
         return new StaticAnalysisPreComputed(totalCount, introducedCount, testOnlyIntroducedCount, preExistingCount, category, Precision.round(impact, RunArgs.SCORE_PRECISION));
     }
-    @VisibleForTesting
     public static List<CodeBlockEffort> calculateCodeBlockEfforts(
             List<CodeBlockChange> codeBlocks,
             DriverScaler methodScalerProd,
