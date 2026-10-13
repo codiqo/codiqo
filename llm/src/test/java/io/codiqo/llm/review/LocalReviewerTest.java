@@ -1,6 +1,8 @@
 package io.codiqo.llm.review;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.util.List;
@@ -46,5 +48,23 @@ class LocalReviewerTest {
         LocalReview review = new LocalReview("abc", bugs, sessions, Duration.ofMinutes(4), "{}", null, 3, List.of("r2"), List.of());
 
         assertEquals("2 bugs, 2 sessions, 1 of 3 reviewers unanswered, 1500 input / 350 output tokens", LocalReviewer.progressDetail(review));
+    }
+    /** an unanswered reviewer whose area an answered retry covered leaves nothing unreviewed; one without a retry fails the review */
+    @Test
+    void anAreaIsUnreviewedOnlyWhenNoAnsweredRetryCoversIt() {
+        assertEquals(0, LocalReviewer.unreviewedAreas(0, 0));
+        assertEquals(0, LocalReviewer.unreviewedAreas(2, 2));
+        assertEquals(0, LocalReviewer.unreviewedAreas(1, 2), "a retry split in two covers one area");
+        assertEquals(1, LocalReviewer.unreviewedAreas(1, 0));
+        assertEquals(1, LocalReviewer.unreviewedAreas(3, 2));
+    }
+    @Test
+    void aRetryIsKnownByItsTitle() {
+        assertTrue(LocalReviewer.isRetry("Retry: billing DAL and repos"));
+        assertTrue(LocalReviewer.isRetry("Retry konquer integration steps"));
+        assertTrue(LocalReviewer.isRetry("  retry: providers"));
+        assertFalse(LocalReviewer.isRetry("Review konquer b2b models"));
+        assertFalse(LocalReviewer.isRetry(""));
+        assertFalse(LocalReviewer.isRetry(null));
     }
 }

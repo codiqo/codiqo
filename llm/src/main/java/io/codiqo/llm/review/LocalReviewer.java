@@ -65,6 +65,8 @@ public class LocalReviewer {
      */
     @VisibleForTesting
     static final int REVIEWER_REPAIRS = 2;
+    /** the title the coordinator is told to give a retry; models also write "Retry konquer steps", so the colon is optional */
+    private static final String RETRY_TITLE_PREFIX = "retry";
     /** the errors of a request that was fine and an answer that broke on the way; a refused request is not resumed */
     private static final Set<String> RESUMABLE_ERRORS = Set.of(
             "provider.transport",
@@ -314,6 +316,7 @@ public class LocalReviewer {
         List<String> unanswered = Lists.newArrayList();
         int total = 0;
         int repairs = 0;
+        int answeredRetries = 0;
         for (SessionUsage session : sessions) {
             if (OpenCodeReviewConfig.REVIEWER.equals(session.getAgent())) {
                 total++;
@@ -324,6 +327,9 @@ public class LocalReviewer {
                     log.warn("reviewer session %s ended with no answer at all: %s", session.getSessionId(), err.getMessage());
                     unanswered.add(session.getSessionId());
                     continue;
+                }
+                if (isRetry(client.session(session.getSessionId()).path("title").asString())) {
+                    answeredRetries++;
                 }
 
                 ReviewerAnswer answer = readReviewerAnswer(client, session.getSessionId(), text, repairs < REVIEWER_REPAIRS, log);
@@ -342,8 +348,30 @@ public class LocalReviewer {
                 }
             }
         }
+        int unreviewed = unreviewedAreas(unanswered.size(), answeredRetries);
+        if (unreviewed > args.getReviewMaxUnreviewedAreas()) {
+            log.error("%d of %d reviewer sessions ended without an answer and %d answered retries cover them: %d areas went unreviewed (%s); the review fails",
+                    unanswered.size(),
+                    total,
+                    answeredRetries,
+                    unreviewed,
+                    unanswered);
+            throw new IOException(unreviewed + " reviewer areas went unreviewed: sessions " + unanswered + " ended without an answer");
+        }
         return new ReviewerAnswers(total, unanswered, Lists.newArrayList(labels.values()),
                 observations.stream().limit(args.getReviewMaxObservations()).toList());
+    }
+    /**
+     * Areas left without a review: each reviewer that ended with no answer, less each answered retry the coordinator
+     * started for one. A retry may split an area in two, so this can undercount by one per split, never overcount.
+     */
+    @VisibleForTesting
+    static int unreviewedAreas(int unanswered, int answeredRetries) {
+        return Math.max(0, unanswered - answeredRetries);
+    }
+    @VisibleForTesting
+    static boolean isRetry(String title) {
+        return StringUtils.startsWithIgnoreCase(StringUtils.strip(title), RETRY_TITLE_PREFIX);
     }
     /**
      * A reviewer's labels and observations. An answer that cannot be read, broken JSON or a label written as a bare string,
