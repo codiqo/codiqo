@@ -11,6 +11,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.commons.lang3.tuple.ImmutableTriple;
@@ -19,6 +20,7 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -57,6 +59,12 @@ public class LocalReviewer {
      * fail the whole review.
      */
     private static final int TURN_RESUMES = 2;
+    /**
+     * Reviewer answers corrected in one review. Each correction is a turn the review's time budget must hold; a review
+     * with more unreadable reviewers than this has a problem a correction will not fix, and fails.
+     */
+    @VisibleForTesting
+    static final int REVIEWER_REPAIRS = 2;
     /** the errors of a request that was fine and an answer that broke on the way; a refused request is not resumed */
     private static final Set<String> RESUMABLE_ERRORS = Set.of(
             "provider.transport",
@@ -299,12 +307,13 @@ public class LocalReviewer {
             throw new IOException("the build's " + what + " never arrived", err);
         }
     }
-    private ReviewerAnswers reviewerAnswers(OpenCodeClient client, List<SessionUsage> sessions) {
+    private ReviewerAnswers reviewerAnswers(OpenCodeClient client, List<SessionUsage> sessions) throws IOException {
         Map<Pair<String, String>, LlmScoringResponse.CodeBlockCategoryView> labels = Maps.newLinkedHashMap();
         /** the coordinator is told not to repeat them, so the reviewers' own answers are the only place they exist */
         Set<String> observations = Sets.newLinkedHashSet();
         List<String> unanswered = Lists.newArrayList();
         int total = 0;
+        int repairs = 0;
         for (SessionUsage session : sessions) {
             if (OpenCodeReviewConfig.REVIEWER.equals(session.getAgent())) {
                 total++;
@@ -317,13 +326,16 @@ public class LocalReviewer {
                     continue;
                 }
 
-                List<LlmScoringResponse.CodeBlockCategoryView> sessionLabels = readLabels(session.getSessionId(), text);
-                if (sessionLabels.isEmpty()) {
+                ReviewerAnswer answer = readReviewerAnswer(client, session.getSessionId(), text, repairs < REVIEWER_REPAIRS, log);
+                if (answer.isCorrected()) {
+                    repairs++;
+                }
+                if (answer.getLabels().isEmpty()) {
                     log.warn("reviewer session %s labelled none of its code units", session.getSessionId());
                 }
-                sessionLabels.forEach(block -> labels.putIfAbsent(Pair.of(block.getFile(), block.getSignature()), block));
+                answer.getLabels().forEach(block -> labels.putIfAbsent(Pair.of(block.getFile(), block.getSignature()), block));
 
-                for (String observation : CollectionUtils.emptyIfNull(LlmJson.readAnswer(text, Observations.class).getObservations())) {
+                for (String observation : answer.getObservations()) {
                     if (StringUtils.isNotBlank(observation)) {
                         observations.add(observation.strip());
                     }
@@ -333,13 +345,38 @@ public class LocalReviewer {
         return new ReviewerAnswers(total, unanswered, Lists.newArrayList(labels.values()),
                 observations.stream().limit(args.getReviewMaxObservations()).toList());
     }
-    private List<LlmScoringResponse.CodeBlockCategoryView> readLabels(String sessionId, String answer) {
+    /**
+     * A reviewer's labels and observations. An answer that cannot be read, broken JSON or a label written as a bare string,
+     * gets the one correction the coordinator's answer gets: one such slip in ten reviewers excluded whole commits. An
+     * answer still unreadable after it fails the review, since dropping that reviewer's labels would judge with less.
+     */
+    @VisibleForTesting
+    static ReviewerAnswer readReviewerAnswer(OpenCodeClient client, String sessionId, String text, boolean mayCorrect, Log log) throws IOException {
         try {
-            return CollectionUtils.emptyIfNull(LlmJson.readAnswer(answer, LlmScoringResponse.class).getBlockCategories()).stream().toList();
+            return parseReviewerAnswer(text, false);
         } catch (JacksonException err) {
-            log.error("reviewer session %s labelled its code units in an unreadable shape (%s); the review fails", sessionId, err.getOriginalMessage());
+            if (BooleanUtils.negate(mayCorrect)) {
+                log.error("reviewer session %s answered in an unreadable shape (%s) after %d corrections in this review; the review fails",
+                        sessionId,
+                        err.getOriginalMessage(),
+                        REVIEWER_REPAIRS);
+                throw err;
+            }
+            log.warn("reviewer session %s answered in an unreadable shape (%s); asking it to correct the answer", sessionId, err.getOriginalMessage());
+            turn(client, sessionId, OpenCodeReviewConfig.repairPrompt(err.getOriginalMessage()), log);
+        }
+        String corrected = client.finalAnswer(sessionId);
+        try {
+            return parseReviewerAnswer(corrected, true);
+        } catch (JacksonException err) {
+            log.error("reviewer session %s still answered in an unreadable shape after a correction (%s); the review fails", sessionId, err.getOriginalMessage());
             throw err;
         }
+    }
+    private static ReviewerAnswer parseReviewerAnswer(String text, boolean corrected) {
+        List<LlmScoringResponse.CodeBlockCategoryView> labels = CollectionUtils.emptyIfNull(LlmJson.readAnswer(text, LlmScoringResponse.class).getBlockCategories()).stream().toList();
+        List<String> observations = CollectionUtils.emptyIfNull(LlmJson.readAnswer(text, Observations.class).getObservations()).stream().toList();
+        return new ReviewerAnswer(labels, observations, corrected);
     }
     private SessionUsage withConfiguredModel(SessionUsage usage) {
         String model = usage.getModel();
@@ -358,7 +395,7 @@ public class LocalReviewer {
      * 28-minute review followed by a 6-minute triage.
      */
     public static Duration longestReview(RunArgs args) {
-        int turns = (RunArgs.REVIEW_TURNS + FOLLOW_UPS * RunArgs.REVIEW_FOLLOW_UP_TURNS) * (1 + TURN_RESUMES);
+        int turns = (RunArgs.REVIEW_TURNS + REVIEWER_REPAIRS + FOLLOW_UPS * RunArgs.REVIEW_FOLLOW_UP_TURNS) * (1 + TURN_RESUMES);
         return args.getReviewStartupTimeout().plus(args.getReviewTimeout().multipliedBy(turns));
     }
     /**
@@ -410,7 +447,16 @@ public class LocalReviewer {
     @Data
     @NoArgsConstructor
     public static class Observations {
+        /** a lone observation written as a string, not a one-item list, says the same thing and is read as one */
+        @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY)
         private List<String> observations = Lists.newArrayList();
+    }
+
+    @Value
+    static class ReviewerAnswer {
+        List<LlmScoringResponse.CodeBlockCategoryView> labels;
+        List<String> observations;
+        boolean corrected;
     }
 
     @FunctionalInterface
