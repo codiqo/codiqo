@@ -16,6 +16,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -257,6 +259,30 @@ class LlmRelayTest {
         } finally {
             down.stop(0);
         }
+    }
+    /** a review that fails while the provider keeps failing says so, retried answers included, by status */
+    @Test
+    void countsTheProvidersFailedAnswersForTheReviewsFailure() throws Exception {
+        List<Integer> statuses = List.of(HttpResponseStatus.TOO_MANY_REQUESTS.code(), HttpResponseStatus.TOO_MANY_REQUESTS.code(), HttpResponseStatus.GATEWAY_TIMEOUT.code(),
+                HttpResponseStatus.OK.code(), HttpResponseStatus.TOO_MANY_REQUESTS.code(), HttpResponseStatus.OK.code());
+        AtomicInteger calls = new AtomicInteger();
+        HttpServer failing = fakeProxy(exchange -> respond(exchange, statuses.get(calls.getAndIncrement()), MODELS));
+        try (LlmRelay counting = relayTo(failing)) {
+            assertEquals(Optional.empty(), counting.providerErrors(), "nothing failed yet");
+
+            assertEquals(HttpResponseStatus.GATEWAY_TIMEOUT.code(), getModels(counting).statusCode());
+            assertEquals(HttpResponseStatus.OK.code(), getModels(counting).statusCode());
+            assertEquals(HttpResponseStatus.OK.code(), getModels(counting).statusCode());
+
+            assertEquals(Optional.of("the LLM provider answered 429 3 times and 504 once during the review"), counting.providerErrors());
+        } finally {
+            failing.stop(0);
+        }
+    }
+    @Test
+    void aProviderThatNeverFailedAddsNothingToTheReviewsFailure() throws Exception {
+        assertEquals(HttpResponseStatus.OK.code(), getModels(relay).statusCode());
+        assertEquals(Optional.empty(), relay.providerErrors());
     }
     @Test
     void anUnreachableProxyIsRetriedThenReportedAs502() throws Exception {

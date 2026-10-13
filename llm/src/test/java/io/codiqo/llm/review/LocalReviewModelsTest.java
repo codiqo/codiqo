@@ -74,7 +74,7 @@ class LocalReviewModelsTest {
         LlmScoringResponse.Bugs bugs = LlmScoringResponse.Bugs.builder().blocking(List.of(bug)).minor(List.of(bug)).build();
         LocalReview review = new LocalReview("abc", bugs, List.of(
                 new SessionUsage("ses_1", OpenCodeReviewConfig.COORDINATOR, "coordinator-model", 10, 100, 2, 1),
-                new SessionUsage("ses_2", OpenCodeReviewConfig.REVIEWER, "reviewer-model", 5, 1_000, 3, 0)), Duration.ofSeconds(90), "{}", null, 2, List.of(), List.of());
+                new SessionUsage("ses_2", OpenCodeReviewConfig.REVIEWER, "reviewer-model", 5, 1_000, 3, 0)), Duration.ofSeconds(90), "{}", null, 2, List.of(), List.of(), List.of(), 0);
 
         LocalReviewModel model = LocalReviewModels.toModel(review, new NoopLog());
 
@@ -115,7 +115,7 @@ class LocalReviewModelsTest {
 
         LlmScoringResponse.Bug known = LlmScoringResponse.Bug.builder().title("possible null on the error path").description("the error path reads it unchecked").file("a/Service.java").line(12).build();
         LocalReview alreadyFound = new LocalReview("abc", LlmScoringResponse.Bugs.builder().minor(List.of(known)).build(), List.of(), Duration.ofSeconds(1), "{}",
-                new LlmScoringResponse(), 0, List.of(), List.of());
+                new LlmScoringResponse(), 0, List.of(), List.of(), List.of(), 0);
         LocalReviewModel deduplicated = LocalReviewModels.toModel(alreadyFound, Optional.of(triage), new NoopLog());
         assertEquals(List.of("possible null on the error path"), deduplicated.getBugs().getMinor().stream().map(BugModel::getTitle).toList());
         assertTrue(deduplicated.getBugs().getMajor().isEmpty(), "the review already reported the bug on that line, so the confirmed finding is not listed twice");
@@ -141,7 +141,7 @@ class LocalReviewModelsTest {
         coordinator.putArray("minor");
         String answer = coordinator.toString();
         LocalReview review = new LocalReview("abc", new LlmScoringResponse.Bugs(), List.of(), Duration.ofSeconds(1), answer, null, 2, List.of(),
-                List.of("adds a refund endpoint that writes the ledger"));
+                List.of("adds a refund endpoint that writes the ledger"), List.of(), 0);
         FindingTriage triage = new FindingTriage();
         triage.setVerdicts(List.of(verdict("spotbugs", "OS_OPEN_STREAM", 19, FindingVerdict.Verdict.DEFECT, FindingVerdict.Severity.MAJOR),
                 verdict("pmd", "AssignmentInOperand", 21, FindingVerdict.Verdict.HARMLESS, null)));
@@ -155,7 +155,10 @@ class LocalReviewModelsTest {
         assertTrue(model.getReasoning().contains("2 — 1 defects, 0 false positives, 1 harmless"), model.getReasoning());
         assertTrue(model.getReasoning().contains("`OS_OPEN_STREAM` at a/Service.java:19"), model.getReasoning());
     }
-    /** the digest is Markdown the commit page renders as it is, so every byte of it is pinned */
+    /**
+     * The digest is Markdown the commit page renders as it is, so every byte of it is pinned. What the reviewers could
+     * not verify follows the observations, and corrected reviewer answers are counted beside the areas.
+     */
     @Test
     void theDigestIsRenderedExactly() {
         ObjectNode coordinator = JsonNodeFactory.instance.objectNode();
@@ -164,7 +167,8 @@ class LocalReviewModelsTest {
         tasks.addObject().put("findings", 3).putArray("paths").add("docs/").add("README.md");
         tasks.addObject().put("findings", 2).putArray("paths");
         LocalReview review = new LocalReview("abc", new LlmScoringResponse.Bugs(), List.of(), Duration.ofSeconds(1), coordinator.toString(), null, 4,
-                List.of("ses_7", "ses_9"), List.of("adds a refund endpoint that writes the ledger", "retries the payment twice"));
+                List.of("ses_7", "ses_9"), List.of("adds a refund endpoint that writes the ledger", "retries the payment twice"),
+                List.of("tests were not run", "the enum default comes from an external protobuf artifact"), 1);
         FindingVerdict unexplained = verdict("spotbugs", "NP_NULL_ON_SOME_PATH", 7, FindingVerdict.Verdict.DEFECT, FindingVerdict.Severity.MINOR);
         unexplained.setReason(null);
         FindingVerdict unjudged = verdict("pmd", "GodClass", 1, null, null);
@@ -182,10 +186,15 @@ class LocalReviewModelsTest {
                 - `payments/` — 1 finding
                 - `docs/`, `README.md` — 3 findings
                 - 2 reviewer sessions ended without an answer, so part of the commit may be unreviewed
+                - 1 reviewer answer was readable only after a correction turn
 
                 **Observations**
                 - adds a refund endpoint that writes the ledger
                 - retries the payment twice
+
+                **Not checked**
+                - tests were not run
+                - the enum default comes from an external protobuf artifact
 
                 **Tool findings checked after the build**: 5 — 2 defects, 1 false positives, 1 harmless
                 - `NP_NULL_ON_SOME_PATH` at a/Service.java:7:\s
@@ -194,10 +203,10 @@ class LocalReviewModelsTest {
     @Test
     void aDigestWithoutAreasStartsAtItsFirstSection() {
         LocalReview observed = new LocalReview("abc", new LlmScoringResponse.Bugs(), List.of(), Duration.ofSeconds(1), "{}", null, 0, List.of("ses_1"),
-                List.of("adds a refund endpoint"));
+                List.of("adds a refund endpoint"), List.of(), 0);
         FindingTriage empty = new FindingTriage();
         empty.setVerdicts(List.of());
-        LocalReview silent = new LocalReview("abc", new LlmScoringResponse.Bugs(), List.of(), Duration.ofSeconds(1), "{}", null, 0, List.of(), null);
+        LocalReview silent = new LocalReview("abc", new LlmScoringResponse.Bugs(), List.of(), Duration.ofSeconds(1), "{}", null, 0, List.of(), null, List.of(), 0);
 
         assertEquals("**Observations**\n- adds a refund endpoint", LocalReviewModels.toModel(observed, new NoopLog()).getReasoning(),
                 "the unanswered sessions are reported only beside the areas");
@@ -210,7 +219,7 @@ class LocalReviewModelsTest {
     void aMalformedPlanLeavesTheAreasOut() {
         for (String answer : List.of("{\"tasks\":null}", "{\"tasks\":[null]}", "{\"tasks\":[{\"paths\":\"core/\",\"findings\":2}]}")) {
             LocalReview review = new LocalReview("abc", new LlmScoringResponse.Bugs(), List.of(), Duration.ofSeconds(1), answer, null, 0, List.of(),
-                    List.of("adds a refund endpoint"));
+                    List.of("adds a refund endpoint"), List.of(), 0);
 
             assertEquals("**Observations**\n- adds a refund endpoint", LocalReviewModels.toModel(review, new NoopLog()).getReasoning(), answer);
         }
@@ -250,7 +259,7 @@ class LocalReviewModelsTest {
     void aBugWithoutADescriptionIsLeftOut() {
         LlmScoringResponse.Bug incomplete = LlmScoringResponse.Bug.builder().title("no description").file("A.java").line(1).build();
         LocalReview review = new LocalReview("abc", LlmScoringResponse.Bugs.builder().blocking(List.of(incomplete)).build(), List.of(), Duration.ofSeconds(1), "{}", null, 0,
-                List.of(), List.of());
+                List.of(), List.of(), List.of(), 0);
 
         LocalReviewModel model = LocalReviewModels.toModel(review, new NoopLog());
 
@@ -304,7 +313,7 @@ class LocalReviewModelsTest {
         LlmScoringResponse.QualityDimensions dims = new LlmScoringResponse.QualityDimensions();
         dims.setIntegrationSurface(new LlmScoringResponse.DimensionScore(6, "adds a topic", true));
         assessment.setQualityDimensions(dims);
-        LocalReview review = new LocalReview("abc", new LlmScoringResponse.Bugs(), List.of(), Duration.ofSeconds(1), "{}", assessment, 0, List.of(), List.of());
+        LocalReview review = new LocalReview("abc", new LlmScoringResponse.Bugs(), List.of(), Duration.ofSeconds(1), "{}", assessment, 0, List.of(), List.of(), List.of(), 0);
 
         LocalAssessmentModel model = LocalReviewModels.toModel(review, new NoopLog()).getAssessment();
 
@@ -335,7 +344,7 @@ class LocalReviewModelsTest {
                 .build());
         assessment.setRequiresSeniorReview(6);
         assessment.setSeniorReviewReasons(List.of("changes a shared contract"));
-        LocalReview review = new LocalReview("abc", new LlmScoringResponse.Bugs(), List.of(), Duration.ofSeconds(1), "{}", assessment, 0, List.of(), List.of());
+        LocalReview review = new LocalReview("abc", new LlmScoringResponse.Bugs(), List.of(), Duration.ofSeconds(1), "{}", assessment, 0, List.of(), List.of(), List.of(), 0);
 
         LocalAssessmentModel model = LocalReviewModels.toModel(review, new NoopLog()).getAssessment();
 
@@ -410,6 +419,6 @@ class LocalReviewModelsTest {
     private static LocalReview assessed(LlmScoringResponse.CodeBlockCategoryView... labels) {
         LlmScoringResponse assessment = new LlmScoringResponse();
         assessment.setBlockCategories(List.of(labels));
-        return new LocalReview("abc", new LlmScoringResponse.Bugs(), List.of(), Duration.ofSeconds(1), "{}", assessment, 0, List.of(), List.of());
+        return new LocalReview("abc", new LlmScoringResponse.Bugs(), List.of(), Duration.ofSeconds(1), "{}", assessment, 0, List.of(), List.of(), List.of(), 0);
     }
 }

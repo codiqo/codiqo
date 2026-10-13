@@ -20,6 +20,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Queues;
 import com.google.common.collect.Sets;
 
+import io.codiqo.llm.review.LocalReviewer;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import io.codiqo.llm.schema.RecapAwardsResponse;
@@ -41,7 +42,8 @@ class LlmJsonShapeGuardTest {
                 LlmScoringResponse.class,
                 TagConsolidationResponse.class,
                 RecapAwardsResponse.class,
-                SkipRequestResponse.class);
+                SkipRequestResponse.class,
+                LocalReviewer.ReviewerFields.class);
 
         Set<Class<?>> reachable = reachable(roots);
         List<String> tuples = reachable.stream()

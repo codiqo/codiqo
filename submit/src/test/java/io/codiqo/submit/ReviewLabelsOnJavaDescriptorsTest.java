@@ -211,7 +211,7 @@ class ReviewLabelsOnJavaDescriptorsTest {
     private static LocalReview review(LlmScoringResponse.CodeBlockCategoryView... labels) {
         LlmScoringResponse assessment = new LlmScoringResponse();
         assessment.setBlockCategories(List.of(labels));
-        return new LocalReview("abc", new LlmScoringResponse.Bugs(), List.of(), Duration.ofSeconds(1), "{}", assessment, 0, List.of(), List.of());
+        return new LocalReview("abc", new LlmScoringResponse.Bugs(), List.of(), Duration.ofSeconds(1), "{}", assessment, 0, List.of(), List.of(), List.of(), 0);
     }
     private static LlmScoringResponse.CodeBlockCategoryView label(String path, String signature, CodeBlockCategory category) {
         return LlmScoringResponse.CodeBlockCategoryView.builder().file(path).signature(signature).category(category).reason("because").build();

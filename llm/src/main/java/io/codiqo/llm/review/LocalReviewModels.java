@@ -185,7 +185,9 @@ public class LocalReviewModels {
         ctx.setVariable("tasks", tasks(review.getAnswer(), log));
         ctx.setVariable("reviewers", review.getReviewers());
         ctx.setVariable("unanswered", CollectionUtils.size(review.getUnansweredReviewers()));
+        ctx.setVariable("corrected", review.getCorrectedAnswers());
         ctx.setVariable("observations", CollectionUtils.emptyIfNull(review.getObservations()));
+        ctx.setVariable("notChecked", CollectionUtils.emptyIfNull(review.getNotChecked()));
         triage.ifPresent(t -> ctx.setVariable("triage", TriageDigest.of(t.getVerdicts())));
         return StringUtils.trimToNull(PromptTemplates.process(TEMPLATE_DIGEST, ctx));
     }

@@ -1565,6 +1565,10 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   for the review again. Deleting the analysis retries it. An interrupt is the run being stopped, not a failed review.
   A failed labelling or triage turn, a reviewer answer that is not JSON and a tag vocabulary the server cannot give
   after its retries fail the review as well: none of them falls back to a review that judges with less.
+- **A failed review names a failing provider.** `LlmRelay` counts every answer of the model's end point that was not
+  a success, retried ones included, by status, and `LocalReviewer` appends them to the error of a review that fails
+  while the relay is open: `local review failed: timeout; the LLM provider answered 429 482 times and 504 once during
+  the review`. A turn that timed out says only `timeout` on its own, which hid an hour of provider errors.
 - **Every review leaves a trace**: `ReviewTrace` writes the coordinator, its
   sub-agents (listed again at the end, since a failed review never listed them) and the labelling and triage forks, each
   session's messages as OpenCode recorded them, tool calls with input and status, every tool output cut to 4,000
@@ -1589,9 +1593,17 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   nothing triaged. Never parse a signature, a descriptor or a path convention in `llm`: add it to the language. Labels
   are applied exact match first, then loose, then sole candidate (`LocalReviewModels.applyBlockCategories`). A triaged
   tool needs a row in `StaticAnalysisLists`, the one table of the static analysis review's per-tool lists.
-- The reviewers' `observations` are collected from their own answers (`LocalReviewer.reviewerAnswers`), and
-  `LocalReviewModels.toModel` writes a Markdown `reasoning` digest (the coordinator's areas, the observations, the
-  triage) that the commit page shows.
+- **A reviewer answers `unitLabels`, `observations` and `notChecked` beside its bugs** (`LocalReviewer.ReviewerFields`).
+  `unitLabels` holds only label objects (`{"file","signature","category","reason"}`); it is not the scoring response's
+  `blockCategories`, which reviewers read as the topics of their review and filled with sentences. A string entry
+  still fails the read, and the reviewer gets the one correction (`REVIEWER_REPAIRS` per review) before the review
+  fails. `notChecked` holds up to three notes each on what a reviewer could not verify (an external artifact, a test it
+  could not run, a refused command), `[]` when it checked everything; a lone string is read as one item, as for
+  `observations`.
+- The reviewers' `observations` and `notChecked` are collected from their own answers (`LocalReviewer.reviewerAnswers`,
+  de-duplicated, capped by `RunArgs.reviewMaxObservations` / `reviewMaxNotChecked`), and `LocalReviewModels.toModel`
+  writes a Markdown `reasoning` digest (the coordinator's areas with the count of corrected reviewer answers, the
+  observations, **Not checked**, the triage) that the commit page shows. `notChecked` travels only in the digest.
 - The agents' git rules allow read-only commands and deny their writing and executing forms after them (`difftool`,
   `--output`, `--no-index`, external diff and textconv drivers): OpenCode applies the last matching rule. Convention
   files are fenced with `PromptFences`' markers, which `ConventionGuidance` strips from every file.

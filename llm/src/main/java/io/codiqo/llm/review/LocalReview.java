@@ -35,6 +35,12 @@ public class LocalReview {
     /** the reviewers' risk observations, each a short concrete fact; asked for only when the review assesses */
     List<String> observations;
 
+    /** what the reviewers say they could not verify: an external artifact, a test they could not run, a refused command */
+    List<String> notChecked;
+
+    /** reviewer answers that could be read only after a correction turn */
+    int correctedAnswers;
+
     public long totalInputTokens() {
         return getSessions().stream().mapToLong(SessionUsage::getInputTokens).sum();
     }

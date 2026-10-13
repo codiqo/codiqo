@@ -16,6 +16,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import io.codiqo.llm.review.LocalReviewer;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import io.codiqo.llm.schema.LlmScoringResponse.BugSource;
@@ -42,7 +43,8 @@ class LlmJsonRoundTripTest {
                 Arguments.of("scoring response", RESPONSE, LlmScoringResponse.class),
                 Arguments.of("tag consolidation response", RESPONSE, TagConsolidationResponse.class),
                 Arguments.of("recap awards response", RESPONSE, RecapAwardsResponse.class),
-                Arguments.of("skip request response", RESPONSE, SkipRequestResponse.class));
+                Arguments.of("skip request response", RESPONSE, SkipRequestResponse.class),
+                Arguments.of("reviewer answer", RESPONSE, LocalReviewer.ReviewerFields.class));
     }
 
     @ParameterizedTest(name = "{0}")
