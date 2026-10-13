@@ -118,19 +118,6 @@ public class RunArgs {
 
     public static final int DEFAULT_NUM_CTX = 256 * 1024;
     /**
-     * Tokens of the context window held back from the request JSON when the prompt budget is derived from the window
-     * ({@link #llmPromptTokenBudget} unset): they pay for the system prompt (about 25k), the completion (about 33k)
-     * and a margin. Shrinking it lets the request JSON grow into the space the system prompt and the response need,
-     * so a large commit overflows the model's context window instead of having its callers trimmed.
-     */
-    public static final int PROMPT_TOKEN_RESERVE = 72 * 1024;
-    /**
-     * A sample, not the list: the model judges blast radius from {@code callerCount} / {@code productionCallerCount},
-     * and listing up to 64 callers per block made caller rows the largest part of high fan-in prompts (Guava commits
-     * carried 10k–29k). Every caller is still submitted and persisted; only the prompt is trimmed.
-     */
-    public static final int DEFAULT_MAX_CALLERS_PER_BLOCK = 8;
-    /**
      * Default ceiling on the assembled agent-instruction text, sized above a single large instruction file (observed
      * 40-75 KB). Exceeding {@link #llmConventionFilesMaxChars} fails the analysis rather than trimming, so a default
      * below one such file would make merely enabling the feature fail every run on that repository.
@@ -473,43 +460,11 @@ public class RunArgs {
     private Short llmMaxRetries = 3;
 
     /**
-     * Extra round-trips that feed diff-classification validation failures back to the model as a critique of its
-     * own prior answer, giving it a chance to repair line arithmetic it got wrong. Zero disables the loop; a
-     * response that still fails validation is not discarded, its per-file reduction is simply skipped.
-     */
-    @Nullable
-    private Short llmValidationMaxRetries = 1;
-
-    /**
      * The model's context window, sent through Ollama's {@code options.num_ctx} (where it actually takes effect).
-     * A non-positive value falls back to {@link #DEFAULT_NUM_CTX}. Unset, it is also the basis for the prompt
-     * budget — see {@link #llmPromptTokenBudget}.
+     * A non-positive value falls back to {@link #DEFAULT_NUM_CTX}.
      */
     @Nullable
     private Integer llmNumCtx;
-
-    /**
-     * Estimated-token ceiling on the serialized request JSON embedded in the LLM prompt. Callers are
-     * unbounded, so a change to a hot method can push the prompt past the model context window (observed 549k vs a 512k limit).
-     *
-     * <p>
-     * Unset means "whatever the window allows" — {@code llmNumCtx} less {@link #PROMPT_TOKEN_RESERVE}.
-     * A fixed default derived from a 256K window silently bound every model
-     * with a larger one: an org running a 1M-context model still had its request trimmed to 188K, the
-     * caller cap descended the whole ladder to zero, and large commits were scored with no call graph at
-     * all (observed: the LLM reporting a blast radius of 193 against a persisted 586). Set this only to
-     * spend less than the window permits.
-     */
-    @Nullable
-    private Integer llmPromptTokenBudget;
-
-    /**
-     * Starting ceiling on callers listed per code block. When the request still exceeds the prompt budget the cap
-     * descends the Fibonacci sequence from just below this value to zero, keeping the largest caller set that fits;
-     * survivors are ranked production-before-test, then by call-site coupling, then by class concentration. Blocks
-     * report how many callers were dropped, so a trimmed list is visible to the model rather than silent.
-     */
-    private int llmMaxCallersPerBlock = DEFAULT_MAX_CALLERS_PER_BLOCK;
 
     /**
      * Agent instruction files, relative to the repository root, appended to the prompt as a hint for finding
@@ -540,9 +495,6 @@ public class RunArgs {
     /** Sampling seed, sent with {@link #llmTemperature} for reproducibility. Fixed rather than random so two runs of the same commit differ as little as the provider allows. */
     @Nullable
     private Integer llmSeed = DEFAULT_SEED;
-
-    /** Read by nothing since the scoring prompt is gone; still sent in the scoring configs until the server drops the column. */
-    private boolean llmEnableWebSearchTool = true;
 
     /**
      * Idle guard on the LLM connection, applied per streamed chunk to connect / read / write. The total-call
@@ -1476,7 +1428,6 @@ public class RunArgs {
         this.deleteRewardWeight = Math.min(0.20, Math.max(0.0, requireFinite(this.deleteRewardWeight, "deleteRewardWeight")));
         this.deleteRewardMaxQuantileUnits = Math.max(0.0, requireFinite(this.deleteRewardMaxQuantileUnits, "deleteRewardMaxQuantileUnits"));
         this.llmMaxRetries = (short) Math.max(1, this.llmMaxRetries);
-        this.llmValidationMaxRetries = (short) Math.max(0, this.llmValidationMaxRetries);
         this.llmConventionFilesMaxChars = Math.max(0, this.llmConventionFilesMaxChars);
     }
     /**

@@ -4205,8 +4205,12 @@ components:
           description: number of unchanged lines to include before/after each diff hunk
         llmModel:
           type: string
+          deprecated: true
+          description: No longer sent; the server chooses every model. Kept so an older plugin's submission still parses.
         llmBaseUrl:
           type: string
+          deprecated: true
+          description: No longer sent; the server chooses every endpoint. Kept so an older plugin's submission still parses.
         llmTemperature:
           type: number
           format: double
@@ -4219,7 +4223,8 @@ components:
           type: integer
         llmValidationMaxRetries:
           type: integer
-          description: Max diff-classification validation retries (feedback message + re-stream); 0 disables the retry loop
+          deprecated: true
+          description: No longer sent; it configured the retired scoring prompt. Kept so an older plugin's submission still parses.
         llmNumCtx:
           type: integer
           description: Ollama context window size sent as options.num_ctx; null means do not send
@@ -4228,6 +4233,8 @@ components:
           description: Ollama sampling seed sent as options.seed for reproducible scoring; null means do not send
         llmEnableWebSearchTool:
           type: boolean
+          deprecated: true
+          description: No longer sent; it configured the retired scoring prompt. Kept so an older plugin's submission still parses.
         llmReadTimeout:
           type: string
           description: HTTP read timeout for LLM calls, serialized as an ISO-8601 duration (e.g. "PT10M"). Null means use the client default.

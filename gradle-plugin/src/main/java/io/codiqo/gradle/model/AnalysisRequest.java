@@ -29,11 +29,6 @@ public class AnalysisRequest implements Serializable {
     private String analysisMaxHeap;
     private String buildProgressFile;
 
-    /**
-     * Set by the task, not the collector: codiqoDumpAnalysis and codiqoSubmitAnalysis share one collected model, so
-     * the collector cannot know which of them will run.
-     */
-    private boolean submit;
     private String apiUrl;
     private String apiKey;
     /** without a key the worker uses the stored browser login of this auth server, refreshing it as it ages */

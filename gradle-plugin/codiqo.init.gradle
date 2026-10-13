@@ -6,13 +6,13 @@
 //
 // Codiqo also owns test execution: every Test task is capped with the same envelope the Maven fork imposes
 // (task timeout + JUnit per-test timeout in SEPARATE_THREAD mode) and has ignoreFailures set, so a red test
-// cannot abort the build before codiqoDumpAnalysis runs. --continue is required for the same reason: a test
-// task that hits its TIMEOUT still fails, and only --continue carries the build through to the dump.
+// cannot abort the build before codiqoSubmitAnalysis runs. --continue is required for the same reason: a test
+// task that hits its TIMEOUT still fails, and only --continue carries the build through to the analysis.
 //
 // Usage (from the target project, e.g. a spring-kafka checkout):
 //   ./gradlew --init-script /path/to/codiqo.init.gradle --continue \
-//       test codiqoDumpAnalysis \
-//       -Pcodiqo.commitId=<sha> -Pcodiqo.outputDirectory=/path/to/reports
+//       test codiqoSubmitAnalysis \
+//       -Pcodiqo.commitId=<sha> -Pcodiqo.outputDirectory=/path/to/reports -Pcodiqo.apiKey=env:CODIQO_API_KEY
 //
 // Requires `mvn install` to have published io.codiqo:* to the local Maven repo first.
 

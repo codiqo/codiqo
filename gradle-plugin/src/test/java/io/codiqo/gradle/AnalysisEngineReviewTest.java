@@ -6,10 +6,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
 
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.junit.jupiter.api.Test;
+
+import com.google.common.collect.Lists;
+import com.sun.net.httpserver.HttpServer;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
@@ -26,6 +34,8 @@ import io.codiqo.submit.review.LocalReviewRun;
 class AnalysisEngineReviewTest {
     private static final SlfLogFactory LOGS = new SlfLogFactory();
     private static final Log LOG = LOGS.getLogger(AnalysisEngineReviewTest.class);
+    private static final String SHA = "0123456789abcdef0123456789abcdef01234567";
+    private static final String REVIEW_ERROR = "the coordinator answered nothing";
 
     @Test
     void theReviewSettingsReachTheRunAndTheTraceGoesBesideTheOutput() {
@@ -51,18 +61,40 @@ class AnalysisEngineReviewTest {
     }
     @Test
     void aFailedReviewLeavesTheCommitUnsubmitted() throws Exception {
+        List<String> calls = Lists.newCopyOnWriteArrayList();
+        List<String> bodies = Lists.newCopyOnWriteArrayList();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/v1/analyses", exchange -> {
+            calls.add(exchange.getRequestMethod() + StringUtils.SPACE + exchange.getRequestURI().getPath());
+            bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+        });
+        server.start();
+
+        AnalysisRequest request = new AnalysisRequest();
+        request.setApiUrl(String.format("http://127.0.0.1:%d", server.getAddress().getPort()));
+        request.setApiKey("test-api-key");
+        request.setConnectTimeoutSeconds(5);
+        request.setReadTimeoutSeconds(5);
+
         try (BackgroundReview<LocalReviewer.ReviewOutcome> failing = BackgroundReview.start(() -> {
-            throw new IOException("the coordinator answered nothing");
+            throw new IOException(REVIEW_ERROR);
         })) {
             Optional<LocalReviewRun> review = Optional.of(LocalReviewRun.of(failing, DefaultLanguageProcessors.reviewLanguages(), LOGS));
             SubmissionContext ctx = context();
 
-            assertFalse(AnalysisEngine.judged(new AnalysisRequest(), ctx.getArgs(), review, ctx, LOG), "excluded, never submitted for the prompt to judge");
+            assertFalse(AnalysisEngine.judged(request, ctx.getArgs(), review, ctx, LOG), "excluded, never submitted for the prompt to judge");
+        } finally {
+            server.stop(0);
         }
+
+        assertEquals(List.of("PATCH /api/v1/analyses/commit/" + SHA + "/exclude"), calls, "the exclusion is reported to the backend");
+        assertTrue(Strings.CS.contains(bodies.get(0), "LOCAL_REVIEW_FAILURE"), "as a failed review");
     }
     private static SubmissionContext context() {
         RunArgs args = new RunArgs();
-        args.setCommitId("0123456789abcdef0123456789abcdef01234567");
+        args.setCommitId(SHA);
         return SubmissionContext.builder().args(args).submissionModel(new AnalysisSubmissionModel()).build();
     }
 }

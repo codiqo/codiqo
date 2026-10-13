@@ -48,16 +48,12 @@ public class ScoringConfigs {
         toReturn.setCpdIntroducedThreshold(args.getCpdIntroducedThreshold());
         toReturn.setDiffContextLines(args.getDiffContextLines());
 
-        toReturn.setLlmModel(args.getLlmModel());
-        toReturn.setLlmBaseUrl(args.getLlmBaseUrl());
         toReturn.setLlmTemperature(args.getLlmTemperature());
         toReturn.setLlmTopP(args.getLlmTopP());
         toReturn.setLlmMaxTokens(args.getLlmMaxTokens());
         toReturn.setLlmMaxRetries(Optional.ofNullable(args.getLlmMaxRetries()).map(Short::intValue).orElse(null));
-        toReturn.setLlmValidationMaxRetries(Optional.ofNullable(args.getLlmValidationMaxRetries()).map(Short::intValue).orElse(null));
         toReturn.setLlmNumCtx(args.getLlmNumCtx());
         toReturn.setLlmSeed(args.getLlmSeed());
-        toReturn.setLlmEnableWebSearchTool(args.isLlmEnableWebSearchTool());
         toReturn.setLlmReadTimeout(Optional.ofNullable(args.getLlmReadTimeout()).map(Duration::toString).orElse(null));
 
         toReturn.setIncludeBranches(args.getIncludeBranches());

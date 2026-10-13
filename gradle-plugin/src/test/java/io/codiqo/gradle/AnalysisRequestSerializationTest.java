@@ -13,7 +13,7 @@ import io.codiqo.gradle.model.DependencyData;
 import io.codiqo.gradle.model.ModuleData;
 
 /**
- * The dump task pipes the collected model to the forked analysis JVM as JSON, so a field Jackson cannot map breaks
+ * The analysis task pipes the collected model to the forked analysis JVM as JSON, so a field Jackson cannot map breaks
  * every Gradle analysis at fork time rather than at compile time. Round-tripping a fully populated request keeps that
  * failure in the build.
  */

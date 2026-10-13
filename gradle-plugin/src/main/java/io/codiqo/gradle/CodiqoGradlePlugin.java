@@ -6,15 +6,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
 
 import javax.inject.Inject;
 
-import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.gradle.api.GradleException;
 import org.gradle.api.Plugin;
@@ -32,16 +29,13 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
 import io.codiqo.api.RunArgs;
-import io.codiqo.gradle.model.AnalysisRequest;
 
 public abstract class CodiqoGradlePlugin implements Plugin<Project> {
     private static final String EXTENSION_NAME = "codiqo";
     private static final String TASK_GROUP = "codiqo";
-    private static final String DUMP_TASK = "codiqoDumpAnalysis";
     private static final String SUBMIT_TASK = "codiqoSubmitAnalysis";
     private static final String INDEX_TASK = "codiqoIndexCommits";
     private static final String LOGIN_TASK = "codiqoLogin";
-    private static final Set<String> ANALYSIS_TASKS = Set.of(DUMP_TASK, SUBMIT_TASK);
     private static final String JACOCO_PLUGIN_ID = "jacoco";
 
     private static final String TIMEOUT_DEFAULT_KEY = "junit.jupiter.execution.timeout.default";
@@ -58,14 +52,7 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
     public void apply(Project project) {
         CodiqoExtension ext = project.getExtensions().create(EXTENSION_NAME, CodiqoExtension.class);
 
-        /**
-         * the two analysis tasks differ only in whether the worker posts the result. Run one or the other, never
-         * both.
-         */
-        registerAnalysisTask(project, DUMP_TASK, false,
-                "Analyze the current checkout and dump the Codiqo analysis submission as YAML");
-        registerAnalysisTask(project, SUBMIT_TASK, true,
-                "Analyze the current checkout and submit the Codiqo analysis to the backend");
+        registerAnalysisTask(project);
         project.getTasks().register(LOGIN_TASK, CodiqoLoginTask.class, task -> {
             task.setGroup(TASK_GROUP);
             task.setDescription("Authorize this machine through the browser, so builds need no codiqo.apiKey");
@@ -82,18 +69,10 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
          * analysis runs (ordered after all of them) it sees every failure without depending on event delivery.
          */
         project.getGradle().getTaskGraph().whenReady(graph -> {
-            List<CodiqoDumpAnalysisTask> scheduled = Stream.of(DUMP_TASK, SUBMIT_TASK)
-                    .map(name -> (CodiqoDumpAnalysisTask) project.getTasks().findByName(name))
-                    .filter(Objects::nonNull)
-                    .filter(graph::hasTask)
-                    .toList();
-            if (CollectionUtils.isNotEmpty(scheduled)) {
-                AnalysisRequest request = GradleModelCollector.collect(project.getRootProject(), ext);
-                List<Task> graphTasks = List.copyOf(graph.getAllTasks());
-                scheduled.forEach(task -> {
-                    task.setRequest(request);
-                    task.setScheduledTasks(graphTasks);
-                });
+            CodiqoSubmitAnalysisTask task = (CodiqoSubmitAnalysisTask) project.getTasks().getByName(SUBMIT_TASK);
+            if (graph.hasTask(task)) {
+                task.setRequest(GradleModelCollector.collect(project.getRootProject(), ext));
+                task.setScheduledTasks(List.copyOf(graph.getAllTasks()));
             }
         });
 
@@ -126,8 +105,8 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
     }
     /**
      * module progress for a watcher outside the build, as the Maven fork's event spy writes it. The counts are taken
-     * when the graph is ready, leaving out the analysis tasks: they are not part of building any module, and counting
-     * them would keep the root project running until the analysis ends.
+     * when the graph is ready, leaving out the analysis task: it is not part of building any module, and counting
+     * it would keep the root project running until the analysis ends.
      */
     private void trackBuildProgress(Project project, File progressFile) {
         Provider<BuildProgressService> service = project.getGradle().getSharedServices().registerIfAbsent(PROGRESS_SERVICE,
@@ -138,7 +117,7 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
             Map<String, Integer> tasksByProject = Maps.newLinkedHashMap();
             Map<String, String> ids = Maps.newLinkedHashMap();
             graph.getAllTasks().stream()
-                    .filter(task -> BooleanUtils.negate(ANALYSIS_TASKS.contains(task.getName())))
+                    .filter(task -> BooleanUtils.negate(SUBMIT_TASK.equals(task.getName())))
                     .forEach(task -> {
                         Project owner = task.getProject();
                         tasksByProject.merge(owner.getPath(), 1, Integer::sum);
@@ -148,11 +127,10 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
             service.get().expect(tasksByProject, ids);
         });
     }
-    private static void registerAnalysisTask(Project project, String name, boolean submit, String description) {
-        project.getTasks().register(name, CodiqoDumpAnalysisTask.class, task -> {
+    private static void registerAnalysisTask(Project project) {
+        project.getTasks().register(SUBMIT_TASK, CodiqoSubmitAnalysisTask.class, task -> {
             task.setGroup(TASK_GROUP);
-            task.setDescription(description);
-            task.setSubmit(submit);
+            task.setDescription("Analyze the current checkout and submit the Codiqo analysis to the backend");
 
             /**
              * The analysis runs after every other task in the build. Ordering only against Test tasks was not enough:
@@ -229,7 +207,7 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
 
         /**
          * mirrors -Dmaven.test.failure.ignore=true: the analysis is the deliverable, so a red test must not abort the
-         * build before codiqoDumpAnalysis runs. A task that hits the timeout above still fails, and only --continue
+         * build before codiqoSubmitAnalysis runs. A task that hits the timeout above still fails, and only --continue
          * carries the build past that — hence the documented invocation.
          */
         test.setIgnoreFailures(ignoreTestFailures);
@@ -265,14 +243,13 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
         return toReturn;
     }
     /**
-     * every task in the build except the codiqo analysis tasks — naming itself would be a cycle, and naming its
-     * sibling would serialise a dump and a submit that are never meant to run together anyway.
+     * every task in the build except the codiqo analysis task itself, since naming itself would be a cycle.
      */
     private static List<Task> tasksToFollow(Project project) {
         List<Task> toReturn = Lists.newArrayList();
         for (Project module : project.getRootProject().getAllprojects()) {
             for (Task task : module.getTasks()) {
-                if (BooleanUtils.negate(ANALYSIS_TASKS.contains(task.getName()))) {
+                if (BooleanUtils.negate(SUBMIT_TASK.equals(task.getName()))) {
                     toReturn.add(task);
                 }
             }

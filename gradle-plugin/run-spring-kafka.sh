@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 #
-# Dump Codiqo analysis for a set of spring-kafka commits using the Codiqo Gradle plugin.
-# Mirrors the Maven per-commit dump loop, adapted to Gradle:
+# Analyze and submit a set of spring-kafka commits using the Codiqo Gradle plugin.
+# Mirrors the Maven per-commit submit loop, adapted to Gradle:
 #   - the plugin analyzes the CURRENT checkout, so we git-checkout each commit first
 #   - spring-kafka ships no jacoco -> the init script force-applies it
 #   - the analysis forks its own JVM (codiqo.analysisMaxHeap), so spring-kafka's own daemon heap is left alone
 #   - the root task resolves subproject configs -> Gradle 9 requires --no-parallel
 #
-# Prereqs: `mvn install` in the codiqo repo (publishes io.codiqo:* to ~/.m2), JDK 25 installed.
+# Prereqs: `mvn install` in the codiqo repo (publishes io.codiqo:* to ~/.m2), JDK 25 installed, and a
+# credential (`./gradlew codiqoLogin` once, or -Pcodiqo.apiKey).
 #
 # MODE=fast (default): compile only, no coverage  -> minutes per commit
 # MODE=full          : run tests + jacoco          -> real changed-line coverage, slow (large suite)
@@ -48,19 +49,19 @@ for sha in "${COMMITS[@]}"; do
   rm -rf spring-kafka*/build/classes spring-kafka*/build/jacoco
 
   if [ "$MODE" = "full" ]; then
-    # single invocation: the plugin makes codiqoDumpAnalysis mustRunAfter every Test task, so the dump
+    # single invocation: the plugin makes codiqoSubmitAnalysis mustRunAfter every Test task, so the analysis
     # reads build/jacoco/test.exec only after tests write it (correct even under org.gradle.parallel).
-    # --continue: a flaky test must not abort before the dump (mustRunAfter is ordering, not dependency).
+    # --continue: a flaky test must not abort before the analysis (mustRunAfter is ordering, not dependency).
     ./gradlew --init-script "$INIT" --continue \
       test jacocoTestReport \
-      codiqoDumpAnalysis \
+      codiqoSubmitAnalysis \
       -Pcodiqo.commitId="$sha" \
       -Pcodiqo.outputDirectory="$OUT" \
       --console=plain || echo "!! build failed for $sha (continuing)"
   else
     ./gradlew --init-script "$INIT" --continue \
       testClasses \
-      codiqoDumpAnalysis \
+      codiqoSubmitAnalysis \
       -Pcodiqo.commitId="$sha" \
       -Pcodiqo.outputDirectory="$OUT" \
       -Pcodiqo.ignoreCoverage=true \
@@ -70,5 +71,5 @@ done
 
 git checkout -f "$RESTORE_REF"
 echo "restored $SK to $RESTORE_REF"
-echo "dumps in: $OUT"
+echo "submission YAML in: $OUT"
 ls -1 "$OUT"/codiqo-submission-*.yaml 2>/dev/null | sed 's#.*/#  #'

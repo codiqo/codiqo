@@ -1,7 +1,7 @@
 # Codiqo Gradle Plugin (feasibility PoC)
 
-Runs the Codiqo analysis engine against a **Gradle** build and dumps the analysis submission as
-YAML locally (no backend), or submits it (`codiqoSubmitAnalysis`, as the Maven plugin's
+Runs the Codiqo analysis engine against a **Gradle** build, writes the analysis submission as YAML
+locally and submits it to the backend (`codiqoSubmitAnalysis`, as the Maven plugin's
 `submit-commit-analysis` goal does). It reuses the shared engine (`codiqo-core`, `codiqo-lang-java`) and submission pipeline (`codiqo-submit`)
 through the build-tool-neutral `JvmProjectSpec` seam.
 
@@ -15,13 +15,13 @@ through the build-tool-neutral `JvmProjectSpec` seam.
 
 ## What it does
 
-`codiqoDumpAnalysis` analyzes the current checkout at `HEAD` (or `-Pcodiqo.commitId=<sha>`):
+`codiqoSubmitAnalysis` analyzes the current checkout at `HEAD` (or `-Pcodiqo.commitId=<sha>`):
 
 1. Iterates every `java` subproject, mapping each `SourceSet`/`Configuration`/jacoco exec into a
    `GradleProjectWrapper` (a `JvmProjectSpec`) and building a ClassGraph over the classpath.
 2. Runs the shared engine: `DefaultLanguageProcessors` (JDT/PMD/SpotBugs/JaCoCo) +
    `JGitDeltaAnalyzer`, then the `codiqo-submit` populator pipeline.
-3. Writes `build/codiqo/codiqo-submission-<sha>.yaml`.
+3. Writes `build/codiqo/codiqo-submission-<sha>.yaml`, then posts the submission to the backend.
 
 ## Run against a project (e.g. spring-kafka) without editing its build
 
@@ -29,7 +29,7 @@ through the build-tool-neutral `JvmProjectSpec` seam.
 # 1. publish codiqo artifacts locally
 cd <codiqo repo> && mvn install -DskipTests
 
-# 2. dump a batch of commits (checks out each, restores your branch at the end)
+# 2. analyze and submit a batch of commits (checks out each, restores your branch at the end)
 MODE=full /path/to/gradle-plugin/run-spring-kafka.sh    # tests + real coverage (slow)
 MODE=fast /path/to/gradle-plugin/run-spring-kafka.sh    # compile only, no coverage (minutes)
 ```
@@ -41,16 +41,16 @@ cd <spring-kafka checkout>
 git checkout <sha>
 JAVA_HOME=$(/usr/libexec/java_home -v 25) ./gradlew \
     --init-script <codiqo repo>/gradle-plugin/codiqo.init.gradle --continue \
-    :spring-kafka-test:test codiqoDumpAnalysis \
-    -Pcodiqo.commitId=<sha> -Pcodiqo.outputDirectory=<out dir>
+    :spring-kafka-test:test codiqoSubmitAnalysis \
+    -Pcodiqo.commitId=<sha> -Pcodiqo.outputDirectory=<out dir> -Pcodiqo.apiKey=env:CODIQO_API_KEY
 ```
 
 `--continue` is required, not optional: codiqo caps every `Test` task with a timeout, and a task that
 hits it still fails even though ordinary test failures are ignored — without `--continue` the build
-stops before `codiqoDumpAnalysis` and you get no submission.
+stops before `codiqoSubmitAnalysis` and you get no submission.
 
 No `jacocoTestReport` is needed. Codiqo owns coverage: each `Test` task writes
-`build/jacoco/codiqo-<task>.exec` and the dump merges those parts into the module's `codiqo.exec`.
+`build/jacoco/codiqo-<task>.exec` and the analysis merges those parts into the module's `codiqo.exec`.
 
 Pick the test task(s) of the module that **owns the changed files** — changed-line coverage is
 attributed per module, so running an unrelated module's tests yields a correct but useless
@@ -77,7 +77,7 @@ override with `-Pcodiqo.analysisMaxHeap=12g`. The daemon still needs enough heap
 project, which is the project's own concern.
 
 Success = a `codiqo-submission-<sha>.yaml` with changed-line coverage (MODE=full), PMD + SpotBugs
-diagnostics, CPD duplication and the resolved dependency registry — comparable to the Maven dump.
+diagnostics, CPD duplication and the resolved dependency registry — comparable to the Maven submission.
 
 Gradle build files count as **config files**, the way `pom.xml` does on the Maven side: `build.gradle`
 and `settings.gradle` (`.kts` too), any other `*.gradle` script, `gradle.properties`,
@@ -101,7 +101,7 @@ whole set is always attempted first, so unaffected projects keep full cross-file
   classes with older mtimes than the freshly-touched sources, tripping the engine's staleness
   guard. The batch script deletes `build/classes` per checkout to force a fresh compile.
 - A `Resolution of ':spring-kafka:annotationProcessor' … without an exclusive lock` line in the
-  log comes from **JDT-LS's own** Gradle import, not this plugin — non-fatal; the dump completes.
+  log comes from **JDT-LS's own** Gradle import, not this plugin — non-fatal; the analysis completes.
 
 ## Design notes
 
@@ -120,10 +120,9 @@ whole set is always attempted first, so unaffected projects keep full cross-file
 
 ## codiqoSubmitAnalysis
 
-Same analysis as `codiqoDumpAnalysis`, and then posts the submission to the backend — the Gradle
-counterpart of the Maven `submit-commit-analysis` goal, sharing `AnalysisSubmitter` in
-`codiqo-submit`. The YAML is still written first, so a submission the backend rejects leaves the
-dump on disk to inspect.
+The Gradle counterpart of the Maven `submit-commit-analysis` goal, sharing `AnalysisSubmitter` in
+`codiqo-submit`. The YAML is written first, so a submission the backend rejects leaves it on disk
+to inspect.
 
 ```bash
 ./gradlew --init-script <codiqo repo>/gradle-plugin/codiqo.init.gradle --continue \
@@ -132,8 +131,8 @@ dump on disk to inspect.
 ```
 
 The key is resolved in the daemon, so `env:VAR` works and a variable that is unset fails the build
-in about a second rather than after a full analysis. Run this task **or** `codiqoDumpAnalysis`,
-never both in one build.
+in about a second rather than after a full analysis. Without `codiqo.apiKey` the task uses the
+browser login stored by `codiqoLogin`, and fails the same way when there is none.
 
 ### Local review
 
@@ -145,7 +144,7 @@ excludes the commit as `LOCAL_REVIEW_FAILURE`; the review's trace goes with the 
 `-Pcodiqo.review=false` turns it off. The other settings match the Maven goal's:
 `-Pcodiqo.review.baseUrl`, `.coordinatorModel`, `.reviewerModel`, `.timeoutMinutes`,
 `.relayRetries`, `.relayTimeoutSeconds` and `.traceDirectory` (default: the analysis's output
-directory). `codiqoDumpAnalysis` never reviews.
+directory).
 
 ## codiqoIndexCommits
 
@@ -155,7 +154,7 @@ walk and `CommitIndexPublisher` for the protocol). Squash/rebase duplicates are 
 patch-id; merge/revert commits are flagged. Feeds the per-commit submit loop.
 
 Without an API key the backend half is skipped and every commit in the window is written instead,
-which is what a local dump loop wants: there is no server to say which analyses already exist.
+since there is no server to say which analyses already exist.
 
 ```bash
 ./gradlew --init-script <codiqo repo>/gradle-plugin/codiqo.init.gradle codiqoIndexCommits \
@@ -181,8 +180,7 @@ cannot drift. The gates are:
 
 The merge and author gates run before the ClassGraph scan and the JDT import, so an excluded commit
 costs a git walk rather than a full analysis. Excluded commits still carry their raw diff so the
-backend records what changed. Under `codiqoDumpAnalysis` there is no backend to tell, so the reason
-is logged and the run ends.
+backend records what changed.
 
 ## Build failures
 

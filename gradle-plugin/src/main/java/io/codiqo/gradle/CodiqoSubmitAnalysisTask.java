@@ -13,7 +13,6 @@ import java.util.Optional;
 
 import javax.inject.Inject;
 
-import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.SystemUtils;
 import org.gradle.api.DefaultTask;
@@ -41,11 +40,10 @@ import io.codiqo.submit.auth.CredentialStore;
  * {@code org.gradle.jvmargs} — micrometer pins {@code -Xmx1g}, which OOMs the ClassGraph scan. Maven is immune because
  * its fork takes heap from {@code MAVEN_OPTS}, which codiqo controls; this fork is the equivalent seam.
  */
-public abstract class CodiqoDumpAnalysisTask extends DefaultTask {
+public abstract class CodiqoSubmitAnalysisTask extends DefaultTask {
     private static final String SLF4J_SIMPLE_PREFIX = "org.slf4j.simpleLogger.";
 
     private AnalysisRequest request;
-    private boolean submit;
     private List<Task> scheduledTasks = List.of();
 
     @Inject
@@ -57,32 +55,24 @@ public abstract class CodiqoDumpAnalysisTask extends DefaultTask {
     public void setRequest(AnalysisRequest request) {
         this.request = request;
     }
-    public void setSubmit(boolean submit) {
-        this.submit = submit;
-    }
     public void setScheduledTasks(List<Task> scheduledTasks) {
         this.scheduledTasks = scheduledTasks;
     }
     @TaskAction
-    public void dump() throws URISyntaxException, IOException {
+    public void analyze() throws URISyntaxException, IOException {
         if (Objects.isNull(request)) {
             throw new IllegalStateException(
                     "Codiqo model was not collected — apply the plugin to the root project (via the codiqo init script) so it can snapshot the build.");
         }
 
         /** Checked before the build, so a missing login does not surface only after a full analysis. */
-        if (BooleanUtils.and(new boolean[]{submit, StringUtils.isBlank(request.getApiKey())}) && hasNoStoredLogin()) {
+        if (StringUtils.isBlank(request.getApiKey()) && hasNoStoredLogin()) {
             throw new GradleException("codiqoSubmitAnalysis needs a credential: run 'gradle codiqoLogin' once on this machine, "
                     + "or set codiqo.apiKey in the codiqo { } block (-Pcodiqo.apiKey=env:CODIQO_API_KEY on CI)");
         }
 
-        /**
-         * the two tasks share one collected model, so the submit flag is overlaid on the serialized form rather than
-         * set on the request — mutating a shared object per task would make the payload depend on execution order
-         */
         ObjectMapper mapper = new ObjectMapper();
         ObjectNode payload = mapper.valueToTree(request);
-        payload.put("submit", submit);
 
         /**
          * read here, not in the worker: task state lives in the daemon that ran the build, and by this point every
@@ -94,8 +84,8 @@ public abstract class CodiqoDumpAnalysisTask extends DefaultTask {
         });
         byte[] bytes = mapper.writeValueAsBytes(payload);
         List<File> classpath = workerClasspath();
-        getLogger().lifecycle("running codiqo analysis in a forked JVM (heap {}, {} classpath entries, submit={})",
-                request.getAnalysisMaxHeap(), classpath.size(), submit);
+        getLogger().lifecycle("running codiqo analysis in a forked JVM (heap {}, {} classpath entries)",
+                request.getAnalysisMaxHeap(), classpath.size());
 
         getExecOperations().javaexec(spec -> {
             spec.setExecutable(javaExecutable(request.getJavaHome()));
@@ -129,7 +119,7 @@ public abstract class CodiqoDumpAnalysisTask extends DefaultTask {
      * different version than the daemon is running.
      */
     private static List<File> workerClasspath() throws URISyntaxException {
-        ClassLoader loader = CodiqoDumpAnalysisTask.class.getClassLoader();
+        ClassLoader loader = CodiqoSubmitAnalysisTask.class.getClassLoader();
         if (loader instanceof URLClassLoader urlLoader) {
             List<File> toReturn = Lists.newArrayList();
             for (URL url : urlLoader.getURLs()) {
