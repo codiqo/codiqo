@@ -15,6 +15,7 @@ import java.util.stream.Collectors;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.openai.client.OpenAIClient;
+import com.openai.core.JsonMissing;
 import com.openai.core.JsonValue;
 import com.openai.errors.OpenAIServiceException;
 import com.openai.errors.RateLimitException;
@@ -23,7 +24,6 @@ import com.openai.models.chat.completions.ChatCompletionAssistantMessageParam;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionMessageFunctionToolCall;
 import com.openai.models.chat.completions.ChatCompletionStreamOptions;
-import com.openai.models.chat.completions.ChatCompletionToolChoiceOption;
 import com.openai.models.chat.completions.ChatCompletionToolMessageParam;
 import io.netty.handler.codec.http.HttpStatusClass;
 import org.apache.commons.collections4.CollectionUtils;
@@ -239,8 +239,9 @@ public class LlmScoringClient implements ScoringClient {
                             .contentAsJson(result)
                             .build());
                 }
+                // Ollama ignores tool_choice, so a spent budget withdraws the tool: offered, it was called until MAX_TOOL_CALLS
                 if (toolCallsMade.size() >= MAX_WEB_SEARCHES) {
-                    paramsBuilder.toolChoice(ChatCompletionToolChoiceOption.Auto.NONE);
+                    paramsBuilder.tools(JsonMissing.of());
                 }
                 continue;
             }
