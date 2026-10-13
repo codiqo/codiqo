@@ -41,10 +41,7 @@ class LlmJsonShapeGuardTest {
                 LlmScoringResponse.class,
                 TagConsolidationResponse.class,
                 RecapAwardsResponse.class,
-                SkipRequestResponse.class,
-                WebSearchTool.class,
-                Class.forName(OllamaWebSearchClient.class.getName() + "$SearchRequest"),
-                Class.forName(OllamaWebSearchClient.class.getName() + "$SearchResponse"));
+                SkipRequestResponse.class);
 
         Set<Class<?>> reachable = reachable(roots);
         List<String> tuples = reachable.stream()

@@ -197,7 +197,7 @@ class ConventionGuidanceTest {
         args.setGit(null);
         args.setLlmConventionFiles(List.of("CLAUDE.md"));
 
-        assertEquals(StringUtils.EMPTY, ConventionGuidance.read(args, NOOP_LOG), "score-from-file has no checkout to read");
+        assertEquals(StringUtils.EMPTY, ConventionGuidance.read(args, NOOP_LOG), "without a checkout there is nothing to read");
     }
     private void write(String name, String content) throws Exception {
         Path file = tempDir.resolve(name);

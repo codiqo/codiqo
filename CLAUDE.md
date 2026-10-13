@@ -1542,8 +1542,8 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   units by id, the triage of the PMD and SpotBugs findings on added lines (`StaticFindings.introduced`; a confirmed
   defect becomes a bug unless the review already reported one on that line, and every verdict places its finding in
   `LocalAssessmentModel.staticAnalysisReview`) and the trace. The server scores such a commit from the assessment alone
-  and never builds the prompt. Off, nothing of the review runs and the server scores with its prompt as before. There
-  are no sub-switches: never add one, and never let a commit of local mode fall back to the prompt.
+  and never builds a prompt. Off, nothing of the review runs and the server excludes the commit (`LOCAL_REVIEW_FAILURE`):
+  there is no server prompt any more. There are no sub-switches: never add one.
 - **Gradle has local mode too** (`codiqoSubmitAnalysis`, on by default, `-Pcodiqo.review…` settings as on Maven): the
   analysis worker starts `LocalReviewRun` on the checked-out commit after the exclusion gate and joins it before the
   submission (`AnalysisEngine.judged`), with the same exclusions and trace. Gradle cannot tell a dependency failure or a

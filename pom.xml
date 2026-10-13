@@ -94,8 +94,6 @@
         <oshi.version>7.7.1</oshi.version>
         <jol.version>0.17</jol.version>
         <openai.version>4.80.0</openai.version>
-        <djl.tokenizers.version>0.38.0</djl.tokenizers.version>
-        <jtokkit.version>1.1.0</jtokkit.version>
         <gradle.api.version>8.11.1</gradle.api.version>
         <micrometer.version>1.17.1</micrometer.version>
         <thymeleaf.version>3.1.5.RELEASE</thymeleaf.version>
@@ -598,16 +596,6 @@
                 <groupId>com.openai</groupId>
                 <artifactId>openai-java-core</artifactId>
                 <version>${openai.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>ai.djl.huggingface</groupId>
-                <artifactId>tokenizers</artifactId>
-                <version>${djl.tokenizers.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>com.knuddels</groupId>
-                <artifactId>jtokkit</artifactId>
-                <version>${jtokkit.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.thymeleaf</groupId>

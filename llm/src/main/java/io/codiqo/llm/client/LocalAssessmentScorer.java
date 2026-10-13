@@ -2,6 +2,9 @@ package io.codiqo.llm.client;
 
 import java.util.Locale;
 import java.util.Objects;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
@@ -12,6 +15,8 @@ import io.codiqo.llm.VolumeScoreCalculator;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringResponse;
+import org.apache.commons.collections4.CollectionUtils;
+import com.google.common.annotations.VisibleForTesting;
 
 /**
  * Scores a commit from its local assessment alone, with no model call and no prompt built: the labels, dimensions
@@ -49,7 +54,7 @@ public class LocalAssessmentScorer {
         LlmScoringResponse response = new LlmScoringResponse();
         LocalAssessment.overlay(response, localAssessment);
         finalScoreCalculator.applyRules(response, preComputedScores, request, reviewBugs);
-        LlmScoringClient.removeTestCodeEstimates(response, request);
+        removeTestCodeEstimates(response, request);
         log.info(String.format(Locale.ROOT, "scored from the local assessment by rules: %.2f, no prompt sent", response.getScore()));
 
         return ScoringClient.ScoringResult.builder()
@@ -57,5 +62,18 @@ public class LocalAssessmentScorer {
                 .localAssessmentScore(response.getScore())
                 .preComputedScores(preComputedScores)
                 .build();
+    }
+    /** an estimate of how much a test unit's change matters is the production code's business; the review gives none for tests */
+    @VisibleForTesting
+    public static void removeTestCodeEstimates(LlmScoringResponse response, LlmScoringRequest request) {
+        List<LlmScoringResponse.ModifyImpactEstimate> estimates = response.getModifyImpactEstimates();
+        if (CollectionUtils.isNotEmpty(estimates)) {
+            Set<String> testCodeSignatures = request.getCodeBlockChanges().stream()
+                    .filter(LlmScoringRequest.CodeBlockChange::isTest)
+                    .map(LlmScoringRequest.CodeBlockChange::getSignature)
+                    .collect(Collectors.toSet());
+
+            estimates.removeIf(estimate -> testCodeSignatures.contains(estimate.getSignature()));
+        }
     }
 }

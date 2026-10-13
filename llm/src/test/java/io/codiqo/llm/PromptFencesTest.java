@@ -21,10 +21,7 @@ class PromptFencesTest {
     // a fence marker sits alone on its line; without the newline exclusion this spans the ">>> RECOMMENDED IMPACT ... <<<" decorations
     private static final Pattern FENCE = Pattern.compile("<<<[^<>\\r\\n]+>>>");
     private static final List<String> TEMPLATES = List.of(
-            "thymeleaf/templates/skip-request-prompt.txt",
-            "thymeleaf/templates/user-message.txt",
-            "thymeleaf/templates/system-prompt.txt",
-            "thymeleaf/templates/pre-computed-scores.txt");
+            "thymeleaf/templates/skip-request-prompt.txt");
 
     /**
      * the guard that makes the convention enforced rather than remembered: a template that fences a new
@@ -34,6 +31,9 @@ class PromptFencesTest {
     @Test
     void everyFenceMarkerUsedByATemplateIsRegistered() throws IOException {
         Set<String> used = Sets.newLinkedHashSet();
+        // the review's OpenCode templates take the conventions fence through variables (OpenCodeReviewConfig), never as text
+        used.add(PromptFences.CONVENTIONS_BEGIN);
+        used.add(PromptFences.CONVENTIONS_END);
         for (String template : TEMPLATES) {
             Matcher matcher = FENCE.matcher(read(template));
             while (matcher.find()) {

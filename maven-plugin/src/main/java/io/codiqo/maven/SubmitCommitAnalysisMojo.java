@@ -121,7 +121,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
         }
     }
     @Override
-    protected void doLlmScoring(SubmissionContext ctx) throws Exception {
+    protected void doSubmit(SubmissionContext ctx) throws Exception {
         if (Objects.nonNull(reviewRun)) {
             try {
                 reviewRun.attachTo(ctx);

@@ -59,11 +59,9 @@ import okhttp3.HttpUrl;
  * by the code that does the work.</li>
  * <li><i>Server-enforced scoring</i> — the effort and volume maths in {@code VolumeScoreCalculator} and
  * {@code FinalScoreCalculator}. The LLM cannot influence these; changing one moves the score deterministically.</li>
- * <li><i>Prompt-only advisory</i> — interpolated into {@code thymeleaf/templates/system-prompt.txt} as the penalty
- * tables, thresholds and formulas the model is instructed to follow. Nothing re-checks the result afterwards: the
- * model returns impacts and the only hard guard is the {@link #qualityMultiplierMin} / {@link #qualityMultiplierMax}
- * clamp. Tuning one of these is a request to the model, not a change to the arithmetic — each is marked
- * <i>prompt-only</i> below.</li>
+ * <li><i>Prompt-only advisory</i> — the penalty tables, thresholds and formulas the retired scoring prompt asked its
+ * model to follow. No scoring reads them now; they still travel in the submitted scoring config, which old analyses
+ * record. Each is marked <i>prompt-only</i> below.</li>
  * <li><i>Report presentation</i> — thresholds that only pick a band or badge in the HTML report.</li>
  * </ul>
  *
@@ -447,17 +445,16 @@ public class RunArgs {
     private transient Set<String> remoteUrls = Sets.newHashSet();
 
     /**
-     * API key for the OpenAI-compatible LLM endpoint. Also authenticates the web-search tool when
-     * {@link #llmEnableWebSearchTool} is on. Excluded from the generated toString: {@code @Data} would otherwise
-     * publish the key into any log line that prints these args.
+     * API key for the OpenAI-compatible LLM endpoint. Excluded from the generated toString: {@code @Data} would
+     * otherwise publish the key into any log line that prints these args.
      */
     @ToString.Exclude
     @Nullable
     private String llmApiKey = System.getProperty("ollama.apiKey");
 
-    /** Model id for scoring. Also selects the tokenizer used for prompt-budget estimates, so it affects how aggressively {@link #llmMaxCallersPerBlock} is trimmed. */
+    /** Model id of a JSON completion; the server sets each purpose's own model from {@link LlmModelUsageIntent}. */
     @Nullable
-    private String llmModel = System.getProperty("ollama.model", LlmModelUsageIntent.COMMIT_SCORING.model().id());
+    private String llmModel = System.getProperty("ollama.model", LlmModel.DEEPSEEK_V4_1_FLASH.id());
 
     /** Base URL of the OpenAI-compatible endpoint. Unset falls back to the SDK's own default rather than to a codiqo default. */
     @Nullable
@@ -553,7 +550,7 @@ public class RunArgs {
     @Nullable
     private Integer llmSeed = DEFAULT_SEED;
 
-    /** Expose the web-search tool to the model, for checking an unfamiliar library or CVE while judging a change. Only the direct Ollama path can actually serve the call. */
+    /** Read by nothing since the scoring prompt is gone; still sent in the scoring configs until the server drops the column. */
     private boolean llmEnableWebSearchTool = true;
 
     /**

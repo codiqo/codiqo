@@ -1,6 +1,5 @@
 package io.codiqo.llm;
 
-import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -11,7 +10,6 @@ import org.apache.commons.collections4.CollectionUtils;
 
 import io.codiqo.client.model.AnalysisResultModel;
 import io.codiqo.client.model.ArchitectureAnalysisModel;
-import io.codiqo.client.model.LlmAnalysisModel;
 import io.codiqo.client.model.ArchitectureEffortBonusModel;
 import io.codiqo.client.model.AssessmentModel;
 import io.codiqo.client.model.BlastRadiusAnalysisModel;
@@ -37,10 +35,7 @@ import io.codiqo.client.model.StaticAnalysisFindingModel;
 import io.codiqo.client.model.StaticAnalysisImpactModel;
 import io.codiqo.client.model.StaticAnalysisReviewModel;
 import io.codiqo.client.model.TaskTypeModel;
-import io.codiqo.client.model.TokenUsageModel;
-import io.codiqo.client.model.ToolUsageModel;
 import io.codiqo.client.model.VolumeScoreModel;
-import io.codiqo.llm.client.ScoringClient.ScoringResult;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import io.codiqo.api.RunArgs;
 import lombok.experimental.UtilityClass;
@@ -75,26 +70,6 @@ public class LlmResponseMapper {
         result.setScore(llmResponse.getScore());
         result.setScoreCalculation(llmResponse.getScoreCalculation());
         result.setLlmSummary(llmResponse.getSummary());
-    }
-    public static LlmAnalysisModel mapLlmAnalysis(ScoringResult scoringResult, Duration duration, String model) {
-        LlmAnalysisModel toReturn = new LlmAnalysisModel();
-        toReturn.setModel(model);
-        toReturn.setAnalysisTimeMs((int) duration.toMillis());
-        toReturn.setThinking(scoringResult.getThinking());
-        toReturn.setPromptLength(scoringResult.getPromptLength());
-
-        TokenUsageModel tokenUsage = new TokenUsageModel();
-        tokenUsage.setPromptTokens(scoringResult.getPromptTokens());
-        tokenUsage.setCompletionTokens(scoringResult.getCompletionTokens());
-        tokenUsage.setTotalTokens(scoringResult.getTotalTokens());
-        toReturn.setTokenUsage(tokenUsage);
-
-        if (scoringResult.usedTools()) {
-            ToolUsageModel toolUsage = new ToolUsageModel();
-            toolUsage.setToolCallsCount(scoringResult.getToolCallsMade().size());
-            toReturn.setToolUsage(toolUsage);
-        }
-        return toReturn;
     }
     private static AnalysisResultModel.ChangeClassificationEnum mapChangeClassification(LlmScoringResponse.ChangeClassification classification) {
         switch (classification) {

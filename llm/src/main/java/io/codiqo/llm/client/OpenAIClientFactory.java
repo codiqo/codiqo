@@ -18,7 +18,7 @@ import io.codiqo.api.RunArgs;
 
 /**
  * Shared construction of the OpenAI-compatible HTTP client used by the streaming LLM clients
- * ({@link LlmScoringClient}, {@link TagConsolidationClient}). Centralizes the timeout policy and
+ * ({@link TagConsolidationClient} and the other JSON clients). Centralizes the timeout policy and
  * executor wiring so every streaming caller behaves identically.
  */
 public final class OpenAIClientFactory {

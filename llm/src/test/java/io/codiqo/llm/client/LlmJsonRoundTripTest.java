@@ -42,10 +42,7 @@ class LlmJsonRoundTripTest {
                 Arguments.of("scoring response", RESPONSE, LlmScoringResponse.class),
                 Arguments.of("tag consolidation response", RESPONSE, TagConsolidationResponse.class),
                 Arguments.of("recap awards response", RESPONSE, RecapAwardsResponse.class),
-                Arguments.of("skip request response", RESPONSE, SkipRequestResponse.class),
-                Arguments.of("web search tool call", RESPONSE, WebSearchTool.class),
-                Arguments.of("ollama search request", OLLAMA, Class.forName(OllamaWebSearchClient.class.getName() + "$SearchRequest")),
-                Arguments.of("ollama search response", OLLAMA, Class.forName(OllamaWebSearchClient.class.getName() + "$SearchResponse")));
+                Arguments.of("skip request response", RESPONSE, SkipRequestResponse.class));
     }
 
     @ParameterizedTest(name = "{0}")
