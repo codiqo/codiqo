@@ -570,9 +570,9 @@ public class RunArgs {
      * session, and the server scores the commit from that assessment alone. A review that fails excludes the commit
      * rather than letting the server's prompt judge it. The review fields are local to the run: none of them travels
      * with the submission. The defaults are the pairing measured on real commits: a 270-file commit reviewed for about
-     * $0.50-0.60 and a mid-size one for about $0.15-0.30.
+     * $0.50-0.60 and a mid-size one for about $0.15-0.30. On by default: the review is how a commit is judged.
      */
-    private transient boolean reviewEnabled;
+    private transient boolean reviewEnabled = true;
 
     /** Local review: where the trace of every session goes, {@code codiqo-review-trace-<sha>.json}; unset writes it to the temp directory, whose path is logged. */
     @Nullable
