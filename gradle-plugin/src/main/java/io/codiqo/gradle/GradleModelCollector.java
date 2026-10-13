@@ -62,7 +62,6 @@ public class GradleModelCollector {
         request.setReadTimeoutSeconds(longProp(root, "codiqo.readTimeoutSeconds", ext.getReadTimeoutSeconds()));
 
         request.setSkipOnBuildFailure(boolProp(root, "codiqo.skipOnBuildFailure", ext.isSkipOnBuildFailure()));
-        request.setScoreOnBuildFailure(boolProp(root, "codiqo.scoreOnBuildFailure", ext.isScoreOnBuildFailure()));
 
         request.setReview(boolProp(root, "codiqo.review", ext.isReview()));
         request.setReviewExecutable(stringProp(root, "codiqo.review.executable", ext.getReviewExecutable()));

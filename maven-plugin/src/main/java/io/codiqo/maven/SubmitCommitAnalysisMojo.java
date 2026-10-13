@@ -106,10 +106,9 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
      * failure nobody made, so it stays excluded and is analysed again once the environment is fixed.
      */
     @Override
-    protected boolean scoresFailedBuild(RunArgs args, AnalysisExcludeCategory category, boolean timedOut) {
-        boolean authorBrokeTheBuild = BooleanUtils.and(new boolean[] {
+    protected boolean scoresFailedBuild(AnalysisExcludeCategory category, boolean timedOut) {
+        return BooleanUtils.and(new boolean[] {
                 Objects.nonNull(reviewRun), AnalysisExcludeCategory.BUILD_FAILURE == category, BooleanUtils.negate(timedOut) });
-        return BooleanUtils.or(new boolean[] { super.scoresFailedBuild(args, category, timedOut), authorBrokeTheBuild });
     }
     private ReviewTags projectTags() throws Exception {
         return ProjectTags.fetch(apiUrl, credential(), connectTimeoutSeconds, readTimeoutSeconds, project.getGroupId() + ":" + project.getArtifactId(), new MavenMessageReporter(getLog()));

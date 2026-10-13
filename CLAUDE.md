@@ -1554,7 +1554,7 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   a submitted commit as well, reviews it beside the analysis. A review that fails fails the goal and sends nothing.
 - **A build the author broke does not exclude a commit whose review started** (`SubmitCommitAnalysisMojo.scoresFailedBuild`):
   with `codiqo.skipOnBuildFailure` on (the default; off, a failed build fails the run), a `BUILD_FAILURE` that is not a
-  timeout goes the degraded path even with `codiqo.scoreOnBuildFailure` off, as a source-only submission carrying
+  timeout goes the degraded path (there is no other way to score a failed build), as a source-only submission carrying
   `buildFailure` and the review's assessment, since the reviewers read the code through git. The server scores it by
   rules as a degraded commit (penalties only, no bonus) and counts the failed build as a blocking finding when it
   alerts. A dependency that could not be resolved or a build that timed out is the environment's failure and stays

@@ -30,7 +30,6 @@ public class CodiqoExtension {
     private String indexOutputFile;
 
     private boolean skipOnBuildFailure = true;
-    private boolean scoreOnBuildFailure;
 
     /**
      * Local mode, as on Maven: OpenCode agents review and assess every analysed commit next to the analysis, and the

@@ -63,7 +63,7 @@ import io.codiqo.submit.CommitExclusions.Exclusion;
 import io.codiqo.util.JGit;
 import io.codiqo.util.MemoryReport;
 
-/** the analysis of one commit; {@code submit-commit-analysis} sends it and {@code dump-commit-analysis} writes it out */
+/** the analysis of one commit, which {@code submit-commit-analysis} sends */
 public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     /**
      * Back-off ladder mirroring how stale a developer's local snapshot copy may have been when the commit was built:

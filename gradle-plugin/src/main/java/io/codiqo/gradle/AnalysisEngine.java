@@ -96,7 +96,6 @@ public class AnalysisEngine {
         args.setExcludePaths(request.getExcludePaths());
         args.setBuildTool(BuildTool.GRADLE);
         args.setSkipOnBuildFailure(request.isSkipOnBuildFailure());
-        args.setScoreOnBuildFailure(request.isScoreOnBuildFailure());
         args.setFirstParentOnly(request.isFirstParentOnly());
         args.setExcludeRevertedCommits(request.isExcludeRevertedCommits());
         Optional.ofNullable(request.getIncludeBranches()).ifPresent(args::setIncludeBranches);
@@ -243,9 +242,9 @@ public class AnalysisEngine {
         }
     }
     /**
-     * The build-failed commit. By default it is reported excluded with the failure detail attached; with
-     * codiqo.scoreOnBuildFailure it is scored instead, from a source-only index that runs PMD over the work tree but
-     * never starts the language server — genuine code volume, rather than a score derived from config lines alone.
+     * The build-failed commit. Without a review it is reported excluded with the failure detail attached; with one
+     * it is scored, from a source-only index that runs PMD over the work tree but never starts the language server —
+     * genuine code volume, rather than a score derived from config lines alone.
      */
     private static void runDegraded(AnalysisRequest request, RunArgs args, Optional<LocalReviewRun> review, LogFactory logFactory, Log log) throws Exception {
         String reason = "build failed";
@@ -275,8 +274,7 @@ public class AnalysisEngine {
          * whose review started is scored by rules from it as a build-failed commit, as on Maven. Gradle reports no
          * timeout apart from a failure, so every failed build counts as the author's here.
          */
-        boolean scored = BooleanUtils.or(new boolean[] { args.isScoreOnBuildFailure(), review.isPresent() });
-        if (BooleanUtils.and(new boolean[] { scored, CollectionUtils.isNotEmpty(files) })) {
+        if (BooleanUtils.and(new boolean[] { review.isPresent(), CollectionUtils.isNotEmpty(files) })) {
             if (ctx.getAnalysis().isRevertCommit()) {
                 reportRevert(request, args, ctx, log);
                 return;
