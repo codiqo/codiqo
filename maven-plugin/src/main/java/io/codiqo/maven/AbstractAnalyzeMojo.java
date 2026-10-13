@@ -330,6 +330,43 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     @Parameter(property = "codiqo.scoreOnBuildFailure", defaultValue = "false")
     protected boolean scoreOnBuildFailure;
 
+    /**
+     * Local mode, the one review switch: agents review and assess the commit next to the analysis, judge its static
+     * findings after the build and leave a trace, and the server scores the commit from that assessment alone. The
+     * agents read the analysis clone, which holds exactly the commit, so every analysed commit is reviewed, a backlog of
+     * historical ones included; each one is a review the organization pays for. A review that fails excludes the commit.
+     */
+    @Parameter(property = "codiqo.review")
+    private Boolean review;
+
+    /** each review setting left unset keeps its {@link RunArgs} default */
+    @Parameter(property = "codiqo.review.executable")
+    private String reviewExecutable;
+
+    @Parameter(property = "codiqo.review.baseUrl")
+    private String reviewBaseUrl;
+
+    @Parameter(property = "codiqo.review.coordinatorModel")
+    private String reviewCoordinatorModel;
+
+    @Parameter(property = "codiqo.review.reviewerModel")
+    private String reviewReviewerModel;
+
+    @Parameter(property = "codiqo.review.timeoutMinutes")
+    private Integer reviewTimeoutMinutes;
+
+    /** retries of a call through the relay, to the Codiqo proxy or a direct endpoint, that failed on the way (network error, timeout, 429 or 5xx) */
+    @Parameter(property = "codiqo.review.relayRetries")
+    private Integer reviewRelayRetries;
+
+    /** how long a call through the relay, to the Codiqo proxy or a direct endpoint, may take to start answering */
+    @Parameter(property = "codiqo.review.relayTimeoutSeconds")
+    private Integer reviewRelayTimeoutSeconds;
+
+    /** where the review's trace of every session and tool call goes */
+    @Parameter(property = "codiqo.review.traceDirectory", defaultValue = "${project.build.directory}/codiqo")
+    private File reviewTraceDirectory;
+
     @Parameter(property = "codiqo.excludeRevertedCommits", defaultValue = "true")
     protected boolean excludeRevertedCommits;
 
@@ -1628,6 +1665,18 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), reason));
             doExcludeAnalysis(args.getCommitId(), reason, category, detail, files, ctx.getSubmissionModel().getProjectMetrics());
         }
+    }
+    /** every review setting left unset keeps its {@link RunArgs} default; the review runs only where a goal starts it */
+    protected void applyReviewSettings(RunArgs args) {
+        Optional.ofNullable(review).ifPresent(args::setReviewEnabled);
+        Optional.ofNullable(reviewTraceDirectory).ifPresent(args::setReviewTraceDirectory);
+        Optional.ofNullable(reviewExecutable).ifPresent(args::setReviewExecutable);
+        Optional.ofNullable(reviewBaseUrl).ifPresent(args::setReviewBaseUrl);
+        Optional.ofNullable(reviewCoordinatorModel).ifPresent(args::setReviewCoordinatorModel);
+        Optional.ofNullable(reviewReviewerModel).ifPresent(args::setReviewReviewerModel);
+        Optional.ofNullable(reviewTimeoutMinutes).ifPresent(minutes -> args.setReviewTimeout(Duration.ofMinutes(minutes)));
+        Optional.ofNullable(reviewRelayRetries).ifPresent(args::setReviewRelayRetries);
+        Optional.ofNullable(reviewRelayTimeoutSeconds).ifPresent(seconds -> args.setReviewRelayRequestTimeout(Duration.ofSeconds(seconds)));
     }
     /**
      * The category and the timeout are for a subclass that scores only some failures: a dependency that could not be

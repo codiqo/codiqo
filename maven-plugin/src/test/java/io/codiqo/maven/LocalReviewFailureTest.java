@@ -10,6 +10,7 @@ import java.util.concurrent.Callable;
 
 import org.apache.commons.lang3.reflect.FieldUtils;
 import org.apache.maven.plugin.MojoExecutionException;
+import org.apache.maven.plugin.logging.SystemStreamLog;
 import org.junit.jupiter.api.Test;
 
 import com.google.common.collect.Lists;
@@ -65,7 +66,7 @@ class LocalReviewFailureTest {
                 excluded.add(commitSha + " " + category + " " + reason);
             }
         };
-        FieldUtils.writeField(toReturn, "backgroundReview", BackgroundReview.start(review), true);
+        FieldUtils.writeField(toReturn, "reviewRun", LocalReviewRun.of(BackgroundReview.start(review), new SystemStreamLog()), true);
         return toReturn;
     }
     private static SubmissionContext context() {

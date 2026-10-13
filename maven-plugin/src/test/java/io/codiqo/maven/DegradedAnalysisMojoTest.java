@@ -18,6 +18,7 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.reflect.FieldUtils;
+import org.apache.maven.plugin.logging.SystemStreamLog;
 import org.apache.maven.project.MavenProject;
 import org.apache.maven.rtinfo.RuntimeInformation;
 import org.eclipse.jgit.api.Git;
@@ -37,6 +38,7 @@ import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.ProjectMetricsModel;
+import io.codiqo.llm.review.LocalReviewer;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.util.JGit;
 import io.netty.handler.codec.http.HttpResponseStatus;
@@ -200,8 +202,8 @@ class DegradedAnalysisMojoTest {
         RunArgs args = new RunArgs();
         assertFalse(submit.scoresFailedBuild(args, AnalysisExcludeCategory.BUILD_FAILURE, false), "no review started: the flag decides, and it is off");
 
-        try (BackgroundReview<Object> review = BackgroundReview.start(Object::new)) {
-            FieldUtils.writeField(submit, "backgroundReview", review, true);
+        try (BackgroundReview<LocalReviewer.ReviewOutcome> review = BackgroundReview.start(() -> null)) {
+            FieldUtils.writeField(submit, "reviewRun", LocalReviewRun.of(review, new SystemStreamLog()), true);
             assertTrue(submit.scoresFailedBuild(args, AnalysisExcludeCategory.BUILD_FAILURE, false));
             assertFalse(submit.scoresFailedBuild(args, AnalysisExcludeCategory.BUILD_FAILURE, true), "a build that ran out of time is not the author's");
             assertFalse(submit.scoresFailedBuild(args, AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, false), "an unresolvable dependency is not the author's");
@@ -215,10 +217,10 @@ class DegradedAnalysisMojoTest {
         submit.project = mojo.project;
         FieldUtils.writeField(submit, "runtimeInformation", FieldUtils.readField(mojo, "runtimeInformation", true), true);
 
-        try (BackgroundReview<Object> review = BackgroundReview.start(() -> {
+        try (BackgroundReview<LocalReviewer.ReviewOutcome> review = BackgroundReview.start(() -> {
             throw new IOException("the coordinator answered nothing");
         })) {
-            FieldUtils.writeField(submit, "backgroundReview", review, true);
+            FieldUtils.writeField(submit, "reviewRun", LocalReviewRun.of(review, new SystemStreamLog()), true);
             submit.doDegradedAnalysis(argsFor(second), "[ERROR] COMPILATION ERROR", AnalysisExcludeCategory.BUILD_FAILURE, "cannot find symbol");
         }
 
