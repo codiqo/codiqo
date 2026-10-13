@@ -4,7 +4,7 @@ Plan the work as AT MOST [(${maxTasks})] [(${reviewer})] subagent tasks, splitti
 
 Review only what this commit changes. A defect that already existed before the commit in code it touches is not a finding of this commit.
 
-If a subagent's report holds no JSON object, its area went unreviewed: start ONE more subagent for those paths (split them in two if the area was large) before merging; never more than one retry per area.
+If a subagent's report holds no JSON object, its area went unreviewed: start ONE more subagent for those paths (split them in two if the area was large) before merging, titled "Retry: " followed by the original subagent's title; never more than one retry per area. An area left unreviewed fails the whole review.
 
 [# th:unless="${#strings.isEmpty(guidance)}"][# th:insert="~{opencode/conventions}" /]
 [/][# th:insert="~{opencode/severity}" /] When you merge, keep the most severe grading a subagent gave a confirmed defect.

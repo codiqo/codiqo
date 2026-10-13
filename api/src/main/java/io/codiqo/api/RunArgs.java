@@ -601,6 +601,13 @@ public class RunArgs {
     private transient int reviewMaxObservations = 24;
 
     /**
+     * Local review: reviewer areas that may go unreviewed before the review fails. An area is unreviewed when its reviewer
+     * ended without an answer and no answered retry covers it. 0 fails on the first one, so a broken review is
+     * investigated instead of scored with less.
+     */
+    private transient int reviewMaxUnreviewedAreas = 0;
+
+    /**
      * Local review: context window declared for both models. OpenCode compacts a conversation that reaches it; both
      * default models serve 1M tokens, and declaring less keeps a runaway sub-agent from dragging a huge context through
      * every later step.
