@@ -1544,6 +1544,10 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   `LocalAssessmentModel.staticAnalysisReview`) and the trace. The server scores such a commit from the assessment alone
   and never builds the prompt. Off, nothing of the review runs and the server scores with its prompt as before. There
   are no sub-switches: never add one, and never let a commit of local mode fall back to the prompt.
+- **Uncommitted changes are reviewed too** (`analyze-uncommitted-changes`, when it submits): `WorkingTreeCommit` makes a
+  commit object of the working tree through a throwaway index (untracked files as the analysis reads them, `.gitignore`
+  respected; the developer's index, files, branches and stash untouched), and `LocalReviewRun`, which runs the review of
+  a submitted commit as well, reviews it beside the analysis. A review that fails fails the goal and sends nothing.
 - **A build the author broke does not exclude a commit whose review started** (`SubmitCommitAnalysisMojo.scoresFailedBuild`):
   with `codiqo.skipOnBuildFailure` on (the default; off, a failed build fails the run), a `BUILD_FAILURE` that is not a
   timeout goes the degraded path even with `codiqo.scoreOnBuildFailure` off, as a source-only submission carrying

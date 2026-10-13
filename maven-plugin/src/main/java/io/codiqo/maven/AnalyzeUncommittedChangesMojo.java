@@ -1,8 +1,11 @@
 package io.codiqo.maven;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
@@ -14,11 +17,15 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.client.model.AnalysisAcceptedModel;
 import io.codiqo.client.model.AnalysisResultModel;
+import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.maven.auth.MavenCredentials;
 import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.submit.AnalysisSubmitter;
+import io.codiqo.submit.CommitExclusions;
+import io.codiqo.submit.ProjectTags;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.submit.auth.CodiqoCredential;
+import io.codiqo.util.JGit;
 
 /**
  * Scores the working tree as if it were a commit.
@@ -66,22 +73,67 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
     @Parameter(defaultValue = "${reactorProjects}", readonly = true)
     protected List<MavenProject> reactors;
 
+    /** resolved once per run, so the review and the submission share one browser login */
+    private CodiqoCredential credential;
+    private LocalReviewRun reviewRun;
+
     @Override
     protected void doPrepare(RunArgs args) throws Exception {
         super.doPrepare(args);
 
         args.setIncludeUntracked(includeUntracked);
+        applyReviewSettings(args);
     }
     @Override
     protected void doExecute(RunArgs args) throws Exception {
         try (ClassGraphSpec scan = scanProjects(args, reactors)) {
+            startReview(args);
             super.doExecute(args);
+        } finally {
+            if (Objects.nonNull(reviewRun)) {
+                reviewRun.close();
+            }
         }
+    }
+    /**
+     * The changes are reviewed as a commit object of the working tree, beside the analysis, so a developer's work in
+     * progress is judged the way a submitted commit is. Only a submitted run is reviewed: the review spends the
+     * organization's LLM budget through the proxy, which a local run has no reason to.
+     */
+    private void startReview(RunArgs args) throws Exception {
+        if (BooleanUtils.and(new boolean[] { submit, args.isReviewEnabled() })) {
+            Path workTree = args.getGit().getWorkTree().toPath();
+            String sha = WorkingTreeCommit.create(workTree, includeUntracked);
+            if (CommitExclusions.hasAnalyzableFile(JGit.changedFileNames(args.getGit(), sha), DefaultLanguageProcessors.supportedExtensions())) {
+                CodiqoCredential credential = credential();
+                reviewRun = LocalReviewRun.start(
+                        args,
+                        workTree,
+                        sha,
+                        LocalReviewRun.endpoint(args, resourceUrl, () -> credential),
+                        LocalReviewGuidance.read(args, getLog()),
+                        () -> ProjectTags.fetch(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds, project.getGroupId() + ":" + project.getArtifactId(), new MavenMessageReporter(getLog())),
+                        getLog());
+                getLog().info("local review of the uncommitted changes started next to the analysis");
+            } else {
+                getLog().info("local review skipped: the uncommitted changes touch no file the analysis reads");
+            }
+        }
+    }
+    private CodiqoCredential credential() throws Exception {
+        if (Objects.isNull(credential)) {
+            credential = MavenCredentials.resolve(apiKey, authUrl, resourceUrl, getLog());
+        }
+        return credential;
     }
     @Override
     protected void doLlmScoring(SubmissionContext ctx) throws Exception {
         if (submit) {
-            CodiqoCredential credential = MavenCredentials.resolve(apiKey, authUrl, resourceUrl, getLog());
+            /** a review that failed leaves the changes unjudged: the developer is told, and nothing is sent */
+            if (Objects.nonNull(reviewRun)) {
+                reviewRun.attachTo(ctx);
+            }
+            CodiqoCredential credential = credential();
             Log reporter = new MavenMessageReporter(getLog());
 
             AnalysisAcceptedModel response = AnalysisSubmitter.submitUncommitted(
