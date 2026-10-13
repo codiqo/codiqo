@@ -15,23 +15,27 @@ public class DriverScore {
      */
     public static final double WEIGHT_INVOCATIONS = 0.5;
     public static final double TOTAL_WEIGHT = WEIGHT_LINES + WEIGHT_NCSS + WEIGHT_INVOCATIONS;
-    private static final double MODIFY_WEIGHT = WEIGHT_LINES + WEIGHT_INVOCATIONS;
+    public static final double MODIFY_WEIGHT = WEIGHT_LINES + WEIGHT_INVOCATIONS;
 
     public static double forNew(DriverScaler scaler, int lines, int ncss, int invocations) {
         if (scaler.isEmpty()) {
             return 0.0;
         }
-        double sum = WEIGHT_LINES * lines
-                + WEIGHT_NCSS * ncss * scaler.ncssFactor()
-                + WEIGHT_INVOCATIONS * invocations * scaler.invocationsFactor();
-        return sum / TOTAL_WEIGHT;
+        return weightedSum(lines, ncss * scaler.ncssFactor(), invocations * scaler.invocationsFactor()) / TOTAL_WEIGHT;
     }
     public static double forModify(DriverScaler scaler, int linesChanged, int invocationsChanged) {
         if (scaler.isEmpty()) {
             return 0.0;
         }
-        double sum = WEIGHT_LINES * linesChanged
-                + WEIGHT_INVOCATIONS * invocationsChanged * scaler.invocationsFactor();
-        return sum / MODIFY_WEIGHT;
+        return weightedSum(linesChanged, 0.0, invocationsChanged * scaler.invocationsFactor()) / MODIFY_WEIGHT;
+    }
+    /**
+     * The weighted sum of a block's lines-equivalent components, the numerator of every driver score. Anything that
+     * rescales a driver score by changing one of its components must weigh that component through this sum: summing
+     * the components unweighted gives the invocation term twice its share of the driver, so a discount on moved calls
+     * computed that way removes twice what the calls contributed.
+     */
+    public static double weightedSum(double projectedLines, double projectedNcss, double projectedInvocations) {
+        return WEIGHT_LINES * projectedLines + WEIGHT_NCSS * projectedNcss + WEIGHT_INVOCATIONS * projectedInvocations;
     }
 }

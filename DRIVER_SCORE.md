@@ -1,11 +1,6 @@
 # Driver Score — what it is, why it exists, how to read it
 
-This document is the canonical explanation of Codiqo's volume driver metric. It is designed to be copy-pasted as-is into the two downstream projects that consume the metric:
-
-- the **backend replay service**, which persists offline-plugin submissions to a database and later reconstructs them for server-side LLM callbacks (so it needs to know exactly which inputs must be persisted and how the driver score is re-derived from them);
-- the **UI**, which renders the per-block breakdown in reports and therefore needs to know what each column means and what fields it can read off the LLM scoring request/response.
-
-The first part of the document explains the metric for a developer reviewing a Codiqo report. The [Persistence and replay](#persistence-and-replay) section at the end covers the schema-level details needed by the backend and UI projects.
+This document is the canonical explanation of Codiqo's volume driver metric: what it measures, how it is computed, and how to read it on a commit. The [Reproducibility](#reproducibility) section at the end lists the inputs a score is computed from and the fields the scored result exposes.
 
 ---
 
@@ -15,11 +10,11 @@ Every changed method or constructor gets a **driver score** — a single number 
 
 The driver score is a **weighted average of three dimensions, each projected onto lines-equivalent units**:
 
-1. **L** — physical non-comment lines of code **inside the body block** (between `{` and `}`)
+1. **L** — physical non-comment lines of code **inside the body block** (the `{` … `}` span, the lines holding the braces included)
 2. **S** — NCSS (logical statement count)
 3. **I** — direct method invocations inside the block
 
-> **Why body-only?** A method whose parameters are formatted one-per-line can have a 6-line signature on a 4-line body. Counting those signature lines in `L` would inflate `lines.p50` upward without inflating `ncss.p50` or `invocations.p50` (both of which are body-only by construction), so `k_S = lines.p50 / ncss.p50` would lie about how many real *body* lines a statement projects to. Restricting `L` to the body keeps all three numerators on the same footing and makes the projection factors describe what the tooltips claim: "1 statement ≈ K body lines", "1 invocation ≈ K body lines". Signature-area edits aren't lost — they still appear in the file's overall `linesAdded`/`linesDeleted` and are subject to the LLM's 5-bucket diff classification (cosmetic / in-place modify / true modify / pure add / pure delete).
+> **Why body-only?** A method whose parameters are formatted one-per-line can have a 6-line signature on a 4-line body. Counting those signature lines in `L` would inflate `lines.p50` upward without inflating `ncss.p50` or `invocations.p50` (both of which ignore the signature's layout: invocations are counted in the body only, and NCSS counts the declaration as a single statement however many lines it spans), so `k_S = lines.p50 / ncss.p50` would lie about how many real *body* lines a statement projects to. Restricting `L` to the body keeps all three numerators on the same footing and makes the projection factors describe what the tooltips claim: "1 statement ≈ K body lines", "1 invocation ≈ K body lines". Signature-area edits aren't lost — on a MODIFY block, added signature lines count toward `linesChanged` (still capped at `L`), and every changed line of an eligible file also passes through the [diff classification](#diff-classification-reduction).
 
 The projection factors `k_S` and `k_I` are derived from the baseline population's **median** (p50) — not its max — so a single outlier block can never distort the scoring of every other block. Scalers are computed **per project, per kind (method vs constructor), per scope (prod vs test)**, so the score auto-calibrates to the codebase's own norms. Factors are taken **as-is** at the bucket level (no clamp) so they faithfully reflect the project's coding style; the `driverFactorMaxDeviation` knob lives one level down and only flags **per-block** outliers (see [Driver-score abuse signals](#driver-score-abuse-signals)).
 
@@ -38,15 +33,15 @@ NCSS counts logical statements. For traditional imperative Java code this tracks
 | Reactive stream `.map().filter().collect()` | ~10 | **1** | Non-trivial logic |
 | Imperative loop with 5 steps | ~5 | **5** | Same volume, higher NCSS |
 
-The last two rows are the pain point: at roughly the same real effort, imperative code scored 5× higher than functional code. Reviewers found the difference unjustifiable.
+The last two rows are the pain point: at roughly the same real effort, the imperative loop has 5× the NCSS of the stream pipeline. Reviewers found the difference unjustifiable.
 
-The driver score solves this by combining **three orthogonal signals** that together cover both styles. A builder's `S` is low and — because a same-type fluent run [counts as one invocation](#what-counts-as-an-invocation) — its `I` reflects the number of *distinct* operations it performs, not its setter-chain length, so its volume comes mainly from `L`. An imperative loop has medium `L`, high `S`, medium `I`. A one-line lambda stream has low `L`, low `S`, and an `I` driven by its lambda bodies rather than the pipeline operators. Each dimension fires on a different kind of work, so composing them gives a balanced measure — and no fluent-chain style (proto/gRPC builders, getter navigation, stream pipelines) can run away with the score purely by chain length.
+The driver score solves this by combining **three orthogonal signals** that together cover both styles. A builder's `S` is low and — because a same-type fluent run [counts as one invocation](#what-counts-as-an-invocation) — its `I` reflects the number of *distinct* operations it performs, not its setter-chain length, so its volume comes mainly from `L`. An imperative loop has medium `L`, high `S`, medium `I`. A one-line lambda stream has low `L`, low `S`, and an `I` in which only the type-changing steps, the terminal operation and the calls in its lambda bodies count — same-type steps such as `filter` or `sorted` collapse. Each dimension fires on a different kind of work, so composing them gives a balanced measure — and no fluent-chain style (proto/gRPC builders, `return this` setters, same-type stream steps) can run away with the score purely by chain length.
 
 ---
 
 ## The scaler — a worked example
 
-Before showing the formulas, let's nail down what a "scaler" actually contains. When the Maven plugin runs, it walks every method and every constructor in the project (both production and test code) and records three numbers per block:
+Before showing the formulas, let's nail down what a "scaler" actually contains. When the Maven or Gradle plugin analyses a commit, it walks every method and every constructor in the project (both production and test code) and records three numbers per block:
 
 - `L` = non-comment code lines **of the body block** (`bodyCodeLines` — the `{` ... `}` span, excluding signature, parameter lines, `throws` clauses, leading annotations, and javadoc)
 - `S` = NCSS
@@ -54,14 +49,14 @@ Before showing the formulas, let's nail down what a "scaler" actually contains. 
 
 These samples are bucketed into **four populations**: `method/prod`, `method/test`, `ctor/prod`, `ctor/test`.
 
-**Trivial blocks are excluded from the populations.** A block is trivial when `NCSS ≤ 2` **and** `directInvocationCount == 0` **and** `cyclo ≤ 1` — the typical getter / setter / field-assigning constructor with no branching. Keeping them in would drag `min` to `0` and compress the useful signal at the low end of the distribution.
+**Trivial blocks are excluded from the populations.** A block is trivial when `NCSS ≤ 2` **and** `directInvocationCount == 0` **and** `cyclo ≤ 1` — the typical getter, setter or single-field-assigning constructor with no branching (NCSS counts the declaration itself, so a one-statement body already reaches 2). Trivial blocks are also skipped when a commit's changes are scored. Keeping them in would drag `min` to `0` and compress the useful signal at the low end of the distribution.
 
-For each population, Codiqo computes a `DimensionStats` record per dimension: `(min, p50, p75, p90, p95, max)`. Imagine the `method/prod` bucket has 1604 non-trivial samples. The dimension stats might look like:
+For each population, Codiqo computes a `DimensionStats` value per dimension: `(min, p50, p75, p90, p95, max)`. Imagine the `method/prod` bucket has 1604 non-trivial samples. The dimension stats might look like:
 
 ```
 method/prod  (N=1604)
   lines:   min=1   p50=6   p75=14   p90=28   p95=40   max=87
-  ncss:    min=0   p50=3   p75=8    p90=17   p95=24   max=52
+  ncss:    min=2   p50=3   p75=8    p90=17   p95=24   max=52
   invocs:  min=0   p50=2   p75=6    p90=14   p95=20   max=41
 ```
 
@@ -79,11 +74,11 @@ k_I = lines.p50 / invocs.p50 = 6 / 2 = 3.0
 
 These factors are taken **as-is** at the bucket level — no clamp. They describe the project's actual style: in this hypothetical project, one NCSS statement is worth ~2 physical lines of work, one invocation is worth ~3. Suppressing this would erase the signal the projection is trying to surface.
 
-The `driverFactorMaxDeviation` knob (default `0.75`) does **not** clip these bucket factors. It only flags **per-block outliers** — blocks whose own `S/L` or `I/L` ratio deviates more than 75% from the bucket's median ratio. See [Driver-score abuse signals](#driver-score-abuse-signals).
+The `driverFactorMaxDeviation` knob (default `0.75`) does **not** clip these bucket factors. It only flags **per-block outliers** — blocks whose own `S/L` or `I/L` ratio deviates more than 75% from the bucket's ratio of medians (`ncss.p50 / lines.p50`, `invocations.p50 / lines.p50`; NEW blocks only), and, when the global cap binds, any block that alone owns more than 75% of the raw effort. See [Driver-score abuse signals](#driver-score-abuse-signals).
 
 ### Degenerate dimensions
 
-If `dim.p50 == 0` for either NCSS or invocations (i.e., half or more blocks in the population have zero of that dimension), there is no signal in this project from which to derive a projection factor. **The honest read is that the dimension contributes nothing to the projection** — so the factor is set to `0.0`. This is a deliberate change from a previous behavior that silently used `1.0` as a fabricated neutral; using `0.0` says "we have no evidence about this dimension here" instead of pretending each unit is one line.
+If `dim.p50 == 0` for either NCSS or invocations (i.e., half or more blocks in the population have zero of that dimension), there is no signal in this project from which to derive a projection factor (in practice only invocations can reach this, since NCSS counts the declaration itself). **The honest read is that the dimension contributes nothing to the projection** — so the factor is set to `0.0`. This is a deliberate change from a previous behavior that silently used `1.0` as a fabricated neutral; using `0.0` says "we have no evidence about this dimension here" instead of pretending each unit is one line.
 
 If `lines.p50 == 0` (degenerate input — every block has zero non-comment lines), the entire scaler is treated as **empty** and `DriverScore.forNew/forModify` short-circuit to `0.0`. This effectively disables driver scoring for that bucket; it should never happen on a real codebase.
 
@@ -97,7 +92,7 @@ If `lines.p50 == 0` (degenerate input — every block has zero non-comment lines
 driverScore = (W_L · L + W_S · S · k_S + W_I · I · k_I) / TOTAL_WEIGHT
 ```
 
-With the defaults in `DriverScore.java` (`W_L = 1.0`, `W_S = 1.0`, `W_I = 0.5`, `TOTAL_WEIGHT = 2.5`) this is:
+With the constants in `DriverScore.java` (`W_L = 1.0`, `W_S = 1.0`, `W_I = 0.5`, `TOTAL_WEIGHT = 2.5`) this is:
 
 ```
 driverScore = (L + S · k_S + 0.5 · I · k_I) / 2.5
@@ -110,16 +105,16 @@ Each dimension is first projected into lines-equivalent units, then averaged. Th
 ### For a MODIFY block — NCSS is dropped
 
 ```
-linesChanged       = min(totalLinesChanged, L)     // capped at the block's own size
-invocationsChanged = effectiveInvocationsChanged   // invocations whose source line is in the changed-line set
+linesChanged       = min(totalLinesChanged, L)     // effective added + deleted lines, capped at the block's own size
+invocationsChanged = effectiveInvocationsChanged   // calls on the block's effective added lines plus calls on its effective deleted lines
 
 driverScore = (W_L · linesChanged + W_I · invocationsChanged · k_I) / (W_L + W_I)
             = (linesChanged + 0.5 · invocationsChanged · k_I) / 1.5
 ```
 
-Both `effectiveLinesChanged` and `effectiveInvocationsChanged` are precomputed once per MODIFY code unit by `EffectiveChangePopulator`, which intersects the unit's body with the effective added lines parsed from the unified diff. A 1-line tweak in a 100-line method produces `linesChanged = 1`, not an inflated floor value.
+`EffectiveChangePopulator` precomputes both inputs once per MODIFY code unit from the unified diff, skipping blank and comment lines and any nested method or constructor: `effectiveLinesChanged` counts the effective added lines in the unit's declaration span, and `effectiveInvocationsChanged` counts the calls on those added lines (same-type fluent runs collapsed) plus the calls on the effective deleted lines anchored in the unit (counted per call). `totalLinesChanged` adds the effective deleted lines anchored in the body to `effectiveLinesChanged`. A 1-line addition in a 100-line method produces `linesChanged = 1`, not an inflated floor value; a 1-line in-place edit (one deleted plus one added line) produces `linesChanged = 2` here, and the [diff classification](#diff-classification-reduction) then bills the pair once.
 
-NCSS is intentionally dropped because lines-changed already captures modification volume — including it would double-count. For a pure refactor that rewrites the algorithm without changing line count, `S` would redundantly echo `L`. Dividing by `MODIFY_WEIGHT = (W_L + W_I) = 1.5` (instead of `TOTAL_WEIGHT = 2.5`) means a fully-modified block (`linesChanged = L`) scores the same magnitude as an equivalent NEW block.
+NCSS is intentionally dropped because lines-changed already captures modification volume — including it would double-count. For a pure refactor that rewrites the algorithm without changing line count, `S` would redundantly echo `L`. Dividing by `MODIFY_WEIGHT = (W_L + W_I) = 1.5` (instead of `TOTAL_WEIGHT = 2.5`) means a fully-modified block (`linesChanged = L`) scores the same magnitude as an equivalent NEW block (somewhat above it when the rewrite is call-heavy, since a call on a deleted line and one on an added line both count).
 
 ### What counts as an "invocation"
 
@@ -140,7 +135,7 @@ It **does not** recurse into nested type declarations (anonymous classes, local 
 Earlier versions used min-max normalization with an anchor multiplication (`sL = (L - Lmin) / (Lmax - Lmin)`, then `driver = normalized × Lmax / 3`). That formulation had a subtle cross-dimensional leak:
 
 - The lines dimension cancelled out cleanly: `sL × Lmax ≈ L`.
-- But the NCSS and invocations contributions ended up multiplied by `Lmax / ncss.max` and `Lmax / invocations.max` — ratios determined by whichever *different* outlier block happened to own each dim's maximum. A 310-line constructor sitting in one class could silently halve or double the contribution of every other block's NCSS or invocation count.
+- But the NCSS and invocations contributions ended up multiplied by `Lmax / ncss.max` and `Lmax / invocations.max` — ratios determined by whichever *different* outlier block happened to own each dim's maximum. A single large constructor sitting in one class could silently halve or double the contribution of every other block's NCSS or invocation count.
 
 Anchoring to per-dimension `p50` removes that coupling: each dimension's factor depends only on its own median and on lines' median, both of which are robust to outliers by construction. No bucket-level clamp is needed — the median itself is the protection against outlier samples, and the per-block deviation knob handles abuse at the right granularity.
 
@@ -153,7 +148,7 @@ Outlier protection lives at the **aggregate** level, not per block.
 ```
 # per-(kind, scope) baseline contribution from each block:
 bucketP95(block)    = P{statsQuantile} of the driver-score distribution within block's (kind, scope) population
-                      (configurable; default statsQuantile = 0.95, clamped to ≥ 0.85)
+                      (configurable; default statsQuantile = 0.95, clamped to ≥ 0.85; applied by the build plugin when it computes the bucket quantiles)
 operationMult       = addMult (NEW) or modifyMult (MODIFY)
 testWeight          = 1.0 for prod, testCodeScoreMultiplier (default 0.4) for test
 
@@ -166,8 +161,9 @@ blockEffort         = driverScore × operationMult × testWeight              # 
 totalEffortRaw      = Σ blockEffort
 
 # global clip:
-totalEffort         = min(totalEffortRaw, globalCap)
-volumeScore         = pow(totalEffort, volumeExponent) × filesScopeMultiplier
+globalCapApplied    = totalBaseline > 0 and totalEffortRaw > globalCap
+blockEffortSum      = globalCap if (globalCapApplied and not driverScoreCapDryRun) else totalEffortRaw
+volumeScore         = pow(blockEffortSum, volumeExponent) × filesScopeMultiplier
 ```
 
 Each bucket's `P{statsQuantile}` (default `P95`) is computed over its own single-scope population, so test-code outliers — which are systematically larger than prod methods — do not inflate the baseline that gets applied to prod blocks. Methods and constructors are split for the same reason: constructor populations are usually much smaller and tighter than method populations. If a `(kind, scope)` population is empty (e.g., a repo with no tests), the calculator falls back to the same-kind opposite-scope baseline.
@@ -177,14 +173,14 @@ Each bucket's `P{statsQuantile}` (default `P95`) is computed over its own single
 Suppose a commit changes 5 prod methods, all of medium size:
 
 - bucketP95 for `method/prod` = 60
-- modifyMult = 1.0, testWeight = 1.0
+- modifyMult = 1.0 (rounded for the example; the default is slightly above 1.0, and because it scales effort and budget alike here it cannot change whether the cap binds), testWeight = 1.0
 - per-block driver scores: `[35, 42, 28, 50, 31]`
 
 ```
 totalBaseline    = 5 × 60 × 1.0 × 1.0 = 300
 globalCap        = 300 × 2.5            = 750
 totalEffortRaw   = 35 + 42 + 28 + 50 + 31 = 186
-totalEffort      = min(186, 750)        = 186
+blockEffortSum   = min(186, 750)        = 186
 globalCapApplied = false
 ```
 
@@ -200,69 +196,67 @@ Same project, same five blocks, plus one giant outlier method (a 600-line legacy
 totalBaseline    = 6 × 60 × 1.0 × 1.0 = 360
 globalCap        = 360 × 2.5            = 900
 totalEffortRaw   = 186 + 800            = 986
-totalEffort      = min(986, 900)        = 900
+blockEffortSum   = min(986, 900)        = 900
 globalCapApplied = true
 ```
 
 The outlier's excess (800 - 60 = 740 above its bucket baseline) absorbs all the slack the other blocks left in the budget; the global cap then truncates the sum at `900`. Per-block driver scores are reported untouched in the per-block table — the cap only manifests at the aggregate level via the `globalCapApplied` flag and the difference between `totalEffortRaw` and `blockEffortSum`.
 
-### LLM diff-classification reduction
+### Diff-classification reduction
 
-Git diff exposes only ADDED and DELETED lines. There is no native concept of MODIFIED. So a one-line in-place edit (`log.info("foo")` → `log.info("bar")`) shows as 1 deletion + 1 addition = 2 lines, double-counting effort. Pure-addition cosmetic content (new javadoc, log statements, formatting, license headers) similarly inflates volume even when nothing was deleted.
+Git diff exposes only ADDED and DELETED lines. There is no native concept of MODIFIED. So a one-line in-place edit (`log.info("foo")` → `log.info("bar")`) shows as 1 deletion + 1 addition = 2 lines, double-counting effort.
 
-To compensate, the LLM is asked to classify EVERY changed line in the commit. For each eligible file (those flagged `linesJustificationRequired: true` in the request — Java source plus the line-count-scored config files `pom.xml` / `.proto`; NOT other resources or generated artefacts) the LLM returns six arrays on `effortBreakdown.diffClassification.perFile[*]`:
+To compensate, the server classifies every effective changed line from the diff itself (`DiffClassificationDeriver`); no model labels lines. For each eligible file (those flagged `linesJustificationRequired: true` in the request — Java source plus the [line-count-scored config files](#config-file-efforts-build-and-schema-files); NOT other resources or generated artefacts) it first removes the lines confirmed as [moved](#moved-lines), then pairs the remaining lines of each diff hunk `min(deleted, added)` in diff order and books the longer side's excess as pure additions or deletions. The result is stored as nine arrays on `effortBreakdown.diffClassification.perFile[*]`:
 
-- **`cosmeticAdded: List<Integer>`** — new-file line numbers for cosmetic *additions* (new javadoc, blank lines, log strings, formatting normalizations). 0 effort.
-- **`cosmeticDeleted: List<Integer>`** — old-file line numbers for cosmetic *deletions* (removed comments, whitespace). 0 effort.
-- **`inPlaceModifyPairs: List<LinePair>`** — `{deleted, added}` tuples for paired delete+add where the **same intent survives** in a different form (rename, swapped operand, tweaked expression). 1 effort per pair instead of 2.
-- **`trueModifyPairs: List<LinePair>`** — `{deleted, added}` tuples for paired delete+add where the **line slot now holds a different intent** (the position got re-used for something else). Same 1 effort per pair — the human still made one logical change, even though it's not a refactor of the prior line. The distinction from `inPlaceModifyPairs` is for human reviewers, not for the math.
-- **`pureAdd: List<Integer>`** — new-file line numbers for added lines that have **no counterpart on the deleted side** (real new logic, new branch, new method body). Full weight, 1 effort each.
-- **`pureDelete: List<Integer>`** — old-file line numbers for deleted lines with no counterpart on the added side (real removal). Full weight, 1 effort each.
+- **`trueModifyPairs: List<LinePair>`** — `{deleted, added}` tuples for paired delete+add lines in the same hunk. 1 effort per pair instead of 2. Every pair the server derives lands here.
+- **`pureAdd: List<Integer>`** — new-file line numbers for added lines that have **no counterpart on the deleted side** of their hunk. Full weight, 1 effort each.
+- **`pureDelete: List<Integer>`** — old-file line numbers for deleted lines with no counterpart on the added side. Full weight, 1 effort each.
+- **`movedAdded: List<Integer>`** / **`movedDeleted: List<Integer>`** — lines confirmed as relocated code. `movedLineCoefficient / 2` effort each (see [Moved lines](#moved-lines)).
+- **`inPlaceModifyPairs: List<LinePair>`**, **`cosmeticAdded: List<Integer>`**, **`cosmeticDeleted: List<Integer>`**, **`inPlaceCollapsedAdded: List<Integer>`** — buckets that a model used to fill (same-intent pairs at 1 effort per pair; cosmetic and wrap-collapsed lines at 0 effort). The schema keeps them, and the arithmetic below still reads them, but rule-based scoring leaves them **empty**.
 
-Each `LinePair` is a fixed `{deleted: int, added: int}` tuple. This makes pair balance **structurally impossible to violate** — the old shape stored two parallel arrays (`added.inPlaceModify` and `deleted.inPlaceModify`) and relied on a runtime invariant that they had matching lengths, which LLMs regularly broke. With tuples the LLM can no longer enumerate one side independently from the other.
+Each `LinePair` is a fixed `{deleted: int, added: int}` tuple, so pair balance cannot be violated.
 
 **Per-file invariants (server-validated; one bad file is skipped, the rest still apply):**
 ```
-len(cosmeticAdded)   + len(inPlaceModifyPairs) + len(trueModifyPairs) + len(pureAdd)    == fileChange.linesAdded   (effective)
-len(cosmeticDeleted) + len(inPlaceModifyPairs) + len(trueModifyPairs) + len(pureDelete) == fileChange.linesDeleted (effective)
-no new-file line number repeats across cosmeticAdded / inPlaceModifyPairs[*].added / trueModifyPairs[*].added / pureAdd
-no old-file line number repeats across cosmeticDeleted / inPlaceModifyPairs[*].deleted / trueModifyPairs[*].deleted / pureDelete
+len(cosmeticAdded)   + len(inPlaceModifyPairs) + len(trueModifyPairs) + len(pureAdd) + len(inPlaceCollapsedAdded) + len(movedAdded) == fileChange.linesAdded   (effective)
+len(cosmeticDeleted) + len(inPlaceModifyPairs) + len(trueModifyPairs) + len(pureDelete) + len(movedDeleted)                        == fileChange.linesDeleted (effective)
 ```
 
-The first two invariants use **effective** counts. The server filters three categories of lines from `linesAdded` / `linesDeleted` before validation, and the prompt tells the LLM to exclude them from every bucket — the syntactic markers are **identical across all JVM source languages** (Java, Kotlin, Groovy, Scala), so the rule is language-agnostic by construction:
+The invariants use **effective** counts. Before classification the server removes the lines that carry no effort from `linesAdded` / `linesDeleted`, and the derivation never places them in any bucket. For Java source these are:
 
 - **Blank lines** (empty after trimming).
-- **Import lines** (trimmed content starts with `import ` — covers regular, static, and wildcard imports in every JVM language; Kotlin / Groovy variants without the trailing semicolon are caught by the same prefix).
-- **Comment-only lines** (`//…`, or a block-comment line beginning with `/*`, ` *`, or `*/` — these markers work identically for Javadoc / KDoc / ScalaDoc / GroovyDoc).
+- **Import lines** (trimmed content starts with `import ` — regular, static and wildcard imports).
+- **Comment-only lines** (`//…`, or a block-comment line beginning with `/*`, ` *`, or `*/`).
 
-**Server derives counts from arrays.** The `cosmeticLines`, `pairsCollapsed`, `pureAddDeleteLines` fields on `FileDiffClassification` and the corresponding totals on `DiffClassification` are populated by the server during validation by tallying the arrays — any LLM-supplied values are overwritten. Counts are persisted alongside the arrays so DB / UI consumers can aggregate without iterating.
+Config files use their own filter (see [Config-file efforts](#config-file-efforts-build-and-schema-files)).
+
+**Server derives counts from arrays.** The `cosmeticLines`, `pairsCollapsed`, `pureAddDeleteLines` and `movedLines` fields on `FileDiffClassification` and the corresponding totals on `DiffClassification` are populated by the server by tallying the arrays. The counts are returned alongside the arrays so they can be aggregated without iterating.
 
 **Effective-line factor and how it folds into the volume score.** For each classified file the server computes:
 
 ```
 effectiveLines = len(inPlaceModifyPairs) + len(trueModifyPairs) + len(pureAdd) + len(pureDelete)
+               + (len(movedAdded) + len(movedDeleted)) × movedLineCoefficient / 2
 rawLines       = fileChange.linesAdded + fileChange.linesDeleted    # effective counts
 fileFactor     = effectiveLines / rawLines                          # 1.0 means no reduction
 ```
 
 Worked examples:
-- 5 added + 5 deleted, all paired same-intent (5 in-place pairs): `effectiveLines = 5`, `rawLines = 10`, `fileFactor = 0.5` — half the work git double-counted.
-- 3 trueModify pairs + 4 pureAdd + 1 pureDelete: `effectiveLines = 3 + 4 + 1 = 8`, `rawLines = (3+4) + (3+1) = 11`, `fileFactor ≈ 0.73`.
-- 4 pureAdd, 0 deleted: `effectiveLines = 4`, `rawLines = 4`, `fileFactor = 1.0` — no reduction; all four lines are real new logic.
+- 5 added + 5 deleted in one hunk: 5 pairs, `effectiveLines = 5`, `rawLines = 10`, `fileFactor = 0.5` — half the work git double-counted.
+- 3 pairs + 4 pureAdd + 1 pureDelete: `effectiveLines = 3 + 4 + 1 = 8`, `rawLines = (3+4) + (3+1) = 11`, `fileFactor ≈ 0.73`.
+- 4 pureAdd, 0 deleted: `effectiveLines = 4`, `rawLines = 4`, `fileFactor = 1.0` — no reduction; all four lines are new.
 
-`fileFactor` is then applied to **every** block in that file (both NEW and MODIFY operations) by multiplying the block's `driverScore` and `effort`. The block-level math then re-runs unchanged from there: `totalEffortRaw = Σ scaled effort`, `globalCap` re-tested, `volumeScore = pow(blockEffortSum, volumeExponent) × filesScopeMultiplier`. The reduction lands as a deterministic per-file scaling, not a black-box LLM-decided number.
+`fileFactor` is then applied to **every** block in that file (both NEW and MODIFY operations) by multiplying the block's `driverScore` and `effort` (a [deletion block](#delete-reward) uses `len(pureDelete) / rawLines` instead). The block-level math then re-runs unchanged from there: `totalEffortRaw = Σ scaled effort`, `globalCap` re-tested, `volumeScore = pow(blockEffortSum, volumeExponent) × filesScopeMultiplier`. The reduction lands as a deterministic per-file scaling.
 
 Because validated files only contribute `effectiveLines ≤ rawLines` lines to the accumulators, the bookkeeping invariant `linesChangedAdjusted ≤ linesChangedRaw` holds **by construction**.
 
-**Failure mode (per-file).** If a file's classification fails validation — array sizes whose four-bucket sum doesn't match `linesAdded` / `linesDeleted`, a line number repeated across buckets on a side (double-counting), or a file path the request never touched — the server logs a `debug` skipReason and **skips that file's reduction only**; other files in the same commit still get their factor applied. The bookkeeping accumulators only accrue over validated files, so `linesChangedAdjusted ≤ linesChangedRaw` continues to hold by construction. Only when **every** classified file fails validation (or the LLM omits `diffClassification` entirely) does the server fall back to the unreduced pre-computed volume score.
+**Failure mode (per-file).** If a file's bucket totals do not match `linesAdded` / `linesDeleted`, the server logs a `warn` skipReason (`addedTotalMismatch` / `deletedTotalMismatch`) and **skips that file's reduction only**; the file keeps its unreduced effort and other files in the same commit still get their factor applied. Because the arrays are derived from the diff, a mismatch indicates a filtering defect, not a model error.
 
-The skipped file is still persisted in `file_diff_classifications` with its arrays (for UI display), but its factor is absent from the `perFileFactor` map — so the math behaves as if the LLM never classified it. There is no per-file `applied` flag on the schema; the only signal that a file was skipped is the analysis-level bookkeeping showing `linesChangedAdjusted < linesChangedRaw` by less than expected, or all-zeros in the rare case that every file failed.
-
-**Pipeline position.** This runs in `FinalScoreCalculator` *after* the LLM call returns. The diff-classification reduction and the [per-block difficulty category](#per-block-difficulty-category) coefficient are applied together in a single `VolumeScoreCalculator.recompute` pass — the per-file factor scales each block's `driverScore` and `effort`, the category coefficient scales `effort` only — producing the post-reduction `baseEffortScore`. The clamped quality multiplier and the architecture bonus are then layered on top of that base effort to yield the final commit score (`finalScore = baseEffortScore × clampedQualityMultiplier + architectureBonus`). The four mirror counters on `effortBreakdown.volumeScore` (`linesChangedRaw`, `linesChangedAdjusted`, `cosmeticLinesDropped`, `inPlaceLinesCollapsed`) record the before/after so reviewers can see exactly how much was reclassified.
+**Pipeline position.** This runs on the server in `FinalScoreCalculator.applyRules`, from the local review's assessment; no model is called at scoring time. The diff-classification reduction and the [per-block difficulty category](#per-block-difficulty-category) coefficient are applied together in a single `VolumeScoreCalculator.recompute` pass — the per-file factor scales each block's `driverScore` and `effort`, the category coefficient scales `effort` only — producing the post-reduction `baseEffortScore`. The clamped quality multiplier and the architecture bonus are then layered on top of that base effort to yield the final commit score (`finalScore = baseEffortScore × clampedQualityMultiplier + architectureBonus`). The five mirror counters on `effortBreakdown.volumeScore` (`linesChangedRaw`, `linesChangedAdjusted`, `cosmeticLinesDropped`, `inPlaceLinesCollapsed`, `movedLinesDiscounted`) record the before/after so reviewers can see exactly how much was reclassified.
 
 ### Per-block difficulty category
 
-The diff-classification reduction above measures *how much* changed. A second LLM signal measures *how hard* each change was: every changed code block is assigned a **difficulty category**, which maps to an effort coefficient.
+The diff-classification reduction above measures *how much* changed. A judgement from the local review measures *how hard* each change was: every changed code block is assigned a **difficulty category**, which maps to an effort coefficient.
 
 | Category | Coefficient | Typical change |
 |---|---|---|
@@ -271,7 +265,7 @@ The diff-classification reduction above measures *how much* changed. A second LL
 | `SUBSTANTIVE` | `1.2` | genuine new logic, a non-trivial branch, real algorithmic or concurrency work |
 | `INTRICATE` | `1.4` | dense, correctness-critical, or algorithmically intricate code |
 
-The spread is deliberately narrow (`0.7`–`1.4` around the `1.0` neutral anchor): the hosted LLM is not perfectly reproducible even at `temperature=0` + fixed `seed`, so borderline blocks occasionally flip one tier between identical runs. A compressed spread caps how much a single tier flip can move the final score.
+The spread is deliberately narrow (`0.7`–`1.4` around the `1.0` neutral anchor): the reviewing model is not perfectly reproducible even at `temperature=0` + fixed `seed`, so borderline blocks occasionally flip one tier between identical runs. A compressed spread caps how much a single tier flip can move the final score.
 
 This **replaces the former commit-level `complexityMultiplier`** — a single `[0.7, 1.3]` number applied to the whole commit. Difficulty is now resolved per block, so a commit that mixes a mechanical mass-rename with one intricate algorithm no longer averages the two into a middling multiplier.
 
@@ -286,21 +280,21 @@ scaledEffort      = effort      × effectiveLineFactor × movedFactor × categor
 
 The driver score stays a pure size measure (volume remains an honest line-count magnitude), and difficulty rides on a separate axis layered onto effort: a 200-line mechanical migration and a 200-line intricate rewrite carry the same volume but different effort. The global cap is re-tested on the category-scaled efforts in the same pass.
 
-**Deletion blocks are always `MECHANICAL`.** A [deletion block](#delete-reward) is a file-level synthetic deliberately kept out of `codeBlockChanges`, so the LLM never sees one and none can ever carry a category. Left at the neutral `1.0` the most mechanical work in a cleanup would be the only work without the mechanical discount — on the `ResteasyChannel` commit every one of the ten real blocks recovered `0.7` while all twenty-three deletion blocks sat at `1.0`. They carry no signature, so the coefficient is keyed on the same `null` the block was built with. Unlike the NEW floor below this applies in degraded mode too: no deletion is categorized in any mode, so there is no parsed/unparsed asymmetry to protect.
+**Deletion blocks are always `MECHANICAL`.** A [deletion block](#delete-reward) is a file-level synthetic deliberately kept out of `codeBlockChanges`, so the review never labels one and none can ever carry a category. Left at the neutral `1.0` the most mechanical work in a cleanup would be the only work without the mechanical discount . They carry no signature, so the coefficient is keyed on the same `null` the block was built with. Like the fallback below, this applies in degraded mode too.
 
-**Uncategorized blocks do not default to neutral, and the reason is not the model's silence.** Omission tracks how many blocks the model was asked to label, not what any block contains: measured over 1,149 analyses, 3% of blocks are uncategorized on commits with ≤5 blocks and **68% on commits with 40+**, and the model returns `finishReason=stop` with output budget to spare — it simply emits a partial list on long enumerations. So an uncategorized block carries no signal, and the fallback must be the empirical prior rather than a neutral guess: of the MODIFY blocks the model does label, **82% are `MECHANICAL`** (mean coefficient 0.77).
+**Unlabelled blocks do not default to neutral, and the reason is not the model's silence.** Whether a block goes unlabelled depends on how many blocks the model was asked to label, not on what the block contains, so an unlabelled block carries no signal and the fallback must be the most common label rather than a neutral guess: most MODIFY blocks a model does label are `MECHANICAL`.
 
-Leaving MODIFY at `1.0` coupled the score to the model's verbosity. The same commit (`454a4829`, 119 files) scored **325** with 176 blocks uncategorized and **381** with 263 — identical inputs, identical quality multiplier — because uncategorized MODIFY work was billed at full price. Both `NEW` and `MODIFY` therefore fall back to `MECHANICAL`; that damps the variance as much as it corrects the bias. Coverage is logged per analysis (`block categories: N/M labelled by the LLM`) and warns when the fallback covers most of a commit, because this degraded silently for a long time before anyone measured it.
+Leaving MODIFY at `1.0` would couple the score to the model's verbosity: the same commit would score higher the more blocks the model left unlabelled, because unlabelled MODIFY work would be billed at full price. Both `NEW` and `MODIFY` therefore fall back to `MECHANICAL`; that damps the variance as much as it corrects the bias. Coverage is logged per analysis and warns when the fallback covers most of a commit.
 
-**The historical rationale below is superseded.** A NEW code unit the LLM left uncategorized falls back to the **`MECHANICAL` coefficient (`0.7`)**, not to `ROUTINE` — omission means the model did not judge the unit worth promoting above trivial, and a pure addition has no other triviality signal (a MODIFY unit's trivial churn is already collapsed line-by-line by in-place / true-modify pairing). The floor applies only to blocks that are all of: `operation = NEW`, non-config, and carrying a signature. MODIFY units, config units and signature-less blocks keep the neutral `1.0`. The floor is also **skipped entirely for degraded (build-failure) analyses**, where the prompt instructs the LLM to emit no categories at all — flooring there would discount parsed NEW files while unparsed synthetic ones stayed neutral.
+The fallback applies to every non-config NEW or MODIFY block, in every mode, including the signature-less file-level blocks of a degraded (build-failure) analysis: a file the index could not parse is the least understood work in the commit. Config blocks keep the neutral `1.0`.
 
-The category is supplied on `response.blockCategories[*]` as `{file, signature, category}` (`CodeBlockCategoryView`) and matched to a block by `(file, signature)`. **The label itself is not persisted as a column** — only its effect lands in `code_block_efforts.effort`. To recover it per block:
+The category is supplied on `response.blockCategories[*]` as `{file, signature, category, reason, source}` (`CodeBlockCategoryView`) and matched to a block by `(file, signature)`. **The label is stored with the code unit**, together with the review's reason, and its effect lands in the block's `effort`. To cross-check the two per block:
 
 ```
 categoryCoeff = effort / (driverScore × operationMult × testWeight)
 ```
 
-The persisted `driverScore` already carries `effectiveLineFactor`, so it cancels, and the result lands cleanly on one of `{0.7, 1.0, 1.2, 1.4}` — **for NEW and MODIFY blocks only**.
+The persisted `driverScore` already carries `effectiveLineFactor`, so it cancels, and the result lands on one of `{0.7, 1.0, 1.2, 1.4}` (to the two-decimal rounding of the persisted values) — **for NEW and MODIFY blocks only**.
 
 For a DELETE block the formula does *not* yield the coefficient. `calculateDeletionOnlyFileEfforts` stores `effort = driverScore × modifyMult × testWeight × deleteRewardWeight × deletionScale` while persisting the *unscaled* `driverScore`, so the expression above evaluates to `deleteRewardWeight × deletionScale × categoryCoeff` — at defaults `0.2 × 1.0 × 0.7 = 0.14`, not `0.7`. Divide out the deletion terms first:
 
@@ -314,24 +308,26 @@ Reading `0.14` on a deletion block therefore confirms the mechanical coefficient
 
 Relocating code is not writing it. When `moveDetectionEnabled` (default `true`), deleted and added lines are paired across the whole commit — including across files — and a matched pair is charged `movedLineCoefficient` (default `0.25`) instead of full weight, split as `movedLineCoefficient / 2` to each side so a cross-file move costs the same in total as an in-file one.
 
+A candidate is discounted only when it is a relocation: it moves between two production (or two test) files, or it has a neighbouring candidate within `movedRunMaxGap` (default `2`) lines on both sides. A lone match inside one file, or between test and production code, is treated as a repeated fragment. Lines with fewer than three tokens, or pairs whose token counts differ by more than 2×, are never candidates.
+
 Matching uses **multiset token containment**, `|tokens(A) ∩ tokens(B)| / min(|A|, |B|)`, against `moveSimilarityThreshold` (default `0.95`) — deliberately *not* Dice or Jaccard. Relocation typically only *adds* tokens (a re-qualified receiver, `props.X` → `channel.props.X`), so a genuine move scores `1.0` under containment while a symmetric metric would drop it below the threshold and miss it.
 
 The line side of this is handled by the per-file diff classification. The **invocation** term of the driver score is not — it is uncapped and bills relocated calls to whichever block's new-file span absorbed them. `movedFactor` corrects that, per block:
 
 ```
 billedInvocations    = effectiveInvocationsChanged (MODIFY) | directInvocationCount (NEW)
-driverComponents     = scaledLines + scaledNcss + scaledInvocations
+driverComponents     = W_L · scaledLines + W_S · scaledNcss + W_I · scaledInvocations
 invocationsFactor    = scaledInvocations / billedInvocations
 movedInvocationsScaled = min(movedInvocations × invocationsFactor, scaledInvocations)
 
-movedFactor = (driverComponents − movedInvocationsScaled × (1 − movedLineCoefficient / 2)) / driverComponents
+movedFactor = (driverComponents − W_I · movedInvocationsScaled × (1 − movedLineCoefficient / 2)) / driverComponents
 ```
 
-Because the driver score is the weighted mean of its scaled components, removing that share of the moved invocations' weight scales the driver by exactly this ratio — the operation-specific weight cancels. The factor returns `1.0` (no-op) when the block bills no invocations. The moved share is recounted by regex, matching how the deleted side was billed.
+Because the driver score is the weighted mean of its scaled components, removing that share of the moved invocations' weighted term scales the driver by exactly this ratio — the operation-specific denominator cancels. The factor returns `1.0` (no-op) when the block bills no invocations. The moved share is recounted by regex, matching how the deleted side was billed.
 
 ### Delete reward
 
-By default a surviving file whose only effective change is deletion, and which produced no scored code block, yields **no** effort for its removed lines — deletions inside a surviving MODIFY block are already billed there, so counting them again would double-count.
+Without the delete reward, a surviving file whose only effective change is deletion, and which produced no scored code block, yields **no** effort for its removed lines — deletions inside a surviving MODIFY block are already billed there, so counting them again would double-count.
 
 When `deleteRewardWeight > 0` (default `0.2`, clamped to `[0.0, 0.20]`) those remaining deletion-only files earn one synthetic block:
 
@@ -342,41 +338,40 @@ effort      = driverScore × modifyMult × testWeight × deleteRewardWeight
 
 So a removal earns at most that fraction of a same-size true modify. A file qualifies only when **all** of: change type `MODIFIED`, structured code (`linesJustificationRequired`), non-config, no scored code block, `linesAdded == 0`, `linesDeleted > 0`. Whole-file removals (change type `DELETED`) are excluded, and config deletions are already line-count scored.
 
-**Imports carry no signal in either direction.** `DiffStats` filters them from both sides of the effective line counts, so a file whose only additions are imports has `linesAdded == 0` and still qualifies — whether those imports were reordered by a formatter or genuinely gained. That is deliberate: an import is boilerplate an IDE writes, and a rule that let one disqualify a removal would be reading intent into a line the model is told to ignore everywhere else. The residual case — a file that gains a dependency while deleting code and adding no other line — has never occurred in the corpus.
+**Imports carry no signal in either direction.** `DiffStats` filters them from both sides of the effective line counts, so a file whose only additions are imports has `linesAdded == 0` and still qualifies — whether those imports were reordered by a formatter or genuinely gained. That is deliberate: an import is boilerplate an IDE writes, and a rule that let one disqualify a removal would be reading intent into a line the scoring ignores everywhere else.
 
-**Line count is the only volume signal a removal has.** `forModify` drops NCSS and removed code leaves no parsed unit behind to supply one, so a signature a formatter spread one parameter per line bills every one of those lines. A syntactic wrap-continuation filter (drop lines ending on a separator that close no statement) was implemented and **reverted**: it is indistinguishable from a data literal, a collection literal or an enum constant — deleting a 500-row table billed 3 lines — and its `;` guard is dead in Kotlin and JS, where semicolons are optional, so it degenerates to "any line ending in a comma is free" in exactly the languages targeted next. The over-count for wrapped signatures is accepted instead: it is bounded, and the `MECHANICAL` coefficient on deletion blocks already absorbs most of it.
+**Line count is the only volume signal a removal has.** `forModify` drops NCSS and removed code leaves no parsed unit behind to supply one, so a signature a formatter spread one parameter per line bills every one of those lines. A syntactic wrap-continuation filter (drop lines ending on a separator that close no statement) is deliberately **not** applied: it cannot tell a wrapped signature from a data literal, a collection literal or an enum constant — deleting a 500-row table would bill only a few lines — and its `;` guard is dead in Kotlin and JS, where semicolons are optional, so it degenerates to "any line ending in a comma is free" in exactly the languages targeted next. The over-count for wrapped signatures is accepted instead: it is bounded, and the `MECHANICAL` coefficient on deletion blocks already absorbs most of it.
 
-The synthetic block carries `operation = DELETE`, `signature = null` and `bucketBaseline = 0` — so like config blocks it never inflates the global-cap budget, and it is excluded from the added/modified scaled-line split and from `totalEffectiveStatements`. Cosmetic and moved deletions are still discounted afterwards by the per-file diff-classification factor in `recompute`. On a degraded (build-failure) analysis the scalers are empty and `forModify` would return `0`, so the driver score falls back to the raw deleted-line count — degraded pure-deletion files earn the same fractional reward as any other removal.
+The synthetic block carries `operation = DELETE`, `signature = null` and `bucketBaseline = 0` — so like config blocks it never inflates the global-cap budget, and it is excluded from the added/modified scaled-line split and from `totalEffectiveStatements`. Moved deletions earn nothing: `recompute` scales a deletion block by `len(pureDelete) / rawLines`, not by the general per-file factor. On a degraded (build-failure) analysis the scalers are empty and `forModify` would return `0`, so the driver score falls back to the raw deleted-line count — degraded pure-deletion files earn the same fractional reward as any other removal.
 
-**The deletion reward has its own absolute ceiling, because the global cap cannot bound it.** A mass removal is *broad and shallow* — thousands of lines spread over dozens of individually unremarkable files — so its share of the cap budget grows with file count exactly as fast as its effort does, and [the cap never binds](#the-global-driver-score-cap). Measured on 2,105 real analyses, a 3,024-line removal across 59 files carried 2,016 effort units against a 3,098-unit budget: comfortably under. So the deletion contribution is bounded absolutely instead:
+**The deletion reward has its own absolute ceiling, because the global cap cannot bound it.** A mass removal is *broad and shallow* — thousands of lines spread over dozens of individually unremarkable files — so its share of the cap budget grows with file count exactly as fast as its effort does, and [the cap never binds](#the-global-driver-score-cap). So the deletion contribution is bounded absolutely instead:
 
 ```
-ceiling      = deleteRewardMaxQuantileUnits × methodCapQuantile × modifyMult × deleteRewardWeight
-rawDeletion  = Σ (driverScore × modifyMult × testWeight × deleteRewardWeight)
+quantile     = (Σprod driverScore × methodCapQuantileProd + Σtest driverScore × methodCapQuantileTest) / Σ driverScore
+ceiling      = deleteRewardMaxQuantileUnits × quantile
+rawDeletion  = Σ driverScore      # not weighted by testWeight; modifyMult and deleteRewardWeight cancel
 
 deletionScale = rawDeletion > ceiling ? ceiling / rawDeletion : 1.0
 ```
 
-Every deletion block is scaled by the same `deletionScale`, so their relative sizes survive and only the total is clipped. The ceiling reads as "at most `K` p95-sized method removals' worth of reward, however many files you touched" — `K = deleteRewardMaxQuantileUnits`, default `10`. `methodCapQuantile` is the prod bucket's quantile, falling back to test; if neither population exists there is no ceiling and the reward passes through unscaled rather than collapsing to zero.
+Every deletion block is scaled by the same `deletionScale`, so their relative sizes survive and only the total is clipped. The ceiling reads as "at most `K` p95-sized method removals' worth of reward, however many files you touched" — `K = deleteRewardMaxQuantileUnits`, default `10`. The quantile blends the prod and test method buckets by where the deleted driver volume sits, falling back to whichever bucket exists; if neither population exists there is no ceiling and the reward passes through unscaled rather than collapsing to zero.
 
-At the default `K = 10` this leaves the everyday case untouched — median reward `+2.1` either way, 179 of the 191 affected analyses unchanged — while pulling the worst observed case from `+172` down to `+46`. A large legitimate cleanup earns a medium commit's credit; it can no longer earn a huge one.
-
-**Those figures predate deletion blocks carrying the `MECHANICAL` coefficient.** The clip is computed in driver units, before the coefficient is applied in `recompute`, so the delivered reward — and therefore the effective ceiling — is `0.7 ×` the numbers above. The mechanism is unchanged and remains internally consistent (both sides of the ratio are coefficient-free); only the calibration is now conservative, and the study would need re-running before `+46` is quoted as the real worst case.
+The ceiling is meant to leave ordinary removals untouched and to clip only mass removals: a large legitimate cleanup earns a medium commit's credit; it cannot earn a huge one. The clip is computed in driver units, before the `MECHANICAL` coefficient is applied in `recompute`, so the delivered reward is `0.7 ×` the clipped amount.
 
 ### Dry-run mode (`driverScoreCapDryRun`)
 
-The cap can be put into **audit-only** mode by setting `driverScoreCapDryRun = true` on the submission. In that mode the cap math runs in full — `globalCap`, `globalCapApplied`, `effortShare`, `globalCapDriver`, and the file-level abuse rollups are all computed and persisted exactly as if the cap were live — but `blockEffortSum` is **not** clipped: it is left equal to `totalEffortRaw`, and the volume score is `totalEffortRaw^volumeExponent × filesScopeMultiplier`. In other words, the score matches pre-cap (HEAD) behavior while the abuse signals continue to flow into the DB.
+The cap can be put into **audit-only** mode by setting `driverScoreCapDryRun = true` on the submission. In that mode the cap math runs in full — `globalCap`, `globalCapApplied`, `effortShare`, `globalCapDriver`, and the file-level abuse rollups are all computed and persisted exactly as if the cap were live — but `blockEffortSum` is **not** clipped: it is left equal to `totalEffortRaw`, and the volume score is `totalEffortRaw^volumeExponent × filesScopeMultiplier`. In other words, the score matches pre-cap behaviour while the abuse signals continue to flow into the DB.
 
 This is intended for two use cases:
 
 1. **Calibration** — comparing the score distribution with and without the cap on real production traffic before locking in `driverScoreCapMultiplier`.
-2. **A/B with HEAD** — replaying past commits under the new abuse-detection logic without changing any of the historical scores those commits produced.
+2. **A/B against pre-cap scoring** — replaying past commits under the new abuse-detection logic without changing any of the historical scores those commits produced.
 
 A few rules that follow from the design:
 
 - `globalCapApplied` retains its meaning: "the cap *would* clip if enforced". Combined with `globalCapDryRun`, downstream can distinguish "cap was enforced and clipped" from "cap was audited only" — both are computable from the persisted booleans.
 - `globalCapDriver` still fires under dry-run (because `globalCapApplied` still reflects "would clip"). Without that, the dry-run mode would lose its principal abuse signal.
-- The `blockEffortSum == totalEffortRaw` invariant under dry-run is the only behavioural difference from enforced mode. Replay must honor the persisted `driverScoreCapDryRun` flag verbatim, otherwise the volume score will diverge from the offline value.
+- The `blockEffortSum == totalEffortRaw` invariant under dry-run is the only behavioural difference from enforced mode. Rescoring honours the submitted `driverScoreCapDryRun` flag, so the volume score matches the stored value.
 
 ---
 
@@ -387,13 +382,13 @@ Several multiplicative mechanisms sit between a raw diff and the final score. Ea
 | Layer | Owns | Mechanism | Applied |
 |---|---|---|---|
 | Driver score | volume — how much | median-projected lines/NCSS/invocations; never clipped per block | per block |
-| Operation multiplier | line kind — new vs modified | `addMult = addBase + addScale/(1+s)` (≈0.88), `modifyMult = modifyBase + min(modifyScale·s/(1+s), cap)` (≈1.06) | per block |
+| Operation multiplier | line kind — new vs modified | `addMult = addBase + addScale/(1+s)` (≈0.88), `modifyMult = modifyBase + min(modifyScale·s/(1+s), cap)` (≈1.06; both at ~15,600 project statements) | per block |
 | Test weight | purpose — test vs production | `testCodeScoreMultiplier` (0.4) | per block |
-| Difficulty category | how hard | LLM label → coefficient 0.7–1.4 (effort only, never driver score) | per block |
-| Diff classification / moved lines | what really changed | cosmetic drop, in-place collapse, moved-line factor | per file / block |
+| Difficulty category | how hard | local-review label → coefficient 0.7–1.4 (effort only, never driver score) | per block |
+| Diff classification / moved lines | what really changed | pair collapse, moved-line factor | per file / block |
 | Volume exponent | commit size — marginal volume | `blockEffortSum^volumeExponent` (default 0.85) | per commit |
 | Files scope | breadth | log bonus, ≤ ~1.1 | per commit |
-| Quality multiplier | outcomes | coverage / CPD / static analysis / architecture, clamped | per commit |
+| Quality multiplier | outcomes | coverage / CPD / static analysis / architecture / quality gates, clamped | per commit |
 | Architecture bonus | design uplift | impactScore × baseEffort × bonusFactor × qualityFactor | per commit |
 
 ### Operation multiplier × volume exponent — orthogonal, not compounding
@@ -412,18 +407,18 @@ The multipliers claim a 20.5% per-line spread (`1.06/0.88`); the realized score 
 The new-code discount currently rides in two places, and a third is planned:
 
 1. blanket `addMultiplierBase = 0.8` — every new line, indiscriminately;
-2. LLM difficulty category — `MECHANICAL` (0.7) fires precisely on boilerplate new code, so a trivial new block already stacks `0.88 × 0.7 ≈ 0.62` per driver point;
+2. difficulty category — `MECHANICAL` (0.7) fires precisely on boilerplate new code, so a trivial new block already stacks `0.88 × 0.7 ≈ 0.62` per driver point;
 3. the planned structural-similarity discount — adaptive, per block.
 
 **Rule: when the structural-similarity discount ships, `addMultiplierBase` returns to `1.0`.** The adaptive signal becomes the single owner of the axis and the blanket discount retires. Until then, widen neither of the two live discounts without re-checking the combined floor.
 
 ---
 
-## Config-file efforts (pom.xml, `.proto`)
+## Config-file efforts (build and schema files)
 
-Some changed files carry real work but have **no code blocks** to drive — `pom.xml` and `.proto` files. Rather than ignore them, Codiqo scores them from **line count alone**: `VolumeScoreCalculator.calculateConfigFileEfforts` emits **one synthetic block per changed config file**, which then sits alongside the method/constructor blocks in the same `totalEffortRaw` / cap / volume accumulators.
+Some changed files carry real work but have **no code blocks** to drive — build and schema files. Rather than ignore them, Codiqo scores them from **line count alone**: `VolumeScoreCalculator.calculateConfigFileEfforts` emits **one synthetic block per changed config file**, which then sits alongside the method/constructor blocks in the same `totalEffortRaw` / cap / volume accumulators.
 
-A file is line-count-scored when `LanguageCapabilities.isLineCountScored` is true — currently `pom.xml` (matched by name) or any `*.proto` (matched by extension). The synthetic block is built as:
+A file is line-count-scored when `LanguageCapabilities.isLineCountScored` is true — currently `pom.xml`, `*.proto`, Gradle scripts (`*.gradle`, `*.gradle.kts`), `gradle.properties`, `gradle-wrapper.properties` and `*.versions.toml`. The synthetic block is built as:
 
 ```
 rawLines    = fileChange.linesAdded + fileChange.linesDeleted    # skip the file if 0
@@ -438,17 +433,17 @@ There is no NCSS / invocation projection and no scaler — config files have no 
 **Two structural exclusions keep config files from distorting the rest of the metric:**
 
 - **`bucketBaseline = 0`** — config blocks contribute nothing to `totalBaseline`, so they never inflate the global-cap budget, and on a config-only commit the cap cannot bind at all (`globalCapApplied` requires `totalBaseline > 0`).
-- **`isConfig = true`** — excludes the block from `totalEffectiveStatements` (which sums driver scores over non-config blocks only) and from the driver-score abuse signals.
+- **`isConfig = true`** — excludes the block from `totalEffectiveStatements` (which sums driver scores over non-config blocks only) and from the ratio-outlier signal (it still receives `effortShare` and can be a `globalCapDriver`).
 
-**`linesAdded` / `linesDeleted` are already effective counts.** They come from `DiffStats` filtered by the file's `IneffectiveLineProfile` before they ever reach the config-effort math: `C_STYLE` (`.proto`, like Java) drops `//`-style comments and `import` declarations; `XML` (`pom.xml`) drops `<!-- … -->` comment lines; `NONE` drops only blanks. So a commit that merely re-licenses a header or reorders imports in a `.proto` scores ~0 config effort.
+**`linesAdded` / `linesDeleted` are already effective counts.** They come from `DiffStats` filtered by the file's `IneffectiveLineFilter` before they ever reach the config-effort math: `.proto` drops C-style comments and `import` declarations; Gradle scripts drop C-style comments; `pom.xml` drops `<!-- … -->` comment lines; `gradle.properties`, `gradle-wrapper.properties` and `*.versions.toml` drop `#` comments; blank lines are always dropped. So a commit that merely re-licenses a header or reorders imports in a `.proto` scores ~0 config effort.
 
-**Diff classification still applies, and the seeding is deliberate.** Config files set `linesJustificationRequired = true` (via `requiresDiffClassification`), so the LLM classifies their changed lines just like code, and in `recompute` the per-file effective-line factor rescales the synthetic block's `driverScore` and `effort` — collapsing cosmetic and in-place churn (a re-indented XML stanza, a moved `<dependency>`). The block is seeded from `added + deleted` (not `max(added, deleted)`) precisely so the factor `effectiveLines / (added + deleted)` collapses each delete+add pair exactly once; seeding with `max` would collapse the pair a second time. The per-block [difficulty category](#per-block-difficulty-category) does **not** apply — a null signature means config blocks always take the neutral `categoryCoeff = 1.0`.
+**Diff classification still applies, and the seeding is deliberate.** Config files set `linesJustificationRequired = true` (via `requiresDiffClassification`), so the server classifies their changed lines just like code, and in `recompute` the per-file effective-line factor rescales the synthetic block's `driverScore` and `effort` — collapsing delete+add pairs (a re-indented XML stanza) and discounting moved lines (a moved `<dependency>`). The block is seeded from `added + deleted` (not `max(added, deleted)`) precisely so the factor `effectiveLines / (added + deleted)` collapses each delete+add pair exactly once; seeding with `max` would collapse the pair a second time. The per-block [difficulty category](#per-block-difficulty-category) does **not** apply — config blocks are excluded from labelling and from the fallback, so they always take the neutral `categoryCoeff = 1.0`.
 
 ---
 
 ## Driver-score abuse signals
 
-These fields are **diagnostic**, not scoring inputs. They exist so a downstream DB can later identify developers whose blocks repeatedly look structurally engineered to inflate volume scoring, so the team can flag specific authors for review (or, on closer look, tune the threshold). False positives are expected — the goal is data, not enforcement.
+These fields are **diagnostic**, not scoring inputs. They exist so Codiqo can later identify developers whose blocks repeatedly look structurally engineered to inflate volume scoring, so the team can flag specific authors for review (or, on closer look, tune the threshold). False positives are expected — the goal is data, not enforcement.
 
 Two signal families (both per-block; the project-level scalers themselves don't carry abuse signal — they're just the project's style fingerprint):
 
@@ -475,7 +470,7 @@ blockRatioOutlier = blockRatioDeviationNcss > driverFactorMaxDeviation
                  || blockRatioDeviationInvocations > driverFactorMaxDeviation
 ```
 
-For a MODIFY block, `blockRatioDeviationNcss` is **always `0.0`** (NCSS is dropped from the MODIFY score, so the dimension is not informative). `blockRatioDeviationInvocations` is computed using `effectiveInvocationsChanged / linesChanged` instead.
+For a MODIFY block, `blockRatioDeviationNcss` is **always `0.0`** (NCSS is dropped from the MODIFY score, so the dimension is not informative). `blockRatioDeviationInvocations` is also always `0.0` (per-line ratios on a diff are diff-shape artefacts).
 
 ### About the threshold knob
 
@@ -499,7 +494,7 @@ The block is flagged. By itself this is just data — but if the same author sho
 
 ### Worked example — globalCapDriver
 
-Reusing the L194-204 cap-binds example (one 800-driver outlier method alongside five reasonable ones):
+Reusing the [cap-binds example](#worked-example--cap-binds) (one 800-driver outlier method alongside five reasonable ones):
 
 ```
 totalEffortRaw   = 35 + 42 + 28 + 50 + 31 + 800 = 986
@@ -512,21 +507,23 @@ The outlier method is flagged as the cap driver. The five small blocks each have
 
 ---
 
-## Reading the per-block breakdown in the report
+## Reading the per-block breakdown
 
-The HTML report shows one row per changed code block with the full pipeline; the Maven console summary shows the same columns up to `Driver` (cap/effort are LLM-side concepts and live in the LLM scoring result, not the plugin output):
+Two places show one row per changed code block. The Maven console summary (see [below](#the-maven-console-summary)) shows the columns up to `Driver`, computed on the build machine from the submission. The scored result (`assessment.effortBreakdown.fileEfforts[*].codeBlockEfforts[*]`) and the commit page add `Ratio` and `Effort`, which only exist once the server has scored the commit.
 
 | Column | Where | Meaning |
 |---|---|---|
-| **L** | HTML + Maven | Non-comment code lines in the block. For MODIFY, this is the effective `linesChanged`, not the raw body length |
-| **S** | HTML + Maven | NCSS (logical statements). For MODIFY, shown as the raw NCSS, but the dimension is not used in the score |
-| **I** | HTML + Maven | Direct method invocations inside the block. For MODIFY, this is the effective `invocationsChanged` |
-| **pL** | HTML + Maven | Lines-equivalent contribution of the L dimension (= L directly; included for symmetry with pS/pI) |
-| **pS** | HTML + Maven | Lines-equivalent contribution of the S dimension (= `S · k_S`); rendered as `—` for MODIFY blocks (dimension dropped) |
-| **pI** | HTML + Maven | Lines-equivalent contribution of the I dimension (= `I · k_I`) |
-| **Driver** | HTML + Maven | Final driver score: `(pL + pS + 0.5·pI) / 2.5` for NEW, `(pL + 0.5·pI) / 1.5` for MODIFY. Note `pI` is the *unweighted* lines-equivalent contribution — `W_I = 0.5` is applied here, not in the column |
-| **Ratio** | HTML only | `changeRatio` for MODIFY blocks, `1.00` for NEW |
-| **Effort** | HTML only | `Driver × operationMult × testWeight × categoryCoeff` — what the block contributes to `totalEffortRaw`. The HTML report is post-LLM, so `Driver` already carries the per-file effective-line factor and `categoryCoeff` is the per-block [difficulty-category](#per-block-difficulty-category) coefficient (`categoryMechanicalCoeff` when the LLM left the block uncategorized — see that section; never `1.0` for a NEW or MODIFY block) |
+| **L** | Console + commit page | Non-comment code lines in the block. In the console, for MODIFY, this is the effective `linesChanged`, not the raw body length. The commit page shows the persisted `nonCommentCodeLines` for every block (signature included), so its L is larger than the driver formula's body-only L |
+| **S** | Console + commit page | NCSS (logical statements). For MODIFY, shown as the raw NCSS, but the dimension is not used in the score |
+| **I** | Console + commit page | Direct method invocations inside the block. In the console, for MODIFY, this is the effective `invocationsChanged` |
+| **pL** | Console | Lines-equivalent contribution of the L dimension (= L directly; included for symmetry with pS/pI) |
+| **pS** | Console | Lines-equivalent contribution of the S dimension (= `S · k_S`); rendered as `—` for MODIFY blocks (dimension dropped) |
+| **pI** | Console | Lines-equivalent contribution of the I dimension (= `I · k_I`) |
+| **Driver** | Console + commit page | Driver score: `(pL + pS + 0.5·pI) / 2.5` for NEW, `(pL + 0.5·pI) / 1.5` for MODIFY. Note `pI` is the *unweighted* lines-equivalent contribution — `W_I = 0.5` is applied here, not in the column |
+| **Ratio** | Commit page | `changeRatio` for MODIFY blocks, `1.00` for NEW |
+| **Effort** | Commit page | `Driver × operationMult × testWeight × categoryCoeff` — what the block contributes to `totalEffortRaw`. On the scored result, `Driver` already carries the per-file effective-line factor, and `categoryCoeff` is the per-block [difficulty-category](#per-block-difficulty-category) coefficient (`categoryMechanicalCoeff` when the review left the block unlabelled — see that section; never the neutral default for a non-config NEW or MODIFY block) |
+
+**The console summary computes each row the way the server does**, from the same scored blocks (`bodyCodeLines` as `L`, `min(totalLinesChanged, L)` for a MODIFY block). It runs before the diff classification and the moved-line factor, so its `Driver` column is the driver score before those per-file and per-block corrections.
 
 **Interpretation tip:** scan the `pL / pS / pI` columns first. They're all in the same lines-equivalent unit, so you can compare them directly. If one of them is much larger than the others, that block is "big in one way only" — usually a fan-out-heavy orchestration method that calls many *distinct* collaborators (high pI), a Lombok-generated getter spray or fluent builder with many lines but few distinct call-sites (high pL, since a fluent chain counts as one invocation), or an algorithmic density method (high pS). If all three are balanced, the block is uniformly large.
 
@@ -544,15 +541,15 @@ Separating into four scalers means each changed block ends up compared fairly to
 
 The driver score is **re-calibrated every run**. Because the math is anchored to medians, adding a single 500-line monster method to the project barely moves `lines.p50` at all — so the projection factors (`k_S`, `k_I`) are very stable from commit to commit. Driver scores for unchanged blocks are nearly constant across commits, and adding or removing a handful of outliers does not perturb everyone else's score.
 
-This is a deliberate choice. The alternative (freezing scalers once and reusing them) gives stable historical numbers but goes stale as the project grows. Because driver scores are consumed by a per-commit LLM pass (not plotted on a dashboard), drift is invisible to the end product. If you need stable trend tracking, use the final **commit score** or the **effort** fields.
+This is a deliberate choice. The alternative (freezing scalers once and reusing them) gives stable historical numbers but goes stale as the project grows. Because driver scores are consumed per commit by the scoring rules (not plotted on a dashboard), drift is invisible to the end product. If you need stable trend tracking, use the final **commit score** or the **effort** fields.
 
 ---
 
 ## Configuration
 
-Tunable knobs that affect the driver score and the global cap. All are persisted on the submission so server-side replay reproduces the same numbers regardless of server-side defaults.
+Tunable knobs that affect the driver score and the global cap. All of them except the four `category*Coeff` and `configFileScoreMultiplier` ride on the submission's `scoringConfig`, so rescoring reproduces the same numbers even if server defaults change; those five are not submitted and always take the scoring server's defaults.
 
-**Where each one can actually be set.** Scoring resolves as *submitted config → organization override → project override*, so the submitted value wins over server defaults and an override wins over both. Only a subset is reachable from the build: `driverScoreCapMultiplier`, `driverFactorMaxDeviation`, `driverScoreCapDryRun`, `moveDetectionEnabled`, `moveSimilarityThreshold` and `movedLineCoefficient` have `codiqo.*` Maven properties (and matching `codiqo-action` inputs). The rest — `statsQuantile`, `volumeExponent`, `testCodeScoreMultiplier`, `configFileScoreMultiplier`, the four `category*Coeff`, `deleteRewardWeight`, `deleteRewardMaxQuantileUnits`, the operation-multiplier terms and `sizeFactorDivisor` — are deliberately **not** exposed as build properties: every submission carries the engine's defaults for them, and recalibration happens through an organization or project override so a single decision applies to a whole history rather than drifting per repository's workflow file.
+**Where each one can actually be set.** Scoring resolves as *submitted config → organization override → project override*, so the submitted value wins over server defaults and an override wins over both. Only a subset is reachable from the build: `driverScoreCapMultiplier`, `driverFactorMaxDeviation`, `driverScoreCapDryRun`, `moveDetectionEnabled`, `moveSimilarityThreshold` and `movedLineCoefficient` have `codiqo.*` Maven properties (and matching `codiqo-action` inputs) on Maven only; the Gradle plugin exposes none of them, so a Gradle submission always carries their defaults. The rest — `statsQuantile`, `volumeExponent`, `testCodeScoreMultiplier`, `configFileScoreMultiplier`, the four `category*Coeff`, `deleteRewardWeight`, `deleteRewardMaxQuantileUnits`, the operation-multiplier terms and `sizeFactorDivisor` — are deliberately **not** exposed as build properties: every submission carries the engine's defaults for them (except `configFileScoreMultiplier` and the four `category*Coeff`, which are not submitted and cannot be overridden: the server's defaults apply), and recalibration happens through an organization or project override so a single decision applies to a whole history rather than drifting per repository's workflow file.
 
 | Field | Default | Effect |
 |---|---|---|
@@ -560,22 +557,23 @@ Tunable knobs that affect the driver score and the global cap. All are persisted
 | `driverScoreCapMultiplier` | `2.5` | Multiplier on `totalBaseline` to get the global cap on summed effort. Higher = more permissive cap |
 | `driverFactorMaxDeviation` | `0.75` | Per-block deviation threshold. A block whose own `S/L` or `I/L` deviates from the bucket median ratio by more than this fraction is flagged as a ratio outlier; same value also gates `globalCapDriver`. Does **not** affect bucket-level projection factors (which are always raw `lines.p50 / dim.p50`). |
 | `driverScoreCapDryRun` | `false` | When `true`, the global cap is computed and abuse signals (`globalCapApplied`, `globalCapDriver`, `effortShare`, file-level rollups) are populated, but `blockEffortSum` is **not** clipped to `globalCap` — the score uses the uncapped `totalEffortRaw`. Lets you compare uncapped vs. capped scoring while still surfacing abuse signals. |
-| `volumeExponent` | `0.85` | Applied after `totalEffort` is computed; compresses marginal volume so large commits gain sub-linearly |
+| `volumeExponent` | `0.85` | Applied to `blockEffortSum` (the effort sum after the global cap); compresses marginal volume so large commits gain sub-linearly |
 | `testCodeScoreMultiplier` | `0.4` | Multiplier applied to test-block effort (and to the test-block contribution to `totalBaseline`) |
-| `categoryMechanicalCoeff`, `categoryRoutineCoeff`, `categorySubstantiveCoeff`, `categoryIntricateCoeff` | `0.7`, `1.0`, `1.2`, `1.4` | Per-block difficulty-category effort coefficients (LLM-assigned category → coefficient). Multiply **effort only**, never the driver score. Spread deliberately narrow to limit score swing when the LLM flips a borderline block one tier between runs. Replace the former commit-level `complexityMultiplier` |
-| `configFileScoreMultiplier` | `0.3` | Discount applied to [config-file efforts](#config-file-efforts-pomxml-proto) (`pom.xml` / `.proto` synthetic blocks, scored by line count). `effort = rawLines × modifyMult × configFileScoreMultiplier` |
+| `categoryMechanicalCoeff`, `categoryRoutineCoeff`, `categorySubstantiveCoeff`, `categoryIntricateCoeff` | `0.7`, `1.0`, `1.2`, `1.4` | Per-block difficulty-category effort coefficients (local-review label → coefficient). Multiply **effort only**, never the driver score. Spread deliberately narrow to limit score swing when the model flips a borderline block one tier between runs. Replace the former commit-level `complexityMultiplier` |
+| `configFileScoreMultiplier` | `0.3` | Discount applied to [config-file efforts](#config-file-efforts-build-and-schema-files) (synthetic blocks for `pom.xml`, `.proto`, Gradle build scripts and version catalogs, scored by line count). `effort = rawLines × modifyMult × configFileScoreMultiplier` |
 | `moveDetectionEnabled` | `true` | Enables cross-file [moved-line](#moved-lines) detection and the per-block `movedFactor` correction |
 | `moveSimilarityThreshold` | `0.95` | Multiset **token containment** threshold `\|A ∩ B\| / min(\|A\|,\|B\|)` for treating a deleted/added line pair as a move. Not Dice/Jaccard — relocation usually only adds tokens |
 | `movedLineCoefficient` | `0.25` | Charge for a matched moved pair instead of full weight, split `movedLineCoefficient / 2` to each side so cross-file and in-file moves cost the same in total |
+| `movedRunMaxGap` | `2` | Largest line gap between two move candidates that still counts them as one relocated run (a lone in-file candidate is not discounted) |
 | `deleteRewardWeight` | `0.2` | Fraction of a same-size in-place modify credited to [deletion-only files](#delete-reward) that produced no scored block. Clamped to `[0.0, 0.20]`; `0.0` disables the reward entirely |
 | `deleteRewardMaxQuantileUnits` | `10` | Absolute ceiling on a commit's **total** deletion reward, in bucket-quantile units. Exists because the global cap structurally cannot bound a broad-and-shallow deletion sweep. `0` disables the ceiling |
-| `addMultiplierScale`, `modifyMultiplierScale`, `modifyMultiplierCap`, `sizeFactorDivisor` | various | Together compute `addMult` and `modifyMult` based on project size — see `VolumeScoreCalculator.calculate` |
+| `addMultiplierBase`, `addMultiplierScale`, `modifyMultiplierBase`, `modifyMultiplierScale`, `modifyMultiplierCap`, `sizeFactorDivisor` | `0.8`, `0.1`, `1.0`, `0.3`, `0.2`, `100` | `addMult = addMultiplierBase + addMultiplierScale / (1 + s)`, `modifyMult = modifyMultiplierBase + min(modifyMultiplierScale · s / (1 + s), modifyMultiplierCap)` with `s = cbrt(totalStatements) / sizeFactorDivisor` — see `VolumeScoreCalculator.calculate` |
 
 ---
 
 ## The Maven console summary
 
-When `codiqo-maven-plugin` runs, it prints a calibration block at the end:
+When a `codiqo-maven-plugin` analysis goal assembles its submission, it logs a calibration block (the Gradle plugin prints none):
 
 ```
 Codiqo — Driver Score Calibration
@@ -604,6 +602,8 @@ driver_score_cap (global ceiling on total code-block effort):
   total_baseline  = Σ_block bucket_baseline (summed over all changed non-trivial blocks)
   global_cap      = total_baseline × 2.50
   total_effort    = min(Σ_block effort, global_cap)
+  P95 = 95th percentile of driver-score distribution within each (kind, scope) population
+  2.50 = driver score cap multiplier (caps the total summed effort at this multiple of the baseline budget)
   per-block driver scores are not individually clipped; the cap binds only on their sum
   method/prod:       quantile=52    bucket_budget_per_block=130
   method/test:       quantile=71    bucket_budget_per_block=178
@@ -612,9 +612,9 @@ driver_score_cap (global ceiling on total code-block effort):
 
 scalers:
   method/prod: (N=1604)
-    lines:   min=1    p50=6    p75=14   p90=28   max=87
-    ncss:    min=0    p50=3    p75=8    p90=17   max=52
-    invocs:  min=0    p50=2    p75=6    p90=14   max=41
+    lines:   min=1    p50=6.0    p75=14.0   p90=28.0   p95=40.0   max=87
+    ncss:    min=2    p50=3.0    p75=8.0    p90=17.0   p95=24.0   max=52
+    invocs:  min=0    p50=2.0    p75=6.0    p90=14.0   p95=20.0   max=41
   ... (other three buckets) ...
 
 driver_formula:
@@ -622,24 +622,26 @@ driver_formula:
   formula_new:      (W_L·lines + W_S·ncss·k_S + W_I·invocs·k_I) / total
   formula_modify:   (W_L·linesChanged + W_I·invocsChanged·k_I) / (W_L + W_I)
   factors (k_S = lines.p50 / ncss.p50, k_I = lines.p50 / invocs.p50; raw bucket-level — no clamp):
-    method/prod:       k_S=1.250  k_I=1.250   (lines.p50=6, ncss.p50=3, invocs.p50=2)
+    method/prod:       k_S=2.000  k_I=3.000   (lines.p50=6.0, ncss.p50=3.0, invocs.p50=2.0)
     ... (other three) ...
+  ... (then: max contributors per bucket, the changed-blocks table L/S/I/pL/pS/pI/Driver, trivial changed blocks, ratio outliers and outlier counts) ...
 ```
 
 Reading notes:
 
 - `baseline_populations` shows the `N` each scaler was built from plus how many trivial blocks were filtered out.
-- `driver_score_cap` shows the global formula and per-bucket `bucket_budget_per_block = quantile × driverScoreCapMultiplier`. This is the contribution **a single block in that bucket** makes to `totalBaseline` (before operation/test multipliers); the actual cap is the sum across all changed blocks.
-- Each scaler prints `min / p50 / p75 / p90 / max` per dimension. Only the `p50` rows participate in the formula (via `k_S` and `k_I`); the other percentiles are informational.
+- `driver_score_cap` shows the global formula and per-bucket `bucket_budget_per_block = quantile × driverScoreCapMultiplier`. This is the contribution **a single block in that bucket** makes to `globalCap` (before operation/test multipliers); its contribution to `totalBaseline` is `quantile` alone, and the actual cap is the sum across all changed blocks.
+- Each scaler prints `min / p50 / p75 / p90 / p95 / max` per dimension. Only the `p50` rows participate in the formula (via `k_S` and `k_I`); the other percentiles are informational.
 - `driver_formula` shows the weights, the per-scope raw projection factors, and the formulas. Invocations carry half weight (`W_I=0.50`) because a call is already counted as a line and a statement — see the weights FAQ below. Each `k_S` / `k_I` is annotated with the three p50 numbers it was derived from — useful for sanity-checking that the project's style is being captured faithfully.
-- The non-trivial blocks table stops at `Driver` — `Effort` is applied later in the LLM scoring pipeline and shows up in the HTML report, not the Maven summary.
+- The non-trivial blocks table stops at `Driver` — `Effort` is computed by the server when it scores the commit and shows on the commit page, not in the Maven summary. Its `Driver` column is the driver score before the per-file and moved-line corrections; see [Reading the per-block breakdown](#reading-the-per-block-breakdown).
+- If the changed blocks cannot be mapped as the server maps them (for example a diff that cannot be parsed), the summary logs a warning naming the cause and prints `unavailable` in place of the block counts, the blocks table and the outlier sections; the analysis itself continues. A block whose bucket has no baseline samples prints `0.00 (no baseline samples in this bucket)`.
 
 ---
 
 ## FAQ
 
 **Q: Why full weight on lines and NCSS but half weight on invocations?**
-A: The projection factors (`k_S`, `k_I`) put all three on commensurable lines-equivalent scales, so a median block scores the same regardless of weights — the weights only decide how above/below-median *deviations* in each dimension combine. Lines and NCSS are two views of size and carry full weight. Invocations are different: measured across real JDK sources (BigDecimal, Collectors, DateTimeFormatterBuilder) there are ~0.7–1.0 calls per NCSS statement, i.e. a call is almost always *already* counted as a line and a statement — invocations are ~1:1 collinear with NCSS, not an independent axis. Their only extra signal is orchestration/fan-out density (e.g. `a(b(c(d())))` is one statement but four calls). Full weight double-counts call-heavy glue code and penalizes dense compute that makes few calls; half weight (`W_I=0.50`) keeps the fan-out signal without the double-count. The weights are constants in `DriverScore.java` and easy to change.
+A: The projection factors (`k_S`, `k_I`) put all three on commensurable lines-equivalent scales, so a median block scores the same regardless of weights — the weights only decide how above/below-median *deviations* in each dimension combine. Lines and NCSS are two views of size and carry full weight. Invocations are different: a call almost always sits on a line and in a statement that are *already* counted, so invocations track NCSS closely rather than forming an independent axis. Their only extra signal is orchestration/fan-out density (e.g. `a(b(c(d())))` is one statement but four calls). Full weight double-counts call-heavy glue code and penalizes dense compute that makes few calls; half weight (`W_I=0.50`) keeps the fan-out signal without the double-count. The weights are constants in `DriverScore.java` and easy to change.
 
 **Q: Why median-anchored projection instead of raw counts (`L + S + I`) or MinMax?**
 A: Raw counts would give each unit equal weight, which is wrong — one line of code is not the same amount of work as one NCSS statement or one method invocation, and the ratio depends on the project's coding style. The median-based factors let the project's own baseline say "on average, one S is worth roughly X lines in *this* codebase". The medians themselves are robust to outliers, so we take the resulting factors as-is — abuse protection lives one level down, on individual blocks via `driverFactorMaxDeviation`.
@@ -651,216 +653,36 @@ A: For a brand-new block, `linesChanged = totalLines`, so all three dimensions c
 A: Test blocks still get the `testCodeScoreMultiplier` (default `0.4`) applied to both their effort and their contribution to `totalBaseline`. The driver score itself is fair (test calibrated against test); the deweighting is a product decision applied uniformly at the effort step.
 
 **Q: Why is the cap global instead of per-block?**
-A: Per-block clipping conflates two different concerns — outlier-block protection and aggregate size protection. The global-cap design isolates the latter: the **global cap on `totalEffort`** handles size-outlier protection at the aggregate, while the **per-block deviation flag (`blockRatioOutlier`)** handles per-developer abuse signal as data — without distorting the score. A typical commit (no outliers) is unaffected by the cap; a commit with one giant block sees only the *aggregate* truncation, so a 600-line legacy refactor doesn't lose the contributions of the well-sized blocks alongside it.
+A: Per-block clipping conflates two different concerns — outlier-block protection and aggregate size protection. The global-cap design isolates the latter: the **global cap on the summed effort** handles size-outlier protection at the aggregate, while the **per-block deviation flag (`blockRatioOutlier`)** handles per-developer abuse signal as data — without distorting the score. A typical commit (no outliers) is unaffected by the cap; a commit with one giant block sees only the *aggregate* truncation, so a 600-line legacy refactor doesn't lose the contributions of the well-sized blocks alongside it.
 
 **Q: Can I see the raw L, S, I for a specific block?**
-A: Yes. They are on every `CodeBlockEffortView` row in the LLM scoring response JSON (`directInvocationCount`, `nonCommentCodeStatements`, `nonCommentCodeLines`) and in the per-block HTML report table.
+A: Yes. The submission carries them on each code unit's `metrics` (`bodyCodeLines` = L, `nonCommentCodeStatements` = S, `directInvocationCount` = I), and the Maven console summary prints them per block. The scored result's `assessment.effortBreakdown.fileEfforts[*].codeBlockEfforts[*]` repeats S and I, but reports `nonCommentCodeLines` (signature included) rather than L.
 
 ---
 
-## Persistence and replay
+## Reproducibility
 
-This section is written for the **backend replay service** (persists offline-plugin submissions to a database, then reconstructs them server-side and triggers an LLM callback) and for the **UI** (reads the same submission payload to render per-block tables and distribution charts). Both consume the same set of fields — the backend writes them, the UI reads them, and the replay step must reproduce identical driver scores from what was persisted.
+The score of a commit is a deterministic function of what the build plugin submits and of the local review's assessment. The submission carries everything the formulas above read:
 
-### What must be persisted
+- **Project calibration** — the four scalers (`driverScalers.*`, each dimension as `{min, p50, p75, p90, p95, max}`, with the derived `ncssFactor` and `invocationsFactor`) and the four per-bucket cap quantiles (`projectMetrics.*CapQuantile*`).
+- **Per-block raw counts** — `bodyCodeLines` (L), `nonCommentCodeStatements` (S), `directInvocationCount` (I), and for MODIFY blocks `effectiveLinesChanged` and `effectiveInvocationsChanged` (`totalLinesChanged` is derived from the diff when the commit is scored), plus the block's kind, operation and whether its file is test code.
+- **Settings** — the submitted `scoringConfig` (see [Configuration](#configuration)). The four `category*Coeff` and `configFileScoreMultiplier` are not submitted; the scoring server's defaults apply to them.
+- **The diff** — from which the [diff classification](#diff-classification-reduction) and [moved lines](#moved-lines) are derived.
 
-Driver-score math is deterministic given the scalers + per-block raw counts + settings. Everything the offline plugin computes fits into the buckets below. Buckets (1)–(6) feed driver-score / effort / abuse-signal computation; bucket (7) is auxiliary per-call-site data consumed only by the diff-viewer UI.
+The scored result exposes the per-block values derived from these inputs, so they never need to be recomputed to be read:
 
-**1. Project-wide calibration (per submission, once)** — enough to reconstruct every scaler on replay:
+| Field | Value |
+|---|---|
+| `driverScore` | NEW: `(W_L · L + W_S · S · k_S + W_I · I · k_I) / TOTAL_WEIGHT`; MODIFY: `(W_L · linesChanged + W_I · invocationsChanged · k_I) / (W_L + W_I)`, after the per-file and moved-line factors |
+| `scaledLines` / `scaledNcss` / `scaledInvocations` | `pL`, `pS` (`0` for MODIFY), `pI` |
+| `effort` | `driverScore · operationMult · testWeight · categoryCoeff` |
+| `changeRatio` | `min(1.0, totalLinesChanged / bodyCodeLines)` for MODIFY, `1.0` for NEW. On the scored result the per-block `effectiveLinesChanged` field carries this `totalLinesChanged` (effective added plus deleted lines) |
+| `effortShare` | `effort / totalEffortRaw` |
+| `blockRatioDeviationNcss`, `blockRatioDeviationInvocations`, `blockRatioOutlier`, `globalCapDriver` | See [Driver-score abuse signals](#driver-score-abuse-signals) |
 
-| Field | Schema location | Purpose |
-|---|---|---|
-| `driverScalers.methodScalerProd` | `DriverScalersModel` → `DriverScalerModel` | Four independent scalers; each is `{population, lines, ncss, invocations}` where each dimension is a `DimensionStatsModel` of `{min, p50, p75, p90, p95, max}` |
-| `driverScalers.methodScalerTest` | same | — |
-| `driverScalers.constructorScalerProd` | same | — |
-| `driverScalers.constructorScalerTest` | same | — |
-| `driverScalers.trivialMethodsProdExcluded`, `trivialMethodsTestExcluded`, `trivialConstructorsProdExcluded`, `trivialConstructorsTestExcluded` | `DriverScalersModel` | Diagnostic counts of blocks filtered from the populations; not used in the formula |
-| `methodCapQuantileProd`, `methodCapQuantileTest`, `constructorCapQuantileProd`, `constructorCapQuantileTest` | submission root | `P{statsQuantile}` of the driver-score distribution per bucket. Used as the per-block contribution to `totalBaseline` on replay |
-| `driverScalers.*.ncssFactor`, `invocationsFactor` | `DriverScalerModel` | Raw projection factors `lines.p50 / dim.p50` actually used in scoring (no clamp). `0.0` when `dim.p50 == 0`. Persisted on the request payload at submission time so consumers don't need to recompute. |
+Per file, `fileEfforts[*]` adds the abuse-signal rollups (`blocksFlaggedAsRatioOutlier`, `blocksFlaggedAsGlobalCapDriver`, `maxBlockRatioDeviationNcss`, `maxBlockRatioDeviationInvocations`, `fileFlaggedAsAbusive`), and per commit `effortBreakdown.volumeScore` carries `totalEffortRaw`, `totalBaseline`, `globalCap`, `globalCapApplied`, `globalCapDryRun` and the [diff-classification](#diff-classification-reduction) mirror counters.
 
-**2. Submission-level settings** — configurable knobs that tune the formula. These must ride with the payload so replay reproduces the same numbers even if server defaults change later:
-
-| Field | Default | Notes |
-|---|---|---|
-| `statsQuantile` | `0.95` | Clamped to `≥ 0.85` |
-| `driverScoreCapMultiplier` | `2.5` | Multiplier on `totalBaseline` for the global effort cap |
-| `driverFactorMaxDeviation` | `0.75` | Per-block deviation threshold for `blockRatioOutlier` and `globalCapDriver`. Must match the offline plugin's value to reproduce these flags. Has no effect on bucket-level projection factors. |
-| `driverScoreCapDryRun` | `false` | Audit-only mode for the cap: when `true`, `globalCapApplied` and the per-block abuse signals are still computed and persisted, but `blockEffortSum` is left equal to `totalEffortRaw` (cap is **not** applied to the score). Persisted on the submission and mirrored on `effortBreakdown.volumeScore.globalCapDryRun` so analytics can distinguish "cap was enforced" from "cap was only audited". Replay must honor this flag verbatim or volume scores will diverge. |
-| `volumeExponent` | `0.85` | Compression exponent applied to `totalEffort` |
-| `testCodeScoreMultiplier` | `0.4` | Test-block effort weight |
-| `categoryMechanicalCoeff`, `categoryRoutineCoeff`, `categorySubstantiveCoeff`, `categoryIntricateCoeff` | `0.7`, `1.0`, `1.2`, `1.4` | Difficulty-category effort coefficients. Uncategorized NEW blocks floor to the mechanical coefficient — see [per-block difficulty category](#per-block-difficulty-category) |
-| `moveDetectionEnabled`, `moveSimilarityThreshold`, `movedLineCoefficient` | `true`, `0.95`, `0.25` | [Moved-line](#moved-lines) detection and the per-block `movedFactor`. Must match the offline plugin's values to reproduce block driver scores |
-| `deleteRewardWeight`, `deleteRewardMaxQuantileUnits` | `0.2`, `10` | [Delete reward](#delete-reward) for deletion-only files and its absolute per-commit ceiling. Weight clamped to `[0.0, 0.20]`; both must match the offline plugin's values to reproduce deletion efforts |
-| `configFileScoreMultiplier` | `0.3` | Discount on config-file synthetic blocks |
-
-**3. Per-block raw counts (per changed code block)** — sufficient to re-derive `driverScore`, `scaledLines`, `scaledNcss`, `scaledInvocations` on replay:
-
-| Field | Meaning | Used by formula for… |
-|---|---|---|
-| `bodyCodeLines` (`L`) | Body-only physical non-comment lines (`{` ... `}`, excluding signature). Used as `L` in driver-score calibration and per-block scoring | NEW; MODIFY uses `effectiveLinesChanged` capped to `bodyCodeLines` |
-| `nonCommentCodeLines` | Full physical non-comment lines (signature + body). Reported for the report's full-block view; not used by the driver formula | display only |
-| `location.bodyStartLine` / `location.bodyEndLine` | Lines of the body's `{` and `}`. Used to intersect the diff with the body for `effectiveLinesChanged`. Absent for code units without a body | MODIFY |
-| `nonCommentCodeStatements` (`S`) | NCSS logical statement count | NEW only (dropped for MODIFY) |
-| `directInvocationCount` (`I`) | Direct method invocations inside the block | NEW; MODIFY uses `effectiveInvocationsChanged` |
-| `effectiveLinesChanged` | Lines in the block body intersected with the diff's added-line set | MODIFY |
-| `effectiveInvocationsChanged` | Invocations whose source line is in the diff's added-line set | MODIFY |
-| `changeRatio` | `min(1.0, effectiveLinesChanged / bodyCodeLines)` (1.0 for NEW; 0.0 when the block has no body) | Reported in UI only. The denominator is the **body** line count, matching `L` — not `nonCommentCodeLines`, which includes the signature |
-| `kind` | `method` or `constructor` | Picks which scaler applies |
-| `scope` | `prod` or `test` | Same |
-| `operation` | `NEW` or `MODIFY` | Picks the formula |
-
-**4. Per-block derived fields** — **redundant** given (1), (2), (3), but exposed on the request/response schema so the UI can render without re-running the math:
-
-| Field | Formula | Notes |
-|---|---|---|
-| `driverScore` | NEW: `(W_L · L + W_S · S · k_S + W_I · I · k_I) / total`<br>MODIFY: `(W_L · linesChanged + W_I · invocsChanged · k_I) / (W_L + W_I)` | Recomputable on replay from scalers + raw counts |
-| `scaledLines` (= `pL`) | NEW: `L`; MODIFY: `effectiveLinesChanged` | Lines-equivalent contribution of the L dimension |
-| `scaledNcss` (= `pS`) | NEW: `S · k_S`; MODIFY: `0` | Lines-equivalent contribution of the S dimension. Field name retained for schema stability; the value is lines-equivalent, not a `[0, 1]` ratio |
-| `scaledInvocations` (= `pI`) | NEW: `I · k_I`; MODIFY: `effectiveInvocationsChanged · k_I` | Lines-equivalent contribution of the I dimension |
-| `cappedStatements` | `round(driverScore)` | No longer carries a per-block cap; equals the rounded raw driver score. Field name retained for schema stability |
-| `effort` | `driverScore · operationMult · testWeight · categoryCoeff` | Per-block contribution to `totalEffortRaw`. Post-LLM, `driverScore` carries the per-file effective-line factor and `categoryCoeff` is the per-block [difficulty-category](#per-block-difficulty-category) coefficient — `categoryMechanicalCoeff` when the block was left uncategorized, `1.0` only for config and signature-less blocks. Not individually clipped; the global cap binds on the sum |
-| `bucketBaseline` | `bucketP95(block) · operationMult · testWeight` | Per-block contribution to `totalBaseline` |
-| `blockRatioDeviationNcss` | NEW: `|block.S/block.L − bucket.ncss.p50/bucket.lines.p50| / (bucket.ncss.p50/bucket.lines.p50)`<br>MODIFY: `0.0` (NCSS dropped from MODIFY score) | **For backend:** computed during server-side replay; persisted on the response payload. Per-developer abuse signal candidate. |
-| `blockRatioDeviationInvocations` | NEW: same shape using invocations dimension.<br>MODIFY: `0.0` (per-line ratios on a small diff are diff-shape artifacts, not block structure). | Same persistence semantics as above. |
-| `blockRatioOutlier` | `blockRatioDeviationNcss > driverFactorMaxDeviation \|\| blockRatioDeviationInvocations > driverFactorMaxDeviation`. Always `false` for MODIFY since both deviations are 0. | Boolean flag — easy DB index for "show me commits with N or more outlier blocks". |
-| `effortShare` | `block.effort / totalEffortRaw` (`0.0` if denominator is 0) | Always populated — used by UI for stacked-bar visualizations and by abuse analytics. |
-| `globalCapDriver` | `globalCapApplied && effortShare > driverFactorMaxDeviation` | True iff this block alone owns more than `driverFactorMaxDeviation` (default `75%`) of total effort during a cap event — i.e. principal cause of cap binding. Still fires when `driverScoreCapDryRun == true` (signal must reach analytics regardless of whether the cap was enforced). |
-
-**5. LLM diff-classification fields** — provided by the LLM and consumed by the server-side reduction step (see [LLM diff-classification reduction](#llm-diff-classification-reduction) above). All live on the LLM scoring response; the backend just persists them through.
-
-| Field | Schema location | Meaning |
-|---|---|---|
-| `effortBreakdown.diffClassification` | `EffortBreakdownModel` → `DiffClassificationModel` | **Nullable.** Whole-commit roll-up + per-file array. Null when the LLM omitted it; in that case the volume score was not reduced and the mirror counters below are zero. |
-| `diffClassification.totalLinesAddedRaw` | `DiffClassificationModel` | Sum of `linesAdded` across the files the LLM classified. |
-| `diffClassification.totalLinesDeletedRaw` | `DiffClassificationModel` | Sum of `linesDeleted` across the same files. |
-| `diffClassification.cosmeticLines` | `DiffClassificationModel` | Total lines reclassified as cosmetic (added + deleted). Effort weight 0. |
-| `diffClassification.pairsCollapsed` | `DiffClassificationModel` | Total paired delete/add tuples across the commit (`inPlaceModifyPairs.size + trueModifyPairs.size` summed across files). Each pair removes 1 unit of effort versus the raw 2-line count. |
-| `diffClassification.pureAddDeleteLines` | `DiffClassificationModel` | Total unpaired added + unpaired deleted lines (`pureAdd.size + pureDelete.size` summed). Kept at full weight. |
-| `diffClassification.perFile[*]` | `FileDiffClassificationModel` | Per-file breakdown — `{file, cosmeticLines, pairsCollapsed, pureAddDeleteLines, cosmeticAdded, cosmeticDeleted, inPlaceModifyPairs, trueModifyPairs, pureAdd, pureDelete}`. The six arrays are the **source of truth** supplied by the LLM; the three count fields are server-derived. The reduction is applied per-file from the arrays; persist everything as-is so the classification is auditable line-by-line. |
-| `diffClassification.perFile[*].cosmeticAdded` | `List<Integer>` | New-file line numbers for cosmetic *additions* on this file. No overlap with any other added-side bucket. |
-| `diffClassification.perFile[*].cosmeticDeleted` | `List<Integer>` | Old-file line numbers for cosmetic *deletions* on this file. No overlap with any other deleted-side bucket. |
-| `diffClassification.perFile[*].inPlaceModifyPairs` | `List<LinePairModel>` | Each entry is `{deleted: <old-file line>, added: <new-file line>}` — paired delete+add with same intent (rename / refactor of same operation). 1 effort per pair. |
-| `diffClassification.perFile[*].trueModifyPairs` | `List<LinePairModel>` | Same tuple shape — paired delete+add where the line slot now holds a different intent. Same 1 effort per pair; the distinction from `inPlaceModifyPairs` is for human reviewers, not for the math. |
-| `diffClassification.perFile[*].pureAdd` | `List<Integer>` | New-file line numbers for added lines with no counterpart on the deleted side. Full weight, 1 effort each. |
-| `diffClassification.perFile[*].pureDelete` | `List<Integer>` | Old-file line numbers for deleted lines with no counterpart on the added side. Full weight, 1 effort each. |
-| `diffClassification.rationale` | `DiffClassificationModel` | One- or two-sentence explanation from the LLM. Display-only. |
-| `effortBreakdown.volumeScore.linesChangedRaw` | `VolumeScoreModel` | Sum of `linesAdded + linesDeleted` across the classified files BEFORE reduction. `0` when no reduction was applied. |
-| `effortBreakdown.volumeScore.linesChangedAdjusted` | `VolumeScoreModel` | Effective-line total after reduction (`Σ pairsCollapsed + pureAddDeleteLines` across validated files). `0` when no reduction was applied. Invariant: `linesChangedAdjusted ≤ linesChangedRaw` whenever validation passes. |
-| `effortBreakdown.volumeScore.cosmeticLinesDropped` | `VolumeScoreModel` | Total `cosmeticLines` excluded from the volume score. Mirrors `diffClassification.cosmeticLines` for files actually present in the request. `0` when no reduction was applied. |
-| `effortBreakdown.volumeScore.inPlaceLinesCollapsed` | `VolumeScoreModel` | Number of pairs collapsed (= `pairsCollapsed`). Each pair removed 1 unit of effort versus the raw 2-line count. `0` when no reduction was applied. Field name preserved for schema stability — both in-place pairs *and* true-modify pairs contribute. |
-
-The reduction itself (the per-file factor that scaled each block's `driverScore` and `effort`) is **not persisted as a separate field** — it is derivable on replay from `(per-file FileDiffClassification, request.fileChanges[*].linesAdded/linesDeleted)`. The persisted block-level fields (`driverScore`, `effort`, `bucketBaseline`, `effortShare`, etc.) and the volume aggregates already reflect the post-reduction values, so a downstream consumer that only needs to render the score doesn't have to redo the math.
-
-**For backend (replay):** treat `effortBreakdown.diffClassification` and the four `volumeScore.*` mirror counters as **derived outputs of the LLM scoring step**, not inputs. The replay path of the offline plugin doesn't need them — the offline plugin doesn't run the LLM. They appear only on the LLM response. Persist them through to the DB exactly as received so the UI can render them and so analytics can aggregate "how often the LLM reclassifies this team's commits as cosmetic". When server-side replay re-runs the LLM, the new response will produce its own classification — accept whatever the model returns provided it satisfies the per-file invariant; the post-LLM score (`baseEffortScore`, final `score`) is the source of truth.
-
-**For UI:** see the rendering notes in section [What the UI can render from the submission payload](#what-the-ui-can-render-from-the-submission-payload).
-
-**5b. Per-block difficulty category** — the LLM returns `blockCategories[*]` = `{file, signature, category}` on the response (`CodeBlockCategoryView`; `category` ∈ `MECHANICAL | ROUTINE | SUBSTANTIVE | INTRICATE`). Like the diff-classification fields this is an **output of the LLM scoring step**, not a replay input — its only scoring effect is the `categoryCoeff` already folded into each block's persisted `effort` (see [Per-block difficulty category](#per-block-difficulty-category)). The label is not stored as a dedicated column; persist the array through for audit/UI, or recover the per-block coefficient as `effort / (driverScore × operationMult × testWeight)` — **valid for NEW and MODIFY blocks only**; a DELETE block needs the deletion terms divided out first, see [Per-block difficulty category](#per-block-difficulty-category). On server-side replay the re-run LLM produces its own categories; the post-LLM `effort` / `baseEffortScore` are the source of truth.
-
-**6. Per-file abuse-signal fields** — aggregations of the per-block fields above, also persisted on the response payload (one record per file in `EffortBreakdown.fileEfforts[*]`):
-
-| Field | Formula | Notes |
-|---|---|---|
-| `blocksFlaggedAsRatioOutlier` | `count(blocks where blockRatioOutlier == true)` | **For backend:** persisted on the response payload after server-side replay. |
-| `blocksFlaggedAsGlobalCapDriver` | `count(blocks where globalCapDriver == true)` | Same. |
-| `maxBlockRatioDeviationNcss` | `max(blockRatioDeviationNcss across blocks)` | `0.0` if file has no blocks. |
-| `maxBlockRatioDeviationInvocations` | `max(blockRatioDeviationInvocations across blocks)` | Same. |
-| `fileFlaggedAsAbusive` | `blocksFlaggedAsRatioOutlier × 2 > totalBlocksInFile` | Strict-majority rule. File-level summary signal. |
-
-`k_S` and `k_I` are derived inside `DriverScaler` at construction time as raw `lines.p50 / dim.p50` (with `0.0` when `dim.p50 == 0`), and persisted on `DriverScalerModel` as `ncssFactor` and `invocationsFactor`. No clamp is applied at this level — the medians are themselves robust to outliers, and `driverFactorMaxDeviation` only affects per-block flagging.
-
-**7. Per-call-site invocation records (per `InvocationModel` within a code block)** — every direct method invocation inside a code block ships as an `InvocationModel` on `JavaInfoModel.invocations`, and is persisted as one row in `codiqo.method_calls` (joined to a single interned `codiqo.method_targets` row via `target_id`). These rows do **not** feed the driver-score formula — `directInvocationCount` (the per-block count) is what scoring uses. They exist exclusively for the diff viewer's per-line invocation badges and tooltips.
-
-| Field | DB column | Meaning |
-|---|---|---|
-| `owner` / `name` / `descriptor` | `method_targets.owner` / `name` / `descriptor` | JVM bytecode coordinates of the resolved target. Interned: one `method_targets` row per unique `(owner, name, descriptor)` triple, referenced by many `method_calls` rows |
-| `isStatic` / `isConstructor` | `method_targets.static_call` / `constructor_call` | Resolved-target traits (mirror) |
-| `targetOwner` / `targetDescriptor` | `method_targets.target_owner` / `target_descriptor` | Declaring-class internal name and erased descriptor from the ClassGraph bytecode scan |
-| `isMethodReference` / `isExplicitConstructor` / `isEnumConstant` | `method_calls.method_reference` / `explicit_constructor` / `enum_constant` | Per-call-site flags (which `MethodUsage` subtype) |
-| `invocationKind` | `method_calls.invocation_kind` | `invokevirtual` / `invokeinterface` / `invokespecial` / `invokestatic` / `invokedynamic` / `reference` |
-| `location.startLine` / `startColumn` / `endLine` / `endColumn` | `method_calls.loc_start_line` / `loc_start_column` / `loc_end_line` / `loc_end_column` | Source range of the **whole invocation expression**. For a chained call `Counter.builder().tag(...)`, `startLine` is the line of the chain's leftmost token (`Counter`), not of `tag`. Useful for full-expression highlighting; **not** the right bucket key for per-line counts |
-| `nameStartLine` / `nameStartColumn` | `method_calls.name_start_line` / `name_start_column` | Source line/column of the **method-name token itself** (the `tag` IDENTIFIER in `.tag(...)`). Set by the offline plugin from the resolved `MethodUsage` AST: for `ASTMethodCall`, the IDENTIFIER token immediately before the args' `(`; for `ASTConstructorCall` (`new Foo(...)`), the type-name token; for `ASTExplicitConstructorInvocation`, the `this`/`super` keyword token; for `ASTMethodReference`, the trailing IDENTIFIER (or `new` for ctor refs); for `ASTEnumConstant`, the constant-name IDENTIFIER. **This is the correct bucket key for per-line invocation badges in the diff viewer** — see UI rendering notes below |
-| `artifact` | `method_calls.artifact_id` (FK → `artifacts`) | Maven artifact in which the resolved target lives, when ClassGraph could attribute it to a dependency JAR |
-
-**Why two locations per row?** PMD's `MethodUsage.getBeginLine()` reports the leftmost token of the whole invocation expression. For a chained call
-
-```java
-Counter.builder(METRIC_NAME)        // line 47
-        .tag(TAG_TYPE, ...)         // line 48
-        .tag(TAG_REASON, ...)       // line 49
-        ...
-        .increment();               // line 58
-```
-
-every chained `.tag(...)` is its own `ASTMethodCall` whose begin position is `Counter` (line 47/48). Bucketing the diff-viewer's per-line invocation badges by `loc_start_line` collapses all 10+ chained calls onto the first line and leaves lines 49–58 visually empty. `nameStartLine` instead points at the line of the method-name IDENTIFIER (`tag`, then `tag`, then `increment`), giving each chained call its own line. The `loc_*` range is retained for any consumer that wants to highlight the full expression (it's the only place the chain's true span is recorded).
-
-**For backend (replay):** the per-call-site rows are recomputed from scratch by the offline plugin on every analysis; replay does not need to derive them. Persist whatever the submission carries. The current plugin populates `nameStartLine` / `nameStartColumn` for every invocation (with a `usage.getReportLocation()` fallback if a future `MethodUsage` subtype is unrecognized), so consumers can rely on the columns being non-null in newly ingested data; the columns remain `nullable` for symmetry with the other location columns.
-
-### Replaying a submission
-
-A server-side replay of an offline submission should:
-
-1. Load the persisted `DriverScalersModel` and rebuild four `DriverScaler` instances via `DriverScaler.fromPersisted(population, lines, ncss, invocations)`. Bucket factors are derived from the persisted `(lines, ncss, invocations)` medians as raw `lines.p50 / dim.p50` — no clamp parameter needed.
-2. For each changed block, pick the matching scaler by `(kind, scope)`, then call `DriverScore.forNew` or `DriverScore.forModify` with the persisted raw counts (`L`, `S`, `I` for NEW; `effectiveLinesChanged`, `effectiveInvocationsChanged` for MODIFY).
-3. Compute `bucketBaseline` per block as `bucketP95 × operationMult × testWeight`. Fall back to the same-kind opposite-scope `bucketP95` if a population was empty at submission time.
-4. Sum to `totalBaseline` and `totalEffortRaw`. Compute `globalCap = totalBaseline × driverScoreCapMultiplier` and `globalCapApplied = totalBaseline > 0 && totalEffortRaw > globalCap` — the `totalBaseline > 0` guard is load-bearing: a config-only commit has a zero budget, and without it every such commit would report the cap as binding. If the persisted `driverScoreCapDryRun` is `false`, set `totalEffort = min(totalEffortRaw, globalCap)`; if it is `true`, set `totalEffort = totalEffortRaw` (cap audited, not enforced). Raise to `volumeExponent` and multiply by `filesScopeMultiplier`. The abuse signals (`globalCapDriver`, file-level rollups) are derived from `globalCapApplied` regardless of the dry-run flag.
-
-Because each step only reads persisted fields and deterministic constants, the replayed volume score must match the offline value exactly. If it doesn't, either a scaler field, a raw block count, or one of the knobs in bucket (2) was lost or mutated during persistence.
-
-**For backend (replay & abuse signals):** the abuse-signal fields in buckets (4) and (6) are *derived* from `(scaler + raw block counts + driverFactorMaxDeviation)`. Two valid implementation strategies on replay:
-
-- **Trust the persisted values** (simpler) — the offline plugin already computed them; just write them through to your DB tables.
-- **Recompute and assert equality** (paranoid) — derive `blockRatioDeviation*`, `blockRatioOutlier`, `effortShare`, `globalCapDriver`, and the file rollups using the formulas in section (4)/(5) above, and assert they match the persisted values within rounding tolerance. This catches any persistence corruption before it hits analytics.
-
-Both are correct. Pick based on how much you trust the persistence layer.
-
-### What the UI can render from the submission payload
-
-The UI never re-runs the math — it reads the precomputed per-block fields and presents them. Per-block table:
-
-- `nonCommentCodeLines` → column **L**
-- `nonCommentCodeStatements` → column **S**
-- `directInvocationCount` → column **I**
-- `scaledLines` → column **pL**
-- `scaledNcss` → column **pS** (render as `—` when `operation == MODIFY`)
-- `scaledInvocations` → column **pI**
-- `driverScore` → column **Driver**
-- `changeRatio` → column **Ratio**
-- `effort` → column **Effort**
-- `effortShare` → column **Share** (or stacked-bar visualization across the file/commit)
-- `blockRatioOutlier` → inline badge on the row (e.g. red dot)
-- `blockRatioDeviationNcss`, `blockRatioDeviationInvocations` → tooltip / detail-view values when the badge fires
-- `globalCapDriver` → distinct badge (e.g. "cap driver") rendered only when `effortBreakdown.globalCapApplied` is true
-- `operation`, `kind`, `scope` → for row classification and MODIFY/NEW badging
-
-Per-file row (above the per-block table):
-
-- `blocksFlaggedAsRatioOutlier`, `blocksFlaggedAsGlobalCapDriver` → small counters
-- `maxBlockRatioDeviationNcss`, `maxBlockRatioDeviationInvocations` → "worst block deviation" indicators
-- `fileFlaggedAsAbusive` → file-level badge (e.g. amber row highlight)
-- `effortBreakdown.diffClassification.perFile[file == this.path]` (look up by file path) → render the three counts as a small `cosmetic / pairs collapsed / pure add-delete` chip when the file appears in the LLM classification. Files with `cosmeticLines > 0` should get a subdued indicator that "the LLM reclassified N lines as cosmetic"; files with `pairsCollapsed > 0` should indicate "M pairs collapsed". When `effortBreakdown.diffClassification` is null, omit the chip entirely.
-- `cosmeticAdded` / `cosmeticDeleted` / `inPlaceModifyPairs` / `trueModifyPairs` / `pureAdd` / `pureDelete` → use these for **line-level rendering in the diff view**. Build a lookup `Map<Integer, Classification>` per side by walking the six arrays once: every line number in `cosmeticAdded` is COSMETIC on the added side, each `inPlaceModifyPairs[i].added` is IN_PLACE_MODIFY on the added side and the matching `.deleted` is IN_PLACE_MODIFY on the deleted side, etc. Then for each `+` line at file line `N` color/badge it from the added-side map; same for `-` lines on the deleted side using the deleted-side map. Suggested colour mapping: dim grey for `cosmetic`, amber gutter for *either* paired bucket (in-place / true modify), emerald gutter for `pureAdd` / `pureDelete`. Hovering should show a tooltip with the classification name. This is purely visual — the score is already adjusted server-side.
-
-Volume-score panel (the existing `volumeScore` summary view):
-
-- When `linesChangedRaw > 0` (i.e. the reduction actually fired), surface a small "raw → adjusted" indicator — e.g. `linesChangedRaw → linesChangedAdjusted` with a tooltip listing `cosmeticLinesDropped` and `inPlaceLinesCollapsed`. This explains to the reviewer why the volume score is lower than the line-count alone would suggest.
-- When `linesChangedRaw == 0`, the LLM did not classify (or didn't return classification); render the panel as before with no reduction indicator.
-- Optional: a "diff classification rationale" details strip that displays `effortBreakdown.diffClassification.rationale` verbatim. Useful for senior-review explainers; safe to hide behind a "Why was this reduced?" disclosure.
-
-Diff-viewer per-line invocation badges (the per-line "N invocations" chip rendered in the file content view):
-
-- **Bucket key:** `method_calls.name_start_line`. Do **not** bucket by `method_calls.loc_start_line` — that column reports the leftmost token of the whole invocation expression, so chained calls (`Counter.builder().tag().tag()...`) collapse onto the chain's first line and produce inflated badges there with empty lines underneath.
-- For each `code_unit_id` belonging to the file being rendered, group the unit's `method_calls` rows by `name_start_line` and emit one badge per non-empty line. Order ties by `name_start_column ASC` so multiple invocations on the same line render in source order.
-- Filter: `WHERE name_start_line IS NOT NULL` (steady-state data always populates it; the predicate guards against a hypothetical unrecognized `MethodUsage` subtype where the plugin's fallback also could not resolve a token).
-- Tooltip per badge: list the joined `method_targets.target_owner.target_name(target_descriptor)` for each row in the bucket, with `invocation_kind` and the per-call-site flags (`method_reference` / `explicit_constructor` / `enum_constant`) shown as small modifier chips. The full-expression range from `loc_start_*` / `loc_end_*` may be used to underline / highlight the underlying expression on hover.
-
-For the calibration panel, the UI reads `driverScalers.*.lines / ncss / invocations` (each `{min, p50, p75, p90, p95, max}`) and the four `*CapQuantile*` fields at submission root. Aggregate fields shown alongside (`totalEffortRaw`, `totalBaseline`, `globalCap`, `globalCapApplied`) come from the LLM scoring response's `effortBreakdown.volumeScore` payload.
-
-The calibration panel should **also** render the new factor diagnostics from each `driverScalers.*` (4 buckets):
-
-- `ncssFactor` (`k_S`), `invocationsFactor` (`k_I`) — raw projection factors per bucket. Render alongside `lines.p50`, `ncss.p50`, `invocations.p50` so reviewers can see how the project's medians produced the factors.
-
-**For UI:** the UI must **not** re-derive any of these values — read them from the response payload exactly as the backend persisted them. The backend already applied the formulas; recomputing in the UI risks drift if the offline plugin's interpretation changes in a future release.
+Rescoring a commit from the same inputs yields the same score, provided the server defaults for the unsubmitted settings have not changed in between.
 
 ---
 
@@ -872,7 +694,7 @@ The calibration panel should **also** render the new factor diagnostics from eac
 | **Scaler** | A bucket-level statistical summary: `(min, p50, p75, p90, p95, max)` per dimension, computed from a project population. `p50` drives the projection factors; the rest are diagnostics. `p95` is also used as the per-block contribution to the global cap baseline |
 | **Projection factor** | A median-anchored conversion factor from one dimension's count into lines-equivalent units. `k_S = lines.p50 / ncss.p50`, `k_I = lines.p50 / invocations.p50`. Computed raw at the bucket level — no clamp. A factor of `0.0` means the dimension has no signal in the population (`dim.p50 == 0`) and contributes nothing to the projection |
 | **`driverFactorMaxDeviation`** | Per-block deviation threshold, default `0.75`. Gates `blockRatioOutlier` and `globalCapDriver`. Has no effect on bucket-level projection factors. |
-| **`driverScoreCapDryRun`** | Audit-only flag, default `false`. When `true`, the cap is computed and `globalCapApplied`/`globalCapDriver` still fire, but `blockEffortSum` is **not** clipped — the volume score uses the uncapped `totalEffortRaw`, matching pre-cap (HEAD) behavior. Used to compare scoring with and without the cap while still collecting abuse signals. |
+| **`driverScoreCapDryRun`** | Audit-only flag, default `false`. When `true`, the cap is computed and `globalCapApplied`/`globalCapDriver` still fire, but `blockEffortSum` is **not** clipped — the volume score uses the uncapped `totalEffortRaw`, matching uncapped behaviour. Used to compare scoring with and without the cap while still collecting abuse signals. |
 | **pL, pS, pI** | Lines-equivalent contributions of each dimension to the driver: `pL = L`, `pS = S · k_S`, `pI = I · k_I` (or, for MODIFY, the `*Changed` variants with `pS = —`) |
 | **Scope** | prod vs test — which source set a block belongs to |
 | **Kind** | method vs constructor |
@@ -881,26 +703,23 @@ The calibration panel should **also** render the new factor diagnostics from eac
 | **I** | Direct method invocations inside the block (excluding nested types) |
 | **Driver-score cap (global budget)** | A single ceiling on the sum of all per-block efforts, sized as `totalBaseline × driverScoreCapMultiplier` (default `2.5`). Per-block driver scores are *not* individually clipped; the cap binds only on the sum |
 | **`totalBaseline`** | `Σ_block (bucketP95 × operationMult × testWeight)` — the bucket-aware budget that the global cap multiplies |
-| **`totalEffortRaw`** | `Σ_block (driverScore × operationMult × testWeight)` — sum of per-block efforts before the global cap |
-| **`globalCapApplied`** | `true` iff `totalBaseline > 0 && totalEffortRaw > globalCap` (i.e., the cap clipped the sum). The baseline guard means a config-only commit — whose blocks all carry `bucketBaseline = 0` — can never report the cap as binding |
+| **`totalEffortRaw`** | `Σ_block effort` (`driverScore × operationMult × testWeight × categoryCoeff`, after the per-file and moved-line factors) — sum of per-block efforts before the global cap |
+| **`globalCapApplied`** | `true` iff `totalBaseline > 0 && totalEffortRaw > globalCap` (i.e., the cap clipped the sum, or would have under `driverScoreCapDryRun`). The baseline guard means a config-only commit — whose blocks all carry `bucketBaseline = 0` — can never report the cap as binding |
 | **Trivial block** | A method or constructor with `NCSS ≤ 2` **and** `directInvocationCount == 0` **and** `cyclo ≤ 1`. Excluded from scaler populations and skipped when scoring changes |
 | **Block ratio outlier** | A code block whose own `S/L` (or `I/L`) ratio deviates from the bucket median ratio by more than `driverFactorMaxDeviation` (default `75%`). Per-developer abuse-signal candidate. |
 | **`effortShare`** | A code block's fraction of the commit's total raw effort: `block.effort / totalEffortRaw`. Always populated; used for cap-driver attribution and stacked visualizations. |
 | **`globalCapDriver`** | A code block flagged when `globalCapApplied == true` AND its `effortShare` exceeds `driverFactorMaxDeviation`. Identifies the principal cause of a cap event, attributable to a specific block (and author). |
 | **`fileFlaggedAsAbusive`** | A file where strict majority (`outliers × 2 > total`) of its blocks are ratio outliers. File-level rollup of the per-block abuse signal. |
-| **Difficulty category** | LLM-assigned per-block effort coefficient — `MECHANICAL` (`0.7`), `ROUTINE` (`1.0`, the neutral anchor), `SUBSTANTIVE` (`1.2`), `INTRICATE` (`1.4`). Multiplies the block's `effort` only — never its driver score — in `recompute`. A NEW or MODIFY block the LLM left uncategorized falls back to `MECHANICAL`, **not** to `ROUTINE`; only config and signature-less blocks take the neutral `1.0`. Replaces the former commit-level `complexityMultiplier`. Supplied on `response.blockCategories[*]` as `{file, signature, category}`; not persisted as its own column — recoverable as `effort / (driverScore × operationMult × testWeight)` for NEW/MODIFY (a DELETE block also carries `deleteRewardWeight × deletionScale`). |
-| **Config-file effort** | The synthetic effort of a line-count-scored file (`pom.xml`, `.proto`) that has no code blocks. One block per file with `isConfig = true`, `signature = null`, `driverScore = linesAdded + linesDeleted` (effective), `effort = driverScore × modifyMult × configFileScoreMultiplier` (default `0.3`). `bucketBaseline = 0` so it stays out of the global-cap budget and the effective-statements metric. Still subject to diff-classification reduction; not subject to a difficulty category. |
-| **`isConfig`** | Per-block flag marking a synthetic [config-file effort](#config-file-efforts-pomxml-proto) block. Excludes the block from `totalEffectiveStatements` and the driver-score abuse signals; such blocks carry a null signature and a zero `bucketBaseline`. |
-| **Diff classification** | LLM-provided per-line reclassification of changed lines. The LLM returns six arrays per eligible file — `cosmeticAdded`, `cosmeticDeleted`, `inPlaceModifyPairs`, `trueModifyPairs`, `pureAdd`, `pureDelete` — that together cover every effective changed line. Compensates for git's lack of a "modified" line concept. Lives on `effortBreakdown.diffClassification` of the LLM scoring response. |
+| **Difficulty category** | Per-block effort coefficient from the local review's label — `MECHANICAL` (`0.7`), `ROUTINE` (`1.0`, the neutral anchor), `SUBSTANTIVE` (`1.2`), `INTRICATE` (`1.4`). Multiplies the block's `effort` only — never its driver score — in `recompute`. A non-config NEW or MODIFY block the review left unlabelled falls back to `MECHANICAL`, **not** to `ROUTINE`; only config blocks take the neutral `1.0`. Replaces the former commit-level `complexityMultiplier`. Supplied on `response.blockCategories[*]` as `{file, signature, category, reason, source}`; stored with the code unit, and also recoverable as `effort / (driverScore × operationMult × testWeight)` for NEW/MODIFY (a DELETE block also carries `deleteRewardWeight × deletionScale`). |
+| **Config-file effort** | The synthetic effort of a line-count-scored file (`pom.xml`, `.proto`, Gradle build scripts, `gradle.properties`, `*.versions.toml`) that has no code blocks. One block per file with `isConfig = true`, `signature = null`, `driverScore = linesAdded + linesDeleted` (effective), `effort = driverScore × modifyMult × configFileScoreMultiplier` (default `0.3`). `bucketBaseline = 0` so it stays out of the global-cap budget and the effective-statements metric. Still subject to diff-classification reduction; not subject to a difficulty category. |
+| **`isConfig`** | Per-block flag marking a synthetic [config-file effort](#config-file-efforts-build-and-schema-files) block. Excludes the block from `totalEffectiveStatements` and the ratio-outlier signal; such blocks carry a null signature and a zero `bucketBaseline`. |
+| **Diff classification** | Server-derived per-line classification of changed lines. The server builds nine arrays per eligible file — `trueModifyPairs`, `pureAdd`, `pureDelete`, `movedAdded`, `movedDeleted`, and the model-era `inPlaceModifyPairs`, `cosmeticAdded`, `cosmeticDeleted`, `inPlaceCollapsedAdded` (empty under rule-based scoring) — that together cover every effective changed line. Compensates for git's lack of a "modified" line concept. Lives on `effortBreakdown.diffClassification` of the scoring response. |
 | **`LinePair`** | Tuple `{deleted: int, added: int}` representing one paired modification — an old-file line removed and a new-file line added that together count as one logical edit. Replaces the previous shape of two parallel arrays for paired modifications; the tuple makes pair balance structurally impossible to violate. |
-| **`cosmeticAdded` / `cosmeticDeleted`** | Flat line-number arrays — `cosmeticAdded` uses new-file numbers, `cosmeticDeleted` uses old-file numbers. Lines whose presence/absence does not change behavior (whitespace, comments, log strings, license headers, brace style flips). Effort weight 0. No pairing requirement. |
-| **`inPlaceModifyPairs`** | List of `LinePair` tuples — paired delete+add where the **same intent survives** in a different form (renamed local, swapped operand, tweaked expression). 1 effort per pair. |
-| **`trueModifyPairs`** | List of `LinePair` tuples — paired delete+add where the line slot now holds a **different intent**. Same 1 effort per pair as `inPlaceModifyPairs`; the bucket exists for human reviewers to distinguish refactors from rewrites, not for the math. |
+| **`cosmeticAdded` / `cosmeticDeleted`** | Flat line-number arrays — `cosmeticAdded` uses new-file numbers, `cosmeticDeleted` uses old-file numbers. Lines whose presence/absence does not change behavior (whitespace, comments, log strings, license headers, brace style flips). Effort weight 0. No pairing requirement. Empty under rule-based scoring. |
+| **`inPlaceModifyPairs`** | List of `LinePair` tuples — paired delete+add where the **same intent survives** in a different form (renamed local, swapped operand, tweaked expression). 1 effort per pair. Empty under rule-based scoring, which books every pair as `trueModifyPairs`. |
+| **`trueModifyPairs`** | List of `LinePair` tuples — paired delete+add lines in one diff hunk. 1 effort per pair. |
 | **`pureAdd` / `pureDelete`** | Flat line-number arrays for added / deleted lines with **no counterpart on the other side** (real new logic, real removal). Full weight, 1 effort each. |
-| **`cosmeticLines` / `pairsCollapsed` / `pureAddDeleteLines`** | Server-derived count fields on `FileDiffClassification` — tallied by the server from the six arrays during validation. Persisted alongside the arrays for fast aggregation. `pairsCollapsed = len(inPlaceModifyPairs) + len(trueModifyPairs)`. |
-| **`effectiveLineFactor`** | Per-file scaling factor applied to every block's `driverScore` and `effort` after the LLM classification: `(pairsCollapsed + pureAddDeleteLines) / (linesAdded + linesDeleted)`. `1.0` means no reduction; `0.0` means the file's entire change was cosmetic. |
+| **`cosmeticLines` / `pairsCollapsed` / `pureAddDeleteLines`** | Server-derived count fields on `FileDiffClassification` — tallied by the server from the arrays (`movedLines` as well). Returned alongside the arrays for fast aggregation. `pairsCollapsed = len(inPlaceModifyPairs) + len(trueModifyPairs)`. |
+| **`effectiveLineFactor`** | Per-file scaling factor applied to every block's `driverScore` and `effort` after the diff classification: `(pairsCollapsed + pureAddDeleteLines + movedLines × movedLineCoefficient / 2) / (linesAdded + linesDeleted)`. `1.0` means no reduction. |
 | **`linesChangedRaw` / `linesChangedAdjusted`** | Volume-score mirror counters that record the line totals before/after diff-classification reduction. Both `0` when no classification was applied. Invariant when applied: `linesChangedAdjusted ≤ linesChangedRaw` (by construction — validated files only contribute `effectiveLines ≤ rawLines` to the accumulators). |
-| **`cosmeticLinesDropped` / `inPlaceLinesCollapsed`** | Volume-score mirror counters that summarize how the reduction shifted lines: total cosmetic lines treated as 0-effort, and number of pairs collapsed from 2 raw lines to 1 effective line. `inPlaceLinesCollapsed` field name is preserved for schema stability — both in-place *and* true-modify pairs contribute to it. |
-| **`InvocationModel` / `method_calls`** | Per-call-site record. One `InvocationModel` per direct method invocation inside a code block, persisted as one `codiqo.method_calls` row joined to an interned `codiqo.method_targets` row. Carries owner/name/descriptor of the resolved target plus two source locations (`location.*` for the full expression, `nameStart*` for the method-name token). Drives the diff viewer's per-line invocation badges; not used by the driver-score formula (which uses the per-block `directInvocationCount` count instead). |
-| **`location.startLine` (on `InvocationModel`)** | Line of the leftmost token of the whole invocation expression. For a chained call, this is the line of the chain's first qualifier — same value across every chained `.method()` call sharing the chain. Persisted as `method_calls.loc_start_line`. Not the right bucket key for per-line counts. |
-| **`nameStartLine` / `nameStartColumn`** | Source line/column of the method-name IDENTIFIER token of an invocation (the `tag` in `.tag(...)`, the type-name in `new Foo(...)`, the keyword in `this(...)`/`super(...)`, the trailing identifier in `Foo::bar`, the constant name in an enum-constant constructor). Persisted as `method_calls.name_start_line` / `name_start_column`. **The correct bucket key for the diff viewer's per-line invocation badges** — using `loc_start_line` instead would collapse all chained calls onto one line. |
+| **`cosmeticLinesDropped` / `inPlaceLinesCollapsed` / `movedLinesDiscounted`** | Volume-score mirror counters that summarize how the reduction shifted lines: total cosmetic lines treated as 0-effort, number of pairs collapsed from 2 raw lines to 1 effective line, and moved lines discounted. `inPlaceLinesCollapsed` field name is preserved for schema stability — both in-place *and* true-modify pairs contribute to it. |

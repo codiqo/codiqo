@@ -22,6 +22,7 @@ import com.google.common.collect.Sets;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommentSyntax;
 import io.codiqo.api.diff.IneffectiveLineFilter;
+import io.codiqo.api.metrics.DriverScore;
 import io.codiqo.llm.MovedLineDetector.MoveCandidate;
 import io.codiqo.llm.VolumeScoreCalculator.CodeBlockEffort;
 import io.codiqo.llm.VolumeScoreCalculator.FileEffort;
@@ -1096,13 +1097,16 @@ class FinalScoreCalculatorTest {
         calculator.apply(response, preComputed, request);
 
         /**
-         * fileFactor = 2 moved lines × 0.25/2 / 2 raw = 0.125. billed: components 6+8=14, the moved
-         * line's 1 call scales by invFactor 8/4=2 → factor (14 − 2×0.875)/14 = 0.875. destination:
-         * components 10, invFactor 4/2=2 → factor (10 − 1.75)/10 = 0.825.
-         * sum = 7×0.125×0.875 + 5×0.125×0.825 = 1.28125
+         * fileFactor = 2 moved lines × 0.25/2 / 2 raw = 0.125. Each component carries its driver weight,
+         * so the factor is exactly the driver recomputed without the moved share over the driver.
+         * billed: driver (6 + 0.5×8)/1.5 = 6.667; the moved line's 1 call scales by invFactor 8/4 = 2,
+         * so factor (6 + 0.5×8 − 0.5×2×0.875)/(6 + 0.5×8) = 0.9125. destination: driver
+         * (6 + 0.5×4)/1.5 = 5.333, factor (8 − 0.875)/8 = 0.890625.
+         * sum = 6.667×0.125×0.9125 + 5.333×0.125×0.890625 = 1.354167, stored rounded to two decimals
+         * (RunArgs.SCORE_PRECISION), hence the half-step tolerance; an unweighted factor would give 1.279.
          */
         LlmScoringResponse.VolumeScore vs = response.getEffortBreakdown().getVolumeScore();
-        assertEquals(1.28125, vs.getBlockEffortSum(), 0.01,
+        assertEquals(1.354167, vs.getBlockEffortSum(), 0.005,
                 "moved-out anchor discounts the billing block, moved-in addition discounts the destination");
     }
     @Test
@@ -1110,7 +1114,7 @@ class FinalScoreCalculatorTest {
         RunArgs args = new RunArgs();
         FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
         CodeBlockEffort billed = invocationBlock("Foo.java", "billed", Operation.MODIFY, 4, 6.0, 8.0, 1, 20, 20);
-        // NEW destination is billed via directInvocationCount, driver = (lines + ncss + inv)/3
+        /** a NEW destination is billed via directInvocationCount, and its driver is (lines + ncss + 0.5 × inv)/2.5 */
         CodeBlockEffort destination = invocationBlock("Foo.java", "destination", Operation.NEW, 2, 6.0, 4.0, 25, 35, 11);
         PreComputedScores preComputed = scoresWithBlocks("Foo.java", billed, destination);
         LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF);
@@ -1122,12 +1126,13 @@ class FinalScoreCalculatorTest {
         calculator.apply(response, preComputed, request);
 
         /**
-         * destination driver = 10/3; its component ratio is the same 0.825 as in the MODIFY case —
-         * the operation weight cancels out of the factor.
-         * sum = 7×0.125×0.875 + (10/3)×0.125×0.825 = 1.109375
+         * destination driver = (6 + 0.5×4)/2.5 = 3.2; its factor is the same 0.890625 as in the MODIFY
+         * case — the operation-specific denominator cancels out of the factor.
+         * sum = 6.667×0.125×0.9125 + 3.2×0.125×0.890625 = 1.116667, stored rounded to two decimals;
+         * an unweighted factor would give 1.059.
          */
         LlmScoringResponse.VolumeScore vs = response.getEffortBreakdown().getVolumeScore();
-        assertEquals(1.109375, vs.getBlockEffortSum(), 0.001);
+        assertEquals(1.116667, vs.getBlockEffortSum(), 0.005);
     }
     @Test
     void movedLinesOutsideBlockSpansKeepUniformFileFactorOnly() {
@@ -1145,7 +1150,7 @@ class FinalScoreCalculatorTest {
         calculator.apply(response, preComputed, request);
 
         LlmScoringResponse.VolumeScore vs = response.getEffortBreakdown().getVolumeScore();
-        assertEquals((7.0 + 5.0) * 0.125, vs.getBlockEffortSum(), 0.001,
+        assertEquals((20.0 / 3.0 + 16.0 / 3.0) * 0.125, vs.getBlockEffortSum(), 0.001,
                 "unassigned moved lines fall back to the uniform per-file treatment — no per-block factor");
     }
     @Test
@@ -1486,8 +1491,10 @@ class FinalScoreCalculatorTest {
     }
     private static CodeBlockEffort invocationBlock(String file, String name, Operation operation, int billedInvocations,
             double scaledLines, double scaledInvocations, int bodyStart, int bodyEnd, int bodyCodeLines) {
-        double divisor = operation == Operation.MODIFY ? 2.0 : 3.0;
-        double driver = (scaledLines + scaledInvocations) / divisor;
+        double divisor = operation == Operation.MODIFY
+                ? DriverScore.WEIGHT_LINES + DriverScore.WEIGHT_INVOCATIONS
+                : DriverScore.TOTAL_WEIGHT;
+        double driver = (DriverScore.WEIGHT_LINES * scaledLines + DriverScore.WEIGHT_INVOCATIONS * scaledInvocations) / divisor;
         return new CodeBlockEffort(file, name, name + "()", operation,
                 /*ncss*/ 0, /*directInvocationCount*/ operation == Operation.NEW ? billedInvocations : 5,
                 /*effInvocsChanged*/ operation == Operation.MODIFY ? billedInvocations : 0,
