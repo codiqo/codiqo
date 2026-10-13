@@ -1544,6 +1544,14 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   `LocalAssessmentModel.staticAnalysisReview`) and the trace. The server scores such a commit from the assessment alone
   and never builds a prompt. Off, nothing of the review runs and the server excludes the commit (`LOCAL_REVIEW_FAILURE`):
   there is no server prompt any more. There are no sub-switches: never add one.
+- **Error Prone never fails a commit's build, and its findings are triaged.** `ErrorProneErrorsAsWarnings` (a lifecycle
+  participant in the always-injected `codiqo-maven-build-eventspy` jar) appends `-XepAllErrorsAsWarnings` to every
+  `-Xplugin:ErrorProne` argument of maven-compiler-plugin and sets `showWarnings` (off, `-nowarn` hides them) in the
+  fork's effective model, so the analysis clone's POMs stay the commit's and a released parent is reached too.
+  `ErrorProneWarnings` reads the `[WARNING] path:[line,col] [Check] message` lines of a passed build into
+  `RunArgs.compilerFindings`; `FileAnalysisPopulator` attaches those on added lines to their unit as `errorprone`
+  warnings, and the triage judges them through Error Prone's `StaticAnalysisLists` row. A project that also sets
+  `-Werror` or `failOnWarning` still fails: the extension leaves both alone.
 - **Gradle has local mode too** (`codiqoSubmitAnalysis`, on by default, `-Pcodiqo.review…` settings as on Maven): the
   analysis worker starts `LocalReviewRun` on the checked-out commit after the exclusion gate and joins it before the
   submission (`AnalysisEngine.judged`), with the same exclusions and trace. Gradle cannot tell a dependency failure or a

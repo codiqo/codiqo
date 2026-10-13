@@ -111,7 +111,7 @@ class JavaReviewLanguageTest {
     @Test
     void itCoversJavaFilesAndTriagesTheJvmTools() {
         assertTrue(language.extensions().contains("java"));
-        assertEquals(Set.of("pmd", "spotbugs"), language.triagedTools());
+        assertEquals(Set.of("pmd", "spotbugs", "errorprone"), language.triagedTools());
     }
     private void assertMember(String written, String indexed) {
         assertEquals(language.unit(indexed, "com/example/Totals.x()V", PATH).getMember(), language.labelled(written, PATH).getMember(), written);

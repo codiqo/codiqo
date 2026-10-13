@@ -129,6 +129,21 @@ class LocalReviewModelsTest {
         assertEquals(1, placed.getPmdInChangedLines().size(), "the harmless match stays listed, the invented one is not");
         assertEquals(40, placed.getPmdInChangedLines().getFirst().getLine());
     }
+    /** an Error Prone finding the triage confirms is a bug of the commit, placed in Error Prone's own list */
+    @Test
+    void aConfirmedErrorProneFindingIsABugInItsOwnList() {
+        FindingTriage triage = new FindingTriage();
+        triage.setFindings(List.of(new StaticFinding("errorprone", "FormatString", "warning", "a/Service.java", 21, "extra format arguments: used 0, provided 2")));
+        triage.setVerdicts(List.of(verdict("errorprone", "FormatString", 21, FindingVerdict.Verdict.DEFECT, FindingVerdict.Severity.MINOR)));
+
+        LocalReviewModel model = LocalReviewModels.toModel(assessed(), Optional.of(triage), new NoopLog());
+
+        assertEquals(List.of("FormatString (errorprone)"), model.getBugs().getMinor().stream().map(BugModel::getTitle).toList());
+        StaticAnalysisReviewModel placed = model.getAssessment().getStaticAnalysisReview();
+        assertEquals(1, placed.getErrorproneInChangedLines().size());
+        assertEquals(21, placed.getErrorproneInChangedLines().getFirst().getLine());
+        assertTrue(placed.getPmdInChangedLines().isEmpty());
+    }
     /** the commit page's digest: the coordinator's areas, the reviewers' observations, and what the triage concluded */
     @Test
     void theReviewTravelsAsADigestWithItsObservations() {

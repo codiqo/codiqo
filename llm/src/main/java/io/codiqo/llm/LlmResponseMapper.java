@@ -534,6 +534,12 @@ public class LlmResponseMapper {
                 .map(LlmResponseMapper::mapFindings).orElse(Collections.emptyList()));
         toReturn.setSpotbugsFalsePositives(Optional.ofNullable(staticAnalysisReview.getSpotbugsFalsePositives())
                 .map(LlmResponseMapper::mapFindings).orElse(Collections.emptyList()));
+        toReturn.setErrorproneInChangedLines(Optional.ofNullable(staticAnalysisReview.getErrorproneInChangedLines())
+                .map(LlmResponseMapper::mapFindings).orElse(Collections.emptyList()));
+        toReturn.setErrorpronePreExisting(Optional.ofNullable(staticAnalysisReview.getErrorpronePreExisting())
+                .map(LlmResponseMapper::mapFindings).orElse(Collections.emptyList()));
+        toReturn.setErrorproneFalsePositives(Optional.ofNullable(staticAnalysisReview.getErrorproneFalsePositives())
+                .map(LlmResponseMapper::mapFindings).orElse(Collections.emptyList()));
         return toReturn;
     }
     private static List<StaticAnalysisFindingModel> mapFindings(List<LlmScoringResponse.StaticAnalysisFinding> findings) {

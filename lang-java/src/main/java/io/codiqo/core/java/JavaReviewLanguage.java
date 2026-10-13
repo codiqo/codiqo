@@ -28,7 +28,7 @@ public class JavaReviewLanguage implements ReviewLanguage {
             + " or \"Totals(Config, Clock)\" for a constructor of Totals. A method of an anonymous class is written with the type the anonymous class creates,"
             + " e.g. \"Totals.Runnable.run()\" for run() in a new Runnable() { ... } inside Totals, and a method in an enum constant's body with the constant,"
             + " e.g. \"Op.ADD.apply(int, int)\".";
-    private static final Set<String> TRIAGED_TOOLS = Set.of("pmd", "spotbugs");
+    private static final Set<String> TRIAGED_TOOLS = Set.of("pmd", "spotbugs", "errorprone");
     /** what separates the steps of a written name: {@code Totals.Batch}, {@code Totals#Batch}, {@code Totals$Batch} or {@code Totals::run} */
     private static final CharMatcher LABEL_STEP_SEPARATOR = CharMatcher.anyOf(".#$:");
     /** the binary name of an anonymous class ends in its number ({@code Op$1}), and a local class prefixes one ({@code Totals$1Local}) */

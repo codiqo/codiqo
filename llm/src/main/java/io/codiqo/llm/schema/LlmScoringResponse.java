@@ -478,6 +478,12 @@ public class LlmScoringResponse {
         private List<StaticAnalysisFinding> spotbugsPreExisting = Lists.newArrayList();
         @Builder.Default
         private List<StaticAnalysisFinding> spotbugsFalsePositives = Lists.newArrayList();
+        @Builder.Default
+        private List<StaticAnalysisFinding> errorproneInChangedLines = Lists.newArrayList();
+        @Builder.Default
+        private List<StaticAnalysisFinding> errorpronePreExisting = Lists.newArrayList();
+        @Builder.Default
+        private List<StaticAnalysisFinding> errorproneFalsePositives = Lists.newArrayList();
     }
 
     @Data

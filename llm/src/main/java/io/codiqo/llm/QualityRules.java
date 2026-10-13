@@ -19,7 +19,6 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
-import io.codiqo.client.model.DiagnosticModel;
 import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringResponse;
@@ -222,21 +221,17 @@ public class QualityRules {
      * needs the code read after the build: the local triage does it for the findings on added lines, and its
      * placements win (see {@link #withUnjudged}); here nothing is called a false positive and no fix is offered. No
      * tool severity is recorded either: it names the level before a re-review, and nothing re-reviewed these, so the
-     * dashboard does not show them as verified. Only PMD and SpotBugs have lists; the review never covered other tools.
+     * dashboard does not show them as verified. Only the tools {@link StaticAnalysisLists} keeps lists for are placed.
      */
     private static StaticAnalysisReview staticAnalysisReview(LlmScoringRequest request) {
         StaticAnalysisReview toReturn = new StaticAnalysisReview();
         Set<FindingKey> seen = Sets.newHashSet();
         for (LlmScoringRequest.CodeBlockChange block : CollectionUtils.emptyIfNull(request.getCodeBlockChanges())) {
             for (LlmScoringRequest.DiagnosticInfo diagnostic : CollectionUtils.emptyIfNull(block.getDiagnostics())) {
-                List<StaticAnalysisFinding> list = null;
-                if (DiagnosticModel.ToolEnum.PMD.getValue().equals(diagnostic.getTool())) {
-                    list = diagnostic.isIntroducedInCommit() ? toReturn.getPmdInChangedLines() : toReturn.getPmdPreExisting();
-                } else if (DiagnosticModel.ToolEnum.SPOTBUGS.getValue().equals(diagnostic.getTool())) {
-                    list = diagnostic.isIntroducedInCommit() ? toReturn.getSpotbugsInChangedLines() : toReturn.getSpotbugsPreExisting();
-                }
+                Optional<StaticAnalysisLists.ToolLists> lists = StaticAnalysisLists.of(diagnostic.getTool());
                 /** a diagnostic spanning several blocks is attached to each of them */
-                if (Objects.nonNull(list) && seen.add(FindingKey.of(diagnostic.getTool(), diagnostic.getRuleId(), block.getFile(), diagnostic.getStartLine()))) {
+                if (lists.isPresent() && seen.add(FindingKey.of(diagnostic.getTool(), diagnostic.getRuleId(), block.getFile(), diagnostic.getStartLine()))) {
+                    List<StaticAnalysisFinding> list = (diagnostic.isIntroducedInCommit() ? lists.get().getInChangedLines() : lists.get().getPreExisting()).apply(toReturn);
                     FindingSeverity severity = severity(diagnostic.getSeverity());
                     list.add(StaticAnalysisFinding.builder()
                             .rule(diagnostic.getRuleId())
@@ -263,6 +258,9 @@ public class QualityRules {
                 .spotbugsInChangedLines(Lists.newArrayList(CollectionUtils.emptyIfNull(judged.getSpotbugsInChangedLines())))
                 .spotbugsPreExisting(Lists.newArrayList(CollectionUtils.emptyIfNull(judged.getSpotbugsPreExisting())))
                 .spotbugsFalsePositives(Lists.newArrayList(CollectionUtils.emptyIfNull(judged.getSpotbugsFalsePositives())))
+                .errorproneInChangedLines(Lists.newArrayList(CollectionUtils.emptyIfNull(judged.getErrorproneInChangedLines())))
+                .errorpronePreExisting(Lists.newArrayList(CollectionUtils.emptyIfNull(judged.getErrorpronePreExisting())))
+                .errorproneFalsePositives(Lists.newArrayList(CollectionUtils.emptyIfNull(judged.getErrorproneFalsePositives())))
                 .build();
         for (StaticAnalysisLists.ToolLists tool : StaticAnalysisLists.all()) {
             Set<Triple<String, String, Integer>> seen = Sets.newHashSet();
