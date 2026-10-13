@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="440" viewBox="0 0 1280 440" role="img" aria-label="Codiqo: deep JVM and AST analysis on AI rails. Every Java commit built, every changed method classified, every line tracked and analysed; an AI judge reviews each change from ten aspects on proven JVM tooling (JaCoCo, Eclipse JDT LS, PMD, SpotBugs, Error Prone soon, ClassGraph, OpenRewrite, JGit, Maven and Gradle), and a risky change with weak test coverage fails its gate.">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2a1757"/>
+      <stop offset="0.55" stop-color="#1b1236"/>
+      <stop offset="1" stop-color="#151a1f"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.78" cy="0.45" r="0.5">
+      <stop offset="0" stop-color="#c2ef4e" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#c2ef4e" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <style>
+    text { font-family: Inter, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .h { font-size: 46px; font-weight: 800; fill: #ffffff; letter-spacing: -0.5px; }
+    .sub { font-size: 18px; fill: #cfc8ee; }
+    .subb { font-weight: 700; fill: #ffffff; }
+    .brand { font-size: 24px; font-weight: 700; fill: #ffffff; }
+    .cap { font-size: 12px; font-weight: 700; fill: #9d93d9; letter-spacing: 1.6px; }
+    .aspect { font-size: 13px; font-weight: 600; fill: #f2efff; }
+    .tool { font-size: 13px; font-weight: 700; fill: #f2efff; }
+    .ai { font-size: 14px; font-weight: 800; fill: #1b1236; }
+    .gate { font-size: 16px; font-weight: 700; fill: #c2ef4e; }
+    .gates { font-size: 14px; fill: #cfc8ee; }
+  </style>
+
+  <rect width="1280" height="440" fill="url(#bg)"/>
+  <rect width="1280" height="440" fill="url(#glow)"/>
+
+  <g transform="translate(48 38)">
+    <rect width="40" height="40" rx="10" fill="#422082" stroke="#6a5fc1" stroke-opacity="0.6"/>
+    <polyline points="9,27 16,19 23,23 31,12" fill="none" stroke="#c2ef4e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="31" cy="12" r="3.3" fill="#c2ef4e"/>
+    <text x="54" y="28" class="brand">Codiqo</text>
+  </g>
+
+  <text x="48" y="152" class="h">Deep JVM &amp; AST analysis</text>
+  <text x="48" y="210" class="h">on</text>
+  <rect x="112" y="170" width="184" height="56" rx="10" fill="#c2ef4e"/>
+  <text x="126" y="210" class="h" style="fill:#1b1236">AI rails.</text>
+
+  <text x="48" y="262" class="sub">Every Java commit <tspan class="subb">built</tspan>. Every changed method <tspan class="subb">classified</tspan>.</text>
+  <text x="48" y="290" class="sub">Every line <tspan class="subb">tracked</tspan>, <tspan class="subb">covered</tspan> and <tspan class="subb">analysed</tspan>, then judged by AI.</text>
+
+  <g transform="translate(48 320)">
+    <rect width="560" height="72" rx="14" fill="#c2ef4e" fill-opacity="0.08" stroke="#c2ef4e" stroke-opacity="0.7"/>
+    <circle cx="28" cy="36" r="10" fill="none" stroke="#c2ef4e" stroke-width="2.5"/>
+    <path d="M 23 36 L 27 40 L 34 31" fill="none" stroke="#c2ef4e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="52" y="31" class="gate">Risky change, weak tests? It fails its gate.</text>
+    <text x="52" y="53" class="gates">Coverage of the changed lines is measured on every commit.</text>
+  </g>
+
+  <g transform="translate(676 38)">
+    <rect width="556" height="236" rx="18" fill="#ffffff" fill-opacity="0.05" stroke="#6a5fc1" stroke-opacity="0.55"/>
+    <text x="24" y="36" class="cap">AI JUDGE · 10 ASPECTS OF EVERY CHANGE</text>
+    <rect x="430" y="16" width="102" height="30" rx="15" fill="#c2ef4e"/>
+    <text x="481" y="36" text-anchor="middle" class="ai">AI review</text>
+    <g transform="translate(24 58)">
+      <g>
+        <rect width="246" height="30" rx="8" fill="#ffffff" fill-opacity="0.06"/><circle cx="16" cy="15" r="4.5" fill="#c2ef4e"/><text x="30" y="20" class="aspect">Architecture Impact</text>
+        <rect y="34" width="246" height="30" rx="8" fill="#ffffff" fill-opacity="0.06"/><circle cx="16" cy="49" r="4.5" fill="#c2ef4e"/><text x="30" y="54" class="aspect">Concurrency Risk</text>
+        <rect y="68" width="246" height="30" rx="8" fill="#ffffff" fill-opacity="0.06"/><circle cx="16" cy="83" r="4.5" fill="#c2ef4e"/><text x="30" y="88" class="aspect">Integration Surface</text>
+        <rect y="102" width="246" height="30" rx="8" fill="#ffffff" fill-opacity="0.06"/><circle cx="16" cy="117" r="4.5" fill="#c2ef4e"/><text x="30" y="122" class="aspect">Data Integrity</text>
+        <rect y="136" width="246" height="30" rx="8" fill="#ffffff" fill-opacity="0.06"/><circle cx="16" cy="151" r="4.5" fill="#c2ef4e"/><text x="30" y="156" class="aspect">Security Sensitivity</text>
+      </g>
+      <g transform="translate(262 0)">
+        <rect width="246" height="30" rx="8" fill="#ffffff" fill-opacity="0.06"/><circle cx="16" cy="15" r="4.5" fill="#c2ef4e"/><text x="30" y="20" class="aspect">Scalability Impact</text>
+        <rect y="34" width="246" height="30" rx="8" fill="#ffffff" fill-opacity="0.06"/><circle cx="16" cy="49" r="4.5" fill="#c2ef4e"/><text x="30" y="54" class="aspect">Observability</text>
+        <rect y="68" width="246" height="30" rx="8" fill="#ffffff" fill-opacity="0.06"/><circle cx="16" cy="83" r="4.5" fill="#c2ef4e"/><text x="30" y="88" class="aspect">Resilience</text>
+        <rect y="102" width="246" height="30" rx="8" fill="#ffffff" fill-opacity="0.06"/><circle cx="16" cy="117" r="4.5" fill="#c2ef4e"/><text x="30" y="122" class="aspect">Performance</text>
+        <rect y="136" width="246" height="30" rx="8" fill="#ffffff" fill-opacity="0.06"/><circle cx="16" cy="151" r="4.5" fill="#c2ef4e"/><text x="30" y="156" class="aspect">Testing Coverage</text>
+      </g>
+    </g>
+  </g>
+
+  <path d="M 954 274 L 954 286" stroke="#c2ef4e" stroke-width="2" stroke-dasharray="4 4"/>
+
+  <g transform="translate(676 286)">
+    <rect width="556" height="128" rx="18" fill="#ffffff" fill-opacity="0.05" stroke="#6a5fc1" stroke-opacity="0.55"/>
+    <text x="24" y="28" class="cap">ON PROVEN JVM TOOLING</text>
+    <g transform="translate(24 40)">
+      <rect width="164" height="22" rx="11" fill="none" stroke="#6a5fc1"/><text x="82" y="16" text-anchor="middle" class="tool">JaCoCo</text>
+      <rect x="172" width="164" height="22" rx="11" fill="none" stroke="#6a5fc1"/><text x="254" y="16" text-anchor="middle" class="tool">Eclipse JDT LS</text>
+      <rect x="344" width="164" height="22" rx="11" fill="none" stroke="#6a5fc1"/><text x="426" y="16" text-anchor="middle" class="tool">PMD · CPD</text>
+      <rect y="27" width="164" height="22" rx="11" fill="none" stroke="#6a5fc1"/><text x="82" y="43" text-anchor="middle" class="tool">SpotBugs</text>
+      <rect x="172" y="27" width="164" height="22" rx="11" fill="#c2ef4e" fill-opacity="0.12" stroke="#c2ef4e" stroke-opacity="0.8"/><text x="254" y="43" text-anchor="middle" class="tool">Error Prone · soon</text>
+      <rect x="344" y="27" width="164" height="22" rx="11" fill="none" stroke="#6a5fc1"/><text x="426" y="43" text-anchor="middle" class="tool">ClassGraph</text>
+      <rect y="54" width="164" height="22" rx="11" fill="none" stroke="#6a5fc1"/><text x="82" y="70" text-anchor="middle" class="tool">OpenRewrite</text>
+      <rect x="172" y="54" width="164" height="22" rx="11" fill="none" stroke="#6a5fc1"/><text x="254" y="70" text-anchor="middle" class="tool">JGit</text>
+      <rect x="344" y="54" width="164" height="22" rx="11" fill="none" stroke="#6a5fc1"/><text x="426" y="70" text-anchor="middle" class="tool">Maven · Gradle</text>
+    </g>
+  </g>
+</svg>
