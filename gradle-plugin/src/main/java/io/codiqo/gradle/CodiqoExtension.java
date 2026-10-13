@@ -32,6 +32,21 @@ public class CodiqoExtension {
     private boolean skipOnBuildFailure = true;
     private boolean scoreOnBuildFailure;
 
+    /**
+     * Local mode, as on Maven: OpenCode agents review and assess every analysed commit next to the analysis, and the
+     * server scores it from that assessment alone. Each review setting left unset keeps its {@link RunArgs} default.
+     */
+    private boolean review = true;
+    private String reviewExecutable;
+    private String reviewBaseUrl;
+    private String reviewCoordinatorModel;
+    private String reviewReviewerModel;
+    private String reviewTimeoutMinutes;
+    private String reviewRelayRetries;
+    private String reviewRelayTimeoutSeconds;
+    /** where the review's trace of every session and tool call goes; unset, the analysis's output directory */
+    private String reviewTraceDirectory;
+
     private boolean firstParentOnly = true;
     private boolean excludeRevertedCommits = true;
     private String includeBranches;

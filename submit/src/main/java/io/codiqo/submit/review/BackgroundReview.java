@@ -1,4 +1,4 @@
-package io.codiqo.maven;
+package io.codiqo.submit.review;
 
 import java.time.Duration;
 import java.util.concurrent.Callable;
@@ -6,8 +6,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-
-import org.apache.maven.plugin.MojoExecutionException;
 
 /**
  * A local review running next to the analysis of the same commit. It needs only git and the agents, so it is started
@@ -17,7 +15,7 @@ import org.apache.maven.plugin.MojoExecutionException;
  * commit without it would hand the review's judgment to the server's prompt and hide an LLM call that keeps failing.
  * Closing cancels a review that is
  * still running; the interrupt makes the reviewer stop its OpenCode server and delete the server's home, which a
- * review abandoned without the interrupt would leave running after Maven exits.
+ * review abandoned without the interrupt would leave running after the build exits.
  */
 public final class BackgroundReview<T> implements AutoCloseable {
     private static final Duration JOIN_ON_CLOSE = Duration.ofSeconds(30);
@@ -29,16 +27,16 @@ public final class BackgroundReview<T> implements AutoCloseable {
         this.task = task;
         this.thread = thread;
     }
-    public T await(Duration timeout) throws MojoExecutionException {
+    public T await(Duration timeout) throws LocalReviewException {
         try {
             return task.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (ExecutionException err) {
-            throw new MojoExecutionException("local review failed: " + err.getCause().getMessage(), err.getCause());
+            throw new LocalReviewException("local review failed: " + err.getCause().getMessage(), err.getCause());
         } catch (TimeoutException err) {
-            throw new MojoExecutionException("local review did not finish within " + timeout, err);
+            throw new LocalReviewException("local review did not finish within " + timeout, err);
         } catch (InterruptedException err) {
             Thread.currentThread().interrupt();
-            throw new MojoExecutionException("interrupted while waiting for the local review", err);
+            throw new LocalReviewException("interrupted while waiting for the local review", err);
         }
     }
     @Override

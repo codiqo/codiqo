@@ -36,6 +36,9 @@ import io.codiqo.submit.hotspots.FixCommits;
 import io.codiqo.submit.hotspots.HotspotSnapshots;
 import io.codiqo.util.JGit;
 import io.codiqo.util.ProgressStage;
+import io.codiqo.submit.review.LocalReviewException;
+import io.codiqo.submit.review.LocalReviewRun;
+import io.codiqo.maven.logging.MavenLogFactory;
 
 @Mojo(name = "submit-commit-analysis",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
@@ -87,7 +90,8 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
                         endpoint,
                         LocalReviewGuidance.read(args, getLog()),
                         this::projectTags,
-                        getLog());
+                        DefaultLanguageProcessors.reviewLanguages(),
+                        new MavenLogFactory(getLog()));
                 getLog().info("local review of " + args.getCommitId() + " started next to the analysis");
             } else {
                 getLog().info("local review skipped: " + args.getCommitId() + " changes no file the analysis reads");
@@ -121,7 +125,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
         if (Objects.nonNull(reviewRun)) {
             try {
                 reviewRun.attachTo(ctx);
-            } catch (MojoExecutionException err) {
+            } catch (LocalReviewException err) {
                 /**
                  * Local mode judges a commit with the review alone, so a review that failed or ran out of time leaves
                  * the commit unjudged: it is excluded, which keeps the next run from paying for the review again and

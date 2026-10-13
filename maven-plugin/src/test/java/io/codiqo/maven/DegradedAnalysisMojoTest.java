@@ -41,6 +41,10 @@ import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.llm.review.LocalReviewer;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.util.JGit;
+import io.codiqo.submit.review.LocalReviewRun;
+import io.codiqo.submit.review.BackgroundReview;
+import io.codiqo.core.DefaultLanguageProcessors;
+import io.codiqo.maven.logging.MavenLogFactory;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import lombok.Value;
 
@@ -203,7 +207,7 @@ class DegradedAnalysisMojoTest {
         assertFalse(submit.scoresFailedBuild(args, AnalysisExcludeCategory.BUILD_FAILURE, false), "no review started: the flag decides, and it is off");
 
         try (BackgroundReview<LocalReviewer.ReviewOutcome> review = BackgroundReview.start(() -> null)) {
-            FieldUtils.writeField(submit, "reviewRun", LocalReviewRun.of(review, new SystemStreamLog()), true);
+            FieldUtils.writeField(submit, "reviewRun", LocalReviewRun.of(review, DefaultLanguageProcessors.reviewLanguages(), new MavenLogFactory(new SystemStreamLog())), true);
             assertTrue(submit.scoresFailedBuild(args, AnalysisExcludeCategory.BUILD_FAILURE, false));
             assertFalse(submit.scoresFailedBuild(args, AnalysisExcludeCategory.BUILD_FAILURE, true), "a build that ran out of time is not the author's");
             assertFalse(submit.scoresFailedBuild(args, AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, false), "an unresolvable dependency is not the author's");
@@ -220,7 +224,7 @@ class DegradedAnalysisMojoTest {
         try (BackgroundReview<LocalReviewer.ReviewOutcome> review = BackgroundReview.start(() -> {
             throw new IOException("the coordinator answered nothing");
         })) {
-            FieldUtils.writeField(submit, "reviewRun", LocalReviewRun.of(review, new SystemStreamLog()), true);
+            FieldUtils.writeField(submit, "reviewRun", LocalReviewRun.of(review, DefaultLanguageProcessors.reviewLanguages(), new MavenLogFactory(new SystemStreamLog())), true);
             submit.doDegradedAnalysis(argsFor(second), "[ERROR] COMPILATION ERROR", AnalysisExcludeCategory.BUILD_FAILURE, "cannot find symbol");
         }
 
