@@ -3,6 +3,6 @@ ALSO ASSESS what you reviewed, from the same reading; do not run extra tools for
 [# th:insert="~{opencode/unit-categories}" /]
   List EVERY unit this commit adds or changes in your paths, MECHANICAL ones included: a unit you leave out reads as one nobody judged, not as a trivial one.
   Every entry is an object of that shape, never a sentence. When your paths hold no function, method or constructor (SQL migrations, build files, configuration), "blockCategories" is the empty list [] and anything worth saying about those files goes in "observations".
-- "observations": up to 6 short facts about what the change does that matter for risk, each under 20 words, e.g. "adds a Pub/Sub topic and subscriber per operator", "new Flyway migration re-keys the accounts table", "replaces Kafka calls with a REST gateway client".
+- "observations": up to 6 short facts about what the change does that matter for risk, each under 20 words, e.g. "adds a Pub/Sub topic and subscriber per operator", "new Flyway migration re-keys the accounts table", "replaces Kafka calls with a REST gateway client". When the change adds or changes tests, at least one observation names the test and the risky code it exercises (concurrency, persistence, retries or timeouts, a new endpoint or message), e.g. "RetryActivityTest drives the KYC provider timeout through the new retry path"; the quality gates are judged from these.
 
 Your JSON answer then has these two fields beside "blocking", "major" and "minor".
