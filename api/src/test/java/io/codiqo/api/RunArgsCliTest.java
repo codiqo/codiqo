@@ -26,14 +26,12 @@ class RunArgsCliTest {
     @Test
     void boxedNumericOptionsAreApplied() throws Exception {
         CommandLine cmd = new DefaultParser().parse(RunArgs.options(), new String[]{
-                "--llm-validation-max-retries", "2",
                 "--llm-max-retries", "5",
                 "--llm-max-tokens", "1024",
                 "--llm-temperature", "0.5"});
 
         RunArgs args = RunArgs.from(cmd);
 
-        assertEquals((short) 2, args.getLlmValidationMaxRetries());
         assertEquals((short) 5, args.getLlmMaxRetries());
         assertEquals(1024, args.getLlmMaxTokens());
         assertEquals(0.5, args.getLlmTemperature(), 0.001);

@@ -180,28 +180,25 @@ public class AnalysisEngine {
     }
     /**
      * An excluded commit is reported to the backend rather than scored, so its files are still recorded and it is not
-     * re-offered as missing on the next run. A dump-only caller has nowhere to put an exclusion, so the reason is
-     * logged and the run ends.
+     * re-offered as missing on the next run.
      */
     private static void reportExclusion(AnalysisRequest request, RunArgs args, String commitSha, Exclusion exclusion, List<FileChangeModel> files, Log log) throws Exception {
         reportExclusion(request, args, commitSha, exclusion, files, log, null, null);
     }
     private static void reportExclusion(AnalysisRequest request, RunArgs args, String commitSha, Exclusion exclusion, List<FileChangeModel> files, Log log, String detail, ProjectMetricsModel projectMetrics) throws Exception {
         log.warn("commit %s skipped: %s", commitSha, exclusion.getReason());
-        if (request.isSubmit()) {
-            AnalysisSubmitter.exclude(
-                    request.getApiUrl(),
-                    credential(request, log),
-                    request.getConnectTimeoutSeconds(),
-                    request.getReadTimeoutSeconds(),
-                    commitSha,
-                    exclusion.getReason(),
-                    exclusion.getCategory(),
-                    detail,
-                    files,
-                    projectMetrics,
-                    log);
-        }
+        AnalysisSubmitter.exclude(
+                request.getApiUrl(),
+                credential(request, log),
+                request.getConnectTimeoutSeconds(),
+                request.getReadTimeoutSeconds(),
+                commitSha,
+                exclusion.getReason(),
+                exclusion.getCategory(),
+                detail,
+                files,
+                projectMetrics,
+                log);
     }
     /**
      * Folds every Test task's exec part into the single per-module file the analysis reads. Gradle deletes a Test
@@ -281,7 +278,7 @@ public class AnalysisEngine {
             }
             log.warn("commit %s: build failed — running degraded analysis", args.getCommitId());
             new OutputSerializer(true, logFactory.getLogger(OutputSerializer.class)).accept(ctx);
-            if (BooleanUtils.and(new boolean[] { request.isSubmit(), judged(request, args, review, ctx, log) })) {
+            if (judged(request, args, review, ctx, log)) {
                 AnalysisAcceptedModel accepted = submit(request, ctx, log);
                 log.info("accepted degraded analysis id: %s status: %s", accepted.getAnalysisId(), accepted.getStatus());
             }
@@ -453,29 +450,22 @@ public class AnalysisEngine {
             Optional<HotspotSnapshotModel> snapshot = HotspotSnapshots.build(ctx, since -> fixCommits(request, since, log), log);
             if (snapshot.isPresent()) {
                 HotspotSnapshots.write(ctx, snapshot.get(), log);
-                if (request.isSubmit()) {
-                    HotspotSnapshots.submit(
-                            request.getApiUrl(),
-                            credential(request, log),
-                            request.getConnectTimeoutSeconds(),
-                            request.getReadTimeoutSeconds(),
-                            request.getRootCode(),
-                            snapshot.get(),
-                            log);
-                }
+                HotspotSnapshots.submit(
+                        request.getApiUrl(),
+                        credential(request, log),
+                        request.getConnectTimeoutSeconds(),
+                        request.getReadTimeoutSeconds(),
+                        request.getRootCode(),
+                        snapshot.get(),
+                        log);
             }
         } catch (Exception err) {
             log.warn("hotspot snapshot for %s not produced, the previous one stays: %s", ctx.getArgs().getCommitId(), err);
         }
     }
-    /** only a submitting run has a server to ask; any other judges every commit by its message */
     private static FixCommits fixCommits(AnalysisRequest request, Instant since, Log log) throws Exception {
-        FixCommits toReturn = FixCommits.byMessage();
-        if (request.isSubmit()) {
-            toReturn = FixCommits.fetch(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(), request.getReadTimeoutSeconds(),
-                    request.getRootCode(), since, log);
-        }
-        return toReturn;
+        return FixCommits.fetch(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(), request.getReadTimeoutSeconds(),
+                request.getRootCode(), since, log);
     }
     private static String resolveCommitId(AnalysisRequest request, Repository git) throws Exception {
         return JGit.resolveCommit(git, Optional.ofNullable(request.getCommitId()).orElse(Constants.HEAD));
@@ -527,10 +517,10 @@ public class AnalysisEngine {
 
                 new OutputSerializer(true, logFactory.getLogger(OutputSerializer.class)).accept(ctx);
 
-                /** The dump is written first, so a submission the backend rejects still leaves the YAML to inspect. */
+                /** The YAML is written first, so a submission the backend rejects still leaves it to inspect. */
                 if (analysis.isRevertCommit()) {
                     reportRevert(request, args, ctx, log);
-                } else if (BooleanUtils.and(new boolean[] { request.isSubmit(), judged(request, args, review, ctx, log) })) {
+                } else if (judged(request, args, review, ctx, log)) {
                     try (ProgressStage stage = ProgressStage.start(args, "submit")) {
                         AnalysisAcceptedModel accepted = submit(request, ctx, log);
                         log.info("accepted analysis id: %s status: %s", accepted.getAnalysisId(), accepted.getStatus());
@@ -542,13 +532,13 @@ public class AnalysisEngine {
         }
     }
     /**
-     * Local mode, as on Maven: the review of the checked-out commit runs next to the analysis. Only a submitted run is
-     * reviewed, and only a commit that changes a file the analysis reads: the review spends the organization's LLM
-     * budget through the proxy, which a dump or an excluded commit has no use for.
+     * Local mode, as on Maven: the review of the checked-out commit runs next to the analysis. Only a commit that
+     * changes a file the analysis reads is reviewed: the review spends the organization's LLM budget through the
+     * proxy, which an excluded commit has no use for.
      */
     private static Optional<LocalReviewRun> startReview(AnalysisRequest request, RunArgs args, LogFactory logFactory, Log log) throws Exception {
         boolean analyzable = CommitExclusions.hasAnalyzableFile(JGit.changedFileNames(args.getGit(), args.getCommitId()), DefaultLanguageProcessors.supportedExtensions());
-        if (BooleanUtils.and(new boolean[] { request.isSubmit(), args.isReviewEnabled(), analyzable })) {
+        if (BooleanUtils.and(new boolean[] { args.isReviewEnabled(), analyzable })) {
             CodiqoCredential credential = credential(request, log);
             LocalReviewRun toReturn = LocalReviewRun.start(
                     args,
