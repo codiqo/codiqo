@@ -1536,7 +1536,7 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
 
 ## Local Review — Switches and What Travels
 
-- **`codiqo.review` is the one switch of local mode.** On, OpenCode reviews every analysed commit next to the build, in
+- **`codiqo.review` is the one switch of local mode, on by default** (`RunArgs.reviewEnabled`). On, OpenCode reviews every analysed commit next to the build, in
   the analysis clone (a backlog pays for one review per commit), and always does all of it: the judgment (labels with a
   reason above MECHANICAL, task types, dimensions, senior review, blast radius), the labelling of the analysis's own
   units by id, the triage of the PMD and SpotBugs findings on added lines (`StaticFindings.introduced`; a confirmed
