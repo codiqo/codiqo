@@ -130,7 +130,8 @@ class OpenCodeReviewConfigTest {
 
         String reviewer = agents.path(OpenCodeReviewConfig.REVIEWER).path("system").asString();
         String coordinator = agents.path(OpenCodeReviewConfig.COORDINATOR).path("system").asString();
-        assertTrue(reviewer.contains("\"blockCategories\"") && reviewer.contains("\"observations\""), reviewer);
+        assertTrue(reviewer.contains("\"unitLabels\"") && reviewer.contains("\"observations\"") && reviewer.contains("\"notChecked\""), reviewer);
+        assertFalse(reviewer.contains("blockCategories"), "the reviewers read that name as the topics of their review");
         assertTrue(coordinator.contains("\"qualityDimensions\"") && coordinator.contains("\"taskTypes\""), coordinator);
         assertTrue(reviewer.indexOf("ALSO ASSESS") < reviewer.indexOf("JSON RULES"), "the JSON rules close the prompt");
     }

@@ -1,4 +1,4 @@
-The build has finished. The analysis found the 2 functions, methods and constructors listed below, which this commit adds (NEW) or changes (MODIFY); each has an id, its file, its name and its lines in the new file. Label every one of them. The reviewers' "blockCategories" in their reports are your starting point; where a unit has none, or you are unsure, read its changed lines with read-only tools (for example `git show 1a2b3c -- <path>`). Do not start subagents.
+The build has finished. The analysis found the 2 functions, methods and constructors listed below, which this commit adds (NEW) or changes (MODIFY); each has an id, its file, its name and its lines in the new file. Label every one of them. The reviewers' "unitLabels" in their reports are your starting point; where a unit has none, or you are unsure, read its changed lines with read-only tools (for example `git show 1a2b3c -- <path>`). Do not start subagents.
 
 Judge each unit from its changed lines as the reviewers did:
   Judge ONLY the changed lines, never the method they live in: "if I saw only the +/- lines, how hard would they be to get right?"

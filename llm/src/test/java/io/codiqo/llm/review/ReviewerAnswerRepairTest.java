@@ -30,21 +30,32 @@ import tools.jackson.databind.node.ObjectNode;
 
 /**
  * The reviewer answers that excluded six aggregator commits on 13 Oct 2026, each a review the agents had finished: a
- * label written as a bare string, a lone observation written as a string, and an answer cut off mid-object.
+ * label written as a bare string, a lone observation written as a string, and an answer cut off mid-object; and the
+ * review topics and unchecked items two later commits wrote where the labels go.
  */
 class ReviewerAnswerRepairTest {
     private static final String SESSION = "ses_reviewer";
     private static final String GOOD = """
-            {"blockCategories":[{"file":"server/Router.java","signature":"route()","category":"MECHANICAL","reason":"annotation-only"}],
+            {"unitLabels":[{"file":"server/Router.java","signature":"route()","category":"MECHANICAL","reason":"annotation-only"}],
              "observations":["Adds a router"]}""";
     private static final String BARE_LABEL = """
-            {"blockCategories":["CreateFreeSpinsResponse.getFreeSpin(): MECHANICAL — annotation-only change, adds @JsonIgnore with no logic change"],
+            {"unitLabels":["CreateFreeSpinsResponse.getFreeSpin(): MECHANICAL — annotation-only change, adds @JsonIgnore with no logic change"],
              "observations":["Adds a router"]}""";
     private static final String LONE_OBSERVATION = """
-            {"blockCategories":[{"file":"server/Router.java","signature":"route()","category":"MECHANICAL","reason":"annotation-only"}],
+            {"unitLabels":[{"file":"server/Router.java","signature":"route()","category":"MECHANICAL","reason":"annotation-only"}],
              "observations":"Adds a router"}""";
+    /** the shape of the 13 Oct 2026 failures: review topics and unchecked items written where the labels go */
+    private static final String TOPICS_AS_LABELS = """
+            {"unitLabels":["range-notation-fidelity-vs-toString","tests were not executed"],
+             "observations":["Adds a router"]}""";
+    private static final String NOT_CHECKED = """
+            {"unitLabels":[{"file":"server/Router.java","signature":"route()","category":"MECHANICAL"}],
+             "observations":["Adds a router"],
+             "notChecked":["tests were not executed","the enum default comes from an external protobuf artifact"]}""";
+    private static final String LONE_NOT_CHECKED = """
+            {"unitLabels":[],"observations":[],"notChecked":"tests were not executed"}""";
     private static final String CUT = """
-            {"blockCategories":[{"file":"server/Router.java","signature":"route()\"""";
+            {"unitLabels":[{"file":"server/Router.java","signature":"route()\"""";
 
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final List<String> prompts = Lists.newCopyOnWriteArrayList();
@@ -81,6 +92,28 @@ class ReviewerAnswerRepairTest {
 
         assertEquals(List.of("Adds a router"), answer.getObservations());
         assertEquals(0, prompts.size(), "nothing to correct: the string says what a one-item list says");
+    }
+    @Test
+    void topicsWrittenWhereTheLabelsGoAreCorrectedNeverTakenAsLabels() throws Exception {
+        corrections.add(NOT_CHECKED);
+
+        LocalReviewer.ReviewerAnswer answer = read(TOPICS_AS_LABELS, true);
+
+        assertEquals(1, prompts.size(), "one correction turn");
+        assertTrue(prompts.get(0).contains("Cannot construct instance of"), prompts.get(0));
+        assertEquals(1, answer.getLabels().size());
+        assertEquals(List.of("tests were not executed", "the enum default comes from an external protobuf artifact"), answer.getNotChecked());
+        assertTrue(answer.isCorrected());
+    }
+    @Test
+    void whatTheReviewerCouldNotVerifyIsReadBesideItsLabels() throws Exception {
+        LocalReviewer.ReviewerAnswer answer = read(NOT_CHECKED, true);
+
+        assertEquals(0, prompts.size());
+        assertEquals(1, answer.getLabels().size());
+        assertEquals(2, answer.getNotChecked().size());
+        assertEquals(List.of("tests were not executed"), read(LONE_NOT_CHECKED, true).getNotChecked(), "a lone note says what a one-item list says");
+        assertEquals(List.of(), read(GOOD, true).getNotChecked(), "a reviewer that checked everything may leave the field out");
     }
     @Test
     void anAnswerCutOffMidObjectIsCorrectedOnce() throws Exception {

@@ -1,4 +1,4 @@
-The build has finished. The analysis found the [(${units.size()})] functions, methods and constructors listed below, which this commit adds (NEW) or changes (MODIFY); each has an id, its file, its name and its lines in the new file. Label every one of them. The reviewers' "blockCategories" in their reports are your starting point; where a unit has none, or you are unsure, read its changed lines with read-only tools (for example `git show [(${sha})] -- <path>`). Do not start subagents.
+The build has finished. The analysis found the [(${units.size()})] functions, methods and constructors listed below, which this commit adds (NEW) or changes (MODIFY); each has an id, its file, its name and its lines in the new file. Label every one of them. The reviewers' "unitLabels" in their reports are your starting point; where a unit has none, or you are unsure, read its changed lines with read-only tools (for example `git show [(${sha})] -- <path>`). Do not start subagents.
 
 Judge each unit from its changed lines as the reviewers did:
 [# th:insert="~{opencode/unit-categories}" /]

@@ -12,6 +12,7 @@ import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -20,6 +21,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.RandomStringUtils;
@@ -29,6 +31,9 @@ import org.apache.commons.lang3.math.NumberUtils;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.google.common.base.Joiner;
+import com.google.common.collect.ConcurrentHashMultiset;
+import com.google.common.collect.Multiset;
 import com.openai.core.ObjectMappers;
 import com.openai.models.ErrorObject;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
@@ -41,6 +46,7 @@ import io.codiqo.util.RequestAuthorizer;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaderValues;
 import io.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.handler.codec.http.HttpStatusClass;
 import okhttp3.HttpUrl;
 
 /**
@@ -81,6 +87,7 @@ public final class LlmRelay implements AutoCloseable {
      */
     private static final Set<String> FORWARDED_CALLS = Set.of("POST " + CHAT_COMPLETIONS, "GET /models");
     private static final JsonMapper OPENAI = ObjectMappers.jsonMapper();
+    private static final Joiner COMMA = Joiner.on(", ");
 
     private final HttpServer server;
     private final ExecutorService executor;
@@ -94,6 +101,8 @@ public final class LlmRelay implements AutoCloseable {
     private final Double topP;
     private final Integer seed;
     private final String secret;
+    /** every answer of the model's end point that was not a success, retried ones included, by status */
+    private final Multiset<Integer> providerErrors = ConcurrentHashMultiset.create();
     private final Log log;
 
     private LlmRelay(HttpServer server, ExecutorService executor, RunArgs args, ReviewEndpoint upstream, Log log) {
@@ -121,6 +130,26 @@ public final class LlmRelay implements AutoCloseable {
     }
     public String getSecret() {
         return secret;
+    }
+    /**
+     * The model's end point's failed answers so far, for the message of a review that failed: a turn that timed out
+     * while the provider answered 429 for an hour says only "timeout" on its own. Empty when every answer succeeded.
+     */
+    public Optional<String> providerErrors() {
+        List<String> counts = providerErrors.entrySet().stream()
+                .sorted(Comparator.comparing(Multiset.Entry::getElement))
+                .map(entry -> entry.getElement() + StringUtils.SPACE + (entry.getCount() == 1 ? "once" : entry.getCount() + " times"))
+                .toList();
+
+        Optional<String> toReturn = Optional.empty();
+        if (CollectionUtils.isNotEmpty(counts)) {
+            String listed = counts.getLast();
+            if (counts.size() > 1) {
+                listed = COMMA.join(counts.subList(0, counts.size() - 1)) + " and " + listed;
+            }
+            toReturn = Optional.of("the LLM provider answered " + listed + " during the review");
+        }
+        return toReturn;
     }
     @Override
     public void close() {
@@ -191,6 +220,9 @@ public final class LlmRelay implements AutoCloseable {
 
                 try {
                     HttpResponse<InputStream> answer = http.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
+                    if (HttpStatusClass.valueOf(answer.statusCode()) != HttpStatusClass.SUCCESS) {
+                        providerErrors.add(answer.statusCode());
+                    }
                     if (BooleanUtils.and(new boolean[] { RETRIED_STATUSES.contains(answer.statusCode()), attempt < retries })) {
                         answer.body().close();
                         Duration wait = retryAfter(answer).orElse(backoff(attempt));

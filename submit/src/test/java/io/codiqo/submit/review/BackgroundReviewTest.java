@@ -20,7 +20,7 @@ class BackgroundReviewTest {
 
     @Test
     void aFinishedReviewIsReturned() throws Exception {
-        LocalReview review = new LocalReview("abc", new LlmScoringResponse.Bugs(), List.of(), Duration.ofSeconds(1), "{}", null, 0, List.of(), List.of());
+        LocalReview review = new LocalReview("abc", new LlmScoringResponse.Bugs(), List.of(), Duration.ofSeconds(1), "{}", null, 0, List.of(), List.of(), List.of(), 0);
         try (BackgroundReview<LocalReview> background = BackgroundReview.start(() -> review)) {
             assertEquals(review, background.await(WAIT));
         }

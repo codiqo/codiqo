@@ -543,6 +543,9 @@ public class RunArgs {
     /** Local review: the reviewers' observations kept for the commit page; six per reviewer are asked for, and a review with many areas keeps the first of them. */
     private transient int reviewMaxObservations = 24;
 
+    /** Local review: the reviewers' notes on what they could not verify kept for the commit page; three per reviewer are asked for. */
+    private transient int reviewMaxNotChecked = 12;
+
     /**
      * Local review: reviewer areas that may go unreviewed before the review fails. An area is unreviewed when its reviewer
      * ended without an answer and no answered retry covers it. 0 fails on the first one, so a broken review is

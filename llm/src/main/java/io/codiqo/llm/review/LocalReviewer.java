@@ -122,7 +122,16 @@ public class LocalReviewer {
             Optional<BuildSource<ReviewUnit>> units,
             Optional<BuildSource<StaticFinding>> findings) throws IOException {
         try (LlmRelay relay = LlmRelay.start(args, endpoint, log)) {
-            return runReview(workTree, sha, namingRules, new ReviewEndpoint(relay.getUrl(), relay.getSecret(), null), units, findings);
+            try {
+                return runReview(workTree, sha, namingRules, new ReviewEndpoint(relay.getUrl(), relay.getSecret(), null), units, findings);
+            } catch (IOException | RuntimeException err) {
+                /** a turn that timed out says only "timeout"; the provider failing underneath it is the cause worth reading */
+                Optional<String> providerErrors = relay.providerErrors();
+                if (providerErrors.isPresent()) {
+                    throw new IOException(err.getMessage() + "; " + providerErrors.get(), err);
+                }
+                throw err;
+            }
         }
     }
     private ReviewOutcome runReview(
@@ -200,7 +209,9 @@ public class LocalReviewer {
                     assessment,
                     reviewers.getTotal(),
                     reviewers.getUnanswered(),
-                    reviewers.getObservations());
+                    reviewers.getObservations(),
+                    reviewers.getNotChecked(),
+                    reviewers.getCorrected());
             stage.detail(progressDetail(review));
             stage.succeeded();
         }
@@ -313,6 +324,7 @@ public class LocalReviewer {
         Map<Pair<String, String>, LlmScoringResponse.CodeBlockCategoryView> labels = Maps.newLinkedHashMap();
         /** the coordinator is told not to repeat them, so the reviewers' own answers are the only place they exist */
         Set<String> observations = Sets.newLinkedHashSet();
+        Set<String> notChecked = Sets.newLinkedHashSet();
         List<String> unanswered = Lists.newArrayList();
         int total = 0;
         int repairs = 0;
@@ -346,6 +358,11 @@ public class LocalReviewer {
                         observations.add(observation.strip());
                     }
                 }
+                for (String note : answer.getNotChecked()) {
+                    if (StringUtils.isNotBlank(note)) {
+                        notChecked.add(note.strip());
+                    }
+                }
             }
         }
         int unreviewed = unreviewedAreas(unanswered.size(), answeredRetries);
@@ -359,7 +376,9 @@ public class LocalReviewer {
             throw new IOException(unreviewed + " reviewer areas went unreviewed: sessions " + unanswered + " ended without an answer");
         }
         return new ReviewerAnswers(total, unanswered, Lists.newArrayList(labels.values()),
-                observations.stream().limit(args.getReviewMaxObservations()).toList());
+                observations.stream().limit(args.getReviewMaxObservations()).toList(),
+                notChecked.stream().limit(args.getReviewMaxNotChecked()).toList(),
+                repairs);
     }
     /**
      * Areas left without a review: each reviewer that ended with no answer, less each answered retry the coordinator
@@ -374,9 +393,10 @@ public class LocalReviewer {
         return StringUtils.startsWithIgnoreCase(StringUtils.strip(title), RETRY_TITLE_PREFIX);
     }
     /**
-     * A reviewer's labels and observations. An answer that cannot be read, broken JSON or a label written as a bare string,
-     * gets the one correction the coordinator's answer gets: one such slip in ten reviewers excluded whole commits. An
-     * answer still unreadable after it fails the review, since dropping that reviewer's labels would judge with less.
+     * A reviewer's labels, observations and what it could not verify. An answer that cannot be read, broken JSON or a
+     * label written as a bare string, gets the one correction the coordinator's answer gets: one such slip in ten
+     * reviewers excluded whole commits. An answer still unreadable after it fails the review, since dropping that
+     * reviewer's labels would judge with less.
      */
     @VisibleForTesting
     static ReviewerAnswer readReviewerAnswer(OpenCodeClient client, String sessionId, String text, boolean mayCorrect, Log log) throws IOException {
@@ -402,9 +422,12 @@ public class LocalReviewer {
         }
     }
     private static ReviewerAnswer parseReviewerAnswer(String text, boolean corrected) {
-        List<LlmScoringResponse.CodeBlockCategoryView> labels = CollectionUtils.emptyIfNull(LlmJson.readAnswer(text, LlmScoringResponse.class).getBlockCategories()).stream().toList();
-        List<String> observations = CollectionUtils.emptyIfNull(LlmJson.readAnswer(text, Observations.class).getObservations()).stream().toList();
-        return new ReviewerAnswer(labels, observations, corrected);
+        ReviewerFields fields = LlmJson.readAnswer(text, ReviewerFields.class);
+        return new ReviewerAnswer(
+                CollectionUtils.emptyIfNull(fields.getUnitLabels()).stream().toList(),
+                CollectionUtils.emptyIfNull(fields.getObservations()).stream().toList(),
+                CollectionUtils.emptyIfNull(fields.getNotChecked()).stream().toList(),
+                corrected);
     }
     private SessionUsage withConfiguredModel(SessionUsage usage) {
         String model = usage.getModel();
@@ -470,20 +493,33 @@ public class LocalReviewer {
         List<String> unanswered;
         List<LlmScoringResponse.CodeBlockCategoryView> blockCategories;
         List<String> observations;
+        List<String> notChecked;
+        int corrected;
     }
 
+    /**
+     * The fields of a reviewer's answer beside its bugs. The labels are {@code unitLabels}, not the scoring response's
+     * {@code blockCategories}: reviewers read that name as the topics of their review and filled it with sentences.
+     */
     @Data
     @NoArgsConstructor
-    public static class Observations {
+    public static class ReviewerFields {
+        /** strict: an entry written as a sentence fails the read, and the reviewer is asked for a correction */
+        private List<LlmScoringResponse.CodeBlockCategoryView> unitLabels = Lists.newArrayList();
+
         /** a lone observation written as a string, not a one-item list, says the same thing and is read as one */
         @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY)
         private List<String> observations = Lists.newArrayList();
+
+        @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY)
+        private List<String> notChecked = Lists.newArrayList();
     }
 
     @Value
     static class ReviewerAnswer {
         List<LlmScoringResponse.CodeBlockCategoryView> labels;
         List<String> observations;
+        List<String> notChecked;
         boolean corrected;
     }
 
