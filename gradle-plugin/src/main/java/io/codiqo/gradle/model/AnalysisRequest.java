@@ -49,6 +49,16 @@ public class AnalysisRequest implements Serializable {
     private boolean skipOnBuildFailure = true;
     private boolean scoreOnBuildFailure;
 
+    private boolean review = true;
+    private String reviewExecutable;
+    private String reviewBaseUrl;
+    private String reviewCoordinatorModel;
+    private String reviewReviewerModel;
+    private String reviewTimeoutMinutes;
+    private String reviewRelayRetries;
+    private String reviewRelayTimeoutSeconds;
+    private String reviewTraceDirectory;
+
     private boolean firstParentOnly = true;
     private boolean excludeRevertedCommits = true;
     private String includeBranches;

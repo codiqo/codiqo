@@ -135,6 +135,18 @@ The key is resolved in the daemon, so `env:VAR` works and a variable that is uns
 in about a second rather than after a full analysis. Run this task **or** `codiqoDumpAnalysis`,
 never both in one build.
 
+### Local review
+
+As on Maven, `codiqoSubmitAnalysis` reviews the commit with OpenCode agents next to the analysis
+(local mode, on by default), and the server scores the commit from that assessment alone. The
+`opencode` CLI must be on the path (`-Pcodiqo.review.executable` names another), and the agents
+call their models through Codiqo's LLM proxy with the run's credential. A review that fails
+excludes the commit as `LOCAL_REVIEW_FAILURE`; the review's trace goes with the submission.
+`-Pcodiqo.review=false` turns it off. The other settings match the Maven goal's:
+`-Pcodiqo.review.baseUrl`, `.coordinatorModel`, `.reviewerModel`, `.timeoutMinutes`,
+`.relayRetries`, `.relayTimeoutSeconds` and `.traceDirectory` (default: the analysis's output
+directory). `codiqoDumpAnalysis` never reviews.
+
 ## codiqoIndexCommits
 
 Walks git history over a window, publishes it to the backend and writes the commits that still
@@ -190,8 +202,10 @@ ordinary red test never fails the task; the only way one still fails is codiqo's
 firing. Demoting a commit whose classes compiled, because codiqo's own deadline elapsed, would be
 self-inflicted, and it says nothing about whether the compiled output can be trusted.
 
-By default the commit is reported excluded as `BUILD_FAILURE` with the failing task and failure
-kind attached. `codiqo.scoreOnBuildFailure=true` scores it from the degraded submission instead,
+With the local review running, the failed commit is scored from the review by rules, as a
+build-failed commit (penalties only, no bonus); a review that fails then excludes it as
+`BUILD_FAILURE`, files kept. Without a review the commit is reported excluded as `BUILD_FAILURE`
+with the failing task and failure kind attached. `codiqo.scoreOnBuildFailure=true` scores it from the degraded submission instead,
 and `codiqo.skipOnBuildFailure=false` makes a build failure a hard error rather than an exclusion —
 both as the Maven side behaves. If the source-only index cannot be read, the submission degrades
 again to diff-only rather than losing the commit.
@@ -212,7 +226,8 @@ half-written class directory and missed the failure entirely.
   the build. The loop therefore belongs to the caller (see `run-spring-kafka.sh`), not the plugin.
 - **Time machine.** No Gradle equivalent of the `codiqo-maven-time-machine` snapshot resolver, so
   historical commits resolve today's snapshots.
-- **Dependency-resolution failures** are not told apart from other build failures, so
-  `DEPENDENCY_RESOLUTION_FAILURE` is never reported — a resolution failure lands as `BUILD_FAILURE`.
-- **Agent instructions** (`AGENTS.md` / `CLAUDE.md`) are not collected into the submission, so a
-  Gradle commit is scored without the conventions a Maven commit's prompt carries.
+- **Dependency-resolution failures and timeouts** are not told apart from other build failures, so
+  `DEPENDENCY_RESOLUTION_FAILURE` is never reported — a resolution failure lands as `BUILD_FAILURE`,
+  and in local mode it is scored as a build the author broke, where Maven excludes it.
+- **Agent instructions** (`AGENTS.md` / `CLAUDE.md`) reach the local review, which reads them, but are
+  not collected into the submission.

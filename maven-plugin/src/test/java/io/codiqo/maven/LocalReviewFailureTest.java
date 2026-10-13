@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.concurrent.Callable;
 
 import org.apache.commons.lang3.reflect.FieldUtils;
-import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.logging.SystemStreamLog;
 import org.junit.jupiter.api.Test;
 
@@ -22,6 +21,11 @@ import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.llm.review.LocalReviewer;
 import io.codiqo.submit.SubmissionContext;
+import io.codiqo.submit.review.LocalReviewException;
+import io.codiqo.submit.review.LocalReviewRun;
+import io.codiqo.submit.review.BackgroundReview;
+import io.codiqo.core.DefaultLanguageProcessors;
+import io.codiqo.maven.logging.MavenLogFactory;
 
 /**
  * Local mode judges a commit with the review alone, so a review that fails excludes the commit: the server's prompt
@@ -53,7 +57,7 @@ class LocalReviewFailureTest {
 
         Thread.currentThread().interrupt();
         try {
-            assertThrows(MojoExecutionException.class, () -> mojo.doLlmScoring(context()));
+            assertThrows(LocalReviewException.class, () -> mojo.doLlmScoring(context()));
         } finally {
             assertTrue(Thread.interrupted(), "the interrupt is kept for the caller");
         }
@@ -66,7 +70,7 @@ class LocalReviewFailureTest {
                 excluded.add(commitSha + " " + category + " " + reason);
             }
         };
-        FieldUtils.writeField(toReturn, "reviewRun", LocalReviewRun.of(BackgroundReview.start(review), new SystemStreamLog()), true);
+        FieldUtils.writeField(toReturn, "reviewRun", LocalReviewRun.of(BackgroundReview.start(review), DefaultLanguageProcessors.reviewLanguages(), new MavenLogFactory(new SystemStreamLog())), true);
         return toReturn;
     }
     private static SubmissionContext context() {

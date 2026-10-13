@@ -64,6 +64,16 @@ public class GradleModelCollector {
         request.setSkipOnBuildFailure(boolProp(root, "codiqo.skipOnBuildFailure", ext.isSkipOnBuildFailure()));
         request.setScoreOnBuildFailure(boolProp(root, "codiqo.scoreOnBuildFailure", ext.isScoreOnBuildFailure()));
 
+        request.setReview(boolProp(root, "codiqo.review", ext.isReview()));
+        request.setReviewExecutable(stringProp(root, "codiqo.review.executable", ext.getReviewExecutable()));
+        request.setReviewBaseUrl(stringProp(root, "codiqo.review.baseUrl", ext.getReviewBaseUrl()));
+        request.setReviewCoordinatorModel(stringProp(root, "codiqo.review.coordinatorModel", ext.getReviewCoordinatorModel()));
+        request.setReviewReviewerModel(stringProp(root, "codiqo.review.reviewerModel", ext.getReviewReviewerModel()));
+        request.setReviewTimeoutMinutes(stringProp(root, "codiqo.review.timeoutMinutes", ext.getReviewTimeoutMinutes()));
+        request.setReviewRelayRetries(stringProp(root, "codiqo.review.relayRetries", ext.getReviewRelayRetries()));
+        request.setReviewRelayTimeoutSeconds(stringProp(root, "codiqo.review.relayTimeoutSeconds", ext.getReviewRelayTimeoutSeconds()));
+        request.setReviewTraceDirectory(stringProp(root, "codiqo.review.traceDirectory", ext.getReviewTraceDirectory()));
+
         request.setFirstParentOnly(boolProp(root, "codiqo.firstParentOnly", ext.isFirstParentOnly()));
         request.setExcludeRevertedCommits(boolProp(root, "codiqo.excludeRevertedCommits", ext.isExcludeRevertedCommits()));
         request.setIncludeBranches(stringProp(root, "codiqo.includeBranches", ext.getIncludeBranches()));

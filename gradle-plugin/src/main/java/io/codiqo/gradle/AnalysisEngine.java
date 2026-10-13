@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.Objects;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.ArrayUtils;
@@ -18,6 +19,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Repository;
 import org.jacoco.core.tools.ExecFileLoader;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Lists;
@@ -62,6 +64,11 @@ import io.codiqo.util.ProgressStage;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
+import io.codiqo.submit.review.LocalReviewException;
+import io.codiqo.submit.review.LocalReviewRun;
+import io.codiqo.llm.ConventionGuidance;
+import io.codiqo.llm.review.ReviewTrace;
+import io.codiqo.submit.ProjectTags;
 import lombok.experimental.UtilityClass;
 
 /**
@@ -110,6 +117,7 @@ public class AnalysisEngine {
         args.setJdtIncludeDecompiledSources(request.isJdtIncludeDecompiledSources());
         args.setImportTimeout(Duration.ofMinutes(request.getImportTimeoutMinutes()));
         args.setLspQueryTimeout(Duration.ofSeconds(request.getLspQueryTimeoutSeconds()));
+        applyReviewSettings(request, args);
 
         args.validate();
 
@@ -130,37 +138,44 @@ public class AnalysisEngine {
                 return;
             }
 
-            /**
-             * A failed build leaves no trustworthy class output, so the normal pipeline cannot run: no ClassGraph
-             * scan, no JDT import, no coverage. The Maven side takes the same fork, and both must stay aligned so a
-             * build-failed commit is treated the same whichever plugin analysed it.
-             */
-            if (StringUtils.isNotBlank(request.getBuildFailureDetail())) {
-                runDegraded(request, args, logFactory, log);
-                return;
-            }
-
-            /**
-             * Coverage is merged only after the exclusion gate: merging is pointless work for an excluded commit, and
-             * mergeCoverageParts throws when it cannot stamp the merged file, which would fail a run that should
-             * have ended as an exclusion.
-             */
-            if (BooleanUtils.negate(request.isIgnoreCoverage())) {
-                for (ModuleData module : request.getModules()) {
-                    mergeCoverageParts(module, log);
+            Optional<LocalReviewRun> review = startReview(request, args, logFactory, log);
+            try {
+                /**
+                 * A failed build leaves no trustworthy class output, so the normal pipeline cannot run: no ClassGraph
+                 * scan, no JDT import, no coverage. The Maven side takes the same fork, and both must stay aligned so a
+                 * build-failed commit is treated the same whichever plugin analysed it.
+                 */
+                if (StringUtils.isNotBlank(request.getBuildFailureDetail())) {
+                    runDegraded(request, args, review, logFactory, log);
+                    return;
                 }
-            }
 
-            try (ClassGraphSpec scan = buildProjects(request, args, log)) {
-                runEngine(request, args, logFactory);
-            } finally {
-                args.getProjects().forEach(spec -> {
-                    try {
-                        spec.close();
-                    } catch (Exception err) {
-                        log.warn("failed to close project spec %s: %s", spec, err.getMessage());
+                /**
+                 * Coverage is merged only after the exclusion gate: merging is pointless work for an excluded commit, and
+                 * mergeCoverageParts throws when it cannot stamp the merged file, which would fail a run that should
+                 * have ended as an exclusion.
+                 */
+                if (BooleanUtils.negate(request.isIgnoreCoverage())) {
+                    for (ModuleData module : request.getModules()) {
+                        mergeCoverageParts(module, log);
                     }
-                });
+                }
+
+                try (ClassGraphSpec scan = buildProjects(request, args, log)) {
+                    runEngine(request, args, review, logFactory);
+                } finally {
+                    args.getProjects().forEach(spec -> {
+                        try {
+                            spec.close();
+                        } catch (Exception err) {
+                            log.warn("failed to close project spec %s: %s", spec, err.getMessage());
+                        }
+                    });
+                }
+            } finally {
+                if (review.isPresent()) {
+                    review.get().close();
+                }
             }
         }
     }
@@ -232,7 +247,7 @@ public class AnalysisEngine {
      * codiqo.scoreOnBuildFailure it is scored instead, from a source-only index that runs PMD over the work tree but
      * never starts the language server — genuine code volume, rather than a score derived from config lines alone.
      */
-    private static void runDegraded(AnalysisRequest request, RunArgs args, LogFactory logFactory, Log log) throws Exception {
+    private static void runDegraded(AnalysisRequest request, RunArgs args, Optional<LocalReviewRun> review, LogFactory logFactory, Log log) throws Exception {
         String reason = "build failed";
 
         /**
@@ -255,17 +270,21 @@ public class AnalysisEngine {
         ctx.getSubmissionModel().setBuildFailure(buildFailure);
 
         List<FileChangeModel> files = ctx.getSubmissionModel().getFiles();
-        if (BooleanUtils.and(new boolean[] { args.isScoreOnBuildFailure(), CollectionUtils.isNotEmpty(files) })) {
+        /**
+         * Local mode judges a commit with its review, which reads the code through git and needs no build, so a commit
+         * whose review started is scored by rules from it as a build-failed commit, as on Maven. Gradle reports no
+         * timeout apart from a failure, so every failed build counts as the author's here.
+         */
+        boolean scored = BooleanUtils.or(new boolean[] { args.isScoreOnBuildFailure(), review.isPresent() });
+        if (BooleanUtils.and(new boolean[] { scored, CollectionUtils.isNotEmpty(files) })) {
             if (ctx.getAnalysis().isRevertCommit()) {
                 reportRevert(request, args, ctx, log);
                 return;
             }
             log.warn("commit %s: build failed — running degraded analysis", args.getCommitId());
             new OutputSerializer(true, logFactory.getLogger(OutputSerializer.class)).accept(ctx);
-            if (request.isSubmit()) {
-                AnalysisAcceptedModel accepted = AnalysisSubmitter.submit(
-                        request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(),
-                        request.getReadTimeoutSeconds(), ctx.getSubmissionModel(), log);
+            if (BooleanUtils.and(new boolean[] { request.isSubmit(), judged(request, args, review, ctx, log) })) {
+                AnalysisAcceptedModel accepted = submit(request, ctx, log);
                 log.info("accepted degraded analysis id: %s status: %s", accepted.getAnalysisId(), accepted.getStatus());
             }
             return;
@@ -463,7 +482,7 @@ public class AnalysisEngine {
     private static String resolveCommitId(AnalysisRequest request, Repository git) throws Exception {
         return JGit.resolveCommit(git, Optional.ofNullable(request.getCommitId()).orElse(Constants.HEAD));
     }
-    private static void runEngine(AnalysisRequest request, RunArgs args, LogFactory logFactory) throws Exception {
+    private static void runEngine(AnalysisRequest request, RunArgs args, Optional<LocalReviewRun> review, LogFactory logFactory) throws Exception {
         Log log = logFactory.getLogger(AnalysisEngine.class);
         Path workTree = args.getGit().getWorkTree().toPath().normalize();
         try (Fetch fetch = new Fetch(args)) {
@@ -513,15 +532,9 @@ public class AnalysisEngine {
                 /** The dump is written first, so a submission the backend rejects still leaves the YAML to inspect. */
                 if (analysis.isRevertCommit()) {
                     reportRevert(request, args, ctx, log);
-                } else if (request.isSubmit()) {
+                } else if (BooleanUtils.and(new boolean[] { request.isSubmit(), judged(request, args, review, ctx, log) })) {
                     try (ProgressStage stage = ProgressStage.start(args, "submit")) {
-                        AnalysisAcceptedModel accepted = AnalysisSubmitter.submit(
-                                request.getApiUrl(),
-                                credential(request, log),
-                                request.getConnectTimeoutSeconds(),
-                                request.getReadTimeoutSeconds(),
-                                ctx.getSubmissionModel(),
-                                log);
+                        AnalysisAcceptedModel accepted = submit(request, ctx, log);
                         log.info("accepted analysis id: %s status: %s", accepted.getAnalysisId(), accepted.getStatus());
                         stage.succeeded();
                     }
@@ -529,6 +542,84 @@ public class AnalysisEngine {
                 reportHotspots(request, ctx, log);
             }
         }
+    }
+    /**
+     * Local mode, as on Maven: the review of the checked-out commit runs next to the analysis. Only a submitted run is
+     * reviewed, and only a commit that changes a file the analysis reads: the review spends the organization's LLM
+     * budget through the proxy, which a dump or an excluded commit has no use for.
+     */
+    private static Optional<LocalReviewRun> startReview(AnalysisRequest request, RunArgs args, LogFactory logFactory, Log log) throws Exception {
+        boolean analyzable = CommitExclusions.hasAnalyzableFile(JGit.changedFileNames(args.getGit(), args.getCommitId()), DefaultLanguageProcessors.supportedExtensions());
+        if (BooleanUtils.and(new boolean[] { request.isSubmit(), args.isReviewEnabled(), analyzable })) {
+            CodiqoCredential credential = credential(request, log);
+            LocalReviewRun toReturn = LocalReviewRun.start(
+                    args,
+                    args.getGit().getWorkTree().toPath(),
+                    args.getCommitId(),
+                    LocalReviewRun.endpoint(args, request.getResourceUrl(), () -> credential),
+                    ConventionGuidance.read(args, logFactory.getLogger(ConventionGuidance.class)),
+                    () -> ProjectTags.fetch(request.getApiUrl(), credential, request.getConnectTimeoutSeconds(), request.getReadTimeoutSeconds(), request.getRootCode(), log),
+                    DefaultLanguageProcessors.reviewLanguages(),
+                    logFactory);
+            log.info("local review of %s started next to the analysis", args.getCommitId());
+            return Optional.of(toReturn);
+        }
+        return Optional.empty();
+    }
+    /**
+     * Joins the review into the submission; whether the commit is to be submitted. A review that failed leaves the commit
+     * unjudged, so it is excluded, as on Maven: under its build failure when its build failed too, so an operator's
+     * re-inclusion survives a re-analysis, else as LOCAL_REVIEW_FAILURE. An interrupt is the run being stopped, not a
+     * failed review. A commit without a review is submitted as it is.
+     */
+    @VisibleForTesting
+    public static boolean judged(AnalysisRequest request, RunArgs args, Optional<LocalReviewRun> review, SubmissionContext ctx, Log log) throws Exception {
+        if (review.isEmpty()) {
+            return true;
+        }
+        try {
+            review.get().attachTo(ctx);
+            return true;
+        } catch (LocalReviewException err) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw err;
+            }
+            log.error("commit %s excluded: %s", args.getCommitId(), err.getMessage());
+            AnalysisBuildFailureModel buildFailure = ctx.getSubmissionModel().getBuildFailure();
+            if (Objects.nonNull(buildFailure)) {
+                reportExclusion(request, args, args.getCommitId(), new Exclusion(buildFailure.getReason(), buildFailure.getCategory()),
+                        ctx.getSubmissionModel().getFiles(), log, buildFailure.getDetail(), ctx.getSubmissionModel().getProjectMetrics());
+            } else {
+                reportExclusion(request, args, args.getCommitId(), new Exclusion(err.getMessage(), AnalysisExcludeCategory.LOCAL_REVIEW_FAILURE),
+                        List.of(), log, ExceptionUtils.getStackTrace(err), null);
+            }
+            return false;
+        }
+    }
+    /** with the review's trace when it was reviewed: the trace goes with the review it explains, never alone */
+    private static AnalysisAcceptedModel submit(AnalysisRequest request, SubmissionContext ctx, Log log) throws Exception {
+        File trace = ReviewTrace.file(ctx.getArgs(), ctx.getArgs().getCommitId());
+        if (BooleanUtils.and(new boolean[] { Objects.nonNull(ctx.getSubmissionModel().getLocalReview()), trace.isFile() })) {
+            return AnalysisSubmitter.submit(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(),
+                    request.getReadTimeoutSeconds(), ctx.getSubmissionModel(), trace, log);
+        }
+        return AnalysisSubmitter.submit(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(),
+                request.getReadTimeoutSeconds(), ctx.getSubmissionModel(), log);
+    }
+    /** each review setting left unset keeps its {@link RunArgs} default; the trace goes beside the analysis's output */
+    @VisibleForTesting
+    public static void applyReviewSettings(AnalysisRequest request, RunArgs args) {
+        args.setReviewEnabled(request.isReview());
+        Optional.ofNullable(request.getReviewExecutable()).filter(StringUtils::isNotBlank).ifPresent(args::setReviewExecutable);
+        Optional.ofNullable(request.getReviewBaseUrl()).filter(StringUtils::isNotBlank).ifPresent(args::setReviewBaseUrl);
+        Optional.ofNullable(request.getReviewCoordinatorModel()).filter(StringUtils::isNotBlank).ifPresent(args::setReviewCoordinatorModel);
+        Optional.ofNullable(request.getReviewReviewerModel()).filter(StringUtils::isNotBlank).ifPresent(args::setReviewReviewerModel);
+        Optional.ofNullable(request.getReviewTimeoutMinutes()).filter(StringUtils::isNotBlank).map(Long::parseLong)
+                .ifPresent(minutes -> args.setReviewTimeout(Duration.ofMinutes(minutes)));
+        Optional.ofNullable(request.getReviewRelayRetries()).filter(StringUtils::isNotBlank).map(Integer::parseInt).ifPresent(args::setReviewRelayRetries);
+        Optional.ofNullable(request.getReviewRelayTimeoutSeconds()).filter(StringUtils::isNotBlank).map(Long::parseLong)
+                .ifPresent(seconds -> args.setReviewRelayRequestTimeout(Duration.ofSeconds(seconds)));
+        args.setReviewTraceDirectory(new File(Optional.ofNullable(request.getReviewTraceDirectory()).filter(StringUtils::isNotBlank).orElse(request.getOutputDirectory())));
     }
     /**
      * A configured key, or the browser login stored on this machine. Never the browser itself: the worker has nobody

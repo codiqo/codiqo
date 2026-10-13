@@ -1,4 +1,4 @@
-package io.codiqo.maven;
+package io.codiqo.submit.review;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -10,7 +10,6 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-import org.apache.maven.plugin.MojoExecutionException;
 import org.junit.jupiter.api.Test;
 
 import io.codiqo.llm.review.LocalReview;
@@ -31,7 +30,7 @@ class BackgroundReviewTest {
         try (BackgroundReview<LocalReview> background = BackgroundReview.start(() -> {
             throw new IOException("opencode serve exited with code 1");
         })) {
-            MojoExecutionException err = assertThrows(MojoExecutionException.class, () -> background.await(WAIT));
+            LocalReviewException err = assertThrows(LocalReviewException.class, () -> background.await(WAIT));
             assertTrue(err.getMessage().contains("opencode serve exited"), err.getMessage());
         }
     }
@@ -42,7 +41,7 @@ class BackgroundReviewTest {
             release.await();
             return null;
         })) {
-            assertThrows(MojoExecutionException.class, () -> background.await(Duration.ofMillis(50)));
+            assertThrows(LocalReviewException.class, () -> background.await(Duration.ofMillis(50)));
         }
     }
     @Test

@@ -26,6 +26,9 @@ import io.codiqo.submit.ProjectTags;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.submit.auth.CodiqoCredential;
 import io.codiqo.util.JGit;
+import io.codiqo.submit.review.LocalReviewException;
+import io.codiqo.submit.review.LocalReviewRun;
+import io.codiqo.maven.logging.MavenLogFactory;
 
 /**
  * Scores the working tree as if it were a commit.
@@ -113,7 +116,8 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
                         LocalReviewRun.endpoint(args, resourceUrl, () -> credential),
                         LocalReviewGuidance.read(args, getLog()),
                         () -> ProjectTags.fetch(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds, project.getGroupId() + ":" + project.getArtifactId(), new MavenMessageReporter(getLog())),
-                        getLog());
+                        DefaultLanguageProcessors.reviewLanguages(),
+                        new MavenLogFactory(getLog()));
                 getLog().info("local review of the uncommitted changes started next to the analysis");
             } else {
                 getLog().info("local review skipped: the uncommitted changes touch no file the analysis reads");
@@ -131,7 +135,11 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
         if (submit) {
             /** a review that failed leaves the changes unjudged: the developer is told, and nothing is sent */
             if (Objects.nonNull(reviewRun)) {
-                reviewRun.attachTo(ctx);
+                try {
+                    reviewRun.attachTo(ctx);
+                } catch (LocalReviewException err) {
+                    throw new MojoFailureException("the uncommitted changes were not reviewed, so nothing was submitted: " + err.getMessage(), err);
+                }
             }
             CodiqoCredential credential = credential();
             Log reporter = new MavenMessageReporter(getLog());
