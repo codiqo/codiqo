@@ -24,9 +24,10 @@ import tools.jackson.databind.node.ObjectNode;
  * that plans the review and the reviewer sub-agents it starts.
  *
  * <p>
- * Both agents may read files and run read-only git commands only. OpenCode checks every part of a compound shell
- * command against these rules, so {@code git show ... | tail} or a redirect is refused rather than slipping through a
- * {@code git show*} pattern; this was observed on OpenCode 2.0.20, and the agents recover from the refusal on their own.
+ * Both agents may read anything and run any shell command except those that change the repository or the analysis
+ * clone, run a build, or stop processes ({@link #DENIED_SHELL}). OpenCode 2.0.25 parses a shell command with tree-sitter
+ * and checks each simple command on its own, a redirect included in its text, so a pipe or an {@code &&} chain is
+ * allowed when each of its parts is.
  */
 @UtilityClass
 public class OpenCodeReviewConfig {
@@ -36,42 +37,77 @@ public class OpenCodeReviewConfig {
 
     private static final String PROVIDER_PACKAGE = "@opencode/ai/providers/openai-compatible";
     /**
-     * Every git command that only reads the repository. Production traces of 14 Oct 2026 showed reviewers reaching for
-     * read-only commands that were not listed, such as {@code git ls-tree}, and being refused, each refusal a wasted step.
-     * {@code git grep} and {@code git blame} are left out although they only read: {@code git grep -nO'cmd'} runs
-     * {@code cmd} as its pager, the option bundled with other short flags or shortened to {@code --open} where no glob
-     * can see it, and {@code git blame --cont <file>}, {@code -S <file>} and {@code --ignore-revs-file <file>} print a
-     * file from anywhere on disk, its first line at least in the error. Both were reproduced on git 2.54. The grep tool
-     * searches the checked-out commit, and {@code git log -L} gives a line's history. Commands
-     * that can change something are listed only in a reading form whose arguments cannot turn it into a writing one
-     * ({@code git stash list}, {@code git reflog show}); {@code git branch} and {@code git tag} are left out, since an
-     * option such as {@code -D} after a listing flag still deletes, and {@code git for-each-ref} lists the same refs;
-     * {@code git config} is left out whole, since the checkout's configuration can hold the CI token, and
-     * {@code git ls-remote} and {@code git fetch} reach the network.
+     * Shell commands the agents may not run, everything else being allowed. The review runs in the analysis clone while
+     * the commit's own build and tests run in it, so what is denied is what could change the scored code or that run:
+     * git commands that move refs, the index or the checkout, file writes, a second build, and process or container
+     * control (the tests' Testcontainers databases run in the same Docker). Each pattern is token-exact: OpenCode turns
+     * a trailing {@code " *"} into "optionally followed by arguments", so {@code git merge *} does not match
+     * {@code git merge-base}. A determined command can still get past a deny list ({@code bash -c}, a redirect into the
+     * clone): it is there for the model's mistakes, not against a hostile commit. Production traces of 12 to 15 Oct 2026
+     * had 2,973 of 7,719 shell calls refused by the read-only git list this replaced, nearly all of them pipes into
+     * {@code head}, {@code ls}, {@code echo}, {@code grep}, {@code find} and {@code git -C}, every one a wasted step.
      */
-    private static final List<String> READ_ONLY_GIT = List.of(
-            "git show*", "git diff*", "git log*", "git status*", "git ls-files*", "git rev-parse*",
-            "git ls-tree*", "git cat-file*", "git rev-list*", "git shortlog*",
-            "git describe*", "git name-rev*", "git merge-base*", "git show-ref*", "git for-each-ref*", "git show-branch*",
-            "git whatchanged*", "git range-diff*", "git cherry *", "git check-ignore*", "git check-attr*", "git count-objects*",
-            "git stash list*", "git stash show*", "git reflog show*", "git worktree list*", "git notes show*", "git notes list*");
+    private static final List<String> DENIED_SHELL = List.of(
+            "git commit *", "git add *", "git rm *", "git mv *", "git reset *", "git restore *", "git checkout *",
+            "git switch *", "git stash *", "git clean *", "git merge *", "git rebase *", "git cherry-pick *",
+            "git revert *", "git am *", "git apply *", "git pull *", "git push *", "git fetch *", "git config *",
+            "git submodule *", "git update-ref *", "git update-index *", "git symbolic-ref *", "git replace *",
+            "git gc *", "git prune *", "git repack *", "git maintenance *", "git bisect *", "git sparse-checkout *",
+            "git filter-branch *", "git filter-repo *", "git lfs *", "git init *",
+            "git remote add *", "git remote remove *", "git remote rm *", "git remote rename *", "git remote set-* *",
+            "git remote prune *", "git remote update *",
+            "git notes add *", "git notes append *", "git notes copy *", "git notes edit *", "git notes merge *",
+            "git notes prune *", "git notes remove *",
+            "git reflog expire *", "git reflog delete *",
+            "git worktree add *", "git worktree move *", "git worktree remove *", "git worktree prune *",
+            "git worktree lock *", "git worktree unlock *", "git worktree repair *",
+            "rm *", "rmdir *", "unlink *", "shred *", "mv *", "cp *", "ln *", "touch *", "chmod *", "chown *",
+            "truncate *", "dd *", "tee *", "install *", "patch *", "rsync *", "tar *", "unzip *", "jar *",
+            "sed -i*", "sed * -i*", "sed -?i*", "sed * -?i*", "sed * --in-place*",
+            "perl -i*", "perl * -i*", "perl -pi*", "perl * -pi*",
+            "find * -delete*", "find * -exec rm *", "find * -execdir rm *", "xargs rm *", "xargs * rm *",
+            "mvn *", "mvnw *", "./mvnw *", "gradle *", "gradlew *", "./gradlew *", "npm *", "npx *", "yarn *",
+            "pnpm *", "make *", "ant *", "sbt *", "bazel *",
+            "kill *", "pkill *", "killall *", "docker *", "podman *", "sudo *", "su *", "shutdown *", "reboot *",
+            "halt *", "poweroff *", "systemctl *", "launchctl *");
     /**
-     * Forms of the allowed commands that are not read-only: {@code git diff*} also matches {@code git difftool}, which
-     * runs any program given with {@code -x}; {@code --output} writes a file (a commit under review could have the agent
-     * write {@code .git/config}); {@code --no-index} diffs files outside the repository; an external diff or textconv
-     * driver runs a configured program; {@code git cat-file --filters} runs a configured filter. These long options take
-     * no shortened spelling (git 2.54 refuses {@code --outp}, {@code --ext}, {@code --textc}, and {@code --no-ind} and
-     * {@code --filt} as ambiguous), so the globs see them. Denied after the allow rules, since the last matching rule wins.
+     * Reading forms of the commands {@link #DENIED_SHELL} denies, allowed again after it. Agents listed tags and
+     * branches, read a configuration value, asked Maven for its version and the effective POM during production reviews;
+     * none of these writes. Of the 2,973 shell calls refused on 12 to 15 Oct 2026, the only ones the deny list still
+     * refuses are three builds in the clone ({@code mvn -q -pl server -am compile}, a single test run), which would
+     * rewrite {@code target/} under the commit's own test run. A git command given a repository with {@code -C} is denied by the same verbs ({@link #GIT_C_DENIED}).
      */
-    private static final List<String> UNSAFE_GIT = List.of(
-            "git difftool*",
-            "git *--output*",
-            "git *--no-index*",
-            "git *--ext-diff*",
-            "git *--textconv*",
-            "git *-c *",
-            "git *--exec*",
-            "git *--filters*");
+    private static final List<String> READING_FORMS = List.of(
+            "git stash list *", "git stash show *", "git -C * stash list *", "git -C * stash show *",
+            "git -C * config --get *", "git -C * config --list *",
+            "git config --get *", "git config --get-all *", "git config --get-regexp *", "git config --list *",
+            "git config -l *", "git config get *", "git config list *",
+            "git submodule status *", "git submodule summary *", "git lfs ls-files *",
+            "tar -t*", "tar t*", "tar --list *", "unzip -l *", "unzip -p *", "unzip -Z *", "unzip -v *",
+            "jar t*", "jar -t*", "jar --list *",
+            "mvn *help:*", "mvn *maven-help-plugin*", "mvn *dependency:tree*", "mvn *dependency:list*",
+            "./mvnw *help:*", "./mvnw *dependency:tree*", "mvn -v *", "mvn --version *", "./mvnw -v *", "gradle --version *",
+            "./gradlew --version *");
+    /**
+     * The git verbs of {@link #DENIED_SHELL} again behind {@code -C <dir>}, the form agents use most for the clone.
+     * A {@code *} spans the directory and any options, so a word such as "reset" later in a read-only command's
+     * arguments is refused too; that costs a retry, which is cheaper than letting the writing form through.
+     */
+    private static final List<String> GIT_C_DENIED = List.of(
+            "git -C * commit *", "git -C * add *", "git -C * rm *", "git -C * mv *", "git -C * reset *",
+            "git -C * restore *", "git -C * checkout *", "git -C * switch *", "git -C * clean *", "git -C * merge *",
+            "git -C * rebase *", "git -C * cherry-pick *", "git -C * revert *", "git -C * am *", "git -C * apply *",
+            "git -C * pull *", "git -C * push *", "git -C * fetch *", "git -C * gc *", "git -C * update-ref *",
+            "git -C * stash *", "git -C * config *");
+    /**
+     * Flags that make {@code git branch} or {@code git tag} delete, move, copy or force a ref. Listing, the form agents
+     * use ({@code git branch --contains}, {@code git tag}), stays allowed; each flag is denied as its own token, since a
+     * substring such as {@code -c} is also part of {@code --contains}.
+     */
+    private static final List<String> BRANCH_WRITE_FLAGS = List.of("-d", "-D", "--delete", "-m", "-M", "--move", "-c", "-C",
+            "--copy", "-f", "--force", "-u", "--set-upstream-to*", "--unset-upstream", "--edit-description");
+    private static final List<String> TAG_WRITE_FLAGS = List.of("-d", "--delete", "-a", "--annotate", "-s", "--sign",
+            "-u", "--local-user*", "-f", "--force", "-m", "-F", "--file*");
     private static final int STEPS_RESERVED_FOR_ANSWER = 3;
     /**
      * A reviewer stops calling tools this many steps before its cap. Reviewers lose count of their steps (traces show one
@@ -118,11 +154,11 @@ public class OpenCodeReviewConfig {
 
         ObjectNode reviewer = agents.putObject(REVIEWER);
         reviewer.put("mode", "subagent");
-        reviewer.put("description", "Reviews part of a commit with read-only git and file tools and returns confirmed defects as JSON");
+        reviewer.put("description", "Reviews part of a commit with shell and file tools that leave the checkout untouched and returns confirmed defects as JSON");
         reviewer.put("model", PROVIDER + "/" + args.getReviewReviewerModel());
         reviewer.put("steps", args.getReviewReviewerSteps());
         reviewer.put("system", prompt("opencode/module-reviewer", args.getReviewReviewerSteps(), REVIEWER_STEPS_RESERVED_FOR_ANSWER, args, conventionGuidance, namingRules, tags));
-        addReadOnlyPermissions(reviewer.putArray("permissions"));
+        addReviewPermissions(reviewer.putArray("permissions"));
 
         ObjectNode coordinator = agents.putObject(COORDINATOR);
         coordinator.put("mode", "primary");
@@ -131,26 +167,38 @@ public class OpenCodeReviewConfig {
         coordinator.put("steps", args.getReviewCoordinatorSteps());
         coordinator.put("system", prompt("opencode/review-coordinator", args.getReviewCoordinatorSteps(), STEPS_RESERVED_FOR_ANSWER, args, conventionGuidance, namingRules, tags));
         ArrayNode coordinatorPermissions = coordinator.putArray("permissions");
-        addReadOnlyPermissions(coordinatorPermissions);
+        addReviewPermissions(coordinatorPermissions);
         rule(coordinatorPermissions, "subagent", "*", "deny");
         rule(coordinatorPermissions, "subagent", REVIEWER, "allow");
 
         return toReturn;
     }
     /**
-     * Deny first, then allow: OpenCode applies the last matching rule, so the leading deny-all is what keeps every tool
-     * that is not named here (edits, web fetches, other shell commands) out of reach.
+     * Deny first, then allow: OpenCode applies the last matching rule, so the leading deny-all keeps every tool that is
+     * not named here (edits, web fetches) out of reach. Directories outside the repository are readable: reviewers
+     * looked in the local Maven repository for a dependency's sources and were refused 310 times on 12 to 15 Oct 2026.
      */
-    private static void addReadOnlyPermissions(ArrayNode permissions) {
+    private static void addReviewPermissions(ArrayNode permissions) {
         rule(permissions, "*", "*", "deny");
-        for (String tool : List.of("read", "grep", "glob")) {
+        for (String tool : List.of("read", "grep", "glob", "external_directory", "shell")) {
             rule(permissions, tool, "*", "allow");
         }
-        for (String command : READ_ONLY_GIT) {
-            rule(permissions, "shell", command, "allow");
-        }
-        for (String command : UNSAFE_GIT) {
+        for (String command : DENIED_SHELL) {
             rule(permissions, "shell", command, "deny");
+        }
+        for (String command : GIT_C_DENIED) {
+            rule(permissions, "shell", command, "deny");
+        }
+        for (String flag : BRANCH_WRITE_FLAGS) {
+            rule(permissions, "shell", "git branch " + flag + " *", "deny");
+            rule(permissions, "shell", "git branch * " + flag + " *", "deny");
+        }
+        for (String flag : TAG_WRITE_FLAGS) {
+            rule(permissions, "shell", "git tag " + flag + " *", "deny");
+            rule(permissions, "shell", "git tag * " + flag + " *", "deny");
+        }
+        for (String command : READING_FORMS) {
+            rule(permissions, "shell", command, "allow");
         }
         rule(permissions, "read", "*.env", "deny");
         rule(permissions, "read", "*.env.*", "deny");

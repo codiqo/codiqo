@@ -1654,13 +1654,16 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   de-duplicated, capped by `RunArgs.reviewMaxObservations` / `reviewMaxNotChecked`), and `LocalReviewModels.toModel`
   writes a Markdown `reasoning` digest (the coordinator's areas with the count of corrected reviewer answers, the
   observations, **Not checked**, the triage) that the commit page shows. `notChecked` travels only in the digest.
-- The agents' shell runs only read-only git commands (`OpenCodeReviewConfig.READ_ONLY_GIT`: ls-tree, cat-file,
-  rev-list and the rest; not `branch`, `tag` or `config`, and not `grep` or `blame`, whose `-nO'cmd'`, `--open`,
-  `--cont <file>` and `-S <file>` run a program or print any file in forms no glob catches), and denies their writing
-  and executing forms after them (`difftool`, `--output`, `--no-index`, external diff and textconv drivers,
-  `--filters`): OpenCode applies the last matching rule. Never open the shell further: the agents read untrusted commit
-  text in a CI job holding its tokens. The prompts state these rules (`opencode/tools`): on 14 Oct 2026, 194 of 477
-  shell calls were refused pipes, `&&` chains, `cd` and `ls`, each a wasted step. Convention
+- The agents may read anything and run any shell command except those in `OpenCodeReviewConfig.DENIED_SHELL`: git
+  commands that move refs, the index or the checkout, file writes (`rm`, `mv`, `cp`, `touch`, `sed -i`), builds (`mvn`,
+  `gradle`, `npm`) and process or container control (`kill`, `docker`), since the commit's own build and tests run in the
+  same clone during the review. `READING_FORMS` allows their reading forms again (`git stash list`, `git config --get`,
+  `mvn -v`, `help:effective-pom`). OpenCode 2.0.25 checks each simple command of a pipe or chain, a redirect included,
+  and applies the last matching rule; a pattern's trailing ` *` also matches the bare command, so each name is
+  token-exact. The deny list is for the model's mistakes, not against a hostile commit. It replaced a read-only git list
+  that refused 2,973 of 7,719 shell calls on 12 to 15 Oct 2026 (pipes into `head`, `ls`, `echo`, `git -C`); replayed
+  through a real OpenCode, 778 of 783 sampled refusals now run and the other five are builds in the clone or truncated
+  inputs. The prompts state the rules (`opencode/tools`). Convention
   files are fenced with `PromptFences`' markers, which `ConventionGuidance` strips from every file.
 - What the model writes is checked before it is sent: a bug without a title or description and a dimension score off
   the 0-10 scale are left out, since the server would reject the whole submission over them.
