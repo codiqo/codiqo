@@ -69,6 +69,8 @@ public class AnalysisRequest implements Serializable {
     private String hotspotsCommitId;
     private boolean failOnJdtlsError;
     private boolean failOnUninstrumentedModule = true;
+    private String testFailureHaltShare;
+    private String testFailureHaltMinTests;
 
     private String jdtlsVersion;
     private boolean jdtlsUseSnapshot;

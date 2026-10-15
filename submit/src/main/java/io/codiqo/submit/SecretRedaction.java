@@ -12,6 +12,7 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 
+import com.google.common.base.CharMatcher;
 import com.google.common.base.Splitter;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -35,6 +36,7 @@ public class SecretRedaction {
 
     /** shorter values are too likely to be ordinary words */
     private static final int MIN_LENGTH = 8;
+    private static final String NAME_SEPARATORS = "," + StringUtils.LF;
     private static final Set<String> ALWAYS = Set.of("CODIQO_API_KEY", "CODIQO_SETTINGS_XML");
     private static final Pattern SECRET_NAME = Pattern.compile("(?i).*(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE_?KEY|CREDENTIAL).*");
 
@@ -44,6 +46,10 @@ public class SecretRedaction {
         if (CollectionUtils.isNotEmpty(secrets)) {
             redact(document, secrets);
         }
+    }
+    /** the text with every secret of the environment replaced, as {@link #redact(JsonNode, Map)} does for each string */
+    public String redactText(String text, Map<String, String> environment) {
+        return scrub(StringUtils.defaultString(text), secrets(environment));
     }
     private void redact(JsonNode node, List<String> secrets) {
         if (node instanceof ObjectNode object) {
@@ -74,7 +80,7 @@ public class SecretRedaction {
     /** longest first, so a secret that contains another is not left partly in place */
     private List<String> secrets(Map<String, String> environment) {
         Set<String> names = Sets.newHashSet(ALWAYS);
-        names.addAll(Splitter.onPattern("[,\\n]").trimResults().omitEmptyStrings().splitToList(environment.getOrDefault(REDACT_NAMES_VARIABLE, StringUtils.EMPTY)));
+        names.addAll(Splitter.on(CharMatcher.anyOf(NAME_SEPARATORS)).trimResults().omitEmptyStrings().splitToList(environment.getOrDefault(REDACT_NAMES_VARIABLE, StringUtils.EMPTY)));
 
         Set<String> toReturn = Sets.newHashSet();
         environment.forEach((name, value) -> {

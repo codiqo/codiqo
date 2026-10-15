@@ -64,7 +64,7 @@ public class CodiqoExtension {
     private Long perTestTimeoutMinutes;
     private boolean ignoreTestFailures = true;
 
-    private String jdtlsVersion = "1.61.0";
+    private String jdtlsVersion = "1.62.0";
     private boolean jdtlsUseSnapshot;
     private boolean jdtUseSharedIndex = true;
     private boolean jdtIncludeDecompiledSources;
@@ -73,4 +73,7 @@ public class CodiqoExtension {
 
     private boolean failOnJdtlsError;
     private boolean failOnUninstrumentedModule = true;
+    /** unset keeps RunArgs' threshold; 1 or more turns the check off for a project whose tests need what CI lacks */
+    private String testFailureHaltShare;
+    private String testFailureHaltMinTests;
 }

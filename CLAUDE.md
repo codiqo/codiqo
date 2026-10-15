@@ -1529,8 +1529,12 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   does not model as OpenCode sent it; its error bodies are the SDK's `ErrorObject`. A chat completion it cannot read is
   refused with 400, since it would leave without that sampling. Write OpenAI JSON with the SDK's
   models, never by hand.
-- A credential refresh that fails on the network is retried by the relay like any call; only a refusal that survives the
-  retries answers 401. A stream cut after the answer started ends with an error event, since its status was already
+- The relay retries no call to the model: OpenCode retries a failed call itself (ten times, 2 s doubling to 10 s, or the
+  answer's `retry-after-ms` up to 15 minutes), and the relay steers that instead of stacking its own retries on it. A
+  429 goes back with the current rate-limit round's wait (60 s doubling to 10 minutes, `reviewRelayRateLimit*`), every
+  call refused in a round sharing its deadline; after six rounds every call gets a 429 with `x-should-retry: false`,
+  which OpenCode does not retry, so the review fails as the provider's (`ReviewProviderException`). The only retry left
+  is the credential refresh, Codiqo's own login: a refusal that survives it answers 401. A stream cut after the answer started ends with an error event, since its status was already
   sent. A stored login is adopted from disk only when it has this login's OAuth client (another organization's login
   registered another one), and rotated tokens are kept in memory before they are written.
 
@@ -1568,6 +1572,39 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   alerts. A dependency that could not be resolved or a build that timed out is the environment's failure and stays
   excluded. A review that fails on such a commit excludes it under its build failure, files and metrics included, not
   as `LOCAL_REVIEW_FAILURE`: the server keeps an operator's re-inclusion of a build failure only under that category.
+- **A run that fails on codiqo's side halts the project** (`ProjectHalts`): it submits nothing, so the next scheduled
+  run would pick the same commit and pay for its review again every hour. `submit-commit-analysis` and the Gradle
+  worker post the failure as the project's halt (`POST /api/v1/projects/{projectId}/halt`, the first halt is kept);
+  while halted, `listMissingAnalyses` lists nothing and carries the halt, the index step fails with
+  `ProjectHaltedException`, and a submit refuses before its review starts. An administrator resumes the project in
+  codiqo-web. An interrupt is not a failure and halts nothing, and neither is a build the author broke with
+  `codiqo.skipOnBuildFailure` off (`CommitBuildFailedException`): halting would hold the commit that fixes it. A module whose tests ran without the JaCoCo agent is such
+  a failure, never a `BUILD_FAILURE`: `UninstrumentedModuleGuard` (a `MojoExecutionListener` in the coverage injector)
+  fails the fork at that module and names it in `codiqo.jacoco.uninstrumentedReport`, and an agent that does not
+  resolve fails `requireCoverageAgent` before the review starts. A halt also stops the whole CI run: the plugin appends
+  `epochMillis ABORT cause trace` to the build progress file (`ProgressStage.abort`), and the GitHub Action, which
+  already watches that file, ends its loop whatever `stop-on-first-failure` says and shows the cause in the log, the
+  `abort-reason` output and the job summary. A module that runs its tests in the build JVM
+  (`forkCount=0`) fails the compile run in `JacocoAgentInjector.requireAttachable`. A javac or Error Prone crash in the compile run
+  (the test run prints the tests' own output) is a system failure too, never the author's build failure. A test run where at least `testFailureHaltShare` (0.75) of at
+  least `testFailureHaltMinTests` (20) executed tests failed halts as well: it is an environment the analysis cannot
+  rebuild; `codiqo.testFailureHaltShare` / `codiqo.testFailureHaltMinTests` (Gradle `-P`, action inputs
+  `test-failure-halt-share` / `-min-tests`) override them, and a share of 1 or more turns the check off. A run that
+  fails after the server accepted its submission (`RunArgs.submissionAccepted`) has scored its commit and halts nothing.
+  The action calls `halt-project` for a submit step that died outside the JVM (deadline, OOM kill).
+- **The Maven fork builds twice** (`BuildPhase`): `clean package -DskipTests` (with the time-machine ladder; package, not test-compile, so a sibling module's packaged artifact exists), then `verify`
+  without `clean` at the offset that compiled, within what the compile run that compiled left of `buildTimeout` (each
+  ladder rung has a whole `buildTimeout` of its own). The review starts in between
+  (`doAfterCompile`): after a compile that passed, or one the author broke (degraded); a compile that failed on the
+  environment starts none. The test run keeps the compile run's pinned snapshots and adds its Error Prone findings to
+  the compile run's. The JUnit reports become the submission's `testRun` (`TestRuns`): counts, skipped tests, test time,
+  each run's duration and the whole analysis's. Gradle builds before its worker starts, so its worker reads the reports
+  and checks coverage before it starts the review.
+- **A review the provider failed halts the project instead** (`ReviewProviderException`, raised when the relay counted
+  provider failures during a review that failed, `LlmRelay.providerFailed`: a 429, a 5xx or an end point it could not
+  reach, never only requests the provider refused, 400, 413 or 422, which the same commit would ask again;
+  `LocalReviewException.isProviderFailure`): it is no judgement of the commit, and an excluded commit would stay unscored
+  for good. "Resume and retry" reviews it again.
 - **A review that fails excludes the commit** (`LOCAL_REVIEW_FAILURE`, the error as the exclusion's detail): submitting
   it without the review would hand its judgment to the prompt, and leaving it unsubmitted would make the next run pay
   for the review again. Deleting the analysis retries it. An interrupt is the run being stopped, not a failed review.
@@ -1604,8 +1641,13 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
 - **A reviewer answers `unitLabels`, `observations` and `notChecked` beside its bugs** (`LocalReviewer.ReviewerFields`).
   `unitLabels` holds only label objects (`{"file","signature","category","reason"}`); it is not the scoring response's
   `blockCategories`, which reviewers read as the topics of their review and filled with sentences. A string entry
-  still fails the read, and the reviewer gets the one correction (`REVIEWER_REPAIRS` per review) before the review
-  fails. `notChecked` holds up to three notes each on what a reviewer could not verify (an external artifact, a test it
+  still fails the read, and so does an answer with no `unitLabels` (a reviewer with no units sends `[]`). An unreadable
+  answer gets a correction in its own session (the history is a cached prefix), then, still unreadable, a fork from before
+  that answer (`OpenCodeClient.fork(session, before)`) asked only for the final answer, so the bad answer no longer
+  anchors the model; at most `REVIEWER_REPAIRS` (16) reviewers are corrected per review, each costing up to
+  `CORRECTION_TURNS` (2) turns, before the review fails. The reviewer's whole answer format is stated once, at the end of
+  its prompt (`ANSWER FORMAT`), and overrides any format a task describes: the coordinator used to write its own
+  `{"findings":...,"unitLabels":["short labels"]}` into every task, and every label written as a string came from it. `notChecked` holds up to three notes each on what a reviewer could not verify (an external artifact, a test it
   could not run, a refused command), `[]` when it checked everything; a lone string is read as one item, as for
   `observations`.
 - The reviewers' `observations` and `notChecked` are collected from their own answers (`LocalReviewer.reviewerAnswers`,

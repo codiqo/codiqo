@@ -76,6 +76,12 @@ public class OpenCodeClient implements Closeable {
     public String fork(String sessionId) throws IOException {
         return sessionId(post(path("api", "session", sessionId, "fork"), mapper.createObjectNode()), "a fork of " + sessionId);
     }
+    /** a fork holding the session's history before the given message, which the fork leaves out with everything after it */
+    public String fork(String sessionId, String beforeMessageId) throws IOException {
+        ObjectNode body = mapper.createObjectNode();
+        body.put("before", beforeMessageId);
+        return sessionId(post(path("api", "session", sessionId, "fork"), body), "a fork of " + sessionId + " before " + beforeMessageId);
+    }
     public void prompt(String sessionId, String text) throws IOException {
         ObjectNode body = mapper.createObjectNode();
         body.put("text", text);
@@ -90,18 +96,11 @@ public class OpenCodeClient implements Closeable {
      * could hold only the oldest messages of a long coordinator session and miss its actual answer.
      */
     public String finalAnswer(String sessionId) throws IOException {
-        Optional<String> cursor = Optional.empty();
-        do {
-            JsonNode page = messagePage(sessionId, Optional.of(ASSISTANT), ORDER_NEWEST_FIRST, cursor);
-            for (JsonNode message : page.path("data")) {
-                String text = text(message);
-                if (StringUtils.isNotBlank(text)) {
-                    return text;
-                }
-            }
-            cursor = nextPage(page);
-        } while (cursor.isPresent());
-        throw new IOException("session " + sessionId + " finished without an answer");
+        return text(finalAnswerMessage(sessionId));
+    }
+    /** the id of the message {@link #finalAnswer} reads, to fork the session from before it */
+    public String finalAnswerId(String sessionId) throws IOException {
+        return finalAnswerMessage(sessionId).path("id").asString();
     }
     /**
      * The error the session's last turn ended with, when it failed: OpenCode records it on the newest assistant
@@ -231,6 +230,19 @@ public class OpenCodeClient implements Closeable {
                 tokens.path("cache").path("read").asLong(),
                 tokens.path("output").asLong(),
                 tokens.path("reasoning").asLong());
+    }
+    private JsonNode finalAnswerMessage(String sessionId) throws IOException {
+        Optional<String> cursor = Optional.empty();
+        do {
+            JsonNode page = messagePage(sessionId, Optional.of(ASSISTANT), ORDER_NEWEST_FIRST, cursor);
+            for (JsonNode message : page.path("data")) {
+                if (StringUtils.isNotBlank(text(message))) {
+                    return message;
+                }
+            }
+            cursor = nextPage(page);
+        } while (cursor.isPresent());
+        throw new IOException("session " + sessionId + " finished without an answer");
     }
     private static String text(JsonNode message) {
         String text = message.path("text").asString();

@@ -86,6 +86,9 @@ public class CommitIndexPublisher {
             int limit) throws ApiException {
         MissingAnalysesModel response = ApiRetry.call(log, "listMissingAnalyses", apiUrl,
                 () -> client.listMissingAnalyses(projectId, branch, limit));
+        if (Objects.nonNull(response.getHalt())) {
+            throw new ProjectHaltedException(projectId, response.getHalt());
+        }
         return Optional.ofNullable(response.getCommitShas()).orElse(Collections.emptyList());
     }
     /**

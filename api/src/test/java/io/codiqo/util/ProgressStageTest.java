@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
+import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -47,6 +48,18 @@ class ProgressStageTest {
 
         assertEquals("STAGE_FAILED", read(args).get(1)[1]);
     }
+    /** the run's watcher reads one line and splits it on the separator, so a multi-line cause stays one field */
+    @Test
+    void anAbortIsOneLineWithItsCauseAndTrace() throws IOException {
+        RunArgs args = argsWritingTo(tempDir.resolve("progress.tsv"));
+
+        ProgressStage.abort(args, "local review failed:\n\tthe LLM provider answered 429 132 times", "review trace /tmp/codiqo-review-trace-abc.json");
+
+        List<String[]> lines = read(args);
+        assertEquals(1, lines.size());
+        assertEquals(List.of("ABORT", "local review failed: the LLM provider answered 429 132 times", "review trace /tmp/codiqo-review-trace-abc.json"),
+                List.of(lines.get(0)).subList(1, 4));
+    }
     @Test
     void writesNothingWithoutAProgressFile() {
         try (ProgressStage stage = ProgressStage.start(new RunArgs(), "index")) {
@@ -62,7 +75,7 @@ class ProgressStageTest {
     }
     private static List<String[]> read(RunArgs args) throws IOException {
         return Files.readAllLines(args.getBuildProgressFile().toPath(), StandardCharsets.UTF_8).stream()
-                .map(line -> line.split("\t", -1))
+                .map(line -> StringUtils.splitPreserveAllTokens(line, ProgressStage.FIELD_SEPARATOR))
                 .toList();
     }
 }
