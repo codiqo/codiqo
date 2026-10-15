@@ -1654,9 +1654,10 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   de-duplicated, capped by `RunArgs.reviewMaxObservations` / `reviewMaxNotChecked`), and `LocalReviewModels.toModel`
   writes a Markdown `reasoning` digest (the coordinator's areas with the count of corrected reviewer answers, the
   observations, **Not checked**, the triage) that the commit page shows. `notChecked` travels only in the digest.
-- The agents' shell runs only read-only git commands, every one of them (`OpenCodeReviewConfig.READ_ONLY_GIT`: grep,
-  ls-tree, blame, cat-file and the rest; not `branch`, `tag` or `config`), and denies their writing and executing forms
-  after them (`difftool`, `--output`, `--no-index`, external diff and textconv drivers, `grep -O`, `--contents`,
+- The agents' shell runs only read-only git commands (`OpenCodeReviewConfig.READ_ONLY_GIT`: ls-tree, cat-file,
+  rev-list and the rest; not `branch`, `tag` or `config`, and not `grep` or `blame`, whose `-nO'cmd'`, `--open`,
+  `--cont <file>` and `-S <file>` run a program or print any file in forms no glob catches), and denies their writing
+  and executing forms after them (`difftool`, `--output`, `--no-index`, external diff and textconv drivers,
   `--filters`): OpenCode applies the last matching rule. Never open the shell further: the agents read untrusted commit
   text in a CI job holding its tokens. The prompts state these rules (`opencode/tools`): on 14 Oct 2026, 194 of 477
   shell calls were refused pipes, `&&` chains, `cd` and `ls`, each a wasted step. Convention

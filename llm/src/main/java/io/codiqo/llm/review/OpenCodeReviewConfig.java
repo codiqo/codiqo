@@ -37,7 +37,12 @@ public class OpenCodeReviewConfig {
     private static final String PROVIDER_PACKAGE = "@opencode/ai/providers/openai-compatible";
     /**
      * Every git command that only reads the repository. Production traces of 14 Oct 2026 showed reviewers reaching for
-     * {@code git grep}, {@code git ls-tree} and {@code git blame} and being refused, each refusal a wasted step. Commands
+     * read-only commands that were not listed, such as {@code git ls-tree}, and being refused, each refusal a wasted step.
+     * {@code git grep} and {@code git blame} are left out although they only read: {@code git grep -nO'cmd'} runs
+     * {@code cmd} as its pager, the option bundled with other short flags or shortened to {@code --open} where no glob
+     * can see it, and {@code git blame --cont <file>}, {@code -S <file>} and {@code --ignore-revs-file <file>} print a
+     * file from anywhere on disk, its first line at least in the error. Both were reproduced on git 2.54. The grep tool
+     * searches the checked-out commit, and {@code git log -L} gives a line's history. Commands
      * that can change something are listed only in a reading form whose arguments cannot turn it into a writing one
      * ({@code git stash list}, {@code git reflog show}); {@code git branch} and {@code git tag} are left out, since an
      * option such as {@code -D} after a listing flag still deletes, and {@code git for-each-ref} lists the same refs;
@@ -46,7 +51,7 @@ public class OpenCodeReviewConfig {
      */
     private static final List<String> READ_ONLY_GIT = List.of(
             "git show*", "git diff*", "git log*", "git status*", "git ls-files*", "git rev-parse*",
-            "git grep*", "git ls-tree*", "git blame*", "git annotate*", "git cat-file*", "git rev-list*", "git shortlog*",
+            "git ls-tree*", "git cat-file*", "git rev-list*", "git shortlog*",
             "git describe*", "git name-rev*", "git merge-base*", "git show-ref*", "git for-each-ref*", "git show-branch*",
             "git whatchanged*", "git range-diff*", "git cherry *", "git check-ignore*", "git check-attr*", "git count-objects*",
             "git stash list*", "git stash show*", "git reflog show*", "git worktree list*", "git notes show*", "git notes list*");
@@ -54,9 +59,9 @@ public class OpenCodeReviewConfig {
      * Forms of the allowed commands that are not read-only: {@code git diff*} also matches {@code git difftool}, which
      * runs any program given with {@code -x}; {@code --output} writes a file (a commit under review could have the agent
      * write {@code .git/config}); {@code --no-index} diffs files outside the repository; an external diff or textconv
-     * driver runs a configured program. {@code git grep -O} opens its matches in a pager it is given, which runs any
-     * program; {@code git blame --contents} and {@code git cat-file --filters} read a file outside the repository or run
-     * a configured filter. Denied after the allow rules, since the last matching rule wins.
+     * driver runs a configured program; {@code git cat-file --filters} runs a configured filter. These long options take
+     * no shortened spelling (git 2.54 refuses {@code --outp}, {@code --ext}, {@code --textc}, and {@code --no-ind} and
+     * {@code --filt} as ambiguous), so the globs see them. Denied after the allow rules, since the last matching rule wins.
      */
     private static final List<String> UNSAFE_GIT = List.of(
             "git difftool*",
@@ -66,9 +71,6 @@ public class OpenCodeReviewConfig {
             "git *--textconv*",
             "git *-c *",
             "git *--exec*",
-            "git grep *-O*",
-            "git grep *--open-files-in-pager*",
-            "git *--contents*",
             "git *--filters*");
     private static final int STEPS_RESERVED_FOR_ANSWER = 3;
     /**
