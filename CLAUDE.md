@@ -1654,8 +1654,12 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   de-duplicated, capped by `RunArgs.reviewMaxObservations` / `reviewMaxNotChecked`), and `LocalReviewModels.toModel`
   writes a Markdown `reasoning` digest (the coordinator's areas with the count of corrected reviewer answers, the
   observations, **Not checked**, the triage) that the commit page shows. `notChecked` travels only in the digest.
-- The agents' git rules allow read-only commands and deny their writing and executing forms after them (`difftool`,
-  `--output`, `--no-index`, external diff and textconv drivers): OpenCode applies the last matching rule. Convention
+- The agents' shell runs only read-only git commands, every one of them (`OpenCodeReviewConfig.READ_ONLY_GIT`: grep,
+  ls-tree, blame, cat-file and the rest; not `branch`, `tag` or `config`), and denies their writing and executing forms
+  after them (`difftool`, `--output`, `--no-index`, external diff and textconv drivers, `grep -O`, `--contents`,
+  `--filters`): OpenCode applies the last matching rule. Never open the shell further: the agents read untrusted commit
+  text in a CI job holding its tokens. The prompts state these rules (`opencode/tools`): on 14 Oct 2026, 194 of 477
+  shell calls were refused pipes, `&&` chains, `cd` and `ls`, each a wasted step. Convention
   files are fenced with `PromptFences`' markers, which `ConventionGuidance` strips from every file.
 - What the model writes is checked before it is sent: a bug without a title or description and a dimension score off
   the 0-10 scale are left out, since the server would reject the whole submission over them.

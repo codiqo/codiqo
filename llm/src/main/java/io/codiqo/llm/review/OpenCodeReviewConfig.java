@@ -35,12 +35,28 @@ public class OpenCodeReviewConfig {
     public static final String REVIEWER = "codiqo-module-reviewer";
 
     private static final String PROVIDER_PACKAGE = "@opencode/ai/providers/openai-compatible";
-    private static final List<String> READ_ONLY_GIT = List.of("git show*", "git diff*", "git log*", "git status*", "git ls-files*", "git rev-parse*");
+    /**
+     * Every git command that only reads the repository. Production traces of 14 Oct 2026 showed reviewers reaching for
+     * {@code git grep}, {@code git ls-tree} and {@code git blame} and being refused, each refusal a wasted step. Commands
+     * that can change something are listed only in a reading form whose arguments cannot turn it into a writing one
+     * ({@code git stash list}, {@code git reflog show}); {@code git branch} and {@code git tag} are left out, since an
+     * option such as {@code -D} after a listing flag still deletes, and {@code git for-each-ref} lists the same refs;
+     * {@code git config} is left out whole, since the checkout's configuration can hold the CI token, and
+     * {@code git ls-remote} and {@code git fetch} reach the network.
+     */
+    private static final List<String> READ_ONLY_GIT = List.of(
+            "git show*", "git diff*", "git log*", "git status*", "git ls-files*", "git rev-parse*",
+            "git grep*", "git ls-tree*", "git blame*", "git annotate*", "git cat-file*", "git rev-list*", "git shortlog*",
+            "git describe*", "git name-rev*", "git merge-base*", "git show-ref*", "git for-each-ref*", "git show-branch*",
+            "git whatchanged*", "git range-diff*", "git cherry *", "git check-ignore*", "git check-attr*", "git count-objects*",
+            "git stash list*", "git stash show*", "git reflog show*", "git worktree list*", "git notes show*", "git notes list*");
     /**
      * Forms of the allowed commands that are not read-only: {@code git diff*} also matches {@code git difftool}, which
      * runs any program given with {@code -x}; {@code --output} writes a file (a commit under review could have the agent
      * write {@code .git/config}); {@code --no-index} diffs files outside the repository; an external diff or textconv
-     * driver runs a configured program. Denied after the allow rules, since the last matching rule wins.
+     * driver runs a configured program. {@code git grep -O} opens its matches in a pager it is given, which runs any
+     * program; {@code git blame --contents} and {@code git cat-file --filters} read a file outside the repository or run
+     * a configured filter. Denied after the allow rules, since the last matching rule wins.
      */
     private static final List<String> UNSAFE_GIT = List.of(
             "git difftool*",
@@ -49,7 +65,11 @@ public class OpenCodeReviewConfig {
             "git *--ext-diff*",
             "git *--textconv*",
             "git *-c *",
-            "git *--exec*");
+            "git *--exec*",
+            "git grep *-O*",
+            "git grep *--open-files-in-pager*",
+            "git *--contents*",
+            "git *--filters*");
     private static final int STEPS_RESERVED_FOR_ANSWER = 3;
     /**
      * A reviewer stops calling tools this many steps before its cap. Reviewers lose count of their steps (traces show one

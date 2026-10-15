@@ -174,12 +174,16 @@ class OpenCodeReviewConfigTest {
             List<JsonNode> rules = Lists.newArrayList();
             agents.path(agent).path("permissions").forEach(rules::add);
 
-            for (String allowed : List.of("git diff HEAD~1 -- a/B.java", "git log -p -3", "git show HEAD:pom.xml", "git status --short")) {
+            for (String allowed : List.of("git diff HEAD~1 -- a/B.java", "git log -p -3", "git show HEAD:pom.xml", "git status --short",
+                    "git grep -n countLineAwards HEAD -- .", "git ls-tree -r --name-only HEAD src", "git blame -L 10,40 a/B.java",
+                    "git cat-file -p HEAD:pom.xml", "git for-each-ref refs/heads", "git merge-base HEAD main")) {
                 assertEquals("allow", shellEffect(rules, allowed), allowed);
             }
             for (String denied : List.of("git difftool -x 'sh -c id' HEAD~1", "git diff --output=.git/config HEAD~1", "git log -p --output=x",
                     "git diff --no-index /etc/hosts a.txt", "git show --ext-diff HEAD", "git log --textconv -p", "git -c core.pager=id log",
-                    "git show -c core.pager=id HEAD", "rm -rf .")) {
+                    "git show -c core.pager=id HEAD", "rm -rf .", "git grep -O'sh -c id' x", "git grep --open-files-in-pager=id x",
+                    "git blame --contents /etc/passwd a/B.java", "git cat-file --filters HEAD:a", "git config --list", "git branch -a -D main",
+                    "git tag v9", "git stash", "git reflog expire --all", "git ls-remote origin", "git fetch", "git cherry-pick HEAD")) {
                 assertEquals("deny", shellEffect(rules, denied), denied);
             }
         }
