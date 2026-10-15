@@ -165,11 +165,11 @@ class OpenCodeReviewConfigTest {
     }
     /**
      * Commands production reviewers were refused on 12 to 15 Oct 2026 under the read-only git list, each one simple
-     * command as OpenCode checks it after splitting pipes and chains, and the forms that must stay refused because they
-     * change the clone or the build running in it. The last matching rule decides, as OpenCode applies them.
+     * command as OpenCode checks it after splitting pipes and chains, and the git writes and builds that stay refused
+     * because they would change the clone or the build running in it. The last matching rule decides, as in OpenCode.
      */
     @Test
-    void agentsMayRunAnyCommandButOnesThatChangeTheCloneOrItsBuild() throws Exception {
+    void agentsMayRunAnyCommandButGitWritesAndBuilds() throws Exception {
         JsonNode agents = build(new RunArgs(), StringUtils.EMPTY);
         for (String agent : List.of(OpenCodeReviewConfig.COORDINATOR, OpenCodeReviewConfig.REVIEWER)) {
             List<JsonNode> rules = Lists.newArrayList();
@@ -182,22 +182,15 @@ class OpenCodeReviewConfigTest {
                     "git -C /tmp/codiqo1 show 7cf740e:pom.xml", "git -C /tmp/codiqo1 log --oneline -3", "git grep -n countLineAwards HEAD -- .",
                     "git blame -L 10,40 a/B.java", "git ls-tree -r --name-only HEAD src", "git merge-base --is-ancestor 101a2606f 41cf1c3f6",
                     "git branch --contains 4567988dd 2>/dev/null", "git branch -a", "git tag", "git tag -l 'v*'", "git remote -v",
-                    "git config --get core.homedir", "git stash list", "git diff --name-only a b", "git cat-file -e b071e7eab:a.java",
+                    "git config --get core.homedir", "git diff --name-only a b", "git cat-file -e b071e7eab:a.java",
                     "git show 97c625f:pom.xml > /tmp/opencode/pom_prev.xml 2>/dev/null", "curl -s --max-time 15 https://repo1.maven.org/maven2/x",
-                    "mvn -o -q -N org.apache.maven.plugins:maven-help-plugin:3.4.0:effective-pom -Doutput=/tmp/opencode/effective-pom.xml",
-                    "unzip -l x.jar", "jar tf x.jar", "mvn -v", "mvn -v 2>/dev/null", "python3 -c 'print(1+1)'", "which java mvn 2>/dev/null", "sed -E 's/a/b/' x")) {
+                    "unzip -l x.jar", "jar tf x.jar", "git merge-base main HEAD", "python3 -c 'print(1+1)'", "which java mvn 2>/dev/null", "sed -E 's/a/b/' x")) {
                 assertEquals("allow", shellEffect(rules, allowed), allowed);
             }
-            for (String denied : List.of("git commit -am x", "git checkout HEAD~1", "git -C /tmp/codiqo1 checkout -- .", "git reset --hard",
-                    "git stash", "git stash pop", "git -C /tmp/codiqo1 stash", "git clean -fdx", "git merge main", "git rebase -i HEAD~2",
-                    "git cherry-pick abc", "git apply x.patch", "git pull", "git push", "git fetch origin", "git config user.name x",
-                    "git branch -D main", "git branch -a -D main", "git branch --delete x", "git tag -d v1", "git tag -a v9 -m x",
-                    "git remote add x y", "git worktree add ../x", "git reflog expire --all", "git update-ref refs/heads/x HEAD",
-                    "rm -rf .", "rm x", "mv a b", "cp a b", "touch pom.xml", "sed -i 's/a/b/' x", "sed -n -i 's/a/b/' x", "sed -Ei 's/a/b/' x",
-                    "perl -pi -e 's/a/b/' x", "find . -name '*.class' -delete", "find . -exec rm {} ;", "xargs rm", "tar -xzf x.tgz",
-                    "unzip x.zip", "jar xf x.jar", "mvn -q verify", "mvn -q -pl server -am compile -DskipTests -o",
-                    "mvn -q -o test -f worker/pom.xml -Dtest=ATest", "./mvnw package", "gradle test", "./gradlew build", "npm install",
-                    "kill 1234", "pkill java", "docker rm -f db", "sudo rm -rf /")) {
+            for (String denied : List.of("git commit -am x", "git checkout HEAD~1", "git switch main", "git reset --hard", "git restore .",
+                    "git stash", "git stash pop", "git clean -fdx", "git merge main", "git rebase -i HEAD~2", "git cherry-pick abc",
+                    "git apply x.patch", "git pull", "git push", "git fetch origin", "mvn -q verify", "mvn -v",
+                    "mvn -q -pl server -am compile -DskipTests -o", "./mvnw package", "gradle test", "./gradlew build")) {
                 assertEquals("deny", shellEffect(rules, denied), denied);
             }
         }
