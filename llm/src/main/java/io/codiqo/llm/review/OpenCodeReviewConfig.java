@@ -4,6 +4,7 @@ import java.util.EnumSet;
 import java.util.List;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.tuple.Pair;
 import org.thymeleaf.context.Context;
 
 import com.google.common.base.Joiner;
@@ -24,9 +25,8 @@ import tools.jackson.databind.node.ObjectNode;
  * that plans the review and the reviewer sub-agents it starts.
  *
  * <p>
- * Both agents may read files and run read-only git commands only. OpenCode checks every part of a compound shell
- * command against these rules, so {@code git show ... | tail} or a redirect is refused rather than slipping through a
- * {@code git show*} pattern; this was observed on OpenCode 2.0.20, and the agents recover from the refusal on their own.
+ * Both agents run with the permissions of OpenCode's built-in {@code explore} agent ({@link #EXPLORE_ALLOWED}), less
+ * the git writes and builds that would change the analysis clone ({@link #DENIED_SHELL}).
  */
 @UtilityClass
 public class OpenCodeReviewConfig {
@@ -35,21 +35,27 @@ public class OpenCodeReviewConfig {
     public static final String REVIEWER = "codiqo-module-reviewer";
 
     private static final String PROVIDER_PACKAGE = "@opencode/ai/providers/openai-compatible";
-    private static final List<String> READ_ONLY_GIT = List.of("git show*", "git diff*", "git log*", "git status*", "git ls-files*", "git rev-parse*");
     /**
-     * Forms of the allowed commands that are not read-only: {@code git diff*} also matches {@code git difftool}, which
-     * runs any program given with {@code -x}; {@code --output} writes a file (a commit under review could have the agent
-     * write {@code .git/config}); {@code --no-index} diffs files outside the repository; an external diff or textconv
-     * driver runs a configured program. Denied after the allow rules, since the last matching rule wins.
+     * The permissions of OpenCode 2.0.25's built-in {@code explore} agent, its read-only codebase explorer, read from
+     * the binary: everything denied, then the shell (any command), the file tools, directories outside the project and
+     * web access allowed. Its {@code ask} on {@code .env} files becomes {@code deny}: an {@code ask}, and any call no
+     * rule matches, waits for an answer nobody gives in a headless review. The read-only git list this replaced refused
+     * 2,973 of 7,719 shell calls in production reviews from 12 to 15 Oct 2026, nearly all of them read-only pipes.
      */
-    private static final List<String> UNSAFE_GIT = List.of(
-            "git difftool*",
-            "git *--output*",
-            "git *--no-index*",
-            "git *--ext-diff*",
-            "git *--textconv*",
-            "git *-c *",
-            "git *--exec*");
+    private static final List<Pair<String, String>> EXPLORE_ALLOWED = List.of(
+            Pair.of("shell", "*"), Pair.of("read", "*"), Pair.of("grep", "*"), Pair.of("glob", "*"),
+            Pair.of("external_directory", "*"), Pair.of("webfetch", "*"), Pair.of("websearch", "*"));
+    /**
+     * The one addition to the {@code explore} preset: the review runs in the analysis clone while the commit's own build
+     * and tests run in it, so a command that moves its refs or checkout, or a second build that rewrites its
+     * {@code target/}, would change what is scored. In those 7,719 production calls agents never tried a git write, and
+     * the only damaging commands were three builds in the clone. OpenCode checks each simple command of a pipe or chain
+     * and reads a trailing {@code " *"} as optional arguments, so each name is matched as a whole word.
+     */
+    private static final List<String> DENIED_SHELL = List.of(
+            "git commit *", "git checkout *", "git switch *", "git reset *", "git restore *", "git stash *",
+            "git clean *", "git merge *", "git rebase *", "git cherry-pick *", "git apply *", "git pull *", "git push *",
+            "git fetch *", "mvn *", "./mvnw *", "gradle *", "./gradlew *");
     private static final int STEPS_RESERVED_FOR_ANSWER = 3;
     /**
      * A reviewer stops calling tools this many steps before its cap. Reviewers lose count of their steps (traces show one
@@ -96,11 +102,11 @@ public class OpenCodeReviewConfig {
 
         ObjectNode reviewer = agents.putObject(REVIEWER);
         reviewer.put("mode", "subagent");
-        reviewer.put("description", "Reviews part of a commit with read-only git and file tools and returns confirmed defects as JSON");
+        reviewer.put("description", "Reviews part of a commit with shell and file tools that leave the checkout untouched and returns confirmed defects as JSON");
         reviewer.put("model", PROVIDER + "/" + args.getReviewReviewerModel());
         reviewer.put("steps", args.getReviewReviewerSteps());
         reviewer.put("system", prompt("opencode/module-reviewer", args.getReviewReviewerSteps(), REVIEWER_STEPS_RESERVED_FOR_ANSWER, args, conventionGuidance, namingRules, tags));
-        addReadOnlyPermissions(reviewer.putArray("permissions"));
+        addReviewPermissions(reviewer.putArray("permissions"));
 
         ObjectNode coordinator = agents.putObject(COORDINATOR);
         coordinator.put("mode", "primary");
@@ -109,29 +115,20 @@ public class OpenCodeReviewConfig {
         coordinator.put("steps", args.getReviewCoordinatorSteps());
         coordinator.put("system", prompt("opencode/review-coordinator", args.getReviewCoordinatorSteps(), STEPS_RESERVED_FOR_ANSWER, args, conventionGuidance, namingRules, tags));
         ArrayNode coordinatorPermissions = coordinator.putArray("permissions");
-        addReadOnlyPermissions(coordinatorPermissions);
+        addReviewPermissions(coordinatorPermissions);
         rule(coordinatorPermissions, "subagent", "*", "deny");
         rule(coordinatorPermissions, "subagent", REVIEWER, "allow");
 
         return toReturn;
     }
-    /**
-     * Deny first, then allow: OpenCode applies the last matching rule, so the leading deny-all is what keeps every tool
-     * that is not named here (edits, web fetches, other shell commands) out of reach.
-     */
-    private static void addReadOnlyPermissions(ArrayNode permissions) {
+    /** OpenCode applies the last matching rule, so the deny-all comes first and the denied commands last */
+    private static void addReviewPermissions(ArrayNode permissions) {
         rule(permissions, "*", "*", "deny");
-        for (String tool : List.of("read", "grep", "glob")) {
-            rule(permissions, tool, "*", "allow");
-        }
-        for (String command : READ_ONLY_GIT) {
-            rule(permissions, "shell", command, "allow");
-        }
-        for (String command : UNSAFE_GIT) {
-            rule(permissions, "shell", command, "deny");
-        }
+        EXPLORE_ALLOWED.forEach(allowed -> rule(permissions, allowed.getLeft(), allowed.getRight(), "allow"));
         rule(permissions, "read", "*.env", "deny");
         rule(permissions, "read", "*.env.*", "deny");
+        rule(permissions, "read", "*.env.example", "allow");
+        DENIED_SHELL.forEach(command -> rule(permissions, "shell", command, "deny"));
     }
     private static void rule(ArrayNode permissions, String action, String resource, String effect) {
         ObjectNode rule = permissions.addObject();
