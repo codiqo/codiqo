@@ -34,7 +34,7 @@ class LocalReviewerTest {
         args.setReviewTimeout(Duration.ofMinutes(30));
         args.setReviewStartupTimeout(Duration.ofMinutes(1));
 
-        assertEquals(Duration.ofMinutes(1 + 30 * (6 + LocalReviewer.REVIEWER_REPAIRS) * 3), LocalReviewer.longestReview(args));
+        assertEquals(Duration.ofMinutes(1 + 30 * (6 + LocalReviewer.REVIEWER_REPAIRS * LocalReviewer.CORRECTION_TURNS) * 3), LocalReviewer.longestReview(args));
     }
     /** the review's progress line counts every severity and adds reasoning to the output tokens, as the usage does */
     @Test

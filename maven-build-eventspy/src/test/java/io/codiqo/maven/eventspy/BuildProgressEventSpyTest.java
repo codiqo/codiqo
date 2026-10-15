@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.maven.execution.ExecutionEvent;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.project.MavenProject;
@@ -34,10 +35,10 @@ class BuildProgressEventSpyTest {
         MavenSession session = mock(MavenSession.class);
         when(session.getProjects()).thenReturn(List.of(project("core"), project("util")));
 
-        assertEquals(Optional.of("1000\tSESSION\t2"), spy.progressLine(sessionEvent(session), 1000L));
-        assertEquals(Optional.of("1100\tSTARTED\torg.example:core"), spy.progressLine(event(ExecutionEvent.Type.ProjectStarted, "core"), 1100L));
-        assertEquals(Optional.of("4100\tSUCCESS\torg.example:core\t3000"), spy.progressLine(event(ExecutionEvent.Type.ProjectSucceeded, "core"), 4100L));
-        assertEquals(Optional.of("4200\tSKIPPED\torg.example:util\t0"), spy.progressLine(event(ExecutionEvent.Type.ProjectSkipped, "util"), 4200L));
+        assertEquals(List.of("1000", "SESSION", "2"), fields(spy.progressLine(sessionEvent(session), 1000L)));
+        assertEquals(List.of("1100", "STARTED", "org.example:core"), fields(spy.progressLine(event(ExecutionEvent.Type.ProjectStarted, "core"), 1100L)));
+        assertEquals(List.of("4100", "SUCCESS", "org.example:core", "3000"), fields(spy.progressLine(event(ExecutionEvent.Type.ProjectSucceeded, "core"), 4100L)));
+        assertEquals(List.of("4200", "SKIPPED", "org.example:util", "0"), fields(spy.progressLine(event(ExecutionEvent.Type.ProjectSkipped, "util"), 4200L)));
     }
     @Test
     void ignoresMojoLevelEvents() {
@@ -54,14 +55,20 @@ class BuildProgressEventSpyTest {
 
         List<String> lines = Files.readAllLines(progressFile, StandardCharsets.UTF_8);
         assertEquals(2, lines.size(), lines.toString());
-        assertEquals("STARTED\torg.example:core", lines.get(0).split("\t", 2)[1]);
-        assertEquals("FAILED", lines.get(1).split("\t")[1]);
+        assertEquals(List.of("STARTED", "org.example:core"), fields(lines.get(0)).subList(1, 3));
+        assertEquals("FAILED", fields(lines.get(1)).get(1));
     }
     @Test
     void writesNothingWithoutTheProperty() {
         new BuildProgressEventSpy().onEvent(event(ExecutionEvent.Type.ProjectStarted, "core"));
 
         assertFalse(Files.exists(tempDir.resolve("progress.tsv")));
+    }
+    private static List<String> fields(Optional<String> line) {
+        return fields(line.orElseThrow());
+    }
+    private static List<String> fields(String line) {
+        return List.of(StringUtils.splitPreserveAllTokens(line, BuildProgressConfig.FIELD_SEPARATOR));
     }
     private static ExecutionEvent sessionEvent(MavenSession session) {
         ExecutionEvent event = mock(ExecutionEvent.class);

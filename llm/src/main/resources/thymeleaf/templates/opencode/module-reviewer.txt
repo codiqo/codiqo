@@ -5,8 +5,7 @@ Report only defects this commit introduces and that you can confirm from the cod
 [# th:unless="${#strings.isEmpty(guidance)}"][# th:insert="~{opencode/conventions}" /]
 [/][# th:insert="~{opencode/severity}" /]
 
-Answer with one JSON object and nothing else:
-{"blocking":[BUG],"major":[BUG],"minor":[BUG]}
+Your answer is one JSON object; its complete format is the ANSWER FORMAT at the end of these instructions.
 [# th:insert="~{opencode/bug-shape}" /]
 
 [# th:insert="~{opencode/assess-reviewer}" /]
@@ -20,3 +19,7 @@ STEP BUDGET: you have at most [(${steps})] steps; every tool call and every mess
 - open other surrounding source only to confirm a specific suspected defect, and read related files in one call;
 - never re-read what you have already seen, and never run a command only to double-check a finding you already confirmed.
 Stop calling tools by step [(${stopBy})] at the latest, earlier if you have nothing left to confirm. Your LAST message is ALWAYS the JSON object, even when you could not check everything: report what you confirmed, put what you could not check in "notChecked", never end with a question, a plan or a tool error. A reviewer that ends without the JSON loses every finding it made.
+
+ANSWER FORMAT. This is the only format a program can read, and it overrides any answer format your task describes, even one your task spells out. Your LAST message is exactly this object, with all six fields, an empty list where you have nothing:
+{"blocking":[BUG],"major":[BUG],"minor":[BUG],"unitLabels":[LABEL],"observations":["..."],"notChecked":["..."]}
+LABEL is always an object, for example {"file":"src/main/java/a/OrderService.java","signature":"cancel(String orderId)","category":"ROUTINE","reason":"adds a status check before the update"}. A label is never a string: "OrderService.cancel (ROUTINE)" or "cancel: MECHANICAL - renames a field" cannot be read and fails the review.

@@ -9,6 +9,8 @@ import java.util.Objects;
 
 import org.apache.commons.lang3.StringUtils;
 
+import com.google.common.base.Joiner;
+
 import io.codiqo.api.RunArgs;
 
 /**
@@ -25,6 +27,15 @@ import io.codiqo.api.RunArgs;
  * exception without catching it.
  */
 public final class ProgressStage implements AutoCloseable {
+    /**
+     * The field separator of every line in the build progress file. The analysis stages written here, the Gradle
+     * build's task events ({@code BuildProgressService}) and the forked Maven build's module events
+     * ({@code BuildProgressEventSpy}, which cannot depend on this module and keeps its own copy in
+     * {@code BuildProgressConfig}) all append to the same file, and its watcher splits each line on this one
+     * character, so changing it here without changing that copy makes the watcher misread the build's lines.
+     * commons-lang3 publishes no tab constant.
+     */
+    public static final char FIELD_SEPARATOR = '\t';
     private static final Object LOCK = new Object();
 
     private final File progressFile;
@@ -41,8 +52,21 @@ public final class ProgressStage implements AutoCloseable {
     }
     public static ProgressStage start(RunArgs args, String name) {
         ProgressStage toReturn = new ProgressStage(args.getBuildProgressFile(), name);
-        toReturn.append(toReturn.startedAt + "\tSTAGE_STARTED\t" + name);
+        toReturn.append(Joiner.on(FIELD_SEPARATOR).join(toReturn.startedAt, "STAGE_STARTED", name));
         return toReturn;
+    }
+    /**
+     * Tells the run's watcher to stop the whole run: the project was halted because the analysis cannot work (the LLM
+     * cannot be reached, coverage cannot be measured), so every further commit of the run would fail the same way. The
+     * GitHub Action reads this line from the progress file it already watches, stops its loop whatever its
+     * stop-on-first-failure input says, and shows the cause and the trace in the job's log and summary.
+     *
+     * <pre>
+     * epochMillis  ABORT  cause  trace
+     * </pre>
+     */
+    public static void abort(RunArgs args, String cause, String trace) {
+        new ProgressStage(args.getBuildProgressFile(), "abort").append(Joiner.on(FIELD_SEPARATOR).join(System.currentTimeMillis(), "ABORT", oneField(cause), oneField(trace)));
     }
     public void succeeded() {
         succeeded = true;
@@ -54,13 +78,17 @@ public final class ProgressStage implements AutoCloseable {
     @Override
     public void close() {
         long now = System.currentTimeMillis();
-        append(now + "\t" + (succeeded ? "STAGE_FINISHED" : "STAGE_FAILED") + "\t" + name + "\t" + (now - startedAt) + "\t" + detail);
+        String event = succeeded ? "STAGE_FINISHED" : "STAGE_FAILED";
+        append(Joiner.on(FIELD_SEPARATOR).join(now, event, name, now - startedAt, detail));
     }
     private void append(String line) {
         if (Objects.nonNull(progressFile)) {
             synchronized (LOCK) {
                 try {
-                    Files.writeString(progressFile.toPath(), line + System.lineSeparator(), StandardCharsets.UTF_8,
+                    Files.writeString(
+                            progressFile.toPath(),
+                            line + System.lineSeparator(),
+                            StandardCharsets.UTF_8,
                             StandardOpenOption.CREATE, StandardOpenOption.APPEND);
                 } catch (IOException err) {
                     // progress is for a watcher; losing a line must not fail the analysis it describes
@@ -68,5 +96,9 @@ public final class ProgressStage implements AutoCloseable {
                 }
             }
         }
+    }
+    /** a value kept to one field of one line: the watcher splits on the separator and reads line by line */
+    private static String oneField(String value) {
+        return StringUtils.normalizeSpace(StringUtils.replaceChars(StringUtils.defaultString(value), FIELD_SEPARATOR, ' '));
     }
 }

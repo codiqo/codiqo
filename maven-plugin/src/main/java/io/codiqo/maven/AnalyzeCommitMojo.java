@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -57,9 +58,12 @@ import com.google.common.collect.Sets;
 
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.testing.TestRun;
+import io.codiqo.api.testing.TestRuns;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.submit.CommitExclusions;
 import io.codiqo.submit.CommitExclusions.Exclusion;
+import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.util.JGit;
 import io.codiqo.util.MemoryReport;
 
@@ -107,6 +111,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     protected void doPrepare(RunArgs args) throws Exception {
         super.doPrepare(args);
 
+        requireCoverageAgent(args);
         requireResolvableCommit(args, commitId);
         args.setCommitId(JGit.resolveCommit(args.getGit(), commitId));
         args.setFirstParentOnly(firstParentOnly);
@@ -124,11 +129,11 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     protected void doBeforeAnalysis(RunArgs args) throws Exception {
     }
     /**
-     * Runs once the analysis clone holds the commit as its clean HEAD, before the build. Work that reads the commit's
-     * tree and costs money per commit (the local agent review) starts here: the clone is that commit whichever commit
-     * the user's repository has checked out, so a backlog of historical commits is served as well as the tip.
+     * Runs once the compile run has decided, before the test run. Work that costs money per commit (the local agent
+     * review) starts here rather than at checkout: a commit whose build cannot resolve its dependencies or cannot be
+     * measured is failed or excluded before any of it is paid for.
      */
-    protected void doAfterCheckout(RunArgs args) throws Exception {
+    protected void doAfterCompile(RunArgs args, BuildOutcome compileOutcome) throws Exception {
     }
     /** runs before the analysis clone is deleted, whatever the outcome: work still reading it must stop here */
     protected void doBeforeCheckoutRemoved(RunArgs args) throws Exception {
@@ -209,7 +214,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                 git.checkout().setForced(true).setName(commitId).call();
                 getLog().info(String.format("checked out commit ID: %s", commitId));
             }
-            doAfterCheckout(args);
+            args.setAnalysisStartedAt(Instant.now());
 
             /**
              * host-side ProjectBuilder calls (pre-flight, root and module model building) resolve snapshot parents
@@ -243,9 +248,29 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
              * compiles against it — step the resolution target back through the ladder, then fall back to latest
              * snapshots and analyze best-effort.
              */
-            BuildOutcome buildOutcome = args.isTimeMachineEnabled()
+            BuildOutcome compileOutcome = args.isTimeMachineEnabled()
                     ? buildWithBackoff(args, buildingReq)
-                    : buildProject(args, invocationRequest(args, false, Duration.ZERO), buildingReq);
+                    : buildProject(args, invocationRequest(args, false, Duration.ZERO, BuildPhase.COMPILE), buildingReq, BuildPhase.COMPILE, args.getBuildTimeout());
+            doAfterCompile(args, compileOutcome);
+            if (compileOutcome instanceof BuildOutcome.Skipped skipped) {
+                doDegradedAnalysis(args, skipped);
+                return;
+            }
+
+            /**
+             * The test run builds on the compile run's pinned snapshots, at the offset that compiled, within what that
+             * compile run left of the build timeout. Only the run that compiled counts: every rung of the time-machine
+             * ladder has a whole build timeout of its own, so measuring from the first rung left a commit that needed the
+             * ladder a test run of a few minutes, or a negative timeout that killed the fork at once, and excluded it as
+             * a timed-out build after its review had started.
+             */
+            Duration offset = args.getTimeMachineTargetOffset();
+            BuildOutcome buildOutcome = buildProject(
+                    args,
+                    invocationRequest(args, Objects.nonNull(offset), Optional.ofNullable(offset).orElse(Duration.ZERO), BuildPhase.TESTS),
+                    buildingReq,
+                    BuildPhase.TESTS,
+                    args.getBuildTimeout().minus(args.getCompilePhaseTook()));
             if (buildOutcome instanceof BuildOutcome.Skipped skipped) {
                 doDegradedAnalysis(args, skipped);
                 return;
@@ -259,6 +284,13 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                 BuildOutcome.Skipped skipped = moduleOutcome.get();
                 doDegradedAnalysis(args, skipped);
                 return;
+            }
+            if (BooleanUtils.negate(args.isIgnoreCoverage())) {
+                TestRun testRun = TestRuns.read(reactors.stream().flatMap(reactor -> TestReportDirectories.resolve(reactor).stream()).distinct().toList(), new MavenMessageReporter(getLog()));
+                getLog().info(String.format(Locale.ROOT, "test run: %d tests, %d failed, %d errors, %d skipped in %s",
+                        testRun.getTests(), testRun.getFailures(), testRun.getErrors(), testRun.getSkipped(), testRun.getTestTime()));
+                TestRuns.requireHealthy(testRun, args.getTestFailureHaltShare(), args.getTestFailureHaltMinTests());
+                args.setTestRun(testRun);
             }
             relaxOutOfModuleResourceDirs(clone.getWorkTree());
 
@@ -293,7 +325,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
         Duration offset = Duration.ZERO;
         for (;;) {
             args.setTimeMachineTargetOffset(offset);
-            BuildOutcome outcome = buildProject(args, invocationRequest(args, true, offset), buildingReq);
+            BuildOutcome outcome = buildProject(args, invocationRequest(args, true, offset, BuildPhase.COMPILE), buildingReq, BuildPhase.COMPILE, args.getBuildTimeout());
             if (outcome instanceof BuildOutcome.Proceeded) {
                 return outcome;
             }
@@ -330,7 +362,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             if (next.isEmpty()) {
                 getLog().warn(String.format("commit %s: time-machine build failed at offset %s (%s), retrying with latest snapshots", commitId, offset, skipped.getReason()));
                 args.setTimeMachineTargetOffset(null);
-                BuildOutcome latest = buildProject(args, invocationRequest(args, false, Duration.ZERO), buildingReq);
+                BuildOutcome latest = buildProject(args, invocationRequest(args, false, Duration.ZERO, BuildPhase.COMPILE), buildingReq, BuildPhase.COMPILE, args.getBuildTimeout());
                 if (latest instanceof BuildOutcome.Skipped lastSkipped) {
                     attemptFailures.add(attemptEntry("latest snapshots", lastSkipped));
                     /**

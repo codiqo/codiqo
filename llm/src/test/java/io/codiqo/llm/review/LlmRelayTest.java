@@ -1,6 +1,7 @@
 package io.codiqo.llm.review;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -19,6 +20,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -232,39 +234,25 @@ class LlmRelayTest {
             cutting.stop(0);
         }
     }
-    /** a busy proxy is waited out: the agent sees the answer, never the 503, and the credential is fetched per attempt */
+    /** the relay retries no call to the model: OpenCode retries a busy proxy itself, with its own backoff */
     @Test
-    void retriesABusyProxyUntilItAnswers() throws Exception {
+    void aBusyProxysAnswerIsPassedOnForOpenCodeToRetry() throws Exception {
         AtomicInteger calls = new AtomicInteger();
-        HttpServer busy = fakeProxy(exchange -> respond(exchange, calls.incrementAndGet() < 3 ? HttpResponseStatus.SERVICE_UNAVAILABLE.code() : HttpResponseStatus.OK.code(), MODELS));
-        try (LlmRelay retrying = relayTo(busy)) {
-            assertEquals(HttpResponseStatus.OK.code(), getModels(retrying).statusCode());
-            assertEquals(3, calls.get());
-            assertEquals(3, authorizations.get());
+        HttpServer busy = fakeProxy(exchange -> {
+            calls.incrementAndGet();
+            respond(exchange, HttpResponseStatus.SERVICE_UNAVAILABLE.code(), MODELS);
+        });
+        try (LlmRelay passing = relayTo(busy)) {
+            assertEquals(HttpResponseStatus.SERVICE_UNAVAILABLE.code(), getModels(passing).statusCode());
+            assertEquals(1, calls.get(), "no retry on top of OpenCode's");
         } finally {
             busy.stop(0);
         }
     }
-    /** once the retries are spent the proxy's own answer reaches the agent, which may still retry it */
-    @Test
-    void passesTheAnswerOnOnceTheRetriesAreSpent() throws Exception {
-        AtomicInteger calls = new AtomicInteger();
-        HttpServer down = fakeProxy(exchange -> {
-            calls.incrementAndGet();
-            respond(exchange, HttpResponseStatus.SERVICE_UNAVAILABLE.code(), MODELS);
-        });
-        try (LlmRelay retrying = relayTo(down)) {
-            assertEquals(HttpResponseStatus.SERVICE_UNAVAILABLE.code(), getModels(retrying).statusCode());
-            assertEquals(RETRIES + 1, calls.get(), "the first call and every retry");
-        } finally {
-            down.stop(0);
-        }
-    }
-    /** a review that fails while the provider keeps failing says so, retried answers included, by status */
+    /** a review that fails while the provider keeps failing says so, by status */
     @Test
     void countsTheProvidersFailedAnswersForTheReviewsFailure() throws Exception {
-        List<Integer> statuses = List.of(HttpResponseStatus.TOO_MANY_REQUESTS.code(), HttpResponseStatus.TOO_MANY_REQUESTS.code(), HttpResponseStatus.GATEWAY_TIMEOUT.code(),
-                HttpResponseStatus.OK.code(), HttpResponseStatus.TOO_MANY_REQUESTS.code(), HttpResponseStatus.OK.code());
+        List<Integer> statuses = List.of(HttpResponseStatus.GATEWAY_TIMEOUT.code(), HttpResponseStatus.OK.code(), HttpResponseStatus.TOO_MANY_REQUESTS.code());
         AtomicInteger calls = new AtomicInteger();
         HttpServer failing = fakeProxy(exchange -> respond(exchange, statuses.get(calls.getAndIncrement()), MODELS));
         try (LlmRelay counting = relayTo(failing)) {
@@ -272,11 +260,114 @@ class LlmRelayTest {
 
             assertEquals(HttpResponseStatus.GATEWAY_TIMEOUT.code(), getModels(counting).statusCode());
             assertEquals(HttpResponseStatus.OK.code(), getModels(counting).statusCode());
-            assertEquals(HttpResponseStatus.OK.code(), getModels(counting).statusCode());
+            assertEquals(HttpResponseStatus.TOO_MANY_REQUESTS.code(), getModels(counting).statusCode());
 
-            assertEquals(Optional.of("the LLM provider answered 429 3 times and 504 once during the review"), counting.providerErrors());
+            assertEquals(Optional.of("the LLM provider answered 429 once and 504 once during the review"), counting.providerErrors());
+            assertTrue(counting.providerFailed());
         } finally {
             failing.stop(0);
+        }
+    }
+    /** a request the provider only refused, such as a prompt over the model's context, is named but is the commit's failure */
+    @Test
+    void aRefusedRequestIsNotTheProvidersFailure() throws Exception {
+        HttpServer refusing = fakeProxy(exchange -> respond(exchange, HttpResponseStatus.BAD_REQUEST.code(), MODELS));
+        try (LlmRelay counting = relayTo(refusing)) {
+            assertEquals(HttpResponseStatus.BAD_REQUEST.code(), getModels(counting).statusCode());
+
+            assertEquals(Optional.of("the LLM provider answered 400 once during the review"), counting.providerErrors());
+            assertFalse(counting.providerFailed());
+        } finally {
+            refusing.stop(0);
+        }
+    }
+    /** OpenCode tells an exhausted quota, which it does not retry, from a rate limit by the provider's own error body */
+    @Test
+    void aRateLimitKeepsTheProvidersErrorBody() throws Exception {
+        String quota = "{\"error\":{\"message\":\"You exceeded your current quota\",\"type\":\"insufficient_quota\",\"code\":\"insufficient_quota\"}}";
+        HttpServer exhausted = fakeProxy(exchange -> respond(exchange, HttpResponseStatus.TOO_MANY_REQUESTS.code(), quota));
+        try (LlmRelay passing = relayTo(exhausted, rateLimited(5, Duration.ofSeconds(10)))) {
+            HttpResponse<String> answer = getModels(passing);
+
+            assertEquals(HttpResponseStatus.TOO_MANY_REQUESTS.code(), answer.statusCode());
+            assertEquals(quota, answer.body());
+            assertTrue(answer.headers().firstValue("retry-after-ms").isPresent(), "still with the round's wait");
+        } finally {
+            exhausted.stop(0);
+        }
+    }
+    /** a 429 goes back with the round's wait, which OpenCode keeps before it calls again */
+    @Test
+    void aRateLimitIsPassedOnWithTheRoundsWait() throws Exception {
+        HttpServer limited = fakeProxy(exchange -> respond(exchange, HttpResponseStatus.TOO_MANY_REQUESTS.code(), MODELS));
+        try (LlmRelay waiting = relayTo(limited, rateLimited(5, Duration.ofSeconds(10)))) {
+            HttpResponse<String> answer = getModels(waiting);
+
+            assertEquals(HttpResponseStatus.TOO_MANY_REQUESTS.code(), answer.statusCode());
+            long millis = Long.parseLong(answer.headers().firstValue("retry-after-ms").orElseThrow());
+            assertTrue(millis >= 7_900 && millis <= 10_000, "the first round, spread by up to a fifth: " + millis);
+            assertEquals(Optional.of(Long.toString(Math.ceilDiv(millis, 1000L))), answer.headers().firstValue(HttpHeaderNames.RETRY_AFTER.toString()), "the same wait in whole seconds");
+            assertTrue(answer.headers().firstValue("x-should-retry").isEmpty(), "OpenCode retries it");
+        } finally {
+            limited.stop(0);
+        }
+    }
+    /** calls refused while a round lasts share its deadline, so parallel reviewers come back once, together */
+    @Test
+    void callsInTheSameRoundShareItsDeadline() throws Exception {
+        HttpServer limited = fakeProxy(exchange -> respond(exchange, HttpResponseStatus.TOO_MANY_REQUESTS.code(), MODELS));
+        try (LlmRelay sharing = relayTo(limited, rateLimited(1, Duration.ofSeconds(10)))) {
+            long first = Long.parseLong(getModels(sharing).headers().firstValue("retry-after-ms").orElseThrow());
+            HttpResponse<String> second = getModels(sharing);
+
+            assertEquals(HttpResponseStatus.TOO_MANY_REQUESTS.code(), second.statusCode(), "still the first round, not the exhausted answer");
+            assertTrue(Long.parseLong(second.headers().firstValue("retry-after-ms").orElseThrow()) <= first, "the same deadline, a little nearer");
+        } finally {
+            limited.stop(0);
+        }
+    }
+    /**
+     * A limit that outlasts the rounds is answered with a 429 OpenCode does not retry, and every later call of the review
+     * is refused without reaching the provider: retried, each would wait through the whole schedule again.
+     */
+    @Test
+    void aRateLimitThatOutlastsTheRoundsEndsTheReviewsCalls() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        HttpServer limited = fakeProxy(exchange -> {
+            calls.incrementAndGet();
+            respond(exchange, HttpResponseStatus.TOO_MANY_REQUESTS.code(), MODELS);
+        });
+        try (LlmRelay exhausted = relayTo(limited, rateLimited(2, Duration.ofMillis(1)))) {
+            for (int round = 1; round <= 2; round++) {
+                assertTrue(getModels(exhausted).headers().firstValue("x-should-retry").isEmpty(), "round " + round + " is retried");
+                Thread.sleep(5);
+            }
+            HttpResponse<String> last = getModels(exhausted);
+            assertEquals(HttpResponseStatus.TOO_MANY_REQUESTS.code(), last.statusCode());
+            assertEquals(Optional.of("false"), last.headers().firstValue("x-should-retry"));
+            assertTrue(last.body().contains("rate_limit_exhausted"), last.body());
+
+            int reached = calls.get();
+            assertEquals(Optional.of("false"), getModels(exhausted).headers().firstValue("x-should-retry"));
+            assertEquals(reached, calls.get(), "the later call never reached the provider");
+        } finally {
+            limited.stop(0);
+        }
+    }
+    /** a success ends the rate limit, so the next 429 starts again from the first round */
+    @Test
+    void aSuccessResetsTheRounds() throws Exception {
+        List<Integer> statuses = List.of(HttpResponseStatus.TOO_MANY_REQUESTS.code(), HttpResponseStatus.OK.code(), HttpResponseStatus.TOO_MANY_REQUESTS.code(), HttpResponseStatus.TOO_MANY_REQUESTS.code());
+        AtomicInteger calls = new AtomicInteger();
+        HttpServer flapping = fakeProxy(exchange -> respond(exchange, statuses.get(calls.getAndIncrement()), MODELS));
+        try (LlmRelay resetting = relayTo(flapping, rateLimited(1, Duration.ofMillis(1)))) {
+            assertTrue(getModels(resetting).headers().firstValue("x-should-retry").isEmpty());
+            Thread.sleep(5);
+            assertEquals(HttpResponseStatus.OK.code(), getModels(resetting).statusCode());
+            Thread.sleep(5);
+            assertTrue(getModels(resetting).headers().firstValue("x-should-retry").isEmpty(), "the first round again, not the second");
+        } finally {
+            flapping.stop(0);
         }
     }
     @Test
@@ -285,13 +376,14 @@ class LlmRelayTest {
         assertEquals(Optional.empty(), relay.providerErrors());
     }
     @Test
-    void anUnreachableProxyIsRetriedThenReportedAs502() throws Exception {
+    void anUnreachableProxyIsReportedAs502() throws Exception {
         try (LlmRelay unreachable = LlmRelay.start(relayArgs(), endpoint("http://127.0.0.1:9/v1", header -> header.accept(HttpHeaderNames.AUTHORIZATION.toString(), CREDENTIAL)), new NoopLog())) {
             HttpResponse<String> response = http.send(HttpRequest.newBuilder(URI.create(unreachable.getUrl() + "/models")).GET()
                     .header(HttpHeaderNames.AUTHORIZATION.toString(), RequestAuthorizer.bearer(unreachable.getSecret())).build(), HttpResponse.BodyHandlers.ofString());
 
             assertEquals(HttpResponseStatus.BAD_GATEWAY.code(), response.statusCode());
             assertTrue(response.body().contains("could not be reached"), response.body());
+            assertTrue(unreachable.providerFailed(), "an end point that cannot be reached is the provider's outage");
         }
     }
     /**
@@ -322,7 +414,10 @@ class LlmRelayTest {
         return HttpRequest.newBuilder(URI.create(relay.getUrl() + path)).GET();
     }
     private LlmRelay relayTo(HttpServer upstreamProxy) throws IOException {
-        return LlmRelay.start(relayArgs(), endpoint(RunArgs.loopbackUrl(upstreamProxy.getAddress().getPort()).encodedPath("/v1").build().toString(), header -> {
+        return relayTo(upstreamProxy, relayArgs());
+    }
+    private LlmRelay relayTo(HttpServer upstreamProxy, RunArgs args) throws IOException {
+        return LlmRelay.start(args, endpoint(RunArgs.loopbackUrl(upstreamProxy.getAddress().getPort()).encodedPath("/v1").build().toString(), header -> {
             authorizations.incrementAndGet();
             header.accept(HttpHeaderNames.AUTHORIZATION.toString(), CREDENTIAL);
         }), new NoopLog());
@@ -335,6 +430,13 @@ class LlmRelayTest {
         HttpServer toReturn = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         toReturn.createContext("/v1/models", handler);
         toReturn.start();
+        return toReturn;
+    }
+    private static RunArgs rateLimited(int rounds, Duration firstRound) {
+        RunArgs toReturn = relayArgs();
+        toReturn.setReviewRelayRateLimitRetries(rounds);
+        toReturn.setReviewRelayRateLimitBackoff(firstRound);
+        toReturn.setReviewRelayRateLimitMaxBackoff(firstRound);
         return toReturn;
     }
     private static RunArgs relayArgs() {

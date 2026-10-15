@@ -108,6 +108,7 @@ import io.codiqo.api.LanguageProcessors;
 import io.codiqo.api.MavenProjectSpec;
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.code.CompilerFinding;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
@@ -135,16 +136,16 @@ import io.codiqo.submit.SubmissionAssembly;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.submit.hotspots.FixCommits;
 import io.codiqo.submit.hotspots.HotspotSnapshots;
-import io.codiqo.util.Env;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
 import io.codiqo.util.MemoryReport;
 import io.codiqo.util.ProgressStage;
-import io.netty.handler.codec.http.HttpResponseStatus;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
+import io.netty.handler.codec.http.HttpResponseStatus;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.Value;
 
@@ -207,6 +208,8 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     private Collection<File> surefireInjectorJars;
     private Collection<File> buildEventSpyJars;
     private File jacocoAgentJar;
+    /** where the forked build's coverage guard names the first module whose tests ran without the agent; per build */
+    private File uninstrumentedReportFile;
 
     @Inject
     private RuntimeInformation runtimeInformation;
@@ -289,7 +292,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     @Parameter(property = "codiqo.diffContextLines", defaultValue = "10")
     protected int diffContextLines;
 
-    @Parameter(property = "codiqo.jdtlsVersion", defaultValue = "1.61.0")
+    @Parameter(property = "codiqo.jdtlsVersion", defaultValue = "1.62.0")
     protected String jdtlsVersion;
 
     @Parameter(property = "codiqo.jdtlsUseSnapshot", defaultValue = "false")
@@ -303,6 +306,13 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
 
     @Parameter(property = "codiqo.failOnUninstrumentedModule", defaultValue = "true")
     protected boolean failOnUninstrumentedModule;
+
+    /** overrides RunArgs.testFailureHaltShare when set; 1 or more turns the check off for a project whose tests need what CI lacks */
+    @Parameter(property = "codiqo.testFailureHaltShare")
+    protected Double testFailureHaltShare;
+
+    @Parameter(property = "codiqo.testFailureHaltMinTests")
+    protected Integer testFailureHaltMinTests;
 
     @Parameter(property = "codiqo.ignoreCpd", defaultValue = "false")
     protected boolean ignoreCpd;
@@ -506,6 +516,8 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         args.setDumpAnalysis(dumpAnalysis);
         args.setIgnoreCoverage(ignoreCoverage);
         args.setFailOnUninstrumentedModule(failOnUninstrumentedModule);
+        Optional.ofNullable(testFailureHaltShare).ifPresent(args::setTestFailureHaltShare);
+        Optional.ofNullable(testFailureHaltMinTests).ifPresent(args::setTestFailureHaltMinTests);
         args.setIgnoreCpd(ignoreCpd);
         args.setIgnoreDiagnostics(ignoreDiagnostics);
         args.setIgnoreComplexity(ignoreComplexity);
@@ -619,6 +631,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             doPrepare(args);
             doExecute(args);
         } catch (Exception err) {
+            doOnFailure(args, err);
             throw new MojoFailureException(err);
         } finally {
             args.getProjects().forEach(prj -> {
@@ -766,13 +779,20 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         }
     }
     @SuppressWarnings("deprecation")
-    protected InvocationRequest invocationRequest(RunArgs args, boolean timeMachineRequested, Duration targetOffset) throws IOException {
+    protected InvocationRequest invocationRequest(RunArgs args, boolean timeMachineRequested, Duration targetOffset, BuildPhase phase) throws IOException {
         File rootPom = new File(args.getGit().getWorkTree(), "pom.xml");
         InvocationRequest request = new DefaultInvocationRequest();
         request.setPomFile(rootPom);
-        if (args.isIgnoreCoverage()) {
+        if (BuildPhase.COMPILE == phase) {
             request.addArgs(List.of(
                     "clean",
+                    "package",
+                    "-DskipTests=true",
+                    "-Djacoco.skip=true",
+                    "-Dmaven.javadoc.skip=true",
+                    "-Dmdep.analyze.skip=true"));
+        } else if (args.isIgnoreCoverage()) {
+            request.addArgs(List.of(
                     "verify",
                     "-DskipTests=true",
                     "-Djacoco.skip=true",
@@ -787,7 +807,6 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
              * never runs and never interferes.
              */
             request.addArgs(List.of(
-                    "clean",
                     "verify",
                     "-DskipTests=false",
                     "-DfailIfNoTests=false",
@@ -861,7 +880,13 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
              */
             File localRepository = privateLocalRepository();
             if (localRepository.isDirectory()) {
-                clearSnapshots(localRepository);
+                /**
+                 * the test run builds on the snapshots the compile run pinned at this same offset; clearing them would
+                 * make it resolve them all again for nothing
+                 */
+                if (BuildPhase.COMPILE == phase) {
+                    clearSnapshots(localRepository);
+                }
             } else {
                 FileUtils.forceMkdir(localRepository);
                 seedReleaseArtifacts(new File(mavenSession.getRepositorySession().getLocalRepositoryManager().getRepository().getBasedir().getAbsolutePath()), localRepository);
@@ -905,6 +930,13 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
 
             props.setProperty(CoverageInjectorConfig.PROP_AGENT_JAR, jacocoAgentJar.getAbsolutePath());
             getLog().info("JaCoCo agent injection enabled for modules without jacoco-maven-plugin: " + jacocoAgentJar.getAbsolutePath());
+
+            if (args.isFailOnUninstrumentedModule()) {
+                FileUtils.deleteQuietly(uninstrumentedReportFile);
+                uninstrumentedReportFile = File.createTempFile("codiqo-uninstrumented-", ".log");
+                uninstrumentedReportFile.deleteOnExit();
+                props.setProperty(CoverageInjectorConfig.PROP_UNINSTRUMENTED_REPORT, uninstrumentedReportFile.getAbsolutePath());
+            }
         }
 
         if (perTestTimeoutActive) {
@@ -1123,9 +1155,13 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     protected BuildOutcome buildProject(
             RunArgs args,
             InvocationRequest request,
-            ProjectBuildingRequest buildingRequest) throws Exception {
+            ProjectBuildingRequest buildingRequest,
+            BuildPhase phase,
+            Duration timeout) throws Exception {
         File rootPom = new File(args.getGit().getWorkTree(), "pom.xml");
-        args.setCompilerFindings(Lists.newArrayList());
+        if (BuildPhase.COMPILE == phase) {
+            args.setCompilerFindings(Lists.newArrayList());
+        }
 
         CapturingOutputHandler sysout = new CapturingOutputHandler(new PrintStreamHandler(System.out, false), args.getBuildErrorCaptureLimit());
         CapturingOutputHandler syserr = new CapturingOutputHandler(new PrintStreamHandler(System.err, false), args.getBuildErrorCaptureLimit());
@@ -1140,10 +1176,11 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
          * the deadline is enforced here rather than with the request's own timeout, which kills only the launching
          * shell and leaves the forked Maven and its test JVMs running — see ForkProcessTree
          */
-        try (ExecutorService runner = Executors.newSingleThreadExecutor(); ProgressStage stage = ProgressStage.start(args, "build")) {
+        StopWatch took = StopWatch.createStarted();
+        try (ExecutorService runner = Executors.newSingleThreadExecutor(); ProgressStage stage = ProgressStage.start(args, phase.getStage())) {
             Future<InvocationResult> run = runner.submit(() -> invoker.execute(request));
             try {
-                result = run.get(args.getBuildTimeout().toMillis(), TimeUnit.MILLISECONDS);
+                result = run.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
             } catch (TimeoutException err) {
                 timedOut = true;
                 int stopped = ForkProcessTree.stop(beforeFork, FORK_STOP_GRACE);
@@ -1153,16 +1190,46 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                 throw err.getCause() instanceof Exception cause ? cause : err;
             }
             if (timedOut) {
-                stage.detail("timed out after " + args.getBuildTimeout());
+                stage.detail("timed out after " + timeout);
             } else if (result.getExitCode() == 0) {
                 stage.succeeded();
             } else {
                 stage.detail("exit code " + result.getExitCode());
             }
         }
+        took.stop();
+        if (BuildPhase.COMPILE == phase) {
+            args.setCompilePhaseTook(took.getDuration());
+        } else {
+            args.setTestPhaseTook(took.getDuration());
+        }
+
         if (timedOut || result.getExitCode() != 0) {
+            /**
+             * A module whose tests ran without the coverage agent is codiqo's failure, not the commit's: classified as a
+             * build failure it would be scored in degraded mode as one the author broke, as a production commit was on
+             * 13 Oct 2026, and retried down the time-machine ladder for nothing. The run fails instead, which cancels the review.
+             */
+            if (Objects.nonNull(uninstrumentedReportFile) && uninstrumentedReportFile.length() > 0L) {
+                throw new MojoExecutionException("coverage is required (codiqo.failOnUninstrumentedModule) and the analysis build cannot measure it: "
+                        + Joiner.on("; ").join(FileUtils.readLines(uninstrumentedReportFile, StandardCharsets.UTF_8)));
+            }
+            /**
+             * javac or Error Prone crashing is the toolchain failing, not the commit: the fork runs Error Prone's checks as
+             * warnings, so only the plugin itself breaking (an Error Prone release that does not support the JDK) ends a
+             * compile this way. Classified as a build failure it would be scored as one the author broke. Only the
+             * compile run is read for it: the test run compiles nothing the compile run did not, and it prints the tests'
+             * own output, where a test of an annotation processor or of a build plugin prints the same words, which would
+             * halt the project over a test run that failed for any other reason.
+             */
+            if (BuildPhase.COMPILE == phase) {
+                Optional<String> compilerCrash = sysout.compilerCrashLine().or(syserr::compilerCrashLine);
+                if (compilerCrash.isPresent()) {
+                    throw new MojoExecutionException("the compiler crashed in the analysis build, which is not the commit's doing: " + compilerCrash.get());
+                }
+            }
             if (timedOut) {
-                String reason = "fork build timed out after " + args.getBuildTimeout();
+                String reason = "fork build timed out after " + timeout;
                 if (args.isSkipOnBuildFailure()) {
                     getLog().warn(reason + ", skipping with category " + AnalysisExcludeCategory.BUILD_FAILURE);
                     return skipped(args, reason, AnalysisExcludeCategory.BUILD_FAILURE, true, sysout, syserr);
@@ -1188,7 +1255,13 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             }
         }
 
-        args.setCompilerFindings(ErrorProneWarnings.findings(sysout.errorProneWarningLines(), args.getGit().getWorkTree()));
+        /**
+         * The compile run prints every Error Prone warning; the test run prints them again only for the modules it
+         * recompiles, so its findings are added to the compile run's rather than replacing them.
+         */
+        Set<CompilerFinding> findings = Sets.newLinkedHashSet(args.getCompilerFindings());
+        findings.addAll(ErrorProneWarnings.findings(sysout.errorProneWarningLines(), args.getGit().getWorkTree()));
+        args.setCompilerFindings(Lists.newArrayList(findings));
         if (CollectionUtils.isNotEmpty(args.getCompilerFindings())) {
             getLog().info(String.format(Locale.ROOT, "the build reported %d Error Prone findings", args.getCompilerFindings().size()));
         }
@@ -1500,23 +1573,15 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                     getLog().info(MemoryReport.snapshot("after index"));
                     registry.identifyAffectedSymbols(index, analysis);
                     getLog().info(MemoryReport.snapshot("after identify symbols"));
-                    try {
-                        registry.collectAndCapture(index, analysis);
-                    } catch (IOException err) {
-                        /**
-                         * only the coverage-required capture failure surfaces as IOException; treat it as a build
-                         * failure. codiqo-internal defects (RuntimeExceptions from symbol capture, JDT, etc.) are not
-                         * caught here so they propagate and fail loudly instead of being mislabeled BUILD_FAILURE.
-                         */
-                        if (BooleanUtils.and(new boolean[] { StringUtils.isNotBlank(args.getCommitId()), args.isSkipOnBuildFailure() })) {
-                            String reason = StringUtils.defaultIfBlank(err.getMessage(), err.getClass().getSimpleName());
-                            getLog().warn(String.format("commit %s: analysis failed after build: %s", args.getCommitId(), reason), err);
-                            doDegradedAnalysis(args, reason, AnalysisExcludeCategory.BUILD_FAILURE,
-                                    StringUtils.abbreviate(ExceptionUtils.getStackTrace(err), args.getBuildErrorCaptureLimit()));
-                            return Optional.empty();
-                        }
-                        throw err;
-                    }
+                    /**
+                     * A capture failure here comes after a build that passed: a module whose tests ran produced no
+                     * JaCoCo data (codiqo.failOnUninstrumentedModule), or the coverage it produced predates the sources.
+                     * Both are a broken measurement on codiqo's side, never the author's, so the run fails and is
+                     * investigated. It used to be scored as the author's BUILD_FAILURE in degraded mode: a
+                     * production commit whose agent did not attach to eight modules on 13 Oct 2026, was scored with penalties
+                     * only. Failing also cancels the commit's local review, which the checkout's finally block closes.
+                     */
+                    registry.collectAndCapture(index, analysis);
                     getLog().info(MemoryReport.snapshot("after collect capture"));
 
                     SubmissionContext ctx = SubmissionContext.create(
@@ -1581,6 +1646,22 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     }
     protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files, ProjectMetricsModel projectMetrics) throws Exception {
         getLog().debug(String.format("no exclusion handler, commit %s would be excluded with reason: %s (category: %s)", commitSha, reason, category));
+    }
+    /**
+     * For a goal that forks the commit's build. Without the agent no module records coverage, so a run that requires it
+     * would build, test and review the commit and only then fail at coverage capture. Called before the review starts,
+     * the failure costs nothing, and every later run fails the same way until the artifacts resolve.
+     */
+    protected void requireCoverageAgent(RunArgs args) throws MojoExecutionException {
+        if (BooleanUtils.and(new boolean[] { BooleanUtils.negate(args.isIgnoreCoverage()), args.isFailOnUninstrumentedModule(), Objects.isNull(jacocoAgentJar) })) {
+            throw new MojoExecutionException(String.format("could not resolve %s:%s:%s or the codiqo coverage injector, and coverage is required (codiqo.failOnUninstrumentedModule)",
+                    JACOCO_GROUP_ID,
+                    JACOCO_AGENT_ARTIFACT_ID,
+                    JACOCO_AGENT_CLASSIFIER));
+        }
+    }
+    /** runs once when the goal fails, before the failure is rethrown; a commit the run excluded is not a failure */
+    protected void doOnFailure(RunArgs args, Exception err) {
     }
     /**
      * when {@link #scoresFailedBuild} holds, a build-pipeline failure does not exclude the commit
@@ -1672,9 +1753,9 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
      * a source-only degraded run, and a log line alone would not outlive log retention as a record of it.
      */
     private static String diffOnlyFallbackDetail(String detail, IOException err) {
-        String note = String.format("%s (%s) — scored diff-only: no project metrics, so driver scores are raw"
-                + " line counts and the global cap does not bind",
-                DIFF_ONLY_FALLBACK_MARKER, ExceptionUtils.getRootCauseMessage(err));
+        String note = String.format("%s (%s) — scored diff-only: no project metrics, so driver scores are raw line counts and the global cap does not bind",
+                DIFF_ONLY_FALLBACK_MARKER,
+                ExceptionUtils.getRootCauseMessage(err));
         if (StringUtils.isBlank(detail)) {
             return note;
         }
@@ -1823,6 +1904,25 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
 
         ctx.getSubmissionModel().setBuildFailure(buildFailure);
     }
+    /**
+     * The forked build runs twice. The compile run proves the commit compiles and lets the coverage injector check its
+     * preconditions before any test runs; only then does the commit's paid local review start, so a build that cannot
+     * resolve its dependencies or cannot be measured costs no review. The test run reuses the compiled classes.
+     */
+    @Getter
+    @RequiredArgsConstructor
+    protected enum BuildPhase {
+        /**
+         * clean package, without running tests: the tests are compiled, and every sibling module's artifact exists. A run
+         * that stopped at test-compile could not give a module what only package makes, a sibling's zip or classified
+         * jar or a dependency:unpack of it, so a commit that built under clean verify failed its compile run.
+         */
+        COMPILE("compile"),
+        /** verify without clean: the tests, on the classes the compile run left */
+        TESTS("tests");
+
+        private final String stage;
+    }
     protected sealed interface BuildOutcome {
         /**
          * timedOut separates a fork the deadline killed from a fork that genuinely failed: only the latter is worth
@@ -1850,6 +1950,17 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     private static final class CapturingOutputHandler implements InvocationOutputHandler {
         private static final Pattern HELP_LINE = Pattern.compile("\\[ERROR\\]\\s+\\[Help\\s+\\d+\\]\\s+");
         private static final int MAX_CAPTURED_ERROR_LINES = 500;
+        /**
+         * What javac prints when it crashes, what Error Prone prints when one of its checks throws, and what
+         * maven-compiler-plugin prints when javac threw instead of reporting the code's errors. The last was seen on
+         * a production commit on 14 Oct 2026: javac on a newer JDK than the project's failed with
+         * "Fatal error compiling: java.lang.ExceptionInInitializerError", which read as the author's broken build, so
+         * the commit's review started and the commit was excluded instead of the run failing.
+         */
+        private static final String[] COMPILER_CRASH_MARKERS = {
+                "An exception has occurred in the compiler",
+                "An unhandled exception was thrown by the Error Prone static analysis plugin",
+                "Fatal error compiling" };
 
         private final InvocationOutputHandler delegate;
         private final int captureLimit;
@@ -1857,6 +1968,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         private final Queue<String> capturedLines = EvictingQueue.create(MAX_CAPTURED_ERROR_LINES);
         private final List<String> errorProneWarningLines = Lists.newArrayList();
         private String firstErrorLine;
+        private String compilerCrashLine;
         private boolean capturing;
 
         @Override
@@ -1877,6 +1989,12 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             if (ErrorProneWarnings.isWarning(line)) {
                 errorProneWarningLines.add(line);
             }
+            if (BooleanUtils.and(new boolean[] { Objects.isNull(compilerCrashLine), Strings.CS.containsAny(line, COMPILER_CRASH_MARKERS) })) {
+                compilerCrashLine = line;
+            }
+        }
+        public Optional<String> compilerCrashLine() {
+            return Optional.ofNullable(compilerCrashLine);
         }
         public Optional<String> firstErrorLine() {
             return Optional.ofNullable(firstErrorLine);

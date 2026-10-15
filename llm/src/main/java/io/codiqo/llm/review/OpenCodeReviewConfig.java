@@ -77,6 +77,14 @@ public class OpenCodeReviewConfig {
         ObjectNode settings = provider.putObject("settings");
         settings.put("baseURL", endpoint.getBaseUrl());
         settings.put("apiKey", endpoint.getApiKey());
+        /**
+         * OpenCode's own request timeout is the review timeout, the longest LlmRelay lets a direct end point (a local
+         * Ollama daemon evaluating a long prompt) take to start answering, so OpenCode never aborts and resends a call
+         * the relay is still waiting on; the Codiqo proxy's shorter first-byte limit is the relay's to enforce. A
+         * rate-limited call is not held anywhere: the relay answers its 429 at once with the round's wait, and OpenCode
+         * keeps that wait itself. Each turn is bounded by the review timeout anyway.
+         */
+        settings.put("timeout", args.getReviewTimeout().toMillis());
         ObjectNode models = provider.putObject("models");
         for (String model : List.of(args.getReviewCoordinatorModel(), args.getReviewReviewerModel())) {
             ObjectNode limit = models.putObject(model).putObject("limit");
@@ -155,6 +163,9 @@ public class OpenCodeReviewConfig {
         Context ctx = new Context();
         ctx.setVariable("problem", problem);
         return PromptTemplates.process("opencode/repair-answer", ctx).strip();
+    }
+    public static String finalAnswerPrompt() {
+        return PromptTemplates.process("opencode/final-answer", new Context()).strip();
     }
     public static String resumePrompt(String problem) {
         Context ctx = new Context();
