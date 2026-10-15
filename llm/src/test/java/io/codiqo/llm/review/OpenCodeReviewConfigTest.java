@@ -148,7 +148,7 @@ class OpenCodeReviewConfigTest {
         assertTrue(technicalOnly.contains("  - technical: kafka, caching\n  - functional: none yet"), technicalOnly);
     }
     @Test
-    void agentsMayOnlyReadAndRunReadOnlyGit() throws Exception {
+    void agentsMayNeitherEditNorStartWithoutADenyAll() throws Exception {
         JsonNode agents = build(new RunArgs(), StringUtils.EMPTY);
 
         for (String agent : List.of(OpenCodeReviewConfig.COORDINATOR, OpenCodeReviewConfig.REVIEWER)) {
@@ -159,27 +159,38 @@ class OpenCodeReviewConfigTest {
             assertEquals("*", first.path("action").asString(), "rules start with a deny-all so unnamed tools stay out of reach");
             assertEquals("deny", first.path("effect").asString());
             for (JsonNode rule : rules) {
-                if ("shell".equals(rule.path("action").asString())) {
-                    assertTrue(rule.path("resource").asString().startsWith("git "), "only git commands may run: " + rule);
-                }
                 assertFalse("edit".equals(rule.path("action").asString()) && "allow".equals(rule.path("effect").asString()), "no agent may edit");
             }
         }
     }
-    /** the last matching rule decides, as OpenCode applies them: the read-only commands stay, their writing forms do not */
+    /**
+     * Commands production reviewers were refused on 12 to 15 Oct 2026 under the read-only git list, each one simple
+     * command as OpenCode checks it after splitting pipes and chains, and the git writes and builds that stay refused
+     * because they would change the clone or the build running in it. The last matching rule decides, as in OpenCode.
+     */
     @Test
-    void theWritingAndExecutingFormsOfTheAllowedGitCommandsAreDenied() throws Exception {
+    void agentsMayRunAnyCommandButGitWritesAndBuilds() throws Exception {
         JsonNode agents = build(new RunArgs(), StringUtils.EMPTY);
         for (String agent : List.of(OpenCodeReviewConfig.COORDINATOR, OpenCodeReviewConfig.REVIEWER)) {
             List<JsonNode> rules = Lists.newArrayList();
             agents.path(agent).path("permissions").forEach(rules::add);
 
-            for (String allowed : List.of("git diff HEAD~1 -- a/B.java", "git log -p -3", "git show HEAD:pom.xml", "git status --short")) {
+            for (String allowed : List.of("head -40", "tail -20", "ls", "ls -la server-model/src/main/resources/db/", "echo ---", "wc -l",
+                    "sort", "uniq -c", "pwd", "cat pom.xml", "cd /tmp/codiqo12583705868237947062",
+                    "grep -rn \"<version>\" --include=pom.xml .", "grep -rn \"x -> y\" src", "find . -iname \"README*\" -not -path \"./.git/*\"",
+                    "find / -name \"gateway-api*.jar\" 2>/dev/null", "sed -n '150,230p'", "git show --stat=200 --name-status 56e47f2e",
+                    "git -C /tmp/codiqo1 show 7cf740e:pom.xml", "git -C /tmp/codiqo1 log --oneline -3", "git grep -n countLineAwards HEAD -- .",
+                    "git blame -L 10,40 a/B.java", "git ls-tree -r --name-only HEAD src", "git merge-base --is-ancestor 101a2606f 41cf1c3f6",
+                    "git branch --contains 4567988dd 2>/dev/null", "git branch -a", "git tag", "git tag -l 'v*'", "git remote -v",
+                    "git config --get core.homedir", "git diff --name-only a b", "git cat-file -e b071e7eab:a.java",
+                    "git show 97c625f:pom.xml > /tmp/opencode/pom_prev.xml 2>/dev/null", "curl -s --max-time 15 https://repo1.maven.org/maven2/x",
+                    "unzip -l x.jar", "jar tf x.jar", "git merge-base main HEAD", "python3 -c 'print(1+1)'", "which java mvn 2>/dev/null", "sed -E 's/a/b/' x")) {
                 assertEquals("allow", shellEffect(rules, allowed), allowed);
             }
-            for (String denied : List.of("git difftool -x 'sh -c id' HEAD~1", "git diff --output=.git/config HEAD~1", "git log -p --output=x",
-                    "git diff --no-index /etc/hosts a.txt", "git show --ext-diff HEAD", "git log --textconv -p", "git -c core.pager=id log",
-                    "git show -c core.pager=id HEAD", "rm -rf .")) {
+            for (String denied : List.of("git commit -am x", "git checkout HEAD~1", "git switch main", "git reset --hard", "git restore .",
+                    "git stash", "git stash pop", "git clean -fdx", "git merge main", "git rebase -i HEAD~2", "git cherry-pick abc",
+                    "git apply x.patch", "git pull", "git push", "git fetch origin", "mvn -q verify", "mvn -v",
+                    "mvn -q -pl server -am compile -DskipTests -o", "./mvnw package", "gradle test", "./gradlew build")) {
                 assertEquals("deny", shellEffect(rules, denied), denied);
             }
         }
@@ -250,18 +261,39 @@ class OpenCodeReviewConfigTest {
     private static ReviewEndpoint endpoint(String baseUrl, String apiKey) {
         return new ReviewEndpoint(baseUrl, apiKey, null);
     }
+    /**
+     * The effect OpenCode 2.0.25 gives a simple command: the last matching rule's. Its glob, read from the binary, turns
+     * {@code *} into any run of characters and {@code ?} into one, and a pattern ending in {@code " *"} also matches the
+     * command with no arguments, which keeps every denied name token-exact.
+     */
     private static String shellEffect(List<JsonNode> rules, String command) {
         String toReturn = null;
         for (JsonNode rule : rules) {
             String action = rule.path("action").asString();
             if (BooleanUtils.or(new boolean[] { "*".equals(action), "shell".equals(action) })) {
-                String glob = rule.path("resource").asString();
-                String regex = Arrays.stream(glob.split("\\*", -1)).map(Pattern::quote).collect(Collectors.joining(".*"));
-                if (command.matches(regex)) {
+                if (globMatches(command, rule.path("resource").asString())) {
                     toReturn = rule.path("effect").asString();
                 }
             }
         }
         return toReturn;
+    }
+    private static boolean globMatches(String text, String glob) {
+        StringBuilder regex = new StringBuilder();
+        for (char c : glob.toCharArray()) {
+            if (c == '*') {
+                regex.append(".*");
+            } else if (c == '?') {
+                regex.append('.');
+            } else {
+                regex.append(Pattern.quote(String.valueOf(c)));
+            }
+        }
+        String pattern = regex.toString();
+        String anyArguments = Pattern.quote(StringUtils.SPACE) + ".*";
+        if (pattern.endsWith(anyArguments)) {
+            pattern = pattern.substring(0, pattern.length() - anyArguments.length()) + "(" + anyArguments + ")?";
+        }
+        return Pattern.compile(pattern, Pattern.DOTALL).matcher(text).matches();
     }
 }

@@ -1654,8 +1654,14 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   de-duplicated, capped by `RunArgs.reviewMaxObservations` / `reviewMaxNotChecked`), and `LocalReviewModels.toModel`
   writes a Markdown `reasoning` digest (the coordinator's areas with the count of corrected reviewer answers, the
   observations, **Not checked**, the triage) that the commit page shows. `notChecked` travels only in the digest.
-- The agents' git rules allow read-only commands and deny their writing and executing forms after them (`difftool`,
-  `--output`, `--no-index`, external diff and textconv drivers): OpenCode applies the last matching rule. Convention
+- The agents run with the permissions of OpenCode's own built-in `explore` agent (`OpenCodeReviewConfig.EXPLORE_ALLOWED`,
+  read from the 2.0.25 binary: deny all, then any shell command, the file tools, outside directories and web access),
+  with `.env` reads denied instead of asked (an `ask`, and a call no rule matches, hangs a headless review) and one short
+  addition, `DENIED_SHELL`: the git writes and builds (`mvn`, `gradle`) that would change the analysis clone while the
+  commit's own build runs in it. OpenCode has no shell deny list of its own. Keep it to that: a longer list of flags and
+  reading forms was tried and replaced. Replayed through a real OpenCode, 774 of 783 sampled production refusals of the
+  former read-only git list now run; the rest are `mvn` calls and two truncated inputs. The prompts state the rules
+  (`opencode/tools`). Convention
   files are fenced with `PromptFences`' markers, which `ConventionGuidance` strips from every file.
 - What the model writes is checked before it is sent: a bug without a title or description and a dimension score off
   the 0-10 scale are left out, since the server would reject the whole submission over them.
