@@ -1,0 +1,74 @@
+package io.codiqo.submit;
+
+import java.io.File;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
+
+import io.codiqo.api.RunArgs;
+import io.codiqo.api.logging.Log;
+import io.codiqo.client.ApiException;
+import io.codiqo.client.api.CommitIndexApi;
+import io.codiqo.client.model.ProjectHaltRequestModel;
+import io.codiqo.llm.review.ReviewTrace;
+import lombok.experimental.UtilityClass;
+
+/**
+ * The circuit breaker of scheduled analysis. A run that fails on codiqo's side submits nothing, so the next scheduled
+ * run lists the same commit as missing and starts its paid local review again, every hour, for as long as nobody looks.
+ * A failed run therefore halts the project on the server, and every later run refuses to start until an administrator
+ * resumes it in codiqo-web.
+ */
+@UtilityClass
+public class ProjectHalts {
+    /** the request model's limits; a longer reason or detail would make the server refuse the halt itself */
+    private static final int REASON_LIMIT = 2000;
+    private static final int DETAIL_LIMIT = 65536;
+
+    /** where the failed commit's review trace is, for the run's watcher; the run's log when no review left one */
+    public String traceOf(RunArgs args, String commitSha) {
+        File trace = ReviewTrace.file(args, commitSha);
+        return trace.isFile() ? "review trace " + trace.getAbsolutePath() : "no review trace; see the commit's analysis log";
+    }
+    /** throws {@link ProjectHaltedException} when the server holds the project's runs */
+    public void requireRunning(Log log, CommitIndexApi client, String apiUrl, String projectId) throws ApiException {
+        CommitIndexPublisher.listMissingAnalyses(log, client, apiUrl, projectId, null, 1);
+    }
+    /**
+     * Records the failure as the project's halt, and says whether it was recorded. A halt that cannot be recorded is
+     * logged as an error and the caller still fails with the original cause: losing that cause to the halt's own failure
+     * would leave nothing to investigate.
+     */
+    public boolean halt(Log log, CommitIndexApi client, String apiUrl, String projectId, String commitSha, Throwable cause) {
+        return halt(log, client, apiUrl, projectId, commitSha, ExceptionUtils.getRootCauseMessage(cause), ExceptionUtils.getStackTrace(cause));
+    }
+    /**
+     * As above, for a failure known only by its description: a run killed from outside, which left no exception. The
+     * result matters to {@code halt-project}, whose whole job is the halt: a goal that succeeded without recording it
+     * would hide from the GitHub Action that the next scheduled run will pay for the same commit's review again.
+     */
+    public boolean halt(Log log, CommitIndexApi client, String apiUrl, String projectId, String commitSha, String reason, String detail) {
+        /**
+         * The detail can be the tail of the run's log, written before the GitHub Action redacts its logs, and a test or
+         * a transport trace there may echo a credential; administrators read the halt on the server. Scrubbed with the
+         * Action's own rules, as the review trace is before it is sent.
+         */
+        Map<String, String> environment = System.getenv();
+        ProjectHaltRequestModel request = new ProjectHaltRequestModel()
+                .commitSha(commitSha)
+                .reason(StringUtils.abbreviate(SecretRedaction.redactText(reason, environment), REASON_LIMIT))
+                .detail(StringUtils.abbreviate(SecretRedaction.redactText(detail, environment), DETAIL_LIMIT));
+        try {
+            ApiRetry.call(log, "haltProject", apiUrl, () -> {
+                client.haltProject(projectId, request);
+                return null;
+            });
+            log.error("project %s halted: scheduled runs stop until it is resumed in codiqo-web (commit %s: %s)", projectId, commitSha, request.getReason());
+            return true;
+        } catch (Exception err) {
+            log.error(err, "project %s could not be halted after commit %s failed; the next scheduled run will try it again", projectId, commitSha);
+            return false;
+        }
+    }
+}

@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +43,7 @@ import com.google.common.collect.Sets;
 
 import edu.umd.cs.findbugs.Priorities;
 import io.codiqo.api.code.CompilerFinding;
+import io.codiqo.api.testing.TestRun;
 import io.codiqo.util.JGit;
 import lombok.Data;
 import lombok.ToString;
@@ -149,7 +151,7 @@ public class RunArgs {
      * {@link #effectiveJdtlsVersion()}, so moving this forces a full re-index of every dependency jar.
      */
     @Nullable
-    private String jdtlsVersion = "1.61.0";
+    private String jdtlsVersion = "1.62.0";
 
     /**
      * Resolve the language server from the {@code snapshots} channel instead of a pinned milestone. Snapshots move,
@@ -572,8 +574,25 @@ public class RunArgs {
 
     private transient Duration reviewStartupTimeout = Duration.ofSeconds(60);
 
-    /** Local review: retries of a call through the relay, to the Codiqo proxy or a direct endpoint, that failed on the way (a network error, a timeout, a 429 or 5xx). */
+    /**
+     * Local review: retries of the relay's refresh of the Codiqo credential. Calls to the model are never retried by the
+     * relay: OpenCode retries them itself, and retries stacked on its own are how one review answered "429 132 times".
+     */
     private transient int reviewRelayRetries = 3;
+
+    /**
+     * Local review: rounds of waiting out the provider's rate limit before the review gives up. On 14 Oct 2026 the
+     * provider's limit was exhausted for seven hours and 14 production commits were excluded within minutes each: a
+     * limit lifts in minutes, so a 429 is waited out round by round, each round twice as long as the last, every call of
+     * the review waiting for the same round. A limit that outlasts them ends the review as the provider's failure.
+     */
+    private transient int reviewRelayRateLimitRetries = 6;
+
+    /** Local review: the first rate-limit round, doubled for each after it up to {@link #reviewRelayRateLimitMaxBackoff}; a longer {@code Retry-After} wins. */
+    private transient Duration reviewRelayRateLimitBackoff = Duration.ofSeconds(60);
+
+    /** Below OpenCode's own 15-minute ceiling on a {@code retry-after-ms} it honours. */
+    private transient Duration reviewRelayRateLimitMaxBackoff = Duration.ofMinutes(10);
 
     /**
      * Local review: how long a call through the relay to the Codiqo proxy may take to start answering; a stream then runs
@@ -630,6 +649,38 @@ public class RunArgs {
      * failing does not exclude a commit that compiles, and these are those warnings, triaged like PMD and SpotBugs.
      */
     private transient List<CompilerFinding> compilerFindings = Lists.newArrayList();
+
+    /** The commit's test run, read from the JUnit reports once the build's test run finished; unset when it did not. */
+    @Nullable
+    private transient TestRun testRun;
+
+    /** How long the build's compile run took, and its test run, for the submission's test-run record. */
+    @Nullable
+    private transient Duration compilePhaseTook;
+
+    @Nullable
+    private transient Duration testPhaseTook;
+
+    /** When the commit's analysis started, from its checkout, for the submission's overall analysis time. */
+    @Nullable
+    private transient Instant analysisStartedAt;
+
+    /**
+     * The share of executed tests that, failing or erroring, halts the project instead of scoring the commit; 1 or more
+     * turns the check off. A run where
+     * most tests fail is almost never the commit's doing: it is an environment the analysis cannot rebuild (a backdated
+     * commit whose database, service or certificate is gone), and every hour's retry would pay for its review again.
+     */
+    private double testFailureHaltShare = 0.75;
+
+    /** Below this many executed tests a failed share proves nothing about the environment, so it never halts. */
+    private int testFailureHaltMinTests = 20;
+
+    /**
+     * Set once the server accepted the commit's submission. A run that fails after that has scored its commit, so it does
+     * not halt the project: a halt resumed with "skip" would otherwise exclude a commit that was already scored.
+     */
+    private transient boolean submissionAccepted;
 
     /**
      * Comma-separated <b>regular expressions</b> matched against a commit's branches; empty accepts everything.

@@ -20,7 +20,10 @@ import org.gradle.tooling.events.task.TaskFinishEvent;
 import org.gradle.tooling.events.task.TaskOperationResult;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Joiner;
 import com.google.common.collect.Maps;
+
+import io.codiqo.util.ProgressStage;
 
 /**
  * The Gradle counterpart of the Maven fork's BuildProgressEventSpy: appends one tab-separated line per project
@@ -52,7 +55,7 @@ public abstract class BuildProgressService implements BuildService<BuildProgress
     public synchronized void expect(Map<String, Integer> tasksByProject, Map<String, String> ids) {
         remainingTasks.putAll(tasksByProject);
         moduleIds.putAll(ids);
-        append(System.currentTimeMillis() + "\tSESSION\t" + tasksByProject.size());
+        append(Joiner.on(ProgressStage.FIELD_SEPARATOR).join(System.currentTimeMillis(), "SESSION", tasksByProject.size()));
     }
     @Override
     public synchronized void onFinish(FinishEvent event) {
@@ -64,7 +67,7 @@ public abstract class BuildProgressService implements BuildService<BuildProgress
                 TaskOperationResult result = task.getResult();
                 String id = moduleIds.get(projectPath);
                 if (Objects.isNull(startedAt.putIfAbsent(projectPath, result.getStartTime()))) {
-                    append(result.getStartTime() + "\tSTARTED\t" + id);
+                    append(Joiner.on(ProgressStage.FIELD_SEPARATOR).join(result.getStartTime(), "STARTED", id));
                 }
                 /**
                  * a failed task finishes its project: the tasks that depend on it never run, so waiting for the count to
@@ -74,7 +77,7 @@ public abstract class BuildProgressService implements BuildService<BuildProgress
                 if (taskFailed || remaining <= 1) {
                     remainingTasks.remove(projectPath);
                     String status = taskFailed ? "FAILED" : "SUCCESS";
-                    append(result.getEndTime() + "\t" + status + "\t" + id + "\t" + (result.getEndTime() - startedAt.get(projectPath)));
+                    append(Joiner.on(ProgressStage.FIELD_SEPARATOR).join(result.getEndTime(), status, id, result.getEndTime() - startedAt.get(projectPath)));
                 } else {
                     remainingTasks.put(projectPath, remaining - 1);
                 }

@@ -35,6 +35,8 @@ import tools.jackson.databind.node.ObjectNode;
  */
 class ReviewerAnswerRepairTest {
     private static final String SESSION = "ses_reviewer";
+    private static final String FORK = "ses_fork";
+    private static final String UNREADABLE_MESSAGE = "msg_unreadable";
     private static final String GOOD = """
             {"unitLabels":[{"file":"server/Router.java","signature":"route()","category":"MECHANICAL","reason":"annotation-only"}],
              "observations":["Adds a router"]}""";
@@ -54,6 +56,9 @@ class ReviewerAnswerRepairTest {
              "notChecked":["tests were not executed","the enum default comes from an external protobuf artifact"]}""";
     private static final String LONE_NOT_CHECKED = """
             {"unitLabels":[],"observations":[],"notChecked":"tests were not executed"}""";
+    /** a production review, 14 Oct 2026: a reviewer's final answer that was one finding, with no labels at all */
+    private static final String ONE_FINDING = """
+            {"type":"LOGIC","title":"Non-idempotent insert","description":"fails on re-execution","file":"a/B.java","line":3,"confidence":"HIGH"}""";
     private static final String CUT = """
             {"unitLabels":[{"file":"server/Router.java","signature":"route()\"""";
 
@@ -61,6 +66,11 @@ class ReviewerAnswerRepairTest {
     private final List<String> prompts = Lists.newCopyOnWriteArrayList();
     /** the reviewer's answer after each correction: index 0 is what a correction prompt leaves behind first */
     private final List<String> corrections = Lists.newCopyOnWriteArrayList();
+    private final List<String> forkPrompts = Lists.newCopyOnWriteArrayList();
+    private final List<String> forkedBefore = Lists.newCopyOnWriteArrayList();
+    private final List<String> forks = Lists.newCopyOnWriteArrayList();
+    /** what the fork answers to its final-answer prompt */
+    private String forkAnswer;
     private HttpServer server;
     private String url;
 
@@ -124,12 +134,39 @@ class ReviewerAnswerRepairTest {
         assertEquals(1, prompts.size());
         assertEquals(1, answer.getLabels().size());
     }
+    /** the correction left the bad answer in the context; a fork from before it is asked for the final answer only */
     @Test
-    void anAnswerStillUnreadableAfterTheCorrectionFailsTheReview() {
+    void anAnswerStillUnreadableAfterTheCorrectionIsAskedOfAForkFromBeforeIt() throws Exception {
         corrections.add(BARE_LABEL);
+        forkAnswer = GOOD;
+
+        LocalReviewer.ReviewerAnswer answer = read(BARE_LABEL, true);
+
+        assertEquals(1, prompts.size(), "one correction in the reviewer's session");
+        assertEquals(List.of(UNREADABLE_MESSAGE), forkedBefore, "the fork leaves out the first unreadable answer and all after it");
+        assertEquals(List.of(FORK), forks, "the fork goes into the review's trace");
+        assertTrue(forkPrompts.get(0).startsWith("Your review is done: do not call any tool"), forkPrompts.get(0));
+        assertEquals("route()", answer.getLabels().get(0).getSignature());
+        assertTrue(answer.isCorrected());
+    }
+    @Test
+    void anAnswerTheForkCannotGiveEitherFailsTheReview() {
+        corrections.add(BARE_LABEL);
+        forkAnswer = BARE_LABEL;
 
         assertThrows(JacksonException.class, () -> read(BARE_LABEL, true));
-        assertEquals(1, prompts.size(), "one correction, then the review fails instead of judging with less");
+        assertEquals(1, prompts.size());
+        assertEquals(1, forkPrompts.size(), "one fork, then the review fails instead of judging with less");
+    }
+    @Test
+    void anAnswerWithoutLabelsIsCorrectedNotReadAsLabellingNothing() throws Exception {
+        corrections.add(GOOD);
+
+        LocalReviewer.ReviewerAnswer answer = read(ONE_FINDING, true);
+
+        assertEquals(1, prompts.size());
+        assertTrue(prompts.get(0).contains("no \"unitLabels\" field"), prompts.get(0));
+        assertEquals(1, answer.getLabels().size());
     }
     @Test
     void anUnreadableAnswerBeyondTheReviewsCorrectionsFailsWithoutAsking() {
@@ -146,7 +183,7 @@ class ReviewerAnswerRepairTest {
     }
     private LocalReviewer.ReviewerAnswer read(String first, boolean mayCorrect) throws IOException {
         try (OpenCodeClient client = new OpenCodeClient(url, "pw", Duration.ofSeconds(10))) {
-            return LocalReviewer.readReviewerAnswer(client, SESSION, first, mayCorrect, new NoopLog());
+            return LocalReviewer.readReviewerAnswer(client, SESSION, first, mayCorrect, forks::add, new NoopLog());
         }
     }
     private void handle(HttpExchange exchange) throws IOException {
@@ -155,7 +192,16 @@ class ReviewerAnswerRepairTest {
         if (route.equals("POST /api/session/" + SESSION + "/prompt")) {
             prompts.add(mapper.readTree(exchange.getRequestBody().readAllBytes()).path("text").asString());
         } else if (route.equals("GET /api/session/" + SESSION + "/message")) {
-            body = newestAssistant(corrections.get(Math.max(0, prompts.size() - 1)));
+            body = newestAssistant(prompts.isEmpty() ? UNREADABLE_MESSAGE : "msg_corrected", corrections.get(Math.max(0, prompts.size() - 1)));
+        } else if (route.equals("POST /api/session/" + SESSION + "/fork")) {
+            forkedBefore.add(mapper.readTree(exchange.getRequestBody().readAllBytes()).path("before").asString());
+            ObjectNode created = JsonNodeFactory.instance.objectNode();
+            created.putObject("data").put("id", FORK);
+            body = created.toString();
+        } else if (route.equals("POST /api/session/" + FORK + "/prompt")) {
+            forkPrompts.add(mapper.readTree(exchange.getRequestBody().readAllBytes()).path("text").asString());
+        } else if (route.equals("GET /api/session/" + FORK + "/message")) {
+            body = newestAssistant("msg_fork", forkAnswer);
         }
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.sendResponseHeaders(HttpResponseStatus.OK.code(), bytes.length == 0 ? -1 : bytes.length);
@@ -163,8 +209,8 @@ class ReviewerAnswerRepairTest {
             out.write(bytes);
         }
     }
-    private static String newestAssistant(String text) {
-        ObjectNode message = JsonNodeFactory.instance.objectNode().put("type", "assistant").put("finish", "stop").put("text", text);
+    private static String newestAssistant(String id, String text) {
+        ObjectNode message = JsonNodeFactory.instance.objectNode().put("id", id).put("type", "assistant").put("finish", "stop").put("text", text);
         ObjectNode toReturn = JsonNodeFactory.instance.objectNode();
         toReturn.putArray("data").add(message);
         toReturn.putObject("cursor").putNull("next");

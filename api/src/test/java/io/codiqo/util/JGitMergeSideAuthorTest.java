@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 
+import org.apache.commons.lang3.StringUtils;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.MergeCommand;
 import org.eclipse.jgit.lib.CommitBuilder;
@@ -225,7 +226,7 @@ class JGitMergeSideAuthorTest {
         commitAs("m.txt", "m", "mainline", "Maintainer", "maintainer@corp.com");
         RevCommit merge = mergeAs("feature", "Merge pull request #11", "CI Bot", "bot@ci.com");
 
-        Files.writeString(tempDir.resolve(".git").resolve("shallow"), boundary.getName() + "\n", StandardCharsets.UTF_8);
+        Files.writeString(tempDir.resolve(".git").resolve("shallow"), boundary.getName() + StringUtils.LF, StandardCharsets.UTF_8);
         try (Repository shallow = new FileRepositoryBuilder().setGitDir(new File(tempDir.toFile(), ".git")).build()) {
             RevCommit grafted = JGit.mergeSideCommits(shallow, merge).stream().filter(boundary::equals).findFirst().orElseThrow();
             assertEquals(0, grafted.getParentCount(), "precondition: the boundary reads as parentless");

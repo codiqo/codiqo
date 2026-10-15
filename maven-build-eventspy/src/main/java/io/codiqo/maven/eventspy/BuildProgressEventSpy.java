@@ -9,6 +9,8 @@ import java.nio.file.StandardOpenOption;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import javax.inject.Named;
 import javax.inject.Singleton;
@@ -50,10 +52,10 @@ public class BuildProgressEventSpy extends AbstractEventSpy {
         MavenProject project = execution.getProject();
         return switch (execution.getType()) {
             case SessionStarted -> Optional.ofNullable(execution.getSession())
-                    .map(session -> now + "\tSESSION\t" + session.getProjects().size());
+                    .map(session -> line(now, "SESSION", session.getProjects().size()));
             case ProjectStarted -> Optional.ofNullable(project).map(started -> {
                 startedAt.put(Pair.of(started.getGroupId(), started.getArtifactId()), now);
-                return now + "\tSTARTED\t" + moduleId(started);
+                return line(now, "STARTED", moduleId(started));
             });
             case ProjectSucceeded -> finished(project, "SUCCESS", now);
             case ProjectFailed -> finished(project, "FAILED", now);
@@ -65,7 +67,7 @@ public class BuildProgressEventSpy extends AbstractEventSpy {
         return Optional.ofNullable(project).map(done -> {
             // a skipped module never started, so it has no duration
             long duration = Optional.ofNullable(startedAt.remove(Pair.of(done.getGroupId(), done.getArtifactId()))).map(start -> now - start).orElse(0L);
-            return now + "\t" + status + "\t" + moduleId(done) + "\t" + duration;
+            return line(now, status, moduleId(done), duration);
         });
     }
     private synchronized void append(Path progressFile, String line) {
@@ -75,6 +77,9 @@ public class BuildProgressEventSpy extends AbstractEventSpy {
         } catch (IOException err) {
             log.warn("[codiqo] failed to write build progress to {}", progressFile, err);
         }
+    }
+    private static String line(Object... fields) {
+        return Stream.of(fields).map(String::valueOf).collect(Collectors.joining(String.valueOf(BuildProgressConfig.FIELD_SEPARATOR)));
     }
     private static String moduleId(MavenProject project) {
         return project.getGroupId() + ":" + project.getArtifactId();

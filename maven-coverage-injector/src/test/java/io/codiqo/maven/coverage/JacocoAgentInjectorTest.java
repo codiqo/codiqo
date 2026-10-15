@@ -1,5 +1,6 @@
 package io.codiqo.maven.coverage;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -244,7 +245,7 @@ class JacocoAgentInjectorTest {
         when(session.getAllProjects()).thenReturn(List.of(project));
 
         System.setProperty(CoverageInjectorConfig.PROP_AGENT_JAR, agentJar);
-        new JacocoAgentInjector().afterProjectsRead(session);
+        assertDoesNotThrow(() -> new JacocoAgentInjector().afterProjectsRead(session));
     }
 
     private static Xpp3Dom configurationWithArgLine(String value) {

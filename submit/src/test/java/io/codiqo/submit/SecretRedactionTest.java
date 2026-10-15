@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Map;
 
+import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 
 import tools.jackson.databind.json.JsonMapper;
@@ -15,6 +16,15 @@ class SecretRedactionTest {
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
     private static final String TOKEN = "ghp_0123456789abcdef";
 
+    /** a halt sends the tail of the run's log, written before the Action redacts it */
+    @Test
+    void scrubsPlainText() {
+        String log = "[ERROR] wagon: GET https://user:" + TOKEN + "@registry/x failed\nnext line";
+
+        assertEquals("[ERROR] wagon: GET https://user:" + SecretRedaction.PLACEHOLDER + "@registry/x failed\nnext line",
+                SecretRedaction.redactText(log, Map.of("GITHUB_TOKEN", TOKEN)));
+        assertEquals(StringUtils.EMPTY, SecretRedaction.redactText(null, Map.of("GITHUB_TOKEN", TOKEN)), "a halt without a log has nothing to scrub");
+    }
     @Test
     void scrubsAVariableWhoseNameSaysItIsASecretAtAnyDepth() {
         ObjectNode document = MAPPER.createObjectNode();

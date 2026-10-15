@@ -1,13 +1,20 @@
 package io.codiqo.submit;
 
 import java.io.IOException;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Consumer;
 
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
+import io.codiqo.api.testing.TestRun;
+import io.codiqo.client.model.TestRunModel;
 import io.codiqo.llm.ConventionGuidance;
 import lombok.experimental.UtilityClass;
 
@@ -64,6 +71,30 @@ public class SubmissionAssembly {
     public void excluded(SubmissionContext ctx) {
         new FileAnalysisPopulator().accept(ctx);
     }
+    private static TestRunModel testRun(RunArgs args, TestRun run) {
+        TestRunModel toReturn = new TestRunModel()
+                .tests(run.getTests())
+                .failures(run.getFailures())
+                .errors(run.getErrors())
+                .skipped(run.getSkipped())
+                .testTimeMs(run.getTestTime().toMillis())
+                .skippedTests(run.getSkippedTests());
+
+        Optional.ofNullable(args.getCompilePhaseTook()).map(Duration::toMillis).ifPresent(toReturn::compilePhaseMs);
+        Optional.ofNullable(args.getTestPhaseTook()).map(Duration::toMillis).ifPresent(toReturn::testPhaseMs);
+        return toReturn;
+    }
+    /**
+     * The whole analysis's time, stamped right before the submission is sent: assembly runs before the review is
+     * joined, and the review is usually the longest part of the analysis.
+     */
+    public void stampAnalysisTime(SubmissionContext ctx) {
+        TestRunModel testRun = ctx.getSubmissionModel().getTestRun();
+        Instant started = ctx.getArgs().getAnalysisStartedAt();
+        if (BooleanUtils.and(new boolean[] { Objects.nonNull(testRun), Objects.nonNull(started) })) {
+            testRun.setAnalysisMs(Duration.between(started, Instant.now()).toMillis());
+        }
+    }
     /**
      * Scoring runs server-side, so the effective config and the repository's own instruction files are collected
      * here — the last point that still has a work tree — and travel with the submission.
@@ -73,6 +104,7 @@ public class SubmissionAssembly {
         Log log = ctx.getLogFactory().getLogger(ConventionGuidance.class);
 
         ctx.getSubmissionModel().setScoringConfig(ScoringConfigs.map(args));
+        Optional.ofNullable(args.getTestRun()).map(run -> testRun(args, run)).ifPresent(ctx.getSubmissionModel()::setTestRun);
 
         /**
          * an over-budget instruction set has to surface on a scored submission, but not on the other paths: the

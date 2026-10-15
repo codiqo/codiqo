@@ -509,6 +509,40 @@ paths:
         - apiKey: []
         - bearerAuth: []
 
+  /api/v1/projects/{projectId}/halt:
+    post:
+      operationId: haltProject
+      tags: [CommitIndex]
+      summary: Stop the project's analysis runs until an administrator resumes them
+      description: |
+        Posted by a client whose run failed on codiqo's side (a module whose tests ran produced no coverage, a crash of
+        the analysis), not on the commit's. A scheduled run would otherwise pick the same commit again and pay for its
+        local review every time. While the project is halted, listMissingAnalyses lists no commits and carries the halt,
+        and clients refuse to analyse. The first halt is kept: a later one, from a run that started before the first was
+        recorded, does not replace it. An administrator resumes the project from codiqo-web.
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectHaltRequestModel'
+      responses:
+        '204':
+          description: The project is halted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - apiKey: []
+        - bearerAuth: []
+
   /api/v1/projects/{projectId}/commits/fix-commits:
     get:
       operationId: listFixCommits
@@ -721,6 +755,53 @@ components:
         - SELF_EXCLUDED
         - INCOMPLETE_HISTORY
         - LOCAL_REVIEW_FAILURE
+        - SYSTEM_FAILURE
+
+    TestRunModel:
+      type: object
+      description: |
+        The commit's test run in the analysis build, read from the JUnit XML reports the build wrote. Durations are wall
+        clock in milliseconds; testTimeMs is the sum of the suites' own times, so it excludes JVM start-up and build work.
+      required: [tests, failures, errors, skipped, testTimeMs]
+      properties:
+        tests:
+          type: integer
+          minimum: 0
+        failures:
+          type: integer
+          minimum: 0
+        errors:
+          type: integer
+          minimum: 0
+        skipped:
+          description: Tests the run did not execute, such as @Disabled ones
+          type: integer
+          minimum: 0
+        testTimeMs:
+          type: integer
+          format: int64
+          minimum: 0
+        compilePhaseMs:
+          description: The build's compile run, without tests
+          type: integer
+          format: int64
+          minimum: 0
+        testPhaseMs:
+          description: The build's test run, without recompilation
+          type: integer
+          format: int64
+          minimum: 0
+        analysisMs:
+          description: The whole analysis of the commit, from checkout to submission
+          type: integer
+          format: int64
+          minimum: 0
+        skippedTests:
+          description: The skipped tests as class#method, the first 100
+          type: array
+          maxItems: 100
+          items:
+            type: string
 
     AnalysisBuildFailureModel:
       type: object
@@ -821,6 +902,8 @@ components:
             own size ceiling and the prompt fences it and ignores instructions embedded in it.
         scoringConfig:
           $ref: '#/components/schemas/ScoringConfigModel'
+        testRun:
+          $ref: '#/components/schemas/TestRunModel'
         buildFailure:
           description: Present when this is a diff-only degraded submission of a build-breaking commit — no coverage/static-analysis/duplication/code-unit data was collectable
           allOf:
@@ -2284,10 +2367,43 @@ components:
         projectId:
           type: string
         commitShas:
+          description: Empty while the project is halted
           type: array
           items:
             type: string
             pattern: '^[a-f0-9]{40}$'
+        halt:
+          $ref: '#/components/schemas/ProjectHaltModel'
+
+    ProjectHaltRequestModel:
+      type: object
+      required: [commitSha, reason]
+      properties:
+        commitSha:
+          description: The commit whose run failed
+          type: string
+          pattern: '^[a-f0-9]{40}$'
+        reason:
+          description: One line naming the failure
+          type: string
+          maxLength: 2000
+        detail:
+          description: The failure's stack trace or log excerpt
+          type: string
+          maxLength: 65536
+
+    ProjectHaltModel:
+      type: object
+      required: [commitSha, reason, haltedAt]
+      properties:
+        commitSha:
+          type: string
+          pattern: '^[a-f0-9]{40}$'
+        reason:
+          type: string
+        haltedAt:
+          type: string
+          format: date-time
 
     FixCommitsModel:
       type: object

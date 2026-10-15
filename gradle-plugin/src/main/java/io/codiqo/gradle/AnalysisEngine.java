@@ -16,15 +16,17 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Repository;
 import org.jacoco.core.tools.ExecFileLoader;
-import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Joiner;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
+import io.codiqo.client.api.CommitIndexApi;
 import io.codiqo.api.BuildTool;
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.DeltaAnalyzer;
@@ -34,6 +36,8 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
+import io.codiqo.api.testing.TestRun;
+import io.codiqo.api.testing.TestRuns;
 import io.codiqo.client.ApiException;
 import io.codiqo.client.model.AnalysisAcceptedModel;
 import io.codiqo.client.model.AnalysisBuildFailureModel;
@@ -49,7 +53,9 @@ import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.gradle.model.AnalysisRequest;
 import io.codiqo.gradle.model.ModuleData;
 import io.codiqo.submit.AnalysisSubmitter;
+import io.codiqo.submit.CommitBuildFailedException;
 import io.codiqo.submit.CommitExclusions;
+import io.codiqo.submit.CommitIndexPublisher;
 import io.codiqo.submit.CommitExclusions.Exclusion;
 import io.codiqo.submit.OutputSerializer;
 import io.codiqo.submit.SubmissionAssembly;
@@ -68,6 +74,7 @@ import io.codiqo.submit.review.LocalReviewException;
 import io.codiqo.submit.review.LocalReviewRun;
 import io.codiqo.llm.ConventionGuidance;
 import io.codiqo.llm.review.ReviewTrace;
+import io.codiqo.submit.ProjectHalts;
 import io.codiqo.submit.ProjectTags;
 import lombok.experimental.UtilityClass;
 
@@ -106,6 +113,8 @@ public class AnalysisEngine {
         args.setHotspotsEnabled(request.isHotspots());
         args.setFailOnJdtlsError(request.isFailOnJdtlsError());
         args.setFailOnUninstrumentedModule(request.isFailOnUninstrumentedModule());
+        Optional.ofNullable(request.getTestFailureHaltShare()).filter(StringUtils::isNotBlank).map(String::trim).map(Double::parseDouble).ifPresent(args::setTestFailureHaltShare);
+        Optional.ofNullable(request.getTestFailureHaltMinTests()).filter(StringUtils::isNotBlank).map(String::trim).map(Integer::parseInt).ifPresent(args::setTestFailureHaltMinTests);
         args.setJavaHome(new File(request.getJavaHome()));
         args.setOutputDirectory(new File(request.getOutputDirectory()));
         Optional.ofNullable(request.getBuildProgressFile()).map(File::new).ifPresent(args::setBuildProgressFile);
@@ -137,45 +146,105 @@ public class AnalysisEngine {
                 return;
             }
 
+            /** before the review starts: a halted project must not pay for another review the same failure would waste */
+            CommitIndexApi client = CommitIndexPublisher.buildClient(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(), request.getReadTimeoutSeconds());
+            ProjectHalts.requireRunning(log, client, request.getApiUrl(), request.getRootCode());
+            try {
+                analyse(request, args, logFactory, log);
+            } catch (Exception err) {
+                /**
+                 * A run that fails here submits nothing, so the next scheduled run would analyse the same commit and pay
+                 * for its review again, every hour; the project is halted until an administrator resumes it. A run
+                 * that was stopped is not a failure of codiqo's, and the thread's flag tells it apart as on Maven: an
+                 * interrupt often surfaces as an I/O error (ClosedByInterruptException, InterruptedIOException) whose
+                 * root cause is not an InterruptedException. A build the author broke with skipOnBuildFailure off is
+                 * the author's failure and halts nothing ({@link CommitBuildFailedException}).
+                 */
+                boolean haltsNothing = BooleanUtils.or(new boolean[] {
+                        Thread.currentThread().isInterrupted(),
+                        ExceptionUtils.getRootCause(err) instanceof InterruptedException,
+                        ExceptionUtils.indexOfThrowable(err, CommitBuildFailedException.class) >= 0 });
+                /** a run that fails after its submission was accepted has scored its commit, so it halts nothing */
+                if (BooleanUtils.negate(BooleanUtils.or(new boolean[] { haltsNothing, args.isSubmissionAccepted() }))) {
+                    ProjectHalts.halt(log, client, request.getApiUrl(), request.getRootCode(), args.getCommitId(), err);
+                    ProgressStage.abort(args, ExceptionUtils.getRootCauseMessage(err), ProjectHalts.traceOf(args, args.getCommitId()));
+                }
+                throw err;
+            }
+        }
+    }
+    private static void analyse(AnalysisRequest request, RunArgs args, LogFactory logFactory, Log log) throws Exception {
+        args.setAnalysisStartedAt(Instant.now());
+
+        /**
+         * A failed build leaves no trustworthy class output, so the normal pipeline cannot run: no ClassGraph scan, no
+         * JDT import, no coverage. The Maven side takes the same fork, and both must stay aligned so a build-failed
+         * commit is treated the same whichever plugin analysed it.
+         */
+        if (StringUtils.isNotBlank(request.getBuildFailureDetail())) {
             Optional<LocalReviewRun> review = startReview(request, args, logFactory, log);
             try {
-                /**
-                 * A failed build leaves no trustworthy class output, so the normal pipeline cannot run: no ClassGraph
-                 * scan, no JDT import, no coverage. The Maven side takes the same fork, and both must stay aligned so a
-                 * build-failed commit is treated the same whichever plugin analysed it.
-                 */
-                if (StringUtils.isNotBlank(request.getBuildFailureDetail())) {
-                    runDegraded(request, args, review, logFactory, log);
-                    return;
-                }
-
-                /**
-                 * Coverage is merged only after the exclusion gate: merging is pointless work for an excluded commit, and
-                 * mergeCoverageParts throws when it cannot stamp the merged file, which would fail a run that should
-                 * have ended as an exclusion.
-                 */
-                if (BooleanUtils.negate(request.isIgnoreCoverage())) {
-                    for (ModuleData module : request.getModules()) {
-                        mergeCoverageParts(module, log);
-                    }
-                }
-
-                try (ClassGraphSpec scan = buildProjects(request, args, log)) {
-                    runEngine(request, args, review, logFactory);
-                } finally {
-                    args.getProjects().forEach(spec -> {
-                        try {
-                            spec.close();
-                        } catch (Exception err) {
-                            log.warn("failed to close project spec %s: %s", spec, err.getMessage());
-                        }
-                    });
-                }
+                runDegraded(request, args, review, logFactory, log);
             } finally {
                 if (review.isPresent()) {
                     review.get().close();
                 }
             }
+            return;
+        }
+
+        /**
+         * Gradle has built and tested the commit before this worker starts, so whether the run can be measured is known
+         * before the review is paid for: a run where most tests failed, or a module whose tests ran without coverage,
+         * fails here and halts the project instead of starting a review the failure would waste. Coverage is merged only
+         * after the exclusion gate: merging is pointless work for an excluded commit, and mergeCoverageParts throws when
+         * it cannot stamp the merged file, which would fail a run that should have ended as an exclusion.
+         */
+        if (BooleanUtils.negate(request.isIgnoreCoverage())) {
+            for (ModuleData module : request.getModules()) {
+                mergeCoverageParts(module, log);
+            }
+            TestRun testRun = TestRuns.read(request.getModules().stream().flatMap(module -> module.getTestReportDirectories().stream()).map(File::new).distinct().toList(), log);
+            log.info("test run: %d tests, %d failed, %d errors, %d skipped in %s", testRun.getTests(), testRun.getFailures(), testRun.getErrors(), testRun.getSkipped(), testRun.getTestTime());
+            TestRuns.requireHealthy(testRun, args.getTestFailureHaltShare(), args.getTestFailureHaltMinTests());
+            args.setTestRun(testRun);
+            if (args.isFailOnUninstrumentedModule()) {
+                requireCoverage(request.getModules(), log);
+            }
+        }
+
+        Optional<LocalReviewRun> review = startReview(request, args, logFactory, log);
+        try (ClassGraphSpec scan = buildProjects(request, args, log)) {
+            runEngine(request, args, review, logFactory);
+        } finally {
+            args.getProjects().forEach(spec -> {
+                try {
+                    spec.close();
+                } catch (Exception err) {
+                    log.warn("failed to close project spec %s: %s", spec, err.getMessage());
+                }
+            });
+            if (review.isPresent()) {
+                review.get().close();
+            }
+        }
+    }
+    /**
+     * A module whose tests ran but which has no merged coverage: the agent did not attach. Coverage capture finds the
+     * same thing later, after the review has started; found here, the run fails before the review is paid for.
+     */
+    private static void requireCoverage(List<ModuleData> modules, Log log) throws IOException {
+        List<String> uninstrumented = Lists.newArrayList();
+        for (ModuleData module : modules) {
+            TestRun moduleRun = TestRuns.read(module.getTestReportDirectories().stream().map(File::new).toList(), log);
+            boolean testsRan = moduleRun.getTests() > moduleRun.getSkipped();
+            if (BooleanUtils.and(new boolean[] { testsRan, BooleanUtils.negate(new File(module.getCoveragePath()).isFile()) })) {
+                uninstrumented.add(module.getGroupId() + ":" + module.getArtifactId());
+            }
+        }
+        if (CollectionUtils.isNotEmpty(uninstrumented)) {
+            throw new IOException(String.format("coverage is required (codiqo.failOnUninstrumentedModule) but the tests of %s ran without the JaCoCo agent writing coverage",
+                    Joiner.on(", ").join(uninstrumented)));
         }
     }
     /**
@@ -252,7 +321,7 @@ public class AnalysisEngine {
          * one. A Gradle exception type cannot be used: the worker runs on a bare classpath with no gradle-api.
          */
         if (BooleanUtils.negate(args.isSkipOnBuildFailure())) {
-            throw new IllegalStateException(String.format("commit %s: %s, and codiqo.skipOnBuildFailure is false%n%s",
+            throw new CommitBuildFailedException(String.format("commit %s: %s, and codiqo.skipOnBuildFailure is false%n%s",
                     args.getCommitId(), reason, request.getBuildFailureDetail()));
         }
 
@@ -569,7 +638,8 @@ public class AnalysisEngine {
             review.get().attachTo(ctx);
             return true;
         } catch (LocalReviewException err) {
-            if (Thread.currentThread().isInterrupted()) {
+            /** as on Maven: a stopped run and a review the provider failed fail the run, which halts the project */
+            if (BooleanUtils.or(new boolean[] { Thread.currentThread().isInterrupted(), err.isProviderFailure() })) {
                 throw err;
             }
             log.error("commit %s excluded: %s", args.getCommitId(), err.getMessage());
@@ -586,13 +656,18 @@ public class AnalysisEngine {
     }
     /** with the review's trace when it was reviewed: the trace goes with the review it explains, never alone */
     private static AnalysisAcceptedModel submit(AnalysisRequest request, SubmissionContext ctx, Log log) throws Exception {
+        SubmissionAssembly.stampAnalysisTime(ctx);
         File trace = ReviewTrace.file(ctx.getArgs(), ctx.getArgs().getCommitId());
+        AnalysisAcceptedModel toReturn;
         if (BooleanUtils.and(new boolean[] { Objects.nonNull(ctx.getSubmissionModel().getLocalReview()), trace.isFile() })) {
-            return AnalysisSubmitter.submit(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(),
+            toReturn = AnalysisSubmitter.submit(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(),
                     request.getReadTimeoutSeconds(), ctx.getSubmissionModel(), trace, log);
+        } else {
+            toReturn = AnalysisSubmitter.submit(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(),
+                    request.getReadTimeoutSeconds(), ctx.getSubmissionModel(), log);
         }
-        return AnalysisSubmitter.submit(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(),
-                request.getReadTimeoutSeconds(), ctx.getSubmissionModel(), log);
+        ctx.getArgs().setSubmissionAccepted(true);
+        return toReturn;
     }
     /** each review setting left unset keeps its {@link RunArgs} default; the trace goes beside the analysis's output */
     @VisibleForTesting

@@ -1,5 +1,7 @@
 package io.codiqo.maven.coverage;
 
+import static java.util.function.Predicate.not;
+
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -14,10 +16,12 @@ import java.util.stream.Collectors;
 import javax.inject.Named;
 import javax.inject.Singleton;
 
+import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.text.StringSubstitutor;
 import org.apache.maven.AbstractMavenLifecycleParticipant;
+import org.apache.maven.MavenExecutionException;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.model.PluginExecution;
@@ -55,22 +59,77 @@ public class JacocoAgentInjector extends AbstractMavenLifecycleParticipant {
     private static final String PROPERTY_NAME = "propertyName";
     private static final String JACOCO_EXEC = "jacoco.exec";
     private static final String POM_PACKAGING = "pom";
+    private static final String FORK_COUNT = "forkCount";
+    private static final String FORK_MODE = "forkMode";
 
     @Override
-    public void afterProjectsRead(MavenSession session) {
+    public void afterProjectsRead(MavenSession session) throws MavenExecutionException {
         String agentJar = System.getProperty(CoverageInjectorConfig.PROP_AGENT_JAR);
         if (StringUtils.isNotBlank(agentJar)) {
             for (MavenProject project : session.getAllProjects()) {
                 inject(project, agentJar.trim());
             }
+            requireAttachable(session);
         }
     }
+    /**
+     * Fails the build before anything compiles when a module with tests runs them inside the build's own JVM
+     * ({@code forkCount=0}, or {@code forkMode=never} on old plugin versions): the agent rides on the test JVM's
+     * argLine, so such a module records no coverage at all. Found here it costs seconds; found by
+     * {@link UninstrumentedModuleGuard} it costs the build up to that module's tests, and the review running beside them.
+     * Inert unless the codiqo plugin asked for uninstrumented modules to fail the run.
+     */
+    private static void requireAttachable(MavenSession session) throws MavenExecutionException {
+        String report = System.getProperty(CoverageInjectorConfig.PROP_UNINSTRUMENTED_REPORT);
+        if (StringUtils.isNotBlank(report)) {
+            List<String> inProcess = session.getAllProjects().stream()
+                    .filter(not(JacocoAgentInjector::isAggregator))
+                    .filter(JacocoAgentInjector::hasTestSources)
+                    .flatMap(project -> inProcessTests(project).stream())
+                    .toList();
+            if (inProcess.size() > 0) {
+                inProcess.forEach(problem -> UninstrumentedModuleGuard.record(report.trim(), problem));
+                throw new MavenExecutionException("[codiqo] the JaCoCo agent cannot attach: " + inProcess.stream().collect(Collectors.joining("; ")), (File) null);
+            }
+        }
+    }
+    private static List<String> inProcessTests(MavenProject project) {
+        List<String> toReturn = new ArrayList<>();
+        List<Plugin> plugins = new ArrayList<>();
+        findDeclaredPlugin(project, SUREFIRE_ARTIFACT_ID).ifPresent(plugins::add);
+        findDeclaredPlugin(project, FAILSAFE_ARTIFACT_ID).ifPresent(plugins::add);
+        for (Plugin plugin : plugins) {
+            List<Object> configurations = new ArrayList<>();
+            configurations.add(plugin.getConfiguration());
+            plugin.getExecutions().forEach(execution -> configurations.add(execution.getConfiguration()));
+            boolean inProcess = configurations.stream()
+                    .filter(Xpp3Dom.class::isInstance)
+                    .map(Xpp3Dom.class::cast)
+                    .anyMatch(config -> BooleanUtils.or(new boolean[] {
+                            value(project, config, FORK_COUNT).filter("0"::equals).isPresent(),
+                            value(project, config, FORK_MODE).filter("never"::equals).isPresent() }));
+            if (inProcess) {
+                toReturn.add(String.format("%s:%s runs its %s tests in the build JVM (forkCount=0), where no agent attaches",
+                        project.getGroupId(), project.getArtifactId(), plugin.getArtifactId()));
+            }
+        }
+        return toReturn;
+    }
+    /** the child's value with ${property} references read from the project, as Maven will evaluate it */
+    private static Optional<String> value(MavenProject project, Xpp3Dom config, String child) {
+        return Optional.ofNullable(config.getChild(child))
+                .map(Xpp3Dom::getValue)
+                .map(raw -> StringUtils.trim(new StringSubstitutor(project.getProperties()::getProperty).replace(raw)));
+    }
+    private static boolean hasTestSources(MavenProject project) {
+        return ArrayUtils.isNotEmpty(new File(project.getBuild().getTestSourceDirectory()).list());
+    }
     private static void inject(MavenProject project, String agentJar) {
-        if (POM_PACKAGING.equals(project.getPackaging())) {
+        if (isAggregator(project)) {
             return;
         }
 
-        String destFile = new File(project.getBuild().getDirectory(), JACOCO_EXEC).getAbsolutePath();
+        String destFile = destFile(project).getAbsolutePath();
 
         /**
          * quote the whole -javaagent argument so surefire/failsafe keep it as a single token when the agent jar or
@@ -86,6 +145,14 @@ public class JacocoAgentInjector extends AbstractMavenLifecycleParticipant {
         findDeclaredPlugin(project, FAILSAFE_ARTIFACT_ID).ifPresent(failsafe -> injectAgent(failsafe, javaAgent, agentPropertyNames, argLineProperty));
 
         log.info("[codiqo] injected JaCoCo agent into {} test argLine (destfile: {})", project.getArtifactId(), destFile);
+    }
+    /** where the injected agent writes the module's coverage, which {@link UninstrumentedModuleGuard} checks for */
+    public static File destFile(MavenProject project) {
+        return new File(project.getBuild().getDirectory(), JACOCO_EXEC);
+    }
+    /** a pom module runs no tests, so it gets no agent */
+    public static boolean isAggregator(MavenProject project) {
+        return POM_PACKAGING.equals(project.getPackaging());
     }
     private static void injectAgent(Plugin plugin, String javaAgent, Set<String> agentPropertyNames, String argLineProperty) {
         /**
