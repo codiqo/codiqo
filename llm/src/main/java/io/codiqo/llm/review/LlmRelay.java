@@ -125,6 +125,8 @@ public final class LlmRelay implements AutoCloseable {
      */
     private final AtomicInteger rateLimitRound = new AtomicInteger();
     private final Object rateLimitLock = new Object();
+    /** when the current rate-limit round started; guarded by {@link #rateLimitLock} */
+    private Instant rateLimitRoundStarted = Instant.EPOCH;
     /** when the current rate-limit round ends; guarded by {@link #rateLimitLock} */
     private Instant rateLimitRoundEnds = Instant.EPOCH;
     /**
@@ -233,6 +235,7 @@ public final class LlmRelay implements AutoCloseable {
         }
 
         HttpResponse<InputStream> response;
+        Instant sentAt;
         try {
             if (rateLimitExhausted.get()) {
                 respondRateLimitExhausted(exchange);
@@ -273,6 +276,7 @@ public final class LlmRelay implements AutoCloseable {
                 }
             }
 
+            sentAt = Instant.now();
             try {
                 response = http.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
             } catch (IOException err) {
@@ -294,7 +298,7 @@ public final class LlmRelay implements AutoCloseable {
         }
 
         if (HttpStatusClass.valueOf(response.statusCode()) == HttpStatusClass.SUCCESS) {
-            rateLimitRound.set(0);
+            rateLimitRecovered(sentAt);
         } else {
             providerErrors.add(response.statusCode());
         }
@@ -414,10 +418,24 @@ public final class LlmRelay implements AutoCloseable {
                 log.error("llm relay: the provider still answered 429 after %d rounds of waiting; every further call of this review is refused", rateLimitRetries);
                 return Optional.empty();
             }
+            rateLimitRoundStarted = now;
             rateLimitRoundEnds = now.plus(rateLimitWait(answer, round - 1));
             log.warn("llm relay: %s %s answered 429; rate-limit round %d of %d, every call comes back in %s",
                     exchange.getRequestMethod(), path, round, rateLimitRetries, Duration.between(now, rateLimitRoundEnds));
             return Optional.of(Duration.between(now, rateLimitRoundEnds));
+        }
+    }
+    /**
+     * Ends the rate limit's rounds, but only for a call sent after the current round started. Reviewers call in
+     * parallel, so the answer to a call sent before the provider began refusing can arrive after a round started; it
+     * says nothing about the limit having lifted, and resetting on it made the next 429 start the schedule again at its
+     * first, shortest round, so a mixed burst could keep a review waiting past every configured round.
+     */
+    private void rateLimitRecovered(Instant sentAt) {
+        synchronized (rateLimitLock) {
+            if (sentAt.isAfter(rateLimitRoundStarted)) {
+                rateLimitRound.set(0);
+            }
         }
     }
     /**

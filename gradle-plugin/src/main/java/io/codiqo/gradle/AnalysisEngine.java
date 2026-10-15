@@ -53,6 +53,7 @@ import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.gradle.model.AnalysisRequest;
 import io.codiqo.gradle.model.ModuleData;
 import io.codiqo.submit.AnalysisSubmitter;
+import io.codiqo.submit.CommitBuildFailedException;
 import io.codiqo.submit.CommitExclusions;
 import io.codiqo.submit.CommitIndexPublisher;
 import io.codiqo.submit.CommitExclusions.Exclusion;
@@ -156,13 +157,15 @@ public class AnalysisEngine {
                  * for its review again, every hour; the project is halted until an administrator resumes it. A run
                  * that was stopped is not a failure of codiqo's, and the thread's flag tells it apart as on Maven: an
                  * interrupt often surfaces as an I/O error (ClosedByInterruptException, InterruptedIOException) whose
-                 * root cause is not an InterruptedException.
+                 * root cause is not an InterruptedException. A build the author broke with skipOnBuildFailure off is
+                 * the author's failure and halts nothing ({@link CommitBuildFailedException}).
                  */
-                boolean stopped = BooleanUtils.or(new boolean[] {
+                boolean haltsNothing = BooleanUtils.or(new boolean[] {
                         Thread.currentThread().isInterrupted(),
-                        ExceptionUtils.getRootCause(err) instanceof InterruptedException });
+                        ExceptionUtils.getRootCause(err) instanceof InterruptedException,
+                        ExceptionUtils.indexOfThrowable(err, CommitBuildFailedException.class) >= 0 });
                 /** a run that fails after its submission was accepted has scored its commit, so it halts nothing */
-                if (BooleanUtils.negate(BooleanUtils.or(new boolean[] { stopped, args.isSubmissionAccepted() }))) {
+                if (BooleanUtils.negate(BooleanUtils.or(new boolean[] { haltsNothing, args.isSubmissionAccepted() }))) {
                     ProjectHalts.halt(log, client, request.getApiUrl(), request.getRootCode(), args.getCommitId(), err);
                     ProgressStage.abort(args, ExceptionUtils.getRootCauseMessage(err), ProjectHalts.traceOf(args, args.getCommitId()));
                 }
@@ -318,7 +321,7 @@ public class AnalysisEngine {
          * one. A Gradle exception type cannot be used: the worker runs on a bare classpath with no gradle-api.
          */
         if (BooleanUtils.negate(args.isSkipOnBuildFailure())) {
-            throw new IllegalStateException(String.format("commit %s: %s, and codiqo.skipOnBuildFailure is false%n%s",
+            throw new CommitBuildFailedException(String.format("commit %s: %s, and codiqo.skipOnBuildFailure is false%n%s",
                     args.getCommitId(), reason, request.getBuildFailureDetail()));
         }
 

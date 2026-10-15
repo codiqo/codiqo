@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamConstants;
@@ -46,7 +47,7 @@ public class TestRuns {
         for (File dir : reportDirectories) {
             if (dir.isDirectory()) {
                 for (File report : FileUtils.listFiles(dir, JUNIT_REPORTS, null)) {
-                    read(report, totals, log);
+                    read(report, log).ifPresent(totals::merge);
                 }
             }
         }
@@ -77,9 +78,12 @@ public class TestRuns {
     }
     /**
      * A report that cannot be read is left out with a warning: one truncated file, from a test JVM killed mid-write,
-     * must not fail the analysis of a commit whose other reports are whole.
+     * must not fail the analysis of a commit whose other reports are whole. Its counts are kept apart until the whole
+     * file has been read: a report cut after its suite's start tag has already given its totals, and a killed JVM's
+     * {@code tests="30" failures="30"} merged on its own would halt the project as an unhealthy test run.
      */
-    private static void read(File report, Totals totals, Log log) {
+    private static Optional<Totals> read(File report, Log log) {
+        Totals totals = new Totals();
         try (InputStream in = Files.newInputStream(report.toPath())) {
             XMLStreamReader xml = factory().createXMLStreamReader(in);
             int suiteDepth = 0;
@@ -109,8 +113,10 @@ public class TestRuns {
                 }
             }
             xml.close();
+            return Optional.of(totals);
         } catch (IOException | XMLStreamException err) {
             log.warn("test report %s left out of the test run: %s", report, err.getMessage());
+            return Optional.empty();
         }
     }
     /** reports are build output the analysed project controls, so they get no DTD and no external entities */
@@ -134,6 +140,14 @@ public class TestRuns {
             errors += count(suite, "errors");
             skipped += count(suite, SKIPPED);
             seconds += time(suite.getAttributeValue(null, "time"));
+        }
+        private void merge(Totals other) {
+            tests += other.tests;
+            failures += other.failures;
+            errors += other.errors;
+            skipped += other.skipped;
+            seconds += other.seconds;
+            other.skippedTests.forEach(this::skipped);
         }
         private void skipped(String testCase) {
             if (StringUtils.isNotEmpty(testCase) && skippedTests.size() < MAX_SKIPPED_TESTS) {

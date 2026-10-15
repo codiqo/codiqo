@@ -29,6 +29,7 @@ import io.codiqo.maven.auth.MavenCredentials;
 import io.codiqo.maven.logging.MavenLogFactory;
 import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.submit.AnalysisSubmitter;
+import io.codiqo.submit.CommitBuildFailedException;
 import io.codiqo.submit.CommitExclusions;
 import io.codiqo.submit.CommitIndexPublisher;
 import io.codiqo.submit.ProjectHalts;
@@ -87,15 +88,17 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
     /**
      * A run that fails here submits nothing, so the next scheduled run would analyse the same commit and pay for its
      * review again, every hour. The project is halted instead, and stays halted until an administrator resumes it. A
-     * run that was stopped is not a failure of codiqo's, and a halted project is already halted.
+     * run that was stopped is not a failure of codiqo's, a halted project is already halted, and a build the author
+     * broke with {@code codiqo.skipOnBuildFailure} off is the author's failure ({@link CommitBuildFailedException}).
      */
     @Override
     protected void doOnFailure(RunArgs args, Exception err) {
-        boolean stopped = BooleanUtils.or(new boolean[] {
+        boolean haltsNothing = BooleanUtils.or(new boolean[] {
                 Thread.currentThread().isInterrupted(),
-                ExceptionUtils.getRootCause(err) instanceof InterruptedException });
+                ExceptionUtils.getRootCause(err) instanceof InterruptedException,
+                ExceptionUtils.indexOfThrowable(err, CommitBuildFailedException.class) >= 0 });
         /** a run that fails after its submission was accepted has scored its commit, so it halts nothing */
-        if (Objects.nonNull(haltableCommitId) && BooleanUtils.negate(BooleanUtils.or(new boolean[] { stopped, args.isSubmissionAccepted() }))) {
+        if (Objects.nonNull(haltableCommitId) && BooleanUtils.negate(BooleanUtils.or(new boolean[] { haltsNothing, args.isSubmissionAccepted() }))) {
             try {
                 ProjectHalts.halt(new MavenMessageReporter(getLog()), commitIndexClient(), apiUrl, projectId(), haltableCommitId, err);
             } catch (MojoExecutionException credentialErr) {

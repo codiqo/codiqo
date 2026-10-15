@@ -111,7 +111,6 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     protected void doPrepare(RunArgs args) throws Exception {
         super.doPrepare(args);
 
-        requireCoverageAgent(args);
         requireResolvableCommit(args, commitId);
         args.setCommitId(JGit.resolveCommit(args.getGit(), commitId));
         args.setFirstParentOnly(firstParentOnly);
@@ -151,6 +150,12 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                     commitId, CommitExclusions.creditedAuthorEmail(args)));
         }
         doBeforeAnalysis(args);
+        /**
+         * After doBeforeAnalysis, which is where submit-commit-analysis learns the project is running and the commit
+         * may halt it. Checked in doPrepare, a missing agent failed before that, so it halted nothing and every
+         * scheduled run picked the same commit and failed the same way.
+         */
+        requireCoverageAgent(args);
 
         File temp = Files.createTempDirectory("codiqo").toFile();
         temp.deleteOnExit();

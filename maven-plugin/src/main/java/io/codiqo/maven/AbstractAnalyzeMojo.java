@@ -131,6 +131,7 @@ import io.codiqo.maven.populator.ProjectModelPopulator;
 import io.codiqo.maven.populator.SubmissionSummaryPrinter;
 import io.codiqo.maven.surefire.SurefireInjectorConfig;
 import io.codiqo.maven.timemachine.TimeMachineConfig;
+import io.codiqo.submit.CommitBuildFailedException;
 import io.codiqo.submit.OutputSerializer;
 import io.codiqo.submit.SubmissionAssembly;
 import io.codiqo.submit.SubmissionContext;
@@ -1251,7 +1252,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                 getLog().warn(String.format(Locale.ROOT, "fork build failed (exit code %d), skipping with category %s: %s", result.getExitCode(), category, reason));
                 return skipped(args, reason, category, false, sysout, syserr);
             } else {
-                throw new MojoExecutionException("maven build failed in fork", result.getExecutionException());
+                throw new CommitBuildFailedException("maven build failed in fork, and codiqo.skipOnBuildFailure is false", result.getExecutionException());
             }
         }
 

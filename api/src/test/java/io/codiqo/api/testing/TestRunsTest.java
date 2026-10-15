@@ -86,6 +86,22 @@ class TestRunsTest {
 
         assertTrue(run.getSkippedTests().stream().noneMatch(test -> test.contains("s3cret")), run.getSkippedTests().toString());
     }
+    /** a report cut after its suite's start tag has already been counted when the read fails, and must not count */
+    @Test
+    void leavesOutTheCountsOfAReportCutAfterItsSuiteStarted() throws IOException {
+        Path reports = Files.createDirectories(tempDir.resolve("reports"));
+        Files.writeString(reports.resolve("TEST-whole.xml"), "<testsuite tests=\"10\" failures=\"0\" errors=\"0\" skipped=\"0\" time=\"1\"/>", StandardCharsets.UTF_8);
+        Files.writeString(reports.resolve("TEST-killed.xml"), """
+                <testsuite tests="30" failures="30" errors="0" skipped="1" time="1">
+                  <testcase classname="a.ATest" name="disabled"><skipped/></testcase>
+                  <testcase classname="a.ATest" name="cut""", StandardCharsets.UTF_8);
+
+        TestRun run = TestRuns.read(List.of(reports.toFile()), new NoopLog());
+
+        assertEquals(10, run.getTests());
+        assertEquals(0, run.getFailures());
+        assertEquals(List.of(), run.getSkippedTests());
+    }
     @Test
     void mostTestsFailingIsUnhealthy() {
         TestRun run = TestRun.builder().tests(40).failures(25).errors(5).skipped(0).testTime(Duration.ZERO).build();

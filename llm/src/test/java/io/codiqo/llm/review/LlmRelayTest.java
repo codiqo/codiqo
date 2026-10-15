@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -31,6 +32,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import com.google.common.util.concurrent.Uninterruptibles;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
@@ -368,6 +370,42 @@ class LlmRelayTest {
             assertTrue(getModels(resetting).headers().firstValue("x-should-retry").isEmpty(), "the first round again, not the second");
         } finally {
             flapping.stop(0);
+        }
+    }
+    /**
+     * Reviewers call in parallel: the 200 of a call sent before the provider began refusing says nothing about the limit
+     * lifting, so it must not start the schedule again, or a mixed burst would wait past every configured round.
+     */
+    @Test
+    void aSuccessSentBeforeTheRoundDoesNotResetIt() throws Exception {
+        CountDownLatch slowArrived = new CountDownLatch(1);
+        CountDownLatch releaseSlow = new CountDownLatch(1);
+        AtomicInteger calls = new AtomicInteger();
+        HttpServer mixed = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        mixed.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+        mixed.createContext("/v1/models", exchange -> {
+            if (calls.getAndIncrement() == 0) {
+                slowArrived.countDown();
+                Uninterruptibles.awaitUninterruptibly(releaseSlow, 10, TimeUnit.SECONDS);
+                respond(exchange, HttpResponseStatus.OK.code(), MODELS);
+            } else {
+                respond(exchange, HttpResponseStatus.TOO_MANY_REQUESTS.code(), MODELS);
+            }
+        });
+        mixed.start();
+        try (LlmRelay relayed = relayTo(mixed, rateLimited(1, Duration.ofMillis(1)))) {
+            CompletableFuture<HttpResponse<String>> slow = http.sendAsync(HttpRequest.newBuilder(URI.create(relayed.getUrl() + "/models")).GET()
+                    .header(HttpHeaderNames.AUTHORIZATION.toString(), RequestAuthorizer.bearer(relayed.getSecret())).build(), HttpResponse.BodyHandlers.ofString());
+            assertTrue(slowArrived.await(10, TimeUnit.SECONDS));
+
+            assertTrue(getModels(relayed).headers().firstValue("x-should-retry").isEmpty(), "the first round");
+            releaseSlow.countDown();
+            assertEquals(HttpResponseStatus.OK.code(), slow.get(10, TimeUnit.SECONDS).statusCode());
+            Thread.sleep(5);
+
+            assertEquals(Optional.of("false"), getModels(relayed).headers().firstValue("x-should-retry"), "the second round, which is past the only one");
+        } finally {
+            mixed.stop(0);
         }
     }
     @Test

@@ -1577,7 +1577,8 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   worker post the failure as the project's halt (`POST /api/v1/projects/{projectId}/halt`, the first halt is kept);
   while halted, `listMissingAnalyses` lists nothing and carries the halt, the index step fails with
   `ProjectHaltedException`, and a submit refuses before its review starts. An administrator resumes the project in
-  codiqo-web. An interrupt is not a failure and halts nothing. A module whose tests ran without the JaCoCo agent is such
+  codiqo-web. An interrupt is not a failure and halts nothing, and neither is a build the author broke with
+  `codiqo.skipOnBuildFailure` off (`CommitBuildFailedException`): halting would hold the commit that fixes it. A module whose tests ran without the JaCoCo agent is such
   a failure, never a `BUILD_FAILURE`: `UninstrumentedModuleGuard` (a `MojoExecutionListener` in the coverage injector)
   fails the fork at that module and names it in `codiqo.jacoco.uninstrumentedReport`, and an agent that does not
   resolve fails `requireCoverageAgent` before the review starts. A halt also stops the whole CI run: the plugin appends
