@@ -32,6 +32,13 @@ public class CodiqoExtension {
     private boolean skipOnBuildFailure = true;
 
     /**
+     * Hidden-source mode, as on Maven: nothing sent to Codiqo carries source code, and identifiers are hashed with
+     * {@code sourceHashKey} ({@code env:VAR} reads it from the environment), the same key for every run of the project.
+     */
+    private boolean sourceHidden;
+    private String sourceHashKey;
+
+    /**
      * Local mode, as on Maven: OpenCode agents review and assess every analysed commit next to the analysis, and the
      * server scores it from that assessment alone. Each review setting left unset keeps its {@link RunArgs} default.
      */

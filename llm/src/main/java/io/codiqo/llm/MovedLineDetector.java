@@ -35,7 +35,12 @@ import lombok.Value;
  * consumption point (prompt build, validation, derivation) instead of being threaded as state.
  */
 public class MovedLineDetector {
-    private static final Pattern WORD_TOKEN = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$]*|[0-9]+|\"[^\"]*\"|'[^']*'");
+    /**
+     * Public because a hidden-source diff ({@code SourceHiding}) replaces each of these tokens by a keyed hash of the
+     * same kind: it must cut a line into exactly the tokens matching cuts it into, or two lines would compare
+     * differently once hashed and the commit would score differently from its plain submission.
+     */
+    public static final Pattern WORD_TOKEN = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$]*|[0-9]+|\"[^\"]*\"|'[^']*'");
     private static final int MIN_INFORMATIVE_TOKENS = 3;
     private static final double SIZE_RATIO_MIN = 0.5;
     private static final String CANDIDATE_ID_PREFIX = "M";

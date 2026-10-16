@@ -43,6 +43,10 @@ public class AnalysisRequest implements Serializable {
     private String buildFailureDetail;
     private boolean skipOnBuildFailure = true;
 
+    /** hidden-source mode and its HMAC key, resolved from {@code env:VAR} in the daemon like the API key */
+    private boolean sourceHidden;
+    private String sourceHashKey;
+
     private boolean review = true;
     private String reviewExecutable;
     private String reviewBaseUrl;

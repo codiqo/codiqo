@@ -133,6 +133,8 @@ import io.codiqo.maven.surefire.SurefireInjectorConfig;
 import io.codiqo.maven.timemachine.TimeMachineConfig;
 import io.codiqo.submit.CommitBuildFailedException;
 import io.codiqo.submit.OutputSerializer;
+import io.codiqo.submit.SourceHiding;
+import io.codiqo.util.Env;
 import io.codiqo.submit.SubmissionAssembly;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.submit.hotspots.FixCommits;
@@ -335,6 +337,21 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
 
     @Parameter(property = "codiqo.skipOnBuildFailure", defaultValue = "true")
     protected boolean skipOnBuildFailure;
+
+    /**
+     * Hidden-source mode: nothing sent to Codiqo carries source code, and identifiers are hashed with
+     * {@link #sourceHashKey}, which the organization keeps to itself. The commit is scored as it would be in plain text;
+     * the dashboard shows the numbers without the files, methods and texts behind them.
+     */
+    @Parameter(property = "codiqo.sourceHidden")
+    private Boolean sourceHidden;
+
+    /** the hidden-source mode's HMAC key, the same for every run of the project; pass it from a CI secret */
+    @Parameter(property = "codiqo.sourceHashKey")
+    private String sourceHashKey;
+
+    /** resolved first in {@link #doPrepare}, before an exclusion, a review or a submission could be sent */
+    private SourceHiding hiding = SourceHiding.NONE;
 
     /**
      * Local mode, the one review switch: agents review and assess the commit next to the analysis, judge its static
@@ -1422,6 +1439,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         }
     }
     protected void doPrepare(RunArgs args) throws Exception {
+        hiding = SourceHiding.of(BooleanUtils.isTrue(sourceHidden), Env.resolve(sourceHashKey));
         if (StringUtils.isEmpty(args.getDefaultBranch())) {
             JGit.detectDefaultBranch(args.getGit()).ifPresent(args::setDefaultBranch);
         }
@@ -1699,6 +1717,9 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), reason));
             doExcludeAnalysis(args.getCommitId(), reason, category, detail, files, ctx.getSubmissionModel().getProjectMetrics());
         }
+    }
+    protected SourceHiding sourceHiding() {
+        return hiding;
     }
     /** every review setting left unset keeps its {@link RunArgs} default; the review runs only where a goal starts it */
     protected void applyReviewSettings(RunArgs args) {

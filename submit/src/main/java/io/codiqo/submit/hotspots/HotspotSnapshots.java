@@ -30,6 +30,7 @@ import io.codiqo.client.model.HotspotClassModel;
 import io.codiqo.client.model.HotspotSnapshotModel;
 import io.codiqo.client.model.HotspotTypeKind;
 import io.codiqo.submit.ApiRetry;
+import io.codiqo.submit.SourceHiding;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.submit.auth.CodiqoApiClients;
 import io.codiqo.submit.auth.CodiqoCredential;
@@ -72,7 +73,8 @@ public class HotspotSnapshots {
         }
         return toReturn;
     }
-    public void submit(String apiUrl, CodiqoCredential credential, long connectTimeoutSeconds, long readTimeoutSeconds, String projectId, HotspotSnapshotModel snapshot, Log log) throws Exception {
+    public void submit(String apiUrl, CodiqoCredential credential, long connectTimeoutSeconds, long readTimeoutSeconds, String projectId, HotspotSnapshotModel snapshot, SourceHiding hiding, Log log) throws Exception {
+        hiding.hide(snapshot);
         HotspotsApi client = new HotspotsApi(CodiqoApiClients.newApiClient(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds));
         ApiRetry.call(log, "submitHotspots", apiUrl, () -> {
             client.submitHotspots(projectId, snapshot);
