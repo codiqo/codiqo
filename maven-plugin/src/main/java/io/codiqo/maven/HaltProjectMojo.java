@@ -6,6 +6,7 @@ import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -66,6 +67,10 @@ public class HaltProjectMojo extends AbstractMojo {
     @Parameter(property = "codiqo.readTimeoutSeconds", defaultValue = "60")
     private long readTimeoutSeconds;
 
+    /** hidden-source mode drops the log tail, a build log quoting the code it compiled, and needs no key to do it */
+    @Parameter(property = "codiqo.sourceHidden")
+    private Boolean sourceHidden;
+
     @Override
     public void execute() throws MojoExecutionException {
         try (Repository repo = JGit.openRepository(project.getBasedir())) {
@@ -76,7 +81,8 @@ public class HaltProjectMojo extends AbstractMojo {
                     project.getGroupId() + ":" + project.getArtifactId(),
                     JGit.resolveCommit(repo, commitId),
                     reason,
-                    detail());
+                    detail(),
+                    BooleanUtils.isTrue(sourceHidden));
             if (halted) {
                 return;
             }

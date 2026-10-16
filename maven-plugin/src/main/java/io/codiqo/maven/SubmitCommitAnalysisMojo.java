@@ -100,7 +100,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
         /** a run that fails after its submission was accepted has scored its commit, so it halts nothing */
         if (Objects.nonNull(haltableCommitId) && BooleanUtils.negate(BooleanUtils.or(new boolean[] { haltsNothing, args.isSubmissionAccepted() }))) {
             try {
-                ProjectHalts.halt(new MavenMessageReporter(getLog()), commitIndexClient(), apiUrl, projectId(), haltableCommitId, err);
+                ProjectHalts.halt(new MavenMessageReporter(getLog()), commitIndexClient(), apiUrl, projectId(), haltableCommitId, err, sourceHiding().isHidden());
             } catch (MojoExecutionException credentialErr) {
                 getLog().error("project " + projectId() + " could not be halted: " + credentialErr.getMessage(), credentialErr);
             }
@@ -213,6 +213,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
                         readTimeoutSeconds,
                         ctx.getSubmissionModel(),
                         reviewTrace,
+                        sourceHiding(),
                         new MavenMessageReporter(getLog()));
             } else {
                 response = AnalysisSubmitter.submit(
@@ -221,6 +222,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
                         connectTimeoutSeconds,
                         readTimeoutSeconds,
                         ctx.getSubmissionModel(),
+                        sourceHiding(),
                         new MavenMessageReporter(getLog()));
             }
             ctx.getArgs().setSubmissionAccepted(true);
@@ -260,6 +262,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
                 readTimeoutSeconds,
                 ctx.getProjectCode(),
                 snapshot,
+                sourceHiding(),
                 new MavenMessageReporter(getLog()));
     }
     @Override
@@ -275,6 +278,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
                 detail,
                 files,
                 projectMetrics,
+                sourceHiding(),
                 new MavenMessageReporter(getLog()));
     }
     /** a build the author broke; an unresolvable dependency or a build that ran out of time is the environment's */

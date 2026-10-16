@@ -87,7 +87,7 @@ class AnalysisSubmitterTest {
         });
 
         AnalysisAcceptedModel response = AnalysisSubmitter.submit(
-                serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, sampleSubmission(), LOG);
+                serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, sampleSubmission(), SourceHiding.NONE, LOG);
 
         assertEquals(List.of("POST /api/v1/analyses/uploads", "POST /api/v1/analyses"), recorded.stream().map(r -> r.method + " " + r.path).toList());
         RecordedRequest req = recorded.get(1);
@@ -114,7 +114,7 @@ class AnalysisSubmitterTest {
             }
         });
 
-        AnalysisAcceptedModel response = AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, sampleSubmission(), LOG);
+        AnalysisAcceptedModel response = AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, sampleSubmission(), SourceHiding.NONE, LOG);
 
         assertEquals(List.of("POST /api/v1/analyses/uploads", "POST /api/v1/analyses"), recorded.stream().map(r -> r.method + " " + r.path).toList());
         assertEquals(analysisId, response.getAnalysisId());
@@ -151,7 +151,7 @@ class AnalysisSubmitterTest {
             }
         });
 
-        AnalysisAcceptedModel response = AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, sampleSubmission(), LOG);
+        AnalysisAcceptedModel response = AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, sampleSubmission(), SourceHiding.NONE, LOG);
 
         assertEquals(analysisId, response.getAnalysisId());
         assertEquals(2, opens.get(), "staged again after the retry found the upload gone");
@@ -173,7 +173,7 @@ class AnalysisSubmitterTest {
             }
         });
 
-        ApiException err = assertThrows(ApiException.class, () -> AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, sampleSubmission(), LOG));
+        ApiException err = assertThrows(ApiException.class, () -> AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, sampleSubmission(), SourceHiding.NONE, LOG));
 
         assertEquals(HttpResponseStatus.NOT_FOUND.code(), err.getCode());
         assertEquals(1, recorded.stream().filter(r -> "POST".equals(r.method) && r.path.equals("/api/v1/analyses/uploads")).count(), "not staged again");
@@ -200,7 +200,7 @@ class AnalysisSubmitterTest {
         submission.setFiles(Lists.newArrayList(List.of(file("A.java", body), file("B.java", body), file("C.java", body))));
         submission.setLocalReview(new LocalReviewModel().bugs(new BugsModel()));
 
-        AnalysisAcceptedModel response = AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, submission, LOG);
+        AnalysisAcceptedModel response = AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, submission, SourceHiding.NONE, LOG);
 
         String base = "/api/v1/analyses/uploads/" + uploadId;
         assertEquals(List.of("POST /api/v1/analyses/uploads", "PUT " + base + "/files", "PUT " + base + "/files", "PUT " + base + "/local-review", "POST " + base + "/finalize"),
@@ -219,7 +219,7 @@ class AnalysisSubmitterTest {
         stagingServer(uploadId, UUID.randomUUID(), 204);
         File trace = trace(dir);
 
-        AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, reviewedSubmission(), trace, LOG);
+        AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, reviewedSubmission(), trace, SourceHiding.NONE, LOG);
 
         String base = "/api/v1/analyses/uploads/" + uploadId;
         assertEquals(List.of("POST /api/v1/analyses/uploads", "PUT " + base + "/local-review", "PUT " + base + "/review-trace", "POST " + base + "/finalize"),
@@ -231,7 +231,7 @@ class AnalysisSubmitterTest {
         UUID analysisId = UUID.randomUUID();
         stagingServer(UUID.randomUUID(), analysisId, 404);
 
-        AnalysisAcceptedModel response = AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, reviewedSubmission(), trace(dir), LOG);
+        AnalysisAcceptedModel response = AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, reviewedSubmission(), trace(dir), SourceHiding.NONE, LOG);
 
         assertEquals(analysisId, response.getAnalysisId(), "a server that predates the trace still takes the submission");
         assertTrue(Strings.CS.endsWith(recorded.get(recorded.size() - 1).path, "/finalize"));
@@ -241,7 +241,7 @@ class AnalysisSubmitterTest {
         UUID analysisId = UUID.randomUUID();
         stagingServer(UUID.randomUUID(), analysisId, 503);
 
-        AnalysisAcceptedModel response = AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, reviewedSubmission(), trace(dir), LOG);
+        AnalysisAcceptedModel response = AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, reviewedSubmission(), trace(dir), SourceHiding.NONE, LOG);
 
         assertEquals(analysisId, response.getAnalysisId());
         assertEquals(2, recorded.stream().filter(r -> Strings.CS.endsWith(r.path, "/review-trace")).count(), "an optional part is tried twice, not ten times");
@@ -253,7 +253,7 @@ class AnalysisSubmitterTest {
         File broken = dir.resolve("codiqo-review-trace-01234567.json").toFile();
         Files.writeString(broken.toPath(), "{ not json");
 
-        AnalysisAcceptedModel response = AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, reviewedSubmission(), broken, LOG);
+        AnalysisAcceptedModel response = AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, reviewedSubmission(), broken, SourceHiding.NONE, LOG);
 
         assertEquals(analysisId, response.getAnalysisId());
         assertTrue(recorded.stream().noneMatch(r -> Strings.CS.endsWith(r.path, "/review-trace")));
@@ -263,7 +263,7 @@ class AnalysisSubmitterTest {
         installHandler(400, JSON.objectNode().put("message", "bad submission").toString());
 
         ApiException err = assertThrows(ApiException.class, () -> AnalysisSubmitter.submit(
-                serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, sampleSubmission(), LOG));
+                serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, sampleSubmission(), SourceHiding.NONE, LOG));
 
         assertEquals(HttpResponseStatus.BAD_REQUEST.code(), err.getCode());
         assertEquals(1, callCount.get(), "4xx must not be retried");

@@ -63,6 +63,9 @@ public class GradleModelCollector {
 
         request.setSkipOnBuildFailure(boolProp(root, "codiqo.skipOnBuildFailure", ext.isSkipOnBuildFailure()));
 
+        request.setSourceHidden(boolProp(root, "codiqo.sourceHidden", ext.isSourceHidden()));
+        resolveSourceHashKey(root, ext).ifPresent(request::setSourceHashKey);
+
         request.setReview(boolProp(root, "codiqo.review", ext.isReview()));
         request.setReviewExecutable(stringProp(root, "codiqo.review.executable", ext.getReviewExecutable()));
         request.setReviewBaseUrl(stringProp(root, "codiqo.review.baseUrl", ext.getReviewBaseUrl()));
@@ -205,6 +208,15 @@ public class GradleModelCollector {
         }
         return Optional.of(Env.resolve(configured).orElseThrow(() -> new GradleException(
                 "codiqo.apiKey is set to '" + configured + "' but resolves to nothing — export that variable, or pass the key directly")));
+    }
+    /** resolved like the API key, so a key naming an unset variable fails here and not after a paid review */
+    private static Optional<String> resolveSourceHashKey(Project root, CodiqoExtension ext) {
+        String configured = stringProp(root, "codiqo.sourceHashKey", ext.getSourceHashKey());
+        if (StringUtils.isBlank(configured)) {
+            return Optional.empty();
+        }
+        return Optional.of(Env.resolve(configured).orElseThrow(() -> new GradleException(
+                "codiqo.sourceHashKey is set to '" + configured + "' but resolves to nothing — export that variable, or pass the key directly")));
     }
     private static String resolveJavaHome(Project root, CodiqoExtension ext) {
         String javaHome = stringProp(root, "codiqo.javaHome", ext.getJavaHome());
