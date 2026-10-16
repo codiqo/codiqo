@@ -11,6 +11,7 @@ import io.codiqo.api.logging.Log;
 import io.codiqo.client.ApiException;
 import io.codiqo.client.api.CommitIndexApi;
 import io.codiqo.client.model.ProjectHaltRequestModel;
+import io.codiqo.llm.review.ReviewProviderException;
 import io.codiqo.llm.review.ReviewTrace;
 import lombok.experimental.UtilityClass;
 
@@ -41,7 +42,7 @@ public class ProjectHalts {
      * would leave nothing to investigate.
      */
     public boolean halt(Log log, CommitIndexApi client, String apiUrl, String projectId, String commitSha, Throwable cause) {
-        return halt(log, client, apiUrl, projectId, commitSha, ExceptionUtils.getRootCauseMessage(cause), ExceptionUtils.getStackTrace(cause));
+        return halt(log, client, apiUrl, projectId, commitSha, reasonOf(cause), ExceptionUtils.getStackTrace(cause));
     }
     /**
      * As above, for a failure known only by its description: a run killed from outside, which left no exception. The
@@ -70,5 +71,18 @@ public class ProjectHalts {
             log.error(err, "project %s could not be halted after commit %s failed; the next scheduled run will try it again", projectId, commitSha);
             return false;
         }
+    }
+    /**
+     * The root cause names the failure, except for a review the model's provider failed: the provider's answers are
+     * added by the {@link ReviewProviderException} that wraps the root cause, so its message is the reason instead. On
+     * 16 Oct 2026 nine projects halted with "session ... finished without an answer" while the provider answered 429
+     * for eight hours, and only the detail said so, which the halt banner in codiqo-web does not show.
+     */
+    private String reasonOf(Throwable cause) {
+        int provider = ExceptionUtils.indexOfType(cause, ReviewProviderException.class);
+        if (provider >= 0) {
+            return ExceptionUtils.getMessage(ExceptionUtils.getThrowables(cause)[provider]);
+        }
+        return ExceptionUtils.getRootCauseMessage(cause);
     }
 }
