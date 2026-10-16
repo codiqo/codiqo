@@ -11,6 +11,7 @@ import io.codiqo.api.logging.Log;
 import io.codiqo.client.ApiException;
 import io.codiqo.client.api.CommitIndexApi;
 import io.codiqo.client.model.ProjectHaltRequestModel;
+import io.codiqo.llm.review.ReviewProviderException;
 import io.codiqo.llm.review.ReviewTrace;
 import lombok.experimental.UtilityClass;
 
@@ -25,6 +26,9 @@ public class ProjectHalts {
     /** the request model's limits; a longer reason or detail would make the server refuse the halt itself */
     private static final int REASON_LIMIT = 2000;
     private static final int DETAIL_LIMIT = 65536;
+    private static final String SEPARATOR = "; ";
+    /** the shortest length {@link StringUtils#abbreviate(String, int)} accepts: room for one character and its ellipsis */
+    private static final int MIN_ABBREVIATION = 4;
 
     /** where the failed commit's review trace is, for the run's watcher; the run's log when no review left one */
     public String traceOf(RunArgs args, String commitSha) {
@@ -41,7 +45,7 @@ public class ProjectHalts {
      * would leave nothing to investigate.
      */
     public boolean halt(Log log, CommitIndexApi client, String apiUrl, String projectId, String commitSha, Throwable cause) {
-        return halt(log, client, apiUrl, projectId, commitSha, ExceptionUtils.getRootCauseMessage(cause), ExceptionUtils.getStackTrace(cause));
+        return halt(log, client, apiUrl, projectId, commitSha, reasonOf(cause), ExceptionUtils.getStackTrace(cause));
     }
     /**
      * As above, for a failure known only by its description: a run killed from outside, which left no exception. The
@@ -70,5 +74,22 @@ public class ProjectHalts {
             log.error(err, "project %s could not be halted after commit %s failed; the next scheduled run will try it again", projectId, commitSha);
             return false;
         }
+    }
+    /**
+     * The root cause names the failure, except for a review the model's provider failed: the provider's answers are
+     * added by the {@link ReviewProviderException} that wraps the root cause, so the reason is the root cause followed
+     * by them. On 16 Oct 2026 nine projects halted with "session ... finished without an answer" while the provider
+     * answered 429 for eight hours, and only the detail said so, which the halt banner in codiqo-web does not show. The
+     * failure is shortened rather than the summary: a failure that fills the reason's limit on its own would cut off
+     * exactly the part the banner needs.
+     */
+    private String reasonOf(Throwable cause) {
+        String failure = ExceptionUtils.getRootCauseMessage(cause);
+        int provider = ExceptionUtils.indexOfType(cause, ReviewProviderException.class);
+        if (provider >= 0) {
+            String summary = SEPARATOR + ((ReviewProviderException) ExceptionUtils.getThrowables(cause)[provider]).getProviderSummary();
+            return StringUtils.abbreviate(failure, Math.max(MIN_ABBREVIATION, REASON_LIMIT - summary.length())) + summary;
+        }
+        return failure;
     }
 }

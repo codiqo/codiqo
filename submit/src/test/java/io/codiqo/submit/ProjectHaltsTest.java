@@ -20,7 +20,9 @@ import com.sun.net.httpserver.HttpServer;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.client.api.CommitIndexApi;
+import io.codiqo.llm.review.ReviewProviderException;
 import io.codiqo.submit.auth.ApiKeyCredential;
+import io.codiqo.submit.review.LocalReviewException;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaderValues;
 import io.netty.handler.codec.http.HttpResponseStatus;
@@ -84,6 +86,36 @@ class ProjectHaltsTest {
             assertEquals(SHA, posted.get().get("commitSha").asString());
             assertTrue(posted.get().get("reason").asString().contains("agent did not attach"), posted.get().toString());
             assertTrue(posted.get().get("detail").asString().contains("IllegalStateException"), "the stack trace travels as the detail");
+        } finally {
+            server.stop(0);
+        }
+    }
+    /** a review the provider failed is halted with the provider's answers in the reason, which the halt banner shows */
+    @Test
+    void aProviderFailureNamesTheProviderInTheReason() throws Exception {
+        AtomicReference<JsonNode> posted = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/v1/projects/p1/halt", exchange -> {
+            posted.set(new ObjectMapper().readTree(IOUtils.toString(exchange.getRequestBody(), StandardCharsets.UTF_8)));
+            exchange.sendResponseHeaders(HttpResponseStatus.NO_CONTENT.code(), -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            IOException unanswered = new IOException("session ses_1 finished without an answer");
+            ReviewProviderException provider = new ReviewProviderException(unanswered.getMessage(), "the LLM provider answered 429 13 times and 504 5 times during the review", unanswered);
+            ProjectHalts.halt(new NoopLog(), client(server), url(server), "p1", SHA, new LocalReviewException("local review failed: " + provider.getMessage(), provider));
+
+            String reason = posted.get().get("reason").asString();
+            assertTrue(reason.contains("the LLM provider answered 429 13 times"), reason);
+            assertTrue(reason.contains("finished without an answer"), reason);
+
+            IOException wordy = new IOException("opencode answered 500: " + "x".repeat(2100));
+            ReviewProviderException behindWordy = new ReviewProviderException(wordy.getMessage(), "the LLM provider answered 429 once during the review", wordy);
+            ProjectHalts.halt(new NoopLog(), client(server), url(server), "p1", SHA, new LocalReviewException("local review failed", behindWordy));
+
+            String shortened = posted.get().get("reason").asString();
+            assertTrue(shortened.endsWith("; the LLM provider answered 429 once during the review"), "a long failure is shortened, never the provider's summary");
         } finally {
             server.stop(0);
         }

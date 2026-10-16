@@ -147,7 +147,7 @@ public class LocalReviewer {
                 if (providerErrors.isPresent()) {
                     String message = err.getMessage() + "; " + providerErrors.get();
                     if (relay.providerFailed()) {
-                        throw new ReviewProviderException(message, err);
+                        throw new ReviewProviderException(err.getMessage(), providerErrors.get(), err);
                     }
                     throw new IOException(message, err);
                 }
