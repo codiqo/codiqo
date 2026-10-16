@@ -1613,7 +1613,11 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
 - **A failed review names a failing provider.** `LlmRelay` counts every answer of the model's end point that was not
   a success, retried ones included, by status, and `LocalReviewer` appends them to the error of a review that fails
   while the relay is open: `local review failed: timeout; the LLM provider answered 429 482 times and 504 once during
-  the review`. A turn that timed out says only `timeout` on its own, which hid an hour of provider errors.
+  the review`. A turn that timed out says only `timeout` on its own, which hid an hour of provider errors. The
+  relay also reads each 429's body (at most 4 KB) and quotes the provider's own words and its `Retry-After` and
+  `x-ratelimit-*` headers in the round's log line and in that summary (`; its last 429 said: ...`), so a halt tells a
+  short rate limit from an exhausted usage quota: on 16 Oct 2026 the provider refused every call for over eight hours
+  and nothing recorded which it was.
 - **Every review leaves a trace**: `ReviewTrace` writes the coordinator, its
   sub-agents (listed again at the end, since a failed review never listed them) and the labelling and triage forks, each
   session's messages as OpenCode recorded them, tool calls with input and status, every tool output cut to 4,000

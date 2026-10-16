@@ -26,8 +26,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -36,9 +38,11 @@ import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.math.NumberUtils;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ConcurrentHashMultiset;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Multiset;
 import com.openai.core.ObjectMappers;
 import com.openai.models.ErrorObject;
@@ -87,6 +91,12 @@ public final class LlmRelay implements AutoCloseable {
     private static final int MAX_DOUBLINGS = 16;
     /** how far each rate-limit wait is spread either way, as a share of it */
     private static final double JITTER = 0.2;
+    /** a 429's body is an error object of a few hundred bytes; more than this is cut, so a misbehaving end point cannot fill the heap */
+    private static final int RATE_LIMIT_BODY_BYTES = 4096;
+    /** how much of the provider's 429 text a log line or a review's error quotes */
+    private static final int RATE_LIMIT_TEXT_CHARS = 300;
+    /** the headers in which providers state their limits and when they reset, logged with the 429 that carries them */
+    private static final String RATE_LIMIT_HEADER_PREFIX = "x-ratelimit";
     /**
      * The answers in which the provider refused a request itself: a prompt longer than the model's context (400 with
      * {@code context_length_exceeded}, 413) or a body it could not process (422). They follow from what the commit asks
@@ -140,6 +150,12 @@ public final class LlmRelay implements AutoCloseable {
     private final String secret;
     /** every answer of the model's end point that was not a success, retried ones included, by status */
     private final Multiset<Integer> providerErrors = ConcurrentHashMultiset.create();
+    /**
+     * What the provider's last 429 said. On 16 Oct 2026 the provider refused every call for over eight hours after an
+     * evening of heavy load, and nothing recorded whether that was a short rate limit or an exhausted usage quota: the
+     * relay passed the body on without reading it, and the halts said only that sessions finished without an answer.
+     */
+    private final AtomicReference<String> lastRateLimitText = new AtomicReference<>();
     private final Log log;
 
     private LlmRelay(HttpServer server, ExecutorService executor, RunArgs args, ReviewEndpoint upstream, Log log) {
@@ -187,7 +203,12 @@ public final class LlmRelay implements AutoCloseable {
             if (counts.size() > 1) {
                 listed = COMMA.join(counts.subList(0, counts.size() - 1)) + " and " + listed;
             }
-            toReturn = Optional.of("the LLM provider answered " + listed + " during the review");
+            String summary = "the LLM provider answered " + listed + " during the review";
+            Optional<String> providerSays = Optional.ofNullable(lastRateLimitText.get());
+            if (providerSays.isPresent()) {
+                summary += "; its last 429 said: " + providerSays.get();
+            }
+            toReturn = Optional.of(summary);
         }
         return toReturn;
     }
@@ -304,10 +325,15 @@ public final class LlmRelay implements AutoCloseable {
         }
 
         Optional<Duration> retryIn = Optional.empty();
+        Optional<byte[]> rateLimitBody = Optional.empty();
         if (response.statusCode() == HttpResponseStatus.TOO_MANY_REQUESTS.code()) {
-            retryIn = rateLimitRound(exchange, path, response);
+            try (InputStream in = response.body()) {
+                rateLimitBody = Optional.of(in.readNBytes(RATE_LIMIT_BODY_BYTES));
+            }
+            String providerSays = rateLimitText(rateLimitBody.get(), response);
+            lastRateLimitText.set(providerSays);
+            retryIn = rateLimitRound(exchange, path, response, providerSays);
             if (retryIn.isEmpty()) {
-                response.body().close();
                 respondRateLimitExhausted(exchange);
                 return;
             }
@@ -321,6 +347,12 @@ public final class LlmRelay implements AutoCloseable {
             exchange.getResponseHeaders().set(HttpHeaderNames.RETRY_AFTER.toString(), Long.toString(Math.ceilDiv(wait.toMillis(), DateUtils.MILLIS_PER_SECOND)));
         });
         exchange.sendResponseHeaders(response.statusCode(), 0);
+        if (rateLimitBody.isPresent()) {
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(rateLimitBody.get());
+            }
+            return;
+        }
         boolean streamed = response.headers().firstValue(HttpHeaderNames.CONTENT_TYPE.toString()).map(type -> Strings.CI.startsWith(type, HttpHeaderValues.TEXT_EVENT_STREAM)).orElse(false);
         try (InputStream in = response.body(); OutputStream out = exchange.getResponseBody()) {
             byte[] buffer = new byte[BUFFER_BYTES];
@@ -368,6 +400,38 @@ public final class LlmRelay implements AutoCloseable {
         double spread = 1.0 + JITTER * (2 * ThreadLocalRandom.current().nextDouble() - 1);
         return ObjectUtils.min(Duration.ofMillis(Math.round(wait.toMillis() * spread)), rateLimitMaxBackoff);
     }
+    /**
+     * The provider's own words for a 429 and the limits it states, for the log and a failed review's error: the
+     * {@code error.message} of an OpenAI error object, or the {@code error} string some providers send instead, or the
+     * raw body, followed by {@code Retry-After} and every {@code x-ratelimit-*} header, which is where providers say
+     * which limit was hit and when it resets.
+     */
+    private static String rateLimitText(byte[] body, HttpResponse<?> answer) {
+        String raw = new String(body, StandardCharsets.UTF_8);
+        String message = raw;
+        try {
+            JsonNode error = OPENAI.readTree(body).path("error");
+            if (error.isTextual()) {
+                message = error.asText();
+            } else if (error.path("message").isTextual()) {
+                message = error.path("message").asText();
+            }
+        } catch (IOException err) {
+            message = raw;
+        }
+
+        List<String> limits = Lists.newArrayList();
+        answer.headers().map().forEach((name, values) -> {
+            if (BooleanUtils.or(new boolean[] { Strings.CI.startsWith(name, RATE_LIMIT_HEADER_PREFIX), Strings.CI.equals(name, HttpHeaderNames.RETRY_AFTER) })) {
+                limits.add(name + "=" + COMMA.join(values));
+            }
+        });
+        String toReturn = StringUtils.abbreviate(StringUtils.normalizeSpace(StringUtils.defaultIfBlank(message, "(no body)")), RATE_LIMIT_TEXT_CHARS);
+        if (CollectionUtils.isNotEmpty(limits)) {
+            toReturn += " (" + COMMA.join(limits) + ")";
+        }
+        return toReturn;
+    }
     private static Optional<Duration> rawRetryAfter(HttpResponse<?> answer) {
         return answer.headers().firstValue(HttpHeaderNames.RETRY_AFTER.toString())
                 .map(value -> NumberUtils.toLong(StringUtils.trim(value), -1))
@@ -406,7 +470,7 @@ public final class LlmRelay implements AutoCloseable {
      * body of the relay's own would make every exhausted quota look like a rate limit and keep the review waiting
      * through every round, about 35 minutes with the defaults, for a quota that is not coming back.
      */
-    private Optional<Duration> rateLimitRound(HttpExchange exchange, String path, HttpResponse<?> answer) {
+    private Optional<Duration> rateLimitRound(HttpExchange exchange, String path, HttpResponse<?> answer, String providerSays) {
         Instant now = Instant.now();
         synchronized (rateLimitLock) {
             if (now.isBefore(rateLimitRoundEnds)) {
@@ -415,13 +479,14 @@ public final class LlmRelay implements AutoCloseable {
             int round = rateLimitRound.incrementAndGet();
             if (round > rateLimitRetries) {
                 rateLimitExhausted.set(true);
-                log.error("llm relay: the provider still answered 429 after %d rounds of waiting; every further call of this review is refused", rateLimitRetries);
+                log.error("llm relay: the provider still answered 429 after %d rounds of waiting; every further call of this review is refused. It said: %s",
+                        rateLimitRetries, providerSays);
                 return Optional.empty();
             }
             rateLimitRoundStarted = now;
             rateLimitRoundEnds = now.plus(rateLimitWait(answer, round - 1));
-            log.warn("llm relay: %s %s answered 429; rate-limit round %d of %d, every call comes back in %s",
-                    exchange.getRequestMethod(), path, round, rateLimitRetries, Duration.between(now, rateLimitRoundEnds));
+            log.warn("llm relay: %s %s answered 429; rate-limit round %d of %d, every call comes back in %s. The provider said: %s",
+                    exchange.getRequestMethod(), path, round, rateLimitRetries, Duration.between(now, rateLimitRoundEnds), providerSays);
             return Optional.of(Duration.between(now, rateLimitRoundEnds));
         }
     }
