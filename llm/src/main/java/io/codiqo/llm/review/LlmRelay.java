@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.RandomStringUtils;
@@ -40,6 +41,7 @@ import org.apache.commons.lang3.math.NumberUtils;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.node.MissingNode;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ConcurrentHashMultiset;
 import com.google.common.collect.Lists;
@@ -91,7 +93,10 @@ public final class LlmRelay implements AutoCloseable {
     private static final int MAX_DOUBLINGS = 16;
     /** how far each rate-limit wait is spread either way, as a share of it */
     private static final double JITTER = 0.2;
-    /** a 429's body is an error object of a few hundred bytes; more than this is cut, so a misbehaving end point cannot fill the heap */
+    /**
+     * How much of a 429's body the relay reads to quote it: an error object is a few hundred bytes. Only the quote is
+     * bounded; the whole body still goes on to OpenCode, which reads it to tell a rate limit from an exhausted quota.
+     */
     private static final int RATE_LIMIT_BODY_BYTES = 4096;
     /** how much of the provider's 429 text a log line or a review's error quotes */
     private static final int RATE_LIMIT_TEXT_CHARS = 300;
@@ -325,15 +330,14 @@ public final class LlmRelay implements AutoCloseable {
         }
 
         Optional<Duration> retryIn = Optional.empty();
-        Optional<byte[]> rateLimitBody = Optional.empty();
+        byte[] readAhead = ArrayUtils.EMPTY_BYTE_ARRAY;
         if (response.statusCode() == HttpResponseStatus.TOO_MANY_REQUESTS.code()) {
-            try (InputStream in = response.body()) {
-                rateLimitBody = Optional.of(in.readNBytes(RATE_LIMIT_BODY_BYTES));
-            }
-            String providerSays = rateLimitText(rateLimitBody.get(), response);
+            readAhead = response.body().readNBytes(RATE_LIMIT_BODY_BYTES);
+            String providerSays = rateLimitText(readAhead, response);
             lastRateLimitText.set(providerSays);
             retryIn = rateLimitRound(exchange, path, response, providerSays);
             if (retryIn.isEmpty()) {
+                response.body().close();
                 respondRateLimitExhausted(exchange);
                 return;
             }
@@ -347,14 +351,9 @@ public final class LlmRelay implements AutoCloseable {
             exchange.getResponseHeaders().set(HttpHeaderNames.RETRY_AFTER.toString(), Long.toString(Math.ceilDiv(wait.toMillis(), DateUtils.MILLIS_PER_SECOND)));
         });
         exchange.sendResponseHeaders(response.statusCode(), 0);
-        if (rateLimitBody.isPresent()) {
-            try (OutputStream out = exchange.getResponseBody()) {
-                out.write(rateLimitBody.get());
-            }
-            return;
-        }
         boolean streamed = response.headers().firstValue(HttpHeaderNames.CONTENT_TYPE.toString()).map(type -> Strings.CI.startsWith(type, HttpHeaderValues.TEXT_EVENT_STREAM)).orElse(false);
         try (InputStream in = response.body(); OutputStream out = exchange.getResponseBody()) {
+            out.write(readAhead);
             byte[] buffer = new byte[BUFFER_BYTES];
             try {
                 for (int read = in.read(buffer); read >= 0; read = in.read(buffer)) {
@@ -409,15 +408,18 @@ public final class LlmRelay implements AutoCloseable {
     private static String rateLimitText(byte[] body, HttpResponse<?> answer) {
         String raw = new String(body, StandardCharsets.UTF_8);
         String message = raw;
-        try {
-            JsonNode error = OPENAI.readTree(body).path("error");
-            if (error.isTextual()) {
-                message = error.asText();
-            } else if (error.path("message").isTextual()) {
-                message = error.path("message").asText();
+        if (StringUtils.isNotBlank(raw)) {
+            try {
+                /** readTree answers null for a body that holds no JSON at all */
+                JsonNode error = Optional.ofNullable(OPENAI.readTree(body)).map(tree -> tree.path("error")).orElseGet(MissingNode::getInstance);
+                if (error.isTextual()) {
+                    message = error.asText();
+                } else if (error.path("message").isTextual()) {
+                    message = error.path("message").asText();
+                }
+            } catch (IOException err) {
+                message = raw;
             }
-        } catch (IOException err) {
-            message = raw;
         }
 
         List<String> limits = Lists.newArrayList();

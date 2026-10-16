@@ -321,6 +321,35 @@ class LlmRelayTest {
             exhausted.stop(0);
         }
     }
+    /** a 429 body longer than the quoted part still reaches OpenCode whole, whose retry depends on its quota marker */
+    @Test
+    void aLongRateLimitBodyGoesOnWhole() throws Exception {
+        String quota = "{\"error\":{\"message\":\"" + "x".repeat(5000) + "\",\"type\":\"insufficient_quota\",\"code\":\"insufficient_quota\"}}";
+        HttpServer exhausted = fakeProxy(exchange -> respond(exchange, HttpResponseStatus.TOO_MANY_REQUESTS.code(), quota));
+        try (LlmRelay passing = relayTo(exhausted, rateLimited(5, Duration.ofSeconds(10)))) {
+            assertEquals(quota, getModels(passing).body());
+        } finally {
+            exhausted.stop(0);
+        }
+    }
+    /** an empty 429, with only a Retry-After, still goes back as a 429 with the round's wait */
+    @Test
+    void anEmptyRateLimitBodyStillGetsTheRoundsWait() throws Exception {
+        HttpServer empty = fakeProxy(exchange -> {
+            exchange.getResponseHeaders().set(HttpHeaderNames.RETRY_AFTER.toString(), "30");
+            exchange.sendResponseHeaders(HttpResponseStatus.TOO_MANY_REQUESTS.code(), -1);
+            exchange.close();
+        });
+        try (LlmRelay waiting = relayTo(empty, rateLimited(5, Duration.ofSeconds(10)))) {
+            HttpResponse<String> answer = getModels(waiting);
+
+            assertEquals(HttpResponseStatus.TOO_MANY_REQUESTS.code(), answer.statusCode());
+            assertTrue(answer.headers().firstValue("retry-after-ms").isPresent());
+            assertTrue(waiting.providerErrors().orElseThrow().contains("its last 429 said: (no body) (retry-after=30)"), waiting.providerErrors().orElseThrow());
+        } finally {
+            empty.stop(0);
+        }
+    }
     /** a 429 goes back with the round's wait, which OpenCode keeps before it calls again */
     @Test
     void aRateLimitIsPassedOnWithTheRoundsWait() throws Exception {
