@@ -264,7 +264,8 @@ class LlmRelayTest {
             assertEquals(HttpResponseStatus.OK.code(), getModels(counting).statusCode());
             assertEquals(HttpResponseStatus.TOO_MANY_REQUESTS.code(), getModels(counting).statusCode());
 
-            assertEquals(Optional.of("the LLM provider answered 429 once and 504 once during the review"), counting.providerErrors());
+            String summary = counting.providerErrors().orElseThrow();
+            assertTrue(summary.startsWith("the LLM provider answered 429 once and 504 once during the review; its last 429 said: "), summary);
             assertTrue(counting.providerFailed());
         } finally {
             failing.stop(0);
@@ -296,6 +297,57 @@ class LlmRelayTest {
             assertTrue(answer.headers().firstValue("retry-after-ms").isPresent(), "still with the round's wait");
         } finally {
             exhausted.stop(0);
+        }
+    }
+    /**
+     * The provider's own words for a 429, and the limit headers it sends, reach the summary a failed review quotes, so a
+     * halted project says whether a rate limit or an exhausted quota stopped it; the body still goes on unchanged.
+     */
+    @Test
+    void theProvidersRateLimitTextIsKeptForTheReviewsError() throws Exception {
+        String weekly = "{\"error\":\"you have reached your weekly usage limit, upgrade for higher limits\"}";
+        HttpServer exhausted = fakeProxy(exchange -> {
+            exchange.getResponseHeaders().set("x-ratelimit-reset", "2026-10-20T00:00:00Z");
+            respond(exchange, HttpResponseStatus.TOO_MANY_REQUESTS.code(), weekly);
+        });
+        try (LlmRelay quoting = relayTo(exhausted, rateLimited(5, Duration.ofSeconds(10)))) {
+            assertEquals(weekly, getModels(quoting).body(), "the provider's body goes on as it came");
+
+            String summary = quoting.providerErrors().orElseThrow();
+            assertTrue(summary.contains("the LLM provider answered 429 once during the review"), summary);
+            assertTrue(summary.contains("its last 429 said: you have reached your weekly usage limit, upgrade for higher limits"), summary);
+            assertTrue(summary.contains("x-ratelimit-reset=2026-10-20T00:00:00Z"), summary);
+        } finally {
+            exhausted.stop(0);
+        }
+    }
+    /** a 429 body longer than the quoted part still reaches OpenCode whole, whose retry depends on its quota marker */
+    @Test
+    void aLongRateLimitBodyGoesOnWhole() throws Exception {
+        String quota = "{\"error\":{\"message\":\"" + "x".repeat(5000) + "\",\"type\":\"insufficient_quota\",\"code\":\"insufficient_quota\"}}";
+        HttpServer exhausted = fakeProxy(exchange -> respond(exchange, HttpResponseStatus.TOO_MANY_REQUESTS.code(), quota));
+        try (LlmRelay passing = relayTo(exhausted, rateLimited(5, Duration.ofSeconds(10)))) {
+            assertEquals(quota, getModels(passing).body());
+        } finally {
+            exhausted.stop(0);
+        }
+    }
+    /** an empty 429, with only a Retry-After, still goes back as a 429 with the round's wait */
+    @Test
+    void anEmptyRateLimitBodyStillGetsTheRoundsWait() throws Exception {
+        HttpServer empty = fakeProxy(exchange -> {
+            exchange.getResponseHeaders().set(HttpHeaderNames.RETRY_AFTER.toString(), "30");
+            exchange.sendResponseHeaders(HttpResponseStatus.TOO_MANY_REQUESTS.code(), -1);
+            exchange.close();
+        });
+        try (LlmRelay waiting = relayTo(empty, rateLimited(5, Duration.ofSeconds(10)))) {
+            HttpResponse<String> answer = getModels(waiting);
+
+            assertEquals(HttpResponseStatus.TOO_MANY_REQUESTS.code(), answer.statusCode());
+            assertTrue(answer.headers().firstValue("retry-after-ms").isPresent());
+            assertTrue(waiting.providerErrors().orElseThrow().contains("its last 429 said: (no body) (retry-after=30)"), waiting.providerErrors().orElseThrow());
+        } finally {
+            empty.stop(0);
         }
     }
     /** a 429 goes back with the round's wait, which OpenCode keeps before it calls again */
