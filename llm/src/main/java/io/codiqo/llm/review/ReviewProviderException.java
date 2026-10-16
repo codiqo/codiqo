@@ -10,7 +10,18 @@ import java.io.IOException;
 public class ReviewProviderException extends IOException {
     private static final long serialVersionUID = 1L;
 
-    public ReviewProviderException(String message, Throwable cause) {
-        super(message, cause);
+    /**
+     * The provider's failed answers, kept apart from the failure they are appended to: a halt's reason is limited, and
+     * the failure's own message can fill that limit (a turn whose error carries a whole HTTP body), which would cut off
+     * exactly the summary the halt banner needs.
+     */
+    private final String providerSummary;
+
+    public ReviewProviderException(String failure, String providerSummary, Throwable cause) {
+        super(failure + "; " + providerSummary, cause);
+        this.providerSummary = providerSummary;
+    }
+    public String getProviderSummary() {
+        return providerSummary;
     }
 }
