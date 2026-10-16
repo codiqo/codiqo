@@ -739,6 +739,9 @@ components:
           description: Whole-project driver-score statistics (scalers, totals, cap quantiles) captured for a source-only build-failure exclusion, so a later degraded re-score prices real code volume instead of config lines. Null for exclusions without a source index.
           allOf:
             - $ref: '#/components/schemas/ProjectMetricsModel'
+        sourceHidden:
+          type: boolean
+          description: The files carry no source code and their paths are hashed, as AnalysisSubmissionModel.sourceHidden describes; the detail is left out
 
     AnalysisExcludeCategory:
       type: string
@@ -890,6 +893,16 @@ components:
             for debugging; does not affect scoring.
           items:
             $ref: '#/components/schemas/ExcludedCoverageClassModel'
+        sourceHidden:
+          type: boolean
+          description: |
+            The submission carries no source code (codiqo.sourceHidden): file contents, unit bodies, clone slices,
+            diagnostic and finding messages, build output, agent instructions, the review trace and every text the
+            local review wrote are left out. Paths, signatures, class names and the other identifiers are keyed
+            HMAC-SHA256 hashes whose key only the client holds: a path keeps its extension, and a config file
+            recognised by name (pom.xml, *.gradle.kts) keeps its name. The diff keeps its lines and punctuation, with
+            every identifier, number and literal replaced by a keyed hash. The commit is scored exactly as its plain
+            submission would be. Absent or false: the submission is plain.
         agentInstructions:
           type: string
           description: |
@@ -2256,6 +2269,9 @@ components:
           description: Union of the ranked important classes and the ranked hotspots
           items:
             $ref: '#/components/schemas/HotspotClassModel'
+        sourceHidden:
+          type: boolean
+          description: Class names, paths and members are keyed hashes and findings carry no message, as AnalysisSubmissionModel.sourceHidden describes
 
     HotspotClassModel:
       type: object
@@ -2327,7 +2343,7 @@ components:
 
     HotspotFindingModel:
       type: object
-      required: [kind, startLine, endLine, message]
+      required: [kind, startLine, endLine]
       properties:
         kind:
           $ref: '#/components/schemas/HotspotFindingKind'
@@ -2340,6 +2356,7 @@ components:
           type: integer
         message:
           type: string
+          description: Absent when the snapshot's source is hidden
         rule:
           type: string
           description: PMD rule or SpotBugs pattern
@@ -2391,6 +2408,9 @@ components:
           description: The failure's stack trace or log excerpt
           type: string
           maxLength: 65536
+        sourceHidden:
+          type: boolean
+          description: The run hides its source (AnalysisSubmissionModel.sourceHidden); the reason names no file and the detail is left out
 
     ProjectHaltModel:
       type: object
@@ -2932,7 +2952,7 @@ components:
 
     DiagnosticModel:
       type: object
-      required: [ruleId, severity, message]
+      required: [ruleId, severity]
       properties:
         tool:
           type: string
@@ -2947,6 +2967,7 @@ components:
           enum: [error, warning, info, note, none]
         message:
           type: string
+          description: Absent when the submission's source is hidden
         location:
           $ref: '#/components/schemas/LocationModel'
         category:
@@ -3174,15 +3195,17 @@ components:
 
     BugModel:
       type: object
-      required: [type, title, description]
+      required: [type]
       properties:
         type:
           type: string
           enum: [security, concurrency, data_corruption, logic, resource_leak, null_pointer, performance, api_misuse, architecture, other]
         title:
           type: string
+          description: Absent when the submission's source is hidden
         description:
           type: string
+          description: Absent when the submission's source is hidden
         file:
           type: string
         line:

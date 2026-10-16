@@ -16,7 +16,11 @@ import lombok.experimental.UtilityClass;
 @UtilityClass
 public class JavaInvocationCounter {
     private static final Pattern CALL_SHAPE = Pattern.compile("\\b([A-Za-z_$][\\w$]*)\\s*\\(");
-    private static final Set<String> CONTROL_FLOW_KEYWORDS = Set.of(
+    /**
+     * Public because a hidden-source diff ({@code SourceHiding}) must leave exactly these words readable: every other
+     * identifier is replaced by a keyed hash, and a hashed {@code if (} would count as a call.
+     */
+    public static final Set<String> CONTROL_FLOW_KEYWORDS = Set.of(
             "if", "while", "for", "switch", "catch", "synchronized", "try", "return", "throw");
 
     public static int countInLine(String line) {

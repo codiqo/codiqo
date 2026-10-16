@@ -17,6 +17,7 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.output.CountingOutputStream;
 import org.apache.commons.io.output.NullOutputStream;
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
 import com.google.common.collect.Lists;
@@ -59,8 +60,9 @@ public class AnalysisSubmitter {
             long connectTimeoutSeconds,
             long readTimeoutSeconds,
             AnalysisSubmissionModel submission,
+            SourceHiding hiding,
             Log log) throws ApiException {
-        return submit(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds, submission, Optional.empty(), log);
+        return submit(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds, submission, Optional.empty(), hiding, log);
     }
     /** with the local review's trace, which a staged upload carries and a single request does not */
     public static AnalysisAcceptedModel submit(
@@ -70,8 +72,9 @@ public class AnalysisSubmitter {
             long readTimeoutSeconds,
             AnalysisSubmissionModel submission,
             File reviewTrace,
+            SourceHiding hiding,
             Log log) throws ApiException {
-        return submit(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds, submission, Optional.of(reviewTrace), log);
+        return submit(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds, submission, Optional.of(reviewTrace), hiding, log);
     }
     private static AnalysisAcceptedModel submit(
             String apiUrl,
@@ -79,11 +82,15 @@ public class AnalysisSubmitter {
             long connectTimeoutSeconds,
             long readTimeoutSeconds,
             AnalysisSubmissionModel submission,
-            Optional<File> reviewTrace,
+            Optional<File> trace,
+            SourceHiding hiding,
             Log log) throws ApiException {
         ApiClient apiClient = CodiqoApiClients.newApiClient(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds);
         AnalysisApi client = new AnalysisApi(apiClient);
-        log.info("submitting analysis to " + apiUrl + " (" + describePayloadSize(apiClient, submission) + ")");
+        hiding.hide(submission);
+        /** the trace records every file the agents read and every command's output, so a hidden submission never carries it */
+        Optional<File> reviewTrace = trace.filter(file -> BooleanUtils.negate(hiding.isHidden()));
+        log.info("submitting " + (hiding.isHidden() ? "source-hidden " : StringUtils.EMPTY) + "analysis to " + apiUrl + " (" + describePayloadSize(apiClient, submission) + ")");
 
         Optional<UUID> uploadId = openUpload(client, apiUrl, submission, log);
         if (uploadId.isEmpty()) {
@@ -255,9 +262,11 @@ public class AnalysisSubmitter {
             long connectTimeoutSeconds,
             long readTimeoutSeconds,
             AnalysisSubmissionModel submission,
+            SourceHiding hiding,
             Log log) throws ApiException {
         ApiClient apiClient = CodiqoApiClients.newApiClient(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds);
         AnalysisApi client = new AnalysisApi(apiClient);
+        hiding.hide(submission);
         log.info("submitting uncommitted changes to " + apiUrl + " (" + describePayloadSize(apiClient, submission) + ")");
 
         return ApiRetry.call(log, "submitUncommittedAnalysis", apiUrl, () -> client.submitUncommittedAnalysis(submission));
@@ -273,6 +282,7 @@ public class AnalysisSubmitter {
             String detail,
             List<FileChangeModel> files,
             ProjectMetricsModel projectMetrics,
+            SourceHiding hiding,
             Log log) throws ApiException {
         AnalysisApi client = buildClient(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds);
         log.info("excluding commit " + commitSha + " at " + apiUrl + " (reason: " + reason + ", category: " + category + ", files: " + files.size() + ")");
@@ -283,6 +293,7 @@ public class AnalysisSubmitter {
         body.setDetail(detail);
         body.setFiles(files);
         body.setProjectMetrics(projectMetrics);
+        hiding.hide(body);
 
         ApiRetry.call(log, "excludeAnalysis", apiUrl, () -> {
             client.excludeAnalysis(commitSha, body);

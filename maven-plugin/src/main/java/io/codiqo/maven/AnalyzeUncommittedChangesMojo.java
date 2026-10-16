@@ -150,6 +150,7 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
                     connectTimeoutSeconds,
                     readTimeoutSeconds,
                     ctx.getSubmissionModel(),
+                    sourceHiding(),
                     reporter);
             getLog().info(String.format("accepted uncommitted analysis id: %s status: %s",
                     response.getAnalysisId(),

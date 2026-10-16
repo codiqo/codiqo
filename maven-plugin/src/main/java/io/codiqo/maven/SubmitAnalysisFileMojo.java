@@ -2,6 +2,7 @@ package io.codiqo.maven;
 
 import java.io.File;
 
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -23,6 +24,8 @@ import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.maven.auth.MavenCredentials;
 import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.submit.AnalysisSubmitter;
+import io.codiqo.submit.SourceHiding;
+import io.codiqo.util.Env;
 import io.codiqo.submit.auth.CodiqoCredential;
 
 @Mojo(name = "submit-analysis-file",
@@ -52,6 +55,13 @@ public class SubmitAnalysisFileMojo extends AbstractMojo {
     @Parameter(property = "codiqo.readTimeoutSeconds", defaultValue = "300")
     private long readTimeoutSeconds;
 
+    /** a file written by submit-commit-analysis holds the plain submission; hidden-source mode hides it as it is sent */
+    @Parameter(property = "codiqo.sourceHidden")
+    private Boolean sourceHidden;
+
+    @Parameter(property = "codiqo.sourceHashKey")
+    private String sourceHashKey;
+
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         CodiqoCredential credential = MavenCredentials.resolve(apiKey, authUrl, resourceUrl, getLog());
@@ -71,6 +81,7 @@ public class SubmitAnalysisFileMojo extends AbstractMojo {
                     connectTimeoutSeconds,
                     readTimeoutSeconds,
                     submission,
+                    SourceHiding.of(BooleanUtils.isTrue(sourceHidden), Env.resolve(sourceHashKey)),
                     new MavenMessageReporter(getLog()));
             getLog().info(String.format("accepted analysis id: %s status: %s", response.getAnalysisId(), response.getStatus()));
         } catch (ApiException err) {

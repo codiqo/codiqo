@@ -44,15 +44,15 @@ public class ProjectHalts {
      * logged as an error and the caller still fails with the original cause: losing that cause to the halt's own failure
      * would leave nothing to investigate.
      */
-    public boolean halt(Log log, CommitIndexApi client, String apiUrl, String projectId, String commitSha, Throwable cause) {
-        return halt(log, client, apiUrl, projectId, commitSha, reasonOf(cause), ExceptionUtils.getStackTrace(cause));
+    public boolean halt(Log log, CommitIndexApi client, String apiUrl, String projectId, String commitSha, Throwable cause, boolean sourceHidden) {
+        return halt(log, client, apiUrl, projectId, commitSha, reasonOf(cause), ExceptionUtils.getStackTrace(cause), sourceHidden);
     }
     /**
      * As above, for a failure known only by its description: a run killed from outside, which left no exception. The
      * result matters to {@code halt-project}, whose whole job is the halt: a goal that succeeded without recording it
      * would hide from the GitHub Action that the next scheduled run will pay for the same commit's review again.
      */
-    public boolean halt(Log log, CommitIndexApi client, String apiUrl, String projectId, String commitSha, String reason, String detail) {
+    public boolean halt(Log log, CommitIndexApi client, String apiUrl, String projectId, String commitSha, String reason, String detail, boolean sourceHidden) {
         /**
          * The detail can be the tail of the run's log, written before the GitHub Action redacts its logs, and a test or
          * a transport trace there may echo a credential; administrators read the halt on the server. Scrubbed with the
@@ -63,6 +63,16 @@ public class ProjectHalts {
                 .commitSha(commitSha)
                 .reason(StringUtils.abbreviate(SecretRedaction.redactText(reason, environment), REASON_LIMIT))
                 .detail(StringUtils.abbreviate(SecretRedaction.redactText(detail, environment), DETAIL_LIMIT));
+        /**
+         * A hidden-source run's halt keeps its reason without names and drops the detail, a log quoting the build. It
+         * needs no key, so a halt whose key could not be read is still recorded: a lost halt makes the next scheduled run
+         * pay for the same review again.
+         */
+        if (sourceHidden) {
+            request.setSourceHidden(true);
+            request.setReason(SourceHiding.reason(request.getReason()));
+            request.setDetail(null);
+        }
         try {
             ApiRetry.call(log, "haltProject", apiUrl, () -> {
                 client.haltProject(projectId, request);

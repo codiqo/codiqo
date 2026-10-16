@@ -75,6 +75,7 @@ import io.codiqo.submit.review.LocalReviewRun;
 import io.codiqo.llm.ConventionGuidance;
 import io.codiqo.llm.review.ReviewTrace;
 import io.codiqo.submit.ProjectHalts;
+import io.codiqo.submit.SourceHiding;
 import io.codiqo.submit.ProjectTags;
 import lombok.experimental.UtilityClass;
 
@@ -140,6 +141,8 @@ public class AnalysisEngine {
              * The exclusion gate runs before the ClassGraph scan and the JDT import, so an excluded commit costs a git
              * walk rather than a full analysis.
              */
+            /** a hidden-source run without a usable key fails before anything is analysed, sent or paid for */
+            hiding(request);
             Optional<Exclusion> excluded = CommitExclusions.beforeAnalysis(args);
             if (excluded.isPresent()) {
                 reportExclusion(request, args, args.getCommitId(), excluded.get(), List.of(), log);
@@ -166,7 +169,7 @@ public class AnalysisEngine {
                         ExceptionUtils.indexOfThrowable(err, CommitBuildFailedException.class) >= 0 });
                 /** a run that fails after its submission was accepted has scored its commit, so it halts nothing */
                 if (BooleanUtils.negate(BooleanUtils.or(new boolean[] { haltsNothing, args.isSubmissionAccepted() }))) {
-                    ProjectHalts.halt(log, client, request.getApiUrl(), request.getRootCode(), args.getCommitId(), err);
+                    ProjectHalts.halt(log, client, request.getApiUrl(), request.getRootCode(), args.getCommitId(), err, request.isSourceHidden());
                     ProgressStage.abort(args, ExceptionUtils.getRootCauseMessage(err), ProjectHalts.traceOf(args, args.getCommitId()));
                 }
                 throw err;
@@ -267,6 +270,7 @@ public class AnalysisEngine {
                 detail,
                 files,
                 projectMetrics,
+                hiding(request),
                 log);
     }
     /**
@@ -526,6 +530,7 @@ public class AnalysisEngine {
                         request.getReadTimeoutSeconds(),
                         request.getRootCode(),
                         snapshot.get(),
+                        hiding(request),
                         log);
             }
         } catch (Exception err) {
@@ -661,13 +666,16 @@ public class AnalysisEngine {
         AnalysisAcceptedModel toReturn;
         if (BooleanUtils.and(new boolean[] { Objects.nonNull(ctx.getSubmissionModel().getLocalReview()), trace.isFile() })) {
             toReturn = AnalysisSubmitter.submit(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(),
-                    request.getReadTimeoutSeconds(), ctx.getSubmissionModel(), trace, log);
+                    request.getReadTimeoutSeconds(), ctx.getSubmissionModel(), trace, hiding(request), log);
         } else {
             toReturn = AnalysisSubmitter.submit(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(),
-                    request.getReadTimeoutSeconds(), ctx.getSubmissionModel(), log);
+                    request.getReadTimeoutSeconds(), ctx.getSubmissionModel(), hiding(request), log);
         }
         ctx.getArgs().setSubmissionAccepted(true);
         return toReturn;
+    }
+    private static SourceHiding hiding(AnalysisRequest request) {
+        return SourceHiding.of(request.isSourceHidden(), Optional.ofNullable(request.getSourceHashKey()));
     }
     /** each review setting left unset keeps its {@link RunArgs} default; the trace goes beside the analysis's output */
     @VisibleForTesting

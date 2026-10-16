@@ -1683,3 +1683,43 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   `PromptTemplates`): values go in with `[(${...})]`, the assessment and convention parts are `th:if` blocks. Thymeleaf
   does not re-read an inserted value, so a convention file holding `[(...)]` stays text. The OpenCode configuration
   itself stays a Jackson tree: a JSON template would not escape a quote in a model name or a path.
+
+## Hidden-Source Mode — Codiqo Stores No Source Code
+
+**`codiqo.sourceHidden` (Gradle `-Pcodiqo.sourceHidden`) sends Codiqo's API no source code, and the commit scores
+exactly as its plain submission would.** `SourceHiding` is the one transform, applied to every request model as it is sent
+(`AnalysisSubmitter.submit`/`submitUncommitted`/`exclude`, `HotspotSnapshots.submit`, `ProjectHalts.halt`), after the
+local review has read and labelled the plain code. Every one of those methods takes a `SourceHiding` (`NONE` for plain),
+so no send path can forget it. Maven resolves the key in `AbstractAnalyzeMojo.doPrepare`, before any exclusion,
+review or submission; Gradle in `GradleModelCollector`. A halt only needs the flag (`ProjectHalts.halt(..., sourceHidden)`),
+so a halt is recorded even when the key cannot be read.
+
+- **Dropped:** file contents, unit bodies and diffs, clone slices, annotation arguments, diagnostic and finding
+  messages, build, exclusion and halt detail, agent instructions, the review trace (never uploaded), and every text the
+  review wrote (summary, rationales, reasoning, observations, bug texts and fixes, label reasons, senior-review
+  reasons). The SOLID violations and architecture issues stay as hashes, since rules price them by count.
+- **Reasons** (exclusion, build failure, halt) keep their general description, every file name and path masked by
+  `SourceHiding.reason` (`changed files: [******.sql]`, `******.java:[10,5] cannot find symbol`); a name with spaces is
+  masked back to the nearest bracket, comma or colon, words of the description included. A bare identifier a message
+  quotes is not recognised. The review's tags stay: they are short labels, not code.
+- **Hashed:** every identifier, HMAC-SHA256 under `codiqo.sourceHashKey` (at least 32 characters, from a CI secret;
+  both plugins read `env:VAR`), which only the organization holds. The key must stay the same for the whole project: the
+  server joins a unit's file with a clone's, a diagnostic's and a bug's, and a label's signature with its unit's. Nothing
+  is normalised before hashing, so two plain values are equal exactly when their hashes are.
+- **Paths** are hashed segment by segment (separators kept); the last segment keeps its extension, or its whole name
+  for a config file `ConfigFiles` recognises (`pom.xml`, `*.gradle.kts`, `libs.versions.toml`): the scorer picks the
+  language and the line filter from exactly those. `/dev/null` stays. Module directories are hashed segment by segment whole, as a file's directories are; the
+  blob ids of git's `index` line are keyed hashes too.
+- **The diff** keeps git's headers (naming the hashed paths), hunk headers, prefixes, whitespace and punctuation; every
+  `MovedLineDetector.WORD_TOKEN` token becomes a keyed hash of the same kind, a literal keeps its quotes with its
+  content hidden like a line (the invocation count matches call shapes inside literals; content with no token
+  is hashed into private-use characters unless it holds a block comment's end), and only the words the scorer
+  reads by name stay (`import`, `JavaInvocationCounter.CONTROL_FLOW_KEYWORDS`). Non-ASCII runs become private-use
+  characters, whitespace of any script stays, and a `$` followed by a digit stays digit-led (no new call shape). Line counts, comment and import filtering, moved lines and invocation counts are then unchanged, and the
+  server can score it again.
+- **Kept:** the commit's metadata and message (skip detection reads it), project and module coordinates, dependencies,
+  metrics, coverage, locations and the review's scores, gates, labels and tags.
+- `SourceHidingTest.theHiddenSubmissionScoresAsThePlainOne` pins the equivalence; point
+  `-Dcodiqo.hiddenSource.submissions` at a directory of `-Dcodiqo.dumpAnalysis=true` dumps to check real commits.
+- **Not hidden from the model:** the local review still sends the code to the model provider, by default through
+  Codiqo's proxy (`codiqo.review.baseUrl`), which passes it on and stores no body.
