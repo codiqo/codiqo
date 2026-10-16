@@ -256,6 +256,8 @@ class SourceHidingTest {
                 SourceHiding.reason("[ERROR] /home/runner/work/x/src/main/java/com/acme/billing/RetryPolicy.java:[10,5] cannot find symbol"));
         assertEquals("******: the agent did not attach to version 1.2.0", SourceHiding.reason("com.acme.billing.RetryPolicy: the agent did not attach to version 1.2.0"));
         assertEquals("revert commit (no LLM scoring performed)", SourceHiding.reason("revert commit (no LLM scoring performed)"));
+        assertEquals("changed files: [******.java, ******.md]", SourceHiding.reason("changed files: [Secret Invoice.java, Q3 refund plan.md]"));
+        assertEquals("[ERROR] ****** ****** ******.java:[3,1] cannot find symbol", SourceHiding.reason("[ERROR] /home/x/My Docs/Secret Invoice.java:[3,1] cannot find symbol"));
     }
     /**
      * Lines the fixture's commit does not hold, each checked the way the scorer reads a diff line: its tokens, its call
@@ -272,12 +274,15 @@ class SourceHidingTest {
                 "char quote = '\\'', tab = '\\t';",
                 "// значение — retry(count) don't",
                 "import java.util.List;",
-                "String text = \"\"\"\";");
+                "String text = \"\"\"\";",
+                "String arrow = \"<=>\", sep = \"/\", blank = \" \";",
+                "/* \"*/\" */ x();");
         SourceHiding hiding = SourceHiding.of(true, Optional.of(KEY));
         StringBuilder plain = new StringBuilder("diff --git a/A.java b/A.java\n--- a/A.java\n+++ b/A.java\n@@ -0,0 +1," + lines.size() + " @@\n");
         lines.forEach(line -> plain.append('+').append(line).append('\n'));
         String[] hidden = StringUtils.splitPreserveAllTokens(hiding.diff(plain.toString(), "A.java", "A.java"), '\n');
 
+        assertFalse(String.join(StringUtils.LF, hidden).contains("<=>"), "a literal without a token is hashed too");
         for (int i = 0; i < lines.size(); i++) {
             String original = lines.get(i);
             String masked = hidden[4 + i].substring(1);

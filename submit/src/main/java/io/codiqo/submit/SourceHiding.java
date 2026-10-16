@@ -145,6 +145,12 @@ public final class SourceHiding {
     private static final Pattern REASON_EXTENSION = Pattern.compile("[a-z0-9]{1,6}");
     private static final Pattern HAS_LETTER = Pattern.compile("[A-Za-z]");
     private static final String MASK = "******";
+    /**
+     * What ends a reason's file name on its left: a file name with spaces ({@code Secret Invoice.java}) is masked back
+     * to the nearest of these, so none of its words stays readable. A description between the two is masked with it.
+     */
+    private static final String REASON_DELIMITERS = "[](){}<>,;:'\"`";
+    private static final CharSequence[] BLOCK_COMMENT_ENDS = { "*/", "-->" };
 
     /**
      * The words the scorer reads by name in a diff line: a deleted import is ineffective ({@link IneffectiveLineFilter})
@@ -504,12 +510,21 @@ public final class SourceHiding {
     }
     /**
      * A literal keeps its quotes and has its content hidden as a line of its own, rather than hashed whole: the
-     * invocation count matches call shapes inside literals as well, so {@code "retry(x)"} must keep its call.
+     * invocation count matches call shapes inside literals as well, so {@code "retry(x)"} must keep its call. Content
+     * with no token at all ({@code "--->"}, {@code "@#!%"}) would come out unchanged that way, so it is hashed into
+     * private-use characters, which hold no token and no call shape either. Whitespace-only content stays, and so does
+     * content holding a block comment's end marker: the comment check finds the first {@code *}{@code /} or
+     * {@code -->} on a line, wherever it is, and moving it would turn a code line into a comment line.
      */
     private String token(String token) {
         char first = token.charAt(0);
         if (BooleanUtils.or(new boolean[] { first == DOUBLE_QUOTE, first == SINGLE_QUOTE })) {
-            return first + text(token.substring(1, token.length() - 1)) + first;
+            String content = token.substring(1, token.length() - 1);
+            if (BooleanUtils.or(new boolean[] { MovedLineDetector.WORD_TOKEN.matcher(content).find(), StringUtils.isBlank(content),
+                    StringUtils.containsAny(content, BLOCK_COMMENT_ENDS) })) {
+                return first + text(content) + first;
+            }
+            return first + nonAscii(content) + first;
         }
         if (CharUtils.isAsciiNumeric(first)) {
             return Long.toUnsignedString(Long.parseUnsignedLong(hex(token, TOKEN_HEX), 16));
@@ -629,19 +644,37 @@ public final class SourceHiding {
      * Bare identifiers a message quotes (a symbol a compiler could not find) are not recognised and stay.
      */
     public static String reason(String reason) {
-        Matcher name = REASON_NAME.matcher(reason);
         StringBuilder toReturn = new StringBuilder();
+        Matcher name = REASON_NAME.matcher(reason);
+        int copied = 0;
         while (name.find()) {
             String found = name.group();
-            String masked = found;
             if (HAS_LETTER.matcher(found).find()) {
                 String extension = FilenameUtils.getExtension(found.substring(Math.max(found.lastIndexOf(IOUtils.DIR_SEPARATOR_UNIX), found.lastIndexOf(IOUtils.DIR_SEPARATOR_WINDOWS)) + 1));
-                masked = REASON_EXTENSION.matcher(extension).matches() ? MASK + FilenameUtils.EXTENSION_SEPARATOR + extension : MASK;
+                toReturn.append(reason, copied, wordsBefore(reason, name.start(), copied));
+                toReturn.append(REASON_EXTENSION.matcher(extension).matches() ? MASK + FilenameUtils.EXTENSION_SEPARATOR + extension : MASK);
+                copied = name.end();
             }
-            name.appendReplacement(toReturn, Matcher.quoteReplacement(masked));
         }
-        name.appendTail(toReturn);
-        return toReturn.toString();
+        return toReturn.append(reason.substring(copied)).toString();
+    }
+    /** where a name's words start: back over every space-separated word up to a delimiter, the start or {@code floor} */
+    private static int wordsBefore(String reason, int start, int floor) {
+        int toReturn = start;
+        while (toReturn > floor && Character.isWhitespace(reason.charAt(toReturn - 1))) {
+            int word = toReturn - 1;
+            while (word > floor && isWordOfName(reason.charAt(word - 1))) {
+                word--;
+            }
+            if (word == toReturn - 1) {
+                return toReturn;
+            }
+            toReturn = word;
+        }
+        return toReturn;
+    }
+    private static boolean isWordOfName(char c) {
+        return BooleanUtils.and(new boolean[] { BooleanUtils.negate(Character.isWhitespace(c)), REASON_DELIMITERS.indexOf(c) < 0 });
     }
     private static <T> void replace(Supplier<T> getter, Consumer<T> setter, UnaryOperator<T> hide) {
         T value = getter.get();

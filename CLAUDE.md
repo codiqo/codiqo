@@ -1699,8 +1699,9 @@ so a halt is recorded even when the key cannot be read.
   review wrote (summary, rationales, reasoning, observations, bug texts and fixes, label reasons, senior-review
   reasons). The SOLID violations and architecture issues stay as hashes, since rules price them by count.
 - **Reasons** (exclusion, build failure, halt) keep their general description, every file name and path masked by
-  `SourceHiding.reason` (`changed files: [******.sql]`, `******.java:[10,5] cannot find symbol`); a bare identifier a
-  message quotes is not recognised. The review's tags stay: they are short labels, not code.
+  `SourceHiding.reason` (`changed files: [******.sql]`, `******.java:[10,5] cannot find symbol`); a name with spaces is
+  masked back to the nearest bracket, comma or colon, words of the description included. A bare identifier a message
+  quotes is not recognised. The review's tags stay: they are short labels, not code.
 - **Hashed:** every identifier, HMAC-SHA256 under `codiqo.sourceHashKey` (at least 32 characters, from a CI secret;
   both plugins read `env:VAR`), which only the organization holds. The key must stay the same for the whole project: the
   server joins a unit's file with a clone's, a diagnostic's and a bug's, and a label's signature with its unit's. Nothing
@@ -1711,7 +1712,8 @@ so a halt is recorded even when the key cannot be read.
   blob ids of git's `index` line are keyed hashes too.
 - **The diff** keeps git's headers (naming the hashed paths), hunk headers, prefixes, whitespace and punctuation; every
   `MovedLineDetector.WORD_TOKEN` token becomes a keyed hash of the same kind, a literal keeps its quotes with its
-  content hidden like a line (the invocation count matches call shapes inside literals), and only the words the scorer
+  content hidden like a line (the invocation count matches call shapes inside literals; content with no token
+  is hashed into private-use characters unless it holds a block comment's end), and only the words the scorer
   reads by name stay (`import`, `JavaInvocationCounter.CONTROL_FLOW_KEYWORDS`). Non-ASCII runs become private-use
   characters, whitespace of any script stays, and a `$` followed by a digit stays digit-led (no new call shape). Line counts, comment and import filtering, moved lines and invocation counts are then unchanged, and the
   server can score it again.

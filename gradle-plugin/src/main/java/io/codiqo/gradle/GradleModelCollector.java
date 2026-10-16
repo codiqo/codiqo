@@ -64,7 +64,10 @@ public class GradleModelCollector {
         request.setSkipOnBuildFailure(boolProp(root, "codiqo.skipOnBuildFailure", ext.isSkipOnBuildFailure()));
 
         request.setSourceHidden(boolProp(root, "codiqo.sourceHidden", ext.isSourceHidden()));
-        resolveSourceHashKey(root, ext).ifPresent(request::setSourceHashKey);
+        /** only a hidden run reads the key: a plain run must not fail on a key it never uses */
+        if (request.isSourceHidden()) {
+            resolveSourceHashKey(root, ext).ifPresent(request::setSourceHashKey);
+        }
 
         request.setReview(boolProp(root, "codiqo.review", ext.isReview()));
         request.setReviewExecutable(stringProp(root, "codiqo.review.executable", ext.getReviewExecutable()));
