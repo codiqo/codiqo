@@ -257,6 +257,8 @@ class SourceHidingTest {
         assertEquals("******: the agent did not attach to version 1.2.0", SourceHiding.reason("com.acme.billing.RetryPolicy: the agent did not attach to version 1.2.0"));
         assertEquals("revert commit (no LLM scoring performed)", SourceHiding.reason("revert commit (no LLM scoring performed)"));
         assertEquals("changed files: [******.java, ******.md]", SourceHiding.reason("changed files: [Secret Invoice.java, Q3 refund plan.md]"));
+        assertEquals("cannot read: ******.pdf", SourceHiding.reason("cannot read: Q3 Secret Plan.pdf"));
+        assertEquals("******.pdf", SourceHiding.reason("cannot read Q3 Secret Plan.pdf"), "with no delimiter the description goes with the name");
         assertEquals("[ERROR] ****** ****** ******.java:[3,1] cannot find symbol", SourceHiding.reason("[ERROR] /home/x/My Docs/Secret Invoice.java:[3,1] cannot find symbol"));
     }
     /**

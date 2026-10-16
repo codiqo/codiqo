@@ -149,7 +149,7 @@ public final class SourceHiding {
      * What ends a reason's file name on its left: a file name with spaces ({@code Secret Invoice.java}) is masked back
      * to the nearest of these, so none of its words stays readable. A description between the two is masked with it.
      */
-    private static final String REASON_DELIMITERS = "[](){}<>,;:'\"`";
+    private static final String[] REASON_DELIMITERS = { "[", "]", "(", ")", "{", "}", "<", ">", ",", ";", ":", "'", "\"", "`" };
     private static final CharSequence[] BLOCK_COMMENT_ENDS = { "*/", "-->" };
 
     /**
@@ -658,23 +658,15 @@ public final class SourceHiding {
         }
         return toReturn.append(reason.substring(copied)).toString();
     }
-    /** where a name's words start: back over every space-separated word up to a delimiter, the start or {@code floor} */
+    /**
+     * Where a name's words start: after the last delimiter between {@code floor} and the name, past the spaces that
+     * follow it. Nothing but spaces there (the name right after a bracket) leaves the name where it starts.
+     */
     private static int wordsBefore(String reason, int start, int floor) {
-        int toReturn = start;
-        while (toReturn > floor && Character.isWhitespace(reason.charAt(toReturn - 1))) {
-            int word = toReturn - 1;
-            while (word > floor && isWordOfName(reason.charAt(word - 1))) {
-                word--;
-            }
-            if (word == toReturn - 1) {
-                return toReturn;
-            }
-            toReturn = word;
-        }
-        return toReturn;
-    }
-    private static boolean isWordOfName(char c) {
-        return BooleanUtils.and(new boolean[] { BooleanUtils.negate(Character.isWhitespace(c)), REASON_DELIMITERS.indexOf(c) < 0 });
+        String before = reason.substring(floor, start);
+        int delimiter = StringUtils.lastIndexOfAny(before, REASON_DELIMITERS);
+        int words = StringUtils.indexOfAnyBut(before.substring(delimiter + 1), StringUtils.SPACE);
+        return words < 0 ? start : floor + delimiter + 1 + words;
     }
     private static <T> void replace(Supplier<T> getter, Consumer<T> setter, UnaryOperator<T> hide) {
         T value = getter.get();
