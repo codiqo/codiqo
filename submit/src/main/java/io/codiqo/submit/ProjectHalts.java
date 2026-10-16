@@ -26,6 +26,9 @@ public class ProjectHalts {
     /** the request model's limits; a longer reason or detail would make the server refuse the halt itself */
     private static final int REASON_LIMIT = 2000;
     private static final int DETAIL_LIMIT = 65536;
+    private static final String SEPARATOR = "; ";
+    /** the shortest length {@link StringUtils#abbreviate(String, int)} accepts: room for one character and its ellipsis */
+    private static final int MIN_ABBREVIATION = 4;
 
     /** where the failed commit's review trace is, for the run's watcher; the run's log when no review left one */
     public String traceOf(RunArgs args, String commitSha) {
@@ -74,15 +77,19 @@ public class ProjectHalts {
     }
     /**
      * The root cause names the failure, except for a review the model's provider failed: the provider's answers are
-     * added by the {@link ReviewProviderException} that wraps the root cause, so its message is the reason instead. On
-     * 16 Oct 2026 nine projects halted with "session ... finished without an answer" while the provider answered 429
-     * for eight hours, and only the detail said so, which the halt banner in codiqo-web does not show.
+     * added by the {@link ReviewProviderException} that wraps the root cause, so the reason is the root cause followed
+     * by them. On 16 Oct 2026 nine projects halted with "session ... finished without an answer" while the provider
+     * answered 429 for eight hours, and only the detail said so, which the halt banner in codiqo-web does not show. The
+     * failure is shortened rather than the summary: a failure that fills the reason's limit on its own would cut off
+     * exactly the part the banner needs.
      */
     private String reasonOf(Throwable cause) {
+        String failure = ExceptionUtils.getRootCauseMessage(cause);
         int provider = ExceptionUtils.indexOfType(cause, ReviewProviderException.class);
         if (provider >= 0) {
-            return ExceptionUtils.getMessage(ExceptionUtils.getThrowables(cause)[provider]);
+            String summary = SEPARATOR + ((ReviewProviderException) ExceptionUtils.getThrowables(cause)[provider]).getProviderSummary();
+            return StringUtils.abbreviate(failure, Math.max(MIN_ABBREVIATION, REASON_LIMIT - summary.length())) + summary;
         }
-        return ExceptionUtils.getRootCauseMessage(cause);
+        return failure;
     }
 }

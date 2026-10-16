@@ -103,12 +103,19 @@ class ProjectHaltsTest {
         server.start();
         try {
             IOException unanswered = new IOException("session ses_1 finished without an answer");
-            ReviewProviderException provider = new ReviewProviderException(unanswered.getMessage() + "; the LLM provider answered 429 13 times and 504 5 times during the review", unanswered);
+            ReviewProviderException provider = new ReviewProviderException(unanswered.getMessage(), "the LLM provider answered 429 13 times and 504 5 times during the review", unanswered);
             ProjectHalts.halt(new NoopLog(), client(server), url(server), "p1", SHA, new LocalReviewException("local review failed: " + provider.getMessage(), provider));
 
             String reason = posted.get().get("reason").asString();
             assertTrue(reason.contains("the LLM provider answered 429 13 times"), reason);
             assertTrue(reason.contains("finished without an answer"), reason);
+
+            IOException wordy = new IOException("opencode answered 500: " + "x".repeat(2100));
+            ReviewProviderException behindWordy = new ReviewProviderException(wordy.getMessage(), "the LLM provider answered 429 once during the review", wordy);
+            ProjectHalts.halt(new NoopLog(), client(server), url(server), "p1", SHA, new LocalReviewException("local review failed", behindWordy));
+
+            String shortened = posted.get().get("reason").asString();
+            assertTrue(shortened.endsWith("; the LLM provider answered 429 once during the review"), "a long failure is shortened, never the provider's summary");
         } finally {
             server.stop(0);
         }
