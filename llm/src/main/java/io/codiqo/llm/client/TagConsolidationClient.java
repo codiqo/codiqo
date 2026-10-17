@@ -24,7 +24,7 @@ public class TagConsolidationClient implements LlmClient {
 
     public TagConsolidationClient(RunArgs args, ExecutorService executor, Log log, Map<String, String> additionalHeaders) {
         this.log = Objects.requireNonNull(log);
-        this.completions = new JsonCompletionClient(args, executor, log, additionalHeaders);
+        this.completions = new JsonCompletionClient(args, executor, additionalHeaders);
     }
     public JsonCompletionClient.Result<TagConsolidationResponse> consolidate(
             List<String> technicalTags, List<String> functionalTags, int vocabularyCap) throws Exception {

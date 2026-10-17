@@ -39,6 +39,6 @@ class RecapAwardsClientTest {
                 .projects(Lists.newArrayList())
                 .build();
 
-        GoldenText.assertMatches("recap-awards-prompt", RecapAwardsClient.prompt("Example Org", "September 2026", "effort", List.of(full, sparse)));
+        GoldenText.assertMatches("recap-awards-prompt", RecapAwardsClient.prompt("Example Org", "the third quarter", "effort", List.of(full, sparse)));
     }
 }

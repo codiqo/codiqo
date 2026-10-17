@@ -35,7 +35,6 @@ import tools.jackson.databind.node.ObjectNode;
 class LlmJsonRoundTripTest {
     private static final ObjectMapper REQUEST = LlmJson.requestMapper();
     private static final ObjectMapper RESPONSE = LlmJson.responseMapper();
-    private static final ObjectMapper OLLAMA = new ObjectMapper();
     private static final JsonNodeFactory JSON = JsonNodeFactory.instance;
 
     static Stream<Arguments> documents() throws Exception {

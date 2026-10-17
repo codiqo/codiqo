@@ -1225,8 +1225,8 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         if (timedOut || result.getExitCode() != 0) {
             /**
              * A module whose tests ran without the coverage agent is codiqo's failure, not the commit's: classified as a
-             * build failure it would be scored in degraded mode as one the author broke, as a production commit was on
-             * 13 Oct 2026, and retried down the time-machine ladder for nothing. The run fails instead, which cancels the review.
+             * build failure it would be scored in degraded mode as one the author broke, as a production commit once was,
+             * and retried down the time-machine ladder for nothing. The run fails instead, which cancels the review.
              */
             if (Objects.nonNull(uninstrumentedReportFile) && uninstrumentedReportFile.length() > 0L) {
                 throw new MojoExecutionException("coverage is required (codiqo.failOnUninstrumentedModule) and the analysis build cannot measure it: "
@@ -1597,7 +1597,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                      * JaCoCo data (codiqo.failOnUninstrumentedModule), or the coverage it produced predates the sources.
                      * Both are a broken measurement on codiqo's side, never the author's, so the run fails and is
                      * investigated. It used to be scored as the author's BUILD_FAILURE in degraded mode: a
-                     * production commit whose agent did not attach to eight modules on 13 Oct 2026, was scored with penalties
+                     * production commit whose agent did not attach to eight modules was scored with penalties
                      * only. Failing also cancels the commit's local review, which the checkout's finally block closes.
                      */
                     registry.collectAndCapture(index, analysis);
@@ -1975,7 +1975,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         /**
          * What javac prints when it crashes, what Error Prone prints when one of its checks throws, and what
          * maven-compiler-plugin prints when javac threw instead of reporting the code's errors. The last was seen on
-         * a production commit on 14 Oct 2026: javac on a newer JDK than the project's failed with
+         * a production commit: javac on a newer JDK than the project's failed with
          * "Fatal error compiling: java.lang.ExceptionInInitializerError", which read as the author's broken build, so
          * the commit's review started and the commit was excluded instead of the run failing.
          */

@@ -7,6 +7,8 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import com.google.common.collect.Lists;
+
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CodeUnitModel;
 import io.codiqo.client.model.FileChangeModel;
@@ -27,22 +29,20 @@ class UnitLabellingTest {
                 checklist.getListed());
         assertEquals(build, checklist.getUnits().get("U2"));
     }
-    /**
-     * A label reaches the unit behind its id; an id that was never given is reported, a unit labelled before the review
-     * keeps its label, and a reason is kept only above MECHANICAL.
-     */
+    /** a label reaches the unit behind its id, a unit labelled before the review keeps its label, and a reason is kept only above MECHANICAL */
     @Test
-    void labelsReachTheirUnitsByIdOnly() {
+    void labelsReachTheirUnitsById() {
         CodeUnitModel handle = unit("handle(Request)", CodeUnitModel.OperationEnum.MODIFY, 12, 30);
         CodeUnitModel build = unit("build()", CodeUnitModel.OperationEnum.NEW, 41, 44);
         CodeUnitModel kept = unit("kept()", CodeUnitModel.OperationEnum.NEW, 50, 52).category(CodeUnitModel.CategoryEnum.INTRICATE);
         UnitLabelling.Checklist checklist = UnitLabelling.checklist(submission(new FileChangeModel().path("a/Service.java").codeUnits(List.of(handle, build, kept))));
-
-        UnitLabelling.Applied applied = UnitLabelling.apply(checklist, labels(
-                label(" U1 ", CodeBlockCategory.SUBSTANTIVE, "a new retry path"),
+        UnitLabels labels = labels(
+                label("U1", CodeBlockCategory.SUBSTANTIVE, "a new retry path"),
                 label("U2", CodeBlockCategory.MECHANICAL, "a builder"),
-                label("U3", CodeBlockCategory.MECHANICAL, null),
-                label("U9", CodeBlockCategory.ROUTINE, "not listed")));
+                label("U3", CodeBlockCategory.MECHANICAL, null));
+
+        assertEquals(List.of(), UnitLabelling.problems(checklist.getListed(), labels));
+        UnitLabelling.Applied applied = UnitLabelling.apply(checklist, labels);
 
         assertEquals(CodeUnitModel.CategoryEnum.SUBSTANTIVE, handle.getCategory());
         assertEquals("a new retry path", handle.getCategoryReason());
@@ -51,17 +51,29 @@ class UnitLabellingTest {
         assertEquals(CodeUnitModel.CategoryEnum.INTRICATE, kept.getCategory());
         assertEquals(3, applied.getUnits());
         assertEquals(2, applied.getLabelled());
-        assertEquals(List.of("U9"), applied.getUnknownIds());
     }
-    /** a label repeated for one id keeps its last category, as the scoring does */
+    /** anything but one label with a known category per listed id is named, so the review fails on it */
     @Test
-    void aRepeatedIdKeepsItsLastLabel() {
-        CodeUnitModel handle = unit("handle(Request)", CodeUnitModel.OperationEnum.MODIFY, 12, 30);
-        UnitLabelling.Checklist checklist = UnitLabelling.checklist(submission(new FileChangeModel().path("a/Service.java").codeUnits(List.of(handle))));
+    void anAnswerThatIsNotOneLabelPerUnitIsNamed() {
+        List<ReviewUnit> listed = List.of(
+                new ReviewUnit("U1", "a/Service.java", "handle(Request)", "MODIFY", "12-30"),
+                new ReviewUnit("U2", "a/Service.java", "build()", "NEW", "41-44"),
+                new ReviewUnit("U3", "a/Service.java", "kept()", "NEW", "50-52"));
+        UnitLabels nullList = new UnitLabels();
+        nullList.setLabels(null);
+        List<UnitLabels.UnitLabel> withNull = Lists.newArrayList(label("U1", CodeBlockCategory.ROUTINE, "glue"), null);
+        UnitLabels nullEntry = new UnitLabels();
+        nullEntry.setLabels(withNull);
 
-        UnitLabelling.apply(checklist, labels(label("U1", CodeBlockCategory.ROUTINE, "glue"), label("U1", CodeBlockCategory.INTRICATE, "a lock")));
-
-        assertEquals(CodeUnitModel.CategoryEnum.INTRICATE, handle.getCategory());
+        assertEquals(List.of("no \"labels\" list"), UnitLabelling.problems(listed, nullList));
+        assertEquals(List.of("a null label", "not labelled: [U2, U3]"), UnitLabelling.problems(listed, nullEntry));
+        assertEquals(List.of("U1 is labelled twice", "U2 has no known category", " U3 is not a listed id", "U9 is not a listed id", "not labelled: [U3]"),
+                UnitLabelling.problems(listed, labels(
+                        label("U1", CodeBlockCategory.ROUTINE, "glue"),
+                        label("U1", CodeBlockCategory.INTRICATE, "a lock"),
+                        label("U2", null, "unknown category"),
+                        label(" U3", CodeBlockCategory.MECHANICAL, null),
+                        label("U9", CodeBlockCategory.ROUTINE, "not listed"))));
     }
     private static AnalysisSubmissionModel submission(FileChangeModel file) {
         return new AnalysisSubmissionModel().addFilesItem(file);

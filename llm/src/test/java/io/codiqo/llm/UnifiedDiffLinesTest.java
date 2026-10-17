@@ -19,7 +19,7 @@ import io.codiqo.llm.UnifiedDiffLines.ChangeBlock;
 class UnifiedDiffLinesTest {
     private static final IneffectiveLineFilter C_STYLE = new IneffectiveLineFilter(CommentSyntax.C_STYLE, IneffectiveLineFilter.IMPORT_PREFIX);
 
-    // shape of the real a95206ac bootstrapper regression: two hunks, old/new numbering drifting
+    // shape of a real regression: two hunks, old/new numbering drifting
     // apart because the new file is shorter than the old one
     private static final String TWO_HUNK_DIFF = Joiner.on(StringUtils.LF).join(
             "diff --git a/src/Foo.java b/src/Foo.java",

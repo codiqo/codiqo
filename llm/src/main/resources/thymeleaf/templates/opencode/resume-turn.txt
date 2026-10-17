@@ -1,1 +1,0 @@
-/*[- the turn sent after a step whose model answer failed on the way (a cut stream, a provider error) -]*/Your last step failed on the way from the model: [(${problem})]. Continue the task from where it stopped. Keep everything you have already done and do not repeat finished work; end with the answer the task asks for.

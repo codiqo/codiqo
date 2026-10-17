@@ -79,12 +79,10 @@ public final class LocalReviewRun implements AutoCloseable {
         LocalReview finished = reviewed.getReview();
         reviewed.getTriage().ifPresent(this::logTriage);
 
-        LocalReviewModel model = LocalReviewModels.toModel(finished, reviewed.getTriage(), logFactory.getLogger(LocalReviewModels.class));
-        int labelled = 0;
+        LocalReviewModel model = LocalReviewModels.toModel(finished, reviewed.getTriage());
         if (reviewed.getLabels().isPresent()) {
-            labelled = labelById(ctx.getSubmissionModel(), checklist, finished, reviewed.getLabels().get());
-        }
-        if (labelled == 0) {
+            labelById(ctx.getSubmissionModel(), checklist, finished, reviewed.getLabels().get());
+        } else {
             labelByName(ctx.getSubmissionModel(), finished);
         }
         ctx.getSubmissionModel().setLocalReview(model);
@@ -94,13 +92,10 @@ public final class LocalReviewRun implements AutoCloseable {
         review.close();
     }
     /**
-     * The labelling turn's labels, by id; returns the units they labelled. The reviewers' own labels are only matched
-     * here, so the log shows how much of the commit each would have labelled. An answer that labels nothing (an empty
-     * list, another key, only ids or categories that do not exist) still parses, since unknown fields and enum values
-     * are read leniently; the caller then applies the reviewers' labels, as it does when the turn did not run, instead of
-     * leaving every unit of the commit without a local label.
+     * The labelling turn's labels, by id, which the review already checked to be one per listed unit. The reviewers' own
+     * labels are only matched here, so the log shows how much of the commit each would have labelled.
      */
-    private int labelById(AnalysisSubmissionModel submission, UnitLabelling.Checklist checklist, LocalReview finished, UnitLabels labels) {
+    private void labelById(AnalysisSubmissionModel submission, UnitLabelling.Checklist checklist, LocalReview finished, UnitLabels labels) {
         LocalReviewModels.Labelling byName = LocalReviewModels.matchBlockCategories(submission, finished, languages).getRight();
         UnitLabelling.Applied applied = UnitLabelling.apply(checklist, labels);
         log.info("local review labelled %d of the submission's %d code units by id, from %d labels; the reviewers' own labels would have named %d",
@@ -108,15 +103,6 @@ public final class LocalReviewRun implements AutoCloseable {
                 applied.getUnits(),
                 labels.getLabels().size(),
                 byName.getApplied());
-        if (CollectionUtils.isNotEmpty(applied.getUnknownIds())) {
-            log.warn("%d label(s) named an id the review was not given and were dropped: %s",
-                    applied.getUnknownIds().size(),
-                    applied.getUnknownIds().stream().limit(UNMATCHED_LABEL_SAMPLE).toList());
-        }
-        if (applied.getLabelled() == 0) {
-            log.warn("the labelling turn labelled none of the submission's code units; the reviewers' own labels are used instead");
-        }
-        return applied.getLabelled();
     }
     private void labelByName(AnalysisSubmissionModel submission, LocalReview finished) {
         LocalReviewModels.Labelling labelling = LocalReviewModels.applyBlockCategories(submission, finished, languages);

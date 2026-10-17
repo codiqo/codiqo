@@ -469,7 +469,7 @@ List<String> tags = Objects.nonNull(response.getTags()) && Objects.nonNull(respo
 ### Never Re-Walk a Getter Chain Inside a Condition
 
 **A compound condition must not evaluate the same getter chain twice.** Operand *count* is not the problem —
-`if (enabled && Objects.nonNull(request))` is fine. The problem is re-deriving the same value, which makes the
+`BooleanUtils.and(new boolean[] { enabled, Objects.nonNull(request) })` is fine. The problem is re-deriving the same value, which makes the
 condition long, hides what is actually being tested, and forces the reader to diff two near-identical chains.
 
 Bind the intermediate once. Where the outer hop is a null check, nesting is what makes the binding possible:
@@ -546,7 +546,7 @@ ctx.setVariable("count", Objects.nonNull(review) && Objects.nonNull(review.getIt
 
 ## Fail Fast - No Defensive Programming
 
-**CRITICAL: NEVER add null/empty checks at the start of methods that silently return.** The caller is responsible for passing valid data. If invalid data is passed, let it fail fast (NPE) so bugs are discovered immediately.
+**Do not add null/empty checks at the start of methods that silently return.** The caller is responsible for passing valid data. If invalid data is passed, let it fail fast (NPE) so bugs are discovered immediately.
 
 **Forbidden patterns - NEVER do this:**
 
@@ -730,7 +730,7 @@ public final class GitRefs {
 }
 ```
 
-Apply this to every existing and new utility class. Examples already in the codebase: [CommitRevertDetector](api/src/main/java/io/codiqo/util/CommitRevertDetector.java), [DriverScore](api/src/main/java/io/codiqo/api/metrics/DriverScore.java), [CodeLineCounter](api/src/main/java/io/codiqo/api/metrics/CodeLineCounter.java).
+Apply this to every existing and new utility class. Examples already in the codebase: [JGit](api/src/main/java/io/codiqo/util/JGit.java), [DriverScore](api/src/main/java/io/codiqo/api/metrics/DriverScore.java), [Env](api/src/main/java/io/codiqo/util/Env.java).
 
 ### Lombok @Builder with Collections
 
@@ -1039,7 +1039,7 @@ if (array == null || array.length == 0) { ... }
 
 ## Comments and JavaDoc
 
-**HARD RULE: write a comment only when it is necessary, and when it is, write it fully.** A comment is necessary when
+**Write a comment only when it is necessary, and when it is, write it fully.** A comment is necessary when
 the code cannot say it: a non-obvious reason, an invariant another part of the system relies on, a trap that was hit
 before, a measured number, or external context (a spec, an upstream bug, a tool's documented behaviour). Everything
 else is noise and must not be written: restating the code, naming what a well-named method already says, narrating the
@@ -1050,8 +1050,9 @@ alike, and inside method bodies. A kept comment is written to be understood by s
 that produced it, so it covers, in full sentences:
 
 - **what** the constraint or decision is;
-- **why** it holds — the cause, with the concrete evidence (the failure that was observed, the project it was observed
-  on, the number that was measured, the issue or spec that defines it);
+- **why** it holds — the cause, with the concrete evidence (the failure that was observed, the number that was
+  measured, the issue or spec that defines it), never a date, a customer's or private project's name or a private
+  commit hash: the repository is public, and evidence that needs them to stand is not evidence a reader can check;
 - **what breaks** if the code is changed without honouring it.
 
 A one-line hint that leaves the reader to reconstruct the reasoning is worse than no comment: either expand it until it
@@ -1600,11 +1601,14 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   the compile run's. The JUnit reports become the submission's `testRun` (`TestRuns`): counts, skipped tests, test time,
   each run's duration and the whole analysis's. Gradle builds before its worker starts, so its worker reads the reports
   and checks coverage before it starts the review.
-- **A review the provider failed halts the project instead** (`ReviewProviderException`, raised when the relay counted
-  provider failures during a review that failed, `LlmRelay.providerFailed`: a 429, a 5xx or an end point it could not
-  reach, never only requests the provider refused, 400, 413 or 422, which the same commit would ask again;
+- **A review the provider failed halts the project instead** (`ReviewProviderException`,
   `LocalReviewException.isProviderFailure`): it is no judgement of the commit, and an excluded commit would stay unscored
-  for good. "Resume and retry" reviews it again.
+  for good. "Resume and retry" reviews it again. What failed decides (`LocalReviewer.isProviderFailure`): a turn OpenCode
+  ended with an error is the provider's exactly when the error is one of its own (`PROVIDER_TURN_ERRORS`); an answer in
+  the wrong shape (`ReviewAnswerException`) is always the commit's; anything else, an unanswered reviewer or a turn that
+  timed out, is the provider's when the relay counted a provider failure during the review (`LlmRelay.providerFailed`: a
+  429, a 5xx, an end point it could not reach or an answer cut short after it started, never a request the provider
+  only refused, 400, 413 or 422). The parallel reviewers share the relay, so a failure cannot be traced to one call.
 - **A review that fails excludes the commit** (`LOCAL_REVIEW_FAILURE`, the error as the exclusion's detail): submitting
   it without the review would hand its judgment to the prompt, and leaving it unsubmitted would make the next run pay
   for the review again. Deleting the analysis retries it. An interrupt is the run being stopped, not a failed review.
@@ -1613,22 +1617,22 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
 - **A failed review names a failing provider.** `LlmRelay` counts every answer of the model's end point that was not
   a success, retried ones included, by status, and `LocalReviewer` appends them to the error of a review that fails
   while the relay is open: `local review failed: timeout; the LLM provider answered 429 482 times and 504 once during
-  the review`. A turn that timed out says only `timeout` on its own, which hid an hour of provider errors. The
+  the review`, since a turn that timed out says only `timeout` on its own. The
   relay also reads the first 4 KB of each 429's body, which still goes on whole to OpenCode, and quotes the provider's own words and its `Retry-After` and
   `x-ratelimit-*` headers in the round's log line and in that summary (`; its last 429 said: ...`), so a halt tells a
-  short rate limit from an exhausted usage quota: on 16 Oct 2026 the provider refused every call for over eight hours
-  and nothing recorded which it was.
+  short rate limit from an exhausted usage quota.
 - **Every review leaves a trace**: `ReviewTrace` writes the coordinator, its
   sub-agents (listed again at the end, since a failed review never listed them) and the labelling and triage forks, each
   session's messages as OpenCode recorded them, tool calls with input and status, every tool output cut to 4,000
   characters, to `codiqo-review-trace-<sha>.json` in `codiqo.review.traceDirectory` (the build's `target/codiqo`; the
   `review` goal writes beside its report; the GitHub Action puts it with the logs it redacts and uploads). It is written
-  in the review's `finally`, before `OpenCodeServer.close()` deletes the home and its session database, and also while
-  the review is being cancelled (the interrupt is held back for those local reads). A trace that fails costs only the
-  trace. A submitted commit whose review succeeded sends it as the staged upload's `review-trace` part (JSON as
-  written, `AnalysisSubmitter.putReviewTrace`), so the commit page can show what the review did; a refused, unreadable or
-  oversized (`RunArgs.REVIEW_TRACE_MAX_BYTES`) trace is a warning after one retry (`ApiRetry.callOptional`), never a
-  failed submission, and a single-request submission carries none. Its tool outputs are what commands printed with the
+  after the review, before `OpenCodeServer.close()` deletes the home and its session database, and also while the
+  review is being cancelled (the interrupt is held back for those local reads). A trace that cannot be written fails a
+  review that succeeded; on a review that failed it is attached to the review's error as suppressed, never thrown in
+  its place. Every submitted commit with a local review sends it as the staged upload's `review-trace` part (JSON as
+  written, `AnalysisSubmitter.putReviewTrace`), so the commit page can show what the review did. It is retried like
+  every other part (`ApiRetry.call`), and a refused, unreadable, missing or oversized (`RunArgs.REVIEW_TRACE_MAX_BYTES`)
+  trace fails the submission; a single-request submission carries none. Its tool outputs are what commands printed with the
   build's environment, and the Action redacts its logs only after the submission, so `SecretRedaction` scrubs every
   string of the trace first (the Action's rules: the variables it names, variables named like secrets, raw and
   Base64). The server keeps it 90 days and shows it only to those who may act on the commit.
@@ -1645,26 +1649,31 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
 - **A reviewer answers `unitLabels`, `observations` and `notChecked` beside its bugs** (`LocalReviewer.ReviewerFields`).
   `unitLabels` holds only label objects (`{"file","signature","category","reason"}`); it is not the scoring response's
   `blockCategories`, which reviewers read as the topics of their review and filled with sentences. A string entry
-  still fails the read, and so does an answer with no `unitLabels` (a reviewer with no units sends `[]`). An unreadable
-  answer gets a correction in its own session (the history is a cached prefix), then, still unreadable, a fork from before
-  that answer (`OpenCodeClient.fork(session, before)`) asked only for the final answer, so the bad answer no longer
-  anchors the model; at most `REVIEWER_REPAIRS` (16) reviewers are corrected per review, each costing up to
-  `CORRECTION_TURNS` (2) turns, before the review fails. The reviewer's whole answer format is stated once, at the end of
-  its prompt (`ANSWER FORMAT`), and overrides any format a task describes: the coordinator used to write its own
-  `{"findings":...,"unitLabels":["short labels"]}` into every task, and every label written as a string came from it. `notChecked` holds up to three notes each on what a reviewer could not verify (an external artifact, a test it
+  still fails the read, and so does an answer with no `unitLabels` (a reviewer with no units sends `[]`).
+- **Nothing the model writes is repaired, and no turn is sent twice.** An unreadable coordinator, reviewer, labelling or
+  triage answer fails the review at once, and so does a reviewer session that ended without an answer (the coordinator
+  retries no area), a coordinator that started no reviewer, a work split with no area or an area without paths
+  (`LocalReviewModels.tasks`), a
+  labelling answer that is not one label with a known category per listed unit (`UnitLabelling.problems`; the
+  reviewers' labels are used by name only when no labelling turn ran), a triage answer that is not one verdict per
+  listed finding (`FindingTriage.problems`), and a turn OpenCode ended with an error, the reviewers' sessions included
+  (`LocalReviewer.turn`):
+  OpenCode has already retried the provider by then. Never add a correction turn, a fork asked for a final answer or a
+  resume prompt: fix the prompt or the schema that let the shape through. The reviewer's whole answer format is stated once, at the end of
+  its prompt (`ANSWER FORMAT`), and overrides any format a task describes, so the coordinator's task prompts name paths and purpose, never an answer
+  shape. `notChecked` holds up to three notes each on what a reviewer could not verify (an external artifact, a test it
   could not run, a refused command), `[]` when it checked everything; a lone string is read as one item, as for
   `observations`.
 - The reviewers' `observations` and `notChecked` are collected from their own answers (`LocalReviewer.reviewerAnswers`,
   de-duplicated, capped by `RunArgs.reviewMaxObservations` / `reviewMaxNotChecked`), and `LocalReviewModels.toModel`
-  writes a Markdown `reasoning` digest (the coordinator's areas with the count of corrected reviewer answers, the
+  writes a Markdown `reasoning` digest (the coordinator's areas, the
   observations, **Not checked**, the triage) that the commit page shows. `notChecked` travels only in the digest.
 - The agents run with the permissions of OpenCode's own built-in `explore` agent (`OpenCodeReviewConfig.EXPLORE_ALLOWED`,
   read from the 2.0.25 binary: deny all, then any shell command, the file tools, outside directories and web access),
   with `.env` reads denied instead of asked (an `ask`, and a call no rule matches, hangs a headless review) and one short
   addition, `DENIED_SHELL`: the git writes and builds (`mvn`, `gradle`) that would change the analysis clone while the
-  commit's own build runs in it. OpenCode has no shell deny list of its own. Keep it to that: a longer list of flags and
-  reading forms was tried and replaced. Replayed through a real OpenCode, 774 of 783 sampled production refusals of the
-  former read-only git list now run; the rest are `mvn` calls and two truncated inputs. The prompts state the rules
+  commit's own build runs in it. OpenCode has no shell deny list of its own. Keep it to that: never add flags or reading forms
+  to it, since every addition refuses commands the reviewers need. The prompts state the rules
   (`opencode/tools`). Convention
   files are fenced with `PromptFences`' markers, which `ConventionGuidance` strips from every file.
 - What the model writes is checked before it is sent: a bug without a title or description and a dimension score off

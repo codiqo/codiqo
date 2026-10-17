@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -43,6 +44,7 @@ import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.LocalReviewModel;
 import io.codiqo.client.model.ProjectModel;
 import io.codiqo.submit.auth.ApiKeyCredential;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.JsonNodeFactory;
@@ -226,37 +228,51 @@ class AnalysisSubmitterTest {
                 recorded.stream().map(r -> r.method + " " + r.path).toList());
         assertEquals(MAPPER.readTree(trace), MAPPER.readTree(recorded.get(2).body), "the trace goes as the engine wrote it");
     }
+    /** a trace is part of the submission: one the server refuses fails it, and nothing is finalized without the trace */
     @Test
-    void aTraceTheServerRefusesCostsTheTraceOnly(@TempDir Path dir) throws Exception {
-        UUID analysisId = UUID.randomUUID();
-        stagingServer(UUID.randomUUID(), analysisId, 404);
+    void aTraceTheServerRefusesFailsTheSubmission(@TempDir Path dir) throws Exception {
+        stagingServer(UUID.randomUUID(), UUID.randomUUID(), 404);
+        File trace = trace(dir);
 
-        AnalysisAcceptedModel response = AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, reviewedSubmission(), trace(dir), SourceHiding.NONE, LOG);
+        ApiException err = assertThrows(ApiException.class,
+                () -> AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, reviewedSubmission(), trace, SourceHiding.NONE, LOG));
 
-        assertEquals(analysisId, response.getAnalysisId(), "a server that predates the trace still takes the submission");
-        assertTrue(Strings.CS.endsWith(recorded.get(recorded.size() - 1).path, "/finalize"));
+        assertEquals(HttpResponseStatus.NOT_FOUND.code(), err.getCode());
+        assertEquals(1, recorded.stream().filter(r -> Strings.CS.endsWith(r.path, "/review-trace")).count(), "a refusal is not retried");
+        assertTrue(recorded.stream().noneMatch(r -> Strings.CS.endsWith(r.path, "/finalize")));
     }
+    /** a server error on the trace is retried like any other part of the upload */
     @Test
-    void aTraceTheServerFailsOnIsRetriedOnceThenLeftOut(@TempDir Path dir) throws Exception {
+    void aTraceTheServerFailedOnOnceIsRetried(@TempDir Path dir) throws Exception {
         UUID analysisId = UUID.randomUUID();
-        stagingServer(UUID.randomUUID(), analysisId, 503);
+        stagingServer(UUID.randomUUID(), analysisId, 503, 204);
 
         AnalysisAcceptedModel response = AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, reviewedSubmission(), trace(dir), SourceHiding.NONE, LOG);
 
         assertEquals(analysisId, response.getAnalysisId());
-        assertEquals(2, recorded.stream().filter(r -> Strings.CS.endsWith(r.path, "/review-trace")).count(), "an optional part is tried twice, not ten times");
+        assertEquals(2, recorded.stream().filter(r -> Strings.CS.endsWith(r.path, "/review-trace")).count());
     }
     @Test
-    void anUnreadableTraceIsLeftOut(@TempDir Path dir) throws Exception {
-        UUID analysisId = UUID.randomUUID();
-        stagingServer(UUID.randomUUID(), analysisId, 204);
+    void anUnreadableTraceFailsTheSubmission(@TempDir Path dir) throws Exception {
+        stagingServer(UUID.randomUUID(), UUID.randomUUID(), 204);
         File broken = dir.resolve("codiqo-review-trace-01234567.json").toFile();
         Files.writeString(broken.toPath(), "{ not json");
 
-        AnalysisAcceptedModel response = AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, reviewedSubmission(), broken, SourceHiding.NONE, LOG);
+        assertThrows(JacksonException.class,
+                () -> AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, reviewedSubmission(), broken, SourceHiding.NONE, LOG));
+        assertTrue(recorded.stream().noneMatch(r -> Strings.CS.endsWith(r.path, "/finalize")));
+    }
+    @Test
+    void anOversizedTraceFailsTheSubmission(@TempDir Path dir) throws Exception {
+        stagingServer(UUID.randomUUID(), UUID.randomUUID(), 204);
+        File oversized = dir.resolve("codiqo-review-trace-01234567.json").toFile();
+        try (RandomAccessFile file = new RandomAccessFile(oversized, "rw")) {
+            file.setLength(RunArgs.REVIEW_TRACE_MAX_BYTES + 1);
+        }
 
-        assertEquals(analysisId, response.getAnalysisId());
-        assertTrue(recorded.stream().noneMatch(r -> Strings.CS.endsWith(r.path, "/review-trace")));
+        assertThrows(IllegalStateException.class,
+                () -> AnalysisSubmitter.submit(serverUrl(), new ApiKeyCredential(API_KEY), 5, 5, reviewedSubmission(), oversized, SourceHiding.NONE, LOG));
+        assertTrue(recorded.stream().noneMatch(r -> Strings.CS.endsWith(r.path, "/finalize")));
     }
     @Test
     void submitPropagatesNonRetryableApiErrorWithoutRetries() throws Exception {
@@ -293,8 +309,12 @@ class AnalysisSubmitterTest {
         toReturn.setDiff(diff);
         return toReturn;
     }
-    /** opens an upload, answers the trace part with traceStatus and every other part 204, and accepts the finalize */
-    private void stagingServer(UUID uploadId, UUID analysisId, int traceStatus) {
+    /**
+     * Opens an upload, answers the trace part with each of traceStatuses in turn (the last one for every later call) and
+     * every other part 204, and accepts the finalize.
+     */
+    private void stagingServer(UUID uploadId, UUID analysisId, int... traceStatuses) {
+        AtomicInteger traceCalls = new AtomicInteger();
         server.createContext("/api/v1/analyses", exchange -> {
             RecordedRequest request = RecordedRequest.from(exchange);
             recorded.add(request);
@@ -303,6 +323,7 @@ class AnalysisSubmitterTest {
             } else if ("POST".equals(request.method)) {
                 respond(exchange, 201, JSON.objectNode().put("uploadId", uploadId.toString()).put("expiresAt", "2026-01-02T00:00:00Z").toString());
             } else if (Strings.CS.endsWith(request.path, "/review-trace")) {
+                int traceStatus = traceStatuses[Math.min(traceCalls.getAndIncrement(), traceStatuses.length - 1)];
                 respond(exchange, traceStatus, JSON.objectNode().put("message", "status " + traceStatus).toString());
             } else {
                 exchange.sendResponseHeaders(204, -1);

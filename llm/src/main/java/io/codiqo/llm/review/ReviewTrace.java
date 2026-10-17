@@ -2,6 +2,7 @@ package io.codiqo.llm.review;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -36,15 +37,15 @@ public class ReviewTrace {
     private static final JsonMapper MAPPER = JsonMapper.builder().enable(SerializationFeature.INDENT_OUTPUT).build();
 
     /**
-     * A trace that cannot be written costs the trace only, never the review. It is written even while the review is
-     * being cancelled: the interrupt is held back for the few local reads it takes, since a cancelled review is often
-     * the one worth reading, and restored afterwards.
+     * Writes the trace even while the review is being cancelled: the interrupt is held back for the few local reads it
+     * takes, since a cancelled review is often the one worth reading, and restored afterwards. An earlier run's trace of
+     * the same commit is deleted first, so it can never pass for this one's.
      */
-    public void write(RunArgs args, OpenCodeClient client, String sha, String coordinatorId, Collection<String> forkIds, Log log) {
+    public void write(RunArgs args, OpenCodeClient client, String sha, String coordinatorId, Collection<String> forkIds, Log log) throws IOException {
         boolean interrupted = Thread.interrupted();
-        /** an earlier run's trace of the same commit must not pass for this one's when this one cannot be written */
-        FileUtils.deleteQuietly(file(args, sha));
         try {
+            Files.deleteIfExists(file(args, sha).toPath());
+
             /** the sub-agents are listed here rather than taken from the review, which never lists them when it fails */
             List<String> sessionIds = Lists.newArrayList(coordinatorId);
             client.childUsage(coordinatorId).forEach(child -> sessionIds.add(child.getSessionId()));
@@ -66,8 +67,6 @@ public class ReviewTrace {
             FileUtils.forceMkdir(file.getParentFile());
             MAPPER.writeValue(file, trace);
             log.info("review trace of %d sessions written to %s", sessionIds.size(), file);
-        } catch (IOException | RuntimeException err) {
-            log.warn("could not write the review trace of %s: %s", sha, err.getMessage());
         } finally {
             if (interrupted) {
                 Thread.currentThread().interrupt();

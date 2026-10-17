@@ -1,8 +1,6 @@
 package io.codiqo.llm.review;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.util.List;
@@ -24,17 +22,14 @@ class LocalReviewerTest {
         assertEquals(List.of(), bugs.getMajor());
         assertEquals(List.of(), bugs.getMinor());
     }
-    /**
-     * each turn the agents take has its own timeout, so the wait covers every turn: the review, the labelling and the
-     * triage, each with its repair and resumes, and the corrections of reviewer answers with theirs
-     */
+    /** each turn the agents take has its own timeout, so the wait covers every turn: the review, the labelling and the triage */
     @Test
     void theWaitCoversEveryTurn() {
         RunArgs args = new RunArgs();
         args.setReviewTimeout(Duration.ofMinutes(30));
         args.setReviewStartupTimeout(Duration.ofMinutes(1));
 
-        assertEquals(Duration.ofMinutes(1 + 30 * (6 + LocalReviewer.REVIEWER_REPAIRS * LocalReviewer.CORRECTION_TURNS) * 3), LocalReviewer.longestReview(args));
+        assertEquals(Duration.ofMinutes(1 + 30 * 3), LocalReviewer.longestReview(args));
     }
     /** the review's progress line counts every severity and adds reasoning to the output tokens, as the usage does */
     @Test
@@ -45,26 +40,8 @@ class LocalReviewerTest {
         List<SessionUsage> sessions = List.of(
                 new SessionUsage("c", "coordinator", "m", 1000, 9000, 200, 50),
                 new SessionUsage("r", "reviewer", "m", 500, 4000, 100, 0));
-        LocalReview review = new LocalReview("abc", bugs, sessions, Duration.ofMinutes(4), "{}", null, 3, List.of("r2"), List.of(), List.of(), 0);
+        LocalReview review = new LocalReview("abc", bugs, sessions, Duration.ofMinutes(4), "{}", null, 3, List.of(), List.of());
 
-        assertEquals("2 bugs, 2 sessions, 1 of 3 reviewers unanswered, 1500 input / 350 output tokens", LocalReviewer.progressDetail(review));
-    }
-    /** an unanswered reviewer whose area an answered retry covered leaves nothing unreviewed; one without a retry fails the review */
-    @Test
-    void anAreaIsUnreviewedOnlyWhenNoAnsweredRetryCoversIt() {
-        assertEquals(0, LocalReviewer.unreviewedAreas(0, 0));
-        assertEquals(0, LocalReviewer.unreviewedAreas(2, 2));
-        assertEquals(0, LocalReviewer.unreviewedAreas(1, 2), "a retry split in two covers one area");
-        assertEquals(1, LocalReviewer.unreviewedAreas(1, 0));
-        assertEquals(1, LocalReviewer.unreviewedAreas(3, 2));
-    }
-    @Test
-    void aRetryIsKnownByItsTitle() {
-        assertTrue(LocalReviewer.isRetry("Retry: billing DAL and repos"));
-        assertTrue(LocalReviewer.isRetry("Retry konquer integration steps"));
-        assertTrue(LocalReviewer.isRetry("  retry: providers"));
-        assertFalse(LocalReviewer.isRetry("Review konquer b2b models"));
-        assertFalse(LocalReviewer.isRetry(""));
-        assertFalse(LocalReviewer.isRetry(null));
+        assertEquals("2 bugs, 2 sessions, 3 reviewers, 1500 input / 350 output tokens", LocalReviewer.progressDetail(review));
     }
 }

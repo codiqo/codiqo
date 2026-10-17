@@ -664,7 +664,7 @@ public class AnalysisEngine {
         SubmissionAssembly.stampAnalysisTime(ctx);
         File trace = ReviewTrace.file(ctx.getArgs(), ctx.getArgs().getCommitId());
         AnalysisAcceptedModel toReturn;
-        if (BooleanUtils.and(new boolean[] { Objects.nonNull(ctx.getSubmissionModel().getLocalReview()), trace.isFile() })) {
+        if (Objects.nonNull(ctx.getSubmissionModel().getLocalReview())) {
             toReturn = AnalysisSubmitter.submit(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(),
                     request.getReadTimeoutSeconds(), ctx.getSubmissionModel(), trace, hiding(request), log);
         } else {
