@@ -20,10 +20,6 @@
             <artifactId>jakarta.validation-api</artifactId>
         </dependency>
         <dependency>
-            <groupId>jakarta.ws.rs</groupId>
-            <artifactId>jakarta.ws.rs-api</artifactId>
-        </dependency>
-        <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>
         </dependency>
@@ -50,6 +46,22 @@
         <dependency>
             <groupId>org.apache.maven</groupId>
             <artifactId>maven-artifact</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <!-- the server interface only: the backend has Spring on its classpath, the client's users never load it -->
+        <dependency>
+            <groupId>org.jspecify</groupId>
+            <artifactId>jspecify</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-core</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
             <scope>provided</scope>
         </dependency>
         <!-- -->
@@ -80,6 +92,11 @@
             <artifactId>junit-jupiter-params</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
     <build>
         <plugins>
@@ -87,6 +104,12 @@
                 <groupId>org.openapitools</groupId>
                 <artifactId>openapi-generator-maven-plugin</artifactId>
                 <executions>
+                    <!--
+                        The three executions share one output folder, and this first one empties it: a file a later
+                        execution no longer generates (the JAX-RS ApiApi, once the Spring one replaced it) would
+                        otherwise stay in a compile source root of a build without clean, and fail it as a duplicate
+                        class. Executions bound to one phase run in declaration order, so this one must stay first.
+                    -->
                     <execution>
                         <id>generate-codiqo-client</id>
                         <phase>generate-sources</phase>
@@ -94,6 +117,7 @@
                             <goal>generate</goal>
                         </goals>
                         <configuration>
+                            <cleanupOutput>true</cleanupOutput>
                             <inputSpec>${project.basedir}/src/main/resources/codiqo.yaml</inputSpec>
                             <generatorName>java</generatorName>
                             <library>native</library>
@@ -141,8 +165,9 @@
                         <configuration>
                             <inputSpec>${project.basedir}/src/main/resources/codiqo.yaml</inputSpec>
                             <generatorName>jaxrs-spec</generatorName>
+                            <generateApis>false</generateApis>
+                            <generateSupportingFiles>false</generateSupportingFiles>
 
-                            <apiPackage>io.codiqo.server.api</apiPackage>
                             <modelPackage>io.codiqo.server.model</modelPackage>
 
                             <configOptions>                                
@@ -157,15 +182,11 @@
                                 <legacyDiscriminatorBehavior>false</legacyDiscriminatorBehavior>
                                 <discriminatorCaseSensitive>true</discriminatorCaseSensitive>
                                 <hideGenerationTimestamp>true</hideGenerationTimestamp>
-                                <generateApiDocumentation>true</generateApiDocumentation>
                                 <generateModelDocumentation>true</generateModelDocumentation>
                                 <generateBuilders>true</generateBuilders>
                                 <supportUrlQuery>false</supportUrlQuery>
                                 <useBeanValidation>true</useBeanValidation>
                                 <performBeanValidation>true</performBeanValidation>
-                                <interfaceOnly>true</interfaceOnly>
-                                <supportAsync>true</supportAsync>
-                                <returnResponse>true</returnResponse>
                                 <useSwaggerAnnotations>false</useSwaggerAnnotations>
                                 <sourceFolder>jaxrs</sourceFolder>
                             </configOptions>
@@ -177,6 +198,57 @@
                                 <importMapping>Objects=java.util.Objects</importMapping>
                                 <importMapping>Locale=java.util.Locale</importMapping>
                             </importMappings>
+                        </configuration>
+                    </execution>
+                    <!--
+                        The backend's Spring WebFlux interface. The body is a plain type (reactive=false), never a Mono,
+                        and every operation answers a CompletableFuture, which WebFlux subscribes to like a Mono. The
+                        caller's credential headers come from x-spring-provide-args in the spec.
+                    -->
+                    <execution>
+                        <id>generate-codiqo-server-api</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                        <configuration>
+                            <inputSpec>${project.basedir}/src/main/resources/codiqo.yaml</inputSpec>
+                            <generatorName>spring</generatorName>
+                            <library>spring-boot</library>
+                            <generateModels>false</generateModels>
+                            <generateSupportingFiles>false</generateSupportingFiles>
+
+                            <apiPackage>io.codiqo.server.api</apiPackage>
+                            <modelPackage>io.codiqo.server.model</modelPackage>
+
+                            <configOptions>
+                                <dateLibrary>java8</dateLibrary>
+                                <useJakartaEe>true</useJakartaEe>
+                                <useSpringBoot4>true</useSpringBoot4>
+                                <openApiNullable>false</openApiNullable>
+                                <hideGenerationTimestamp>true</hideGenerationTimestamp>
+                                <interfaceOnly>true</interfaceOnly>
+                                <skipDefaultInterface>true</skipDefaultInterface>
+                                <reactive>false</reactive>
+                                <responseWrapper>CompletableFuture</responseWrapper>
+                                <useResponseEntity>true</useResponseEntity>
+                                <useBeanValidation>true</useBeanValidation>
+                                <performBeanValidation>true</performBeanValidation>
+                                <!--
+                                    no class-level @Validated: Spring skips its built-in validation of a controller's
+                                    constrained parameters (a @Pattern path variable, a @Min query parameter) when the
+                                    type carries @Validated, and the backend runs no AOP method validation instead
+                                -->
+                                <useSpringBuiltInValidation>true</useSpringBuiltInValidation>
+                                <!-- Spring 7 deprecates its own @Nullable for JSpecify's -->
+                                <useJspecify>true</useJspecify>
+                                <annotationLibrary>none</annotationLibrary>
+                                <documentationProvider>none</documentationProvider>
+                                <sourceFolder>spring</sourceFolder>
+                            </configOptions>
+
+                            <generateApiTests>false</generateApiTests>
+                            <generateApiDocumentation>false</generateApiDocumentation>
                         </configuration>
                     </execution>
                 </executions>
@@ -205,6 +277,9 @@
                                 </resource>
                                 <resource>
                                     <directory>${project.build.directory}/generated-sources/openapi/jaxrs</directory>
+                                </resource>
+                                <resource>
+                                    <directory>${project.build.directory}/generated-sources/openapi/spring</directory>
                                 </resource>
                             </resources>
                         </configuration>
