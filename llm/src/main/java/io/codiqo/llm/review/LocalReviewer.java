@@ -11,7 +11,6 @@ import java.util.Optional;
 import java.util.Set;
 
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.commons.lang3.tuple.ImmutableTriple;
@@ -111,14 +110,13 @@ public class LocalReviewer {
             } catch (IOException | RuntimeException err) {
                 /**
                  * A turn that timed out says only "timeout", so the provider's failed answers are added to the error.
-                 * The review is the provider's failure, a ReviewProviderException that halts the project instead of
-                 * excluding the commit, when the provider failed the latest call it answered or OpenCode ended a turn
-                 * with a provider error. A review that failed after the provider answered again (an answer in the
-                 * wrong shape after a few retried 429s) or only on refused requests (a prompt over the model's context)
-                 * is the commit's failure: the same commit would fail the same way after every resume.
+                 * Whether the review is the provider's failure, a ReviewProviderException that halts the project instead
+                 * of excluding the commit, follows from what failed (isProviderFailure). The parallel reviewers share
+                 * the relay, so a provider failure cannot be traced to the call that lost a reviewer's answer: the
+                 * provider is held responsible for any failure that is not the model's own answer.
                  */
                 Optional<String> providerErrors = relay.providerErrors();
-                if (BooleanUtils.or(new boolean[] { relay.providerFailed(), isProviderTurnFailure(err) })) {
+                if (isProviderFailure(err, relay)) {
                     throw new ReviewProviderException(err.getMessage(), providerErrors.orElse("OpenCode recorded the provider's failure; the relay counted none"), err);
                 }
                 if (providerErrors.isPresent()) {
@@ -192,7 +190,7 @@ public class LocalReviewer {
                 assessment = LlmJson.readAnswerIgnoring(answer, LlmScoringResponse.class, BLOCK_CATEGORIES);
                 tasks = LocalReviewModels.tasks(answer);
             } catch (JacksonException err) {
-                throw new IOException("the coordinator's answer is not the JSON object asked for: " + StringUtils.abbreviate(answer, RunArgs.REVIEW_ANSWER_PREVIEW), err);
+                throw new ReviewAnswerException("the coordinator's answer is not the JSON object asked for: " + StringUtils.abbreviate(answer, RunArgs.REVIEW_ANSWER_PREVIEW), err);
             }
             assessment.setBlockCategories(reviewers.getBlockCategories());
             log.info("the coordinator split the review of %s into %d areas", sha, tasks.size());
@@ -237,7 +235,7 @@ public class LocalReviewer {
             toReturn = answer.getParsed();
             List<String> problems = UnitLabelling.problems(units, toReturn);
             if (CollectionUtils.isNotEmpty(problems)) {
-                throw new IOException("the labelling answer is not one label per listed unit (" + Joiner.on("; ").join(problems) + "): "
+                throw new ReviewAnswerException("the labelling answer is not one label per listed unit (" + Joiner.on("; ").join(problems) + "): "
                         + StringUtils.abbreviate(answer.getAnswer(), RunArgs.REVIEW_ANSWER_PREVIEW));
             }
             toReturn.setAnswer(answer.getAnswer());
@@ -263,7 +261,7 @@ public class LocalReviewer {
             toReturn = answer.getParsed();
             List<String> problems = toReturn.problems(findings);
             if (CollectionUtils.isNotEmpty(problems)) {
-                throw new IOException("the triage answer is not one verdict per listed finding (" + Joiner.on("; ").join(problems) + "): "
+                throw new ReviewAnswerException("the triage answer is not one verdict per listed finding (" + Joiner.on("; ").join(problems) + "): "
                         + StringUtils.abbreviate(answer.getAnswer(), RunArgs.REVIEW_ANSWER_PREVIEW));
             }
             toReturn.setAnswer(answer.getAnswer());
@@ -282,7 +280,7 @@ public class LocalReviewer {
         try {
             parsed = LlmJson.readAnswer(answer, type);
         } catch (JacksonException err) {
-            throw new IOException("the " + name + " answer is not the JSON object asked for: " + StringUtils.abbreviate(answer, RunArgs.REVIEW_ANSWER_PREVIEW), err);
+            throw new ReviewAnswerException("the " + name + " answer is not the JSON object asked for: " + StringUtils.abbreviate(answer, RunArgs.REVIEW_ANSWER_PREVIEW), err);
         }
         return new ForkAnswer<>(parsed, answer, withConfiguredModel(client.usage(forkId)));
     }
@@ -331,7 +329,7 @@ public class LocalReviewer {
                 try {
                     answer = readReviewerAnswer(text.get());
                 } catch (JacksonException err) {
-                    throw new IOException("reviewer session " + session.getSessionId() + " answered in an unreadable shape: " + err.getOriginalMessage(), err);
+                    throw new ReviewAnswerException("reviewer session " + session.getSessionId() + " answered in an unreadable shape: " + err.getOriginalMessage(), err);
                 }
                 if (answer.getLabels().isEmpty()) {
                     log.warn("reviewer session %s labelled none of its code units", session.getSessionId());
@@ -349,6 +347,9 @@ public class LocalReviewer {
                     }
                 }
             }
+        }
+        if (total == 0) {
+            throw new ReviewAnswerException("the coordinator started no reviewer, so nothing of the commit was reviewed");
         }
         if (CollectionUtils.isNotEmpty(unanswered)) {
             throw new IOException(unanswered.size() + " of " + total + " reviewer sessions ended without an answer, so their areas went unreviewed: " + unanswered);
@@ -419,8 +420,20 @@ public class LocalReviewer {
             throw new TurnFailedException(sessionId, failed.get().path("type").asString(), failed.get().path("message").asString());
         }
     }
-    private static boolean isProviderTurnFailure(Throwable err) {
-        return err instanceof TurnFailedException turn && PROVIDER_TURN_ERRORS.contains(turn.getType());
+    /**
+     * A turn OpenCode ended with an error is the provider's failure exactly when the error is one of the provider's own
+     * ({@link #PROVIDER_TURN_ERRORS}). An answer in the wrong shape is the model's, so the commit's failure whatever the
+     * provider did: halting the project for it would halt it again on every resume. Any other failure, a reviewer that
+     * ended without an answer or a turn that timed out, is the provider's when it failed during the review.
+     */
+    private static boolean isProviderFailure(Throwable err, LlmRelay relay) {
+        if (err instanceof TurnFailedException turn) {
+            return PROVIDER_TURN_ERRORS.contains(turn.getType());
+        }
+        if (err instanceof ReviewAnswerException) {
+            return false;
+        }
+        return relay.providerFailed();
     }
     @Value
     public static class ReviewerAnswers {
@@ -460,6 +473,17 @@ public class LocalReviewer {
         List<T> await() throws Exception;
     }
 
+    /** an answer of the model in another shape than its prompt asks for, which is the commit's failure, never the provider's */
+    private static final class ReviewAnswerException extends IOException {
+        private static final long serialVersionUID = 1L;
+
+        private ReviewAnswerException(String message) {
+            super(message);
+        }
+        private ReviewAnswerException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
     /** a turn that OpenCode ended with an error, which names the session, the error's type and its message */
     private static final class TurnFailedException extends IOException {
         private static final long serialVersionUID = 1L;

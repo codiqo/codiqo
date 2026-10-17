@@ -276,23 +276,6 @@ class LlmRelayTest {
             failing.stop(0);
         }
     }
-    /** a provider that failed and then answered again is named, but a review that fails after that is the commit's failure */
-    @Test
-    void aProviderThatAnsweredAgainHasNotFailed() throws Exception {
-        List<Integer> statuses = List.of(HttpResponseStatus.TOO_MANY_REQUESTS.code(), HttpResponseStatus.OK.code());
-        AtomicInteger calls = new AtomicInteger();
-        HttpServer recovering = fakeProxy(exchange -> respond(exchange, statuses.get(calls.getAndIncrement()), MODELS));
-        try (LlmRelay counting = relayTo(recovering)) {
-            assertEquals(HttpResponseStatus.TOO_MANY_REQUESTS.code(), getModels(counting).statusCode());
-            assertTrue(counting.providerFailed(), "the latest answer failed");
-            assertEquals(HttpResponseStatus.OK.code(), getModels(counting).statusCode());
-
-            assertTrue(counting.providerErrors().orElseThrow().startsWith("the LLM provider answered 429 once during the review"));
-            assertFalse(counting.providerFailed(), "the provider answered again");
-        } finally {
-            recovering.stop(0);
-        }
-    }
     /** a request the provider only refused, such as a prompt over the model's context, is named but is the commit's failure */
     @Test
     void aRefusedRequestIsNotTheProvidersFailure() throws Exception {

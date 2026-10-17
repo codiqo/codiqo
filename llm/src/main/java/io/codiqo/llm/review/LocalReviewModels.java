@@ -50,6 +50,8 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.Value;
 import lombok.experimental.UtilityClass;
+import tools.jackson.core.JsonParser;
+import tools.jackson.databind.exc.MismatchedInputException;
 
 /** Maps a finished local review onto the submission: its {@code localReview} block and the code units' labels. */
 @UtilityClass
@@ -188,15 +190,22 @@ public class LocalReviewModels {
         return StringUtils.trimToNull(PromptTemplates.process(TEMPLATE_DIGEST, ctx));
     }
     /**
-     * The coordinator's work split. LocalReviewer reads it with the coordinator's findings, so a plan in another shape
-     * than the prompt asks for fails the review there, as the review's own failure, and the digest reads it again.
+     * The coordinator's work split, every area a task with its paths. LocalReviewer reads it with the coordinator's
+     * findings, so a split in another shape than the prompt asks for fails the review there as the commit's failure, and
+     * the digest reads it again. A missing, null or empty list, a null task and a task without paths are refused rather
+     * than left out: a coordinator that split the commit into no area reviewed none of it.
      */
     public static List<Task> tasks(String answer) {
-        return CollectionUtils.emptyIfNull(LlmJson.readAnswer(answer, Plan.class).getTasks())
-                .stream()
-                .filter(Objects::nonNull)
-                .filter(task -> CollectionUtils.isNotEmpty(task.getPaths()))
-                .toList();
+        List<Task> toReturn = LlmJson.readAnswer(answer, Plan.class).getTasks();
+        if (CollectionUtils.isEmpty(toReturn)) {
+            throw MismatchedInputException.from((JsonParser) null, Plan.class, "the answer has no \"tasks\"; every area a subagent reviewed is one task with its paths");
+        }
+        for (Task task : toReturn) {
+            if (Objects.isNull(task) || CollectionUtils.isEmpty(task.getPaths())) {
+                throw MismatchedInputException.from((JsonParser) null, Plan.class, "a task without \"paths\": " + task);
+            }
+        }
+        return toReturn;
     }
     private static void addDefects(LlmScoringResponse.Bugs bugs, FindingTriage triage) {
         Map<Pair<String, Integer>, StaticFinding> asked = Maps.newHashMap();
@@ -390,7 +399,7 @@ public class LocalReviewModels {
     @Data
     @NoArgsConstructor
     private static class Plan {
-        private List<Task> tasks = Lists.newArrayList();
+        private List<Task> tasks;
     }
 
     @Data

@@ -1601,12 +1601,13 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   each run's duration and the whole analysis's. Gradle builds before its worker starts, so its worker reads the reports
   and checks coverage before it starts the review.
 - **A review the provider failed halts the project instead** (`ReviewProviderException`,
-  `LocalReviewException.isProviderFailure`), when the provider failed the latest call it answered
-  (`LlmRelay.providerFailed`: a 429, a 5xx, an end point the relay could not reach, or an answer cut short after it
-  started, counted as 502) or OpenCode ended a turn with a provider error (`LocalReviewer.PROVIDER_TURN_ERRORS`): it is
-  no judgement of the commit, and an excluded commit would stay unscored for good. "Resume and retry" reviews it again.
-  A review that fails after the provider answered again, or only on requests the provider refused (400, 413, 422), is
-  the commit's failure: the same commit would fail the same way after every resume.
+  `LocalReviewException.isProviderFailure`): it is no judgement of the commit, and an excluded commit would stay unscored
+  for good. "Resume and retry" reviews it again. What failed decides (`LocalReviewer.isProviderFailure`): a turn OpenCode
+  ended with an error is the provider's exactly when the error is one of its own (`PROVIDER_TURN_ERRORS`); an answer in
+  the wrong shape (`ReviewAnswerException`) is always the commit's; anything else, an unanswered reviewer or a turn that
+  timed out, is the provider's when the relay counted a provider failure during the review (`LlmRelay.providerFailed`: a
+  429, a 5xx, an end point it could not reach or an answer cut short after it started, never a request the provider
+  only refused, 400, 413 or 422). The parallel reviewers share the relay, so a failure cannot be traced to one call.
 - **A review that fails excludes the commit** (`LOCAL_REVIEW_FAILURE`, the error as the exclusion's detail): submitting
   it without the review would hand its judgment to the prompt, and leaving it unsubmitted would make the next run pay
   for the review again. Deleting the analysis retries it. An interrupt is the run being stopped, not a failed review.
@@ -1650,7 +1651,8 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   still fails the read, and so does an answer with no `unitLabels` (a reviewer with no units sends `[]`).
 - **Nothing the model writes is repaired, and no turn is sent twice.** An unreadable coordinator, reviewer, labelling or
   triage answer fails the review at once, and so does a reviewer session that ended without an answer (the coordinator
-  retries no area), a coordinator work split in another shape than the prompt asks for (`LocalReviewModels.tasks`), a
+  retries no area), a coordinator that started no reviewer, a work split with no area or an area without paths
+  (`LocalReviewModels.tasks`), a
   labelling answer that is not one label with a known category per listed unit (`UnitLabelling.problems`; the
   reviewers' labels are used by name only when no labelling turn ran), a triage answer that is not one verdict per
   listed finding (`FindingTriage.problems`), and a turn OpenCode ended with an error, the reviewers' sessions included
