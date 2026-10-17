@@ -82,6 +82,7 @@ public class SubmissionAssembly {
 
         Optional.ofNullable(args.getCompilePhaseTook()).map(Duration::toMillis).ifPresent(toReturn::compilePhaseMs);
         Optional.ofNullable(args.getTestPhaseTook()).map(Duration::toMillis).ifPresent(toReturn::testPhaseMs);
+        Optional.ofNullable(args.getTestRunHeldReason()).ifPresent(toReturn::heldReason);
         return toReturn;
     }
     /**

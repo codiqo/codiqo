@@ -114,8 +114,8 @@ public class AnalysisEngine {
         args.setHotspotsEnabled(request.isHotspots());
         args.setFailOnJdtlsError(request.isFailOnJdtlsError());
         args.setFailOnUninstrumentedModule(request.isFailOnUninstrumentedModule());
-        Optional.ofNullable(request.getTestFailureHaltShare()).filter(StringUtils::isNotBlank).map(String::trim).map(Double::parseDouble).ifPresent(args::setTestFailureHaltShare);
-        Optional.ofNullable(request.getTestFailureHaltMinTests()).filter(StringUtils::isNotBlank).map(String::trim).map(Integer::parseInt).ifPresent(args::setTestFailureHaltMinTests);
+        Optional.ofNullable(request.getTestFailureHoldShare()).filter(StringUtils::isNotBlank).map(String::trim).map(Double::parseDouble).ifPresent(args::setTestFailureHoldShare);
+        Optional.ofNullable(request.getTestFailureHoldMinTests()).filter(StringUtils::isNotBlank).map(String::trim).map(Integer::parseInt).ifPresent(args::setTestFailureHoldMinTests);
         args.setJavaHome(new File(request.getJavaHome()));
         args.setOutputDirectory(new File(request.getOutputDirectory()));
         Optional.ofNullable(request.getBuildProgressFile()).map(File::new).ifPresent(args::setBuildProgressFile);
@@ -198,8 +198,9 @@ public class AnalysisEngine {
 
         /**
          * Gradle has built and tested the commit before this worker starts, so whether the run can be measured is known
-         * before the review is paid for: a run where most tests failed, or a module whose tests ran without coverage,
-         * fails here and halts the project instead of starting a review the failure would waste. Coverage is merged only
+         * before the review is paid for: a module whose tests ran without coverage fails here and halts the project
+         * instead of starting a review the failure would waste. A run where most tests failed is reviewed and scored all
+         * the same, and the server holds its score until someone accepts it (TestRuns.heldReason). Coverage is merged only
          * after the exclusion gate: merging is pointless work for an excluded commit, and mergeCoverageParts throws when
          * it cannot stamp the merged file, which would fail a run that should have ended as an exclusion.
          */
@@ -209,7 +210,10 @@ public class AnalysisEngine {
             }
             TestRun testRun = TestRuns.read(request.getModules().stream().flatMap(module -> module.getTestReportDirectories().stream()).map(File::new).distinct().toList(), log);
             log.info("test run: %d tests, %d failed, %d errors, %d skipped in %s", testRun.getTests(), testRun.getFailures(), testRun.getErrors(), testRun.getSkipped(), testRun.getTestTime());
-            TestRuns.requireHealthy(testRun, args.getTestFailureHaltShare(), args.getTestFailureHaltMinTests());
+            TestRuns.heldReason(testRun, args.getTestFailureHoldShare(), args.getTestFailureHoldMinTests()).ifPresent(reason -> {
+                log.warn("%s: the commit is scored and its score held until someone accepts it", reason);
+                args.setTestRunHeldReason(reason);
+            });
             args.setTestRun(testRun);
             if (args.isFailOnUninstrumentedModule()) {
                 requireCoverage(request.getModules(), log);

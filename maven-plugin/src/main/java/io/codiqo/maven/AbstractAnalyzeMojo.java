@@ -310,12 +310,12 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     @Parameter(property = "codiqo.failOnUninstrumentedModule", defaultValue = "true")
     protected boolean failOnUninstrumentedModule;
 
-    /** overrides RunArgs.testFailureHaltShare when set; 1 or more turns the check off for a project whose tests need what CI lacks */
-    @Parameter(property = "codiqo.testFailureHaltShare")
-    protected Double testFailureHaltShare;
+    /** overrides RunArgs.testFailureHoldShare when set; 1 or more turns the check off for a project whose tests need what CI lacks */
+    @Parameter(property = "codiqo.testFailureHoldShare")
+    protected Double testFailureHoldShare;
 
-    @Parameter(property = "codiqo.testFailureHaltMinTests")
-    protected Integer testFailureHaltMinTests;
+    @Parameter(property = "codiqo.testFailureHoldMinTests")
+    protected Integer testFailureHoldMinTests;
 
     @Parameter(property = "codiqo.ignoreCpd", defaultValue = "false")
     protected boolean ignoreCpd;
@@ -534,8 +534,8 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         args.setDumpAnalysis(dumpAnalysis);
         args.setIgnoreCoverage(ignoreCoverage);
         args.setFailOnUninstrumentedModule(failOnUninstrumentedModule);
-        Optional.ofNullable(testFailureHaltShare).ifPresent(args::setTestFailureHaltShare);
-        Optional.ofNullable(testFailureHaltMinTests).ifPresent(args::setTestFailureHaltMinTests);
+        Optional.ofNullable(testFailureHoldShare).ifPresent(args::setTestFailureHoldShare);
+        Optional.ofNullable(testFailureHoldMinTests).ifPresent(args::setTestFailureHoldMinTests);
         args.setIgnoreCpd(ignoreCpd);
         args.setIgnoreDiagnostics(ignoreDiagnostics);
         args.setIgnoreComplexity(ignoreComplexity);

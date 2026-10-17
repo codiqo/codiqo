@@ -61,20 +61,23 @@ public class TestRuns {
                 .build();
     }
     /**
-     * Fails when most executed tests failed. Such a run is almost never the commit's doing but an environment the
-     * analysis cannot rebuild, so it fails the run, which halts the project, instead of scoring the commit as broken.
+     * Why the commit's score is held, when most executed tests failed. Such a run cannot tell a commit that broke a
+     * shared test fixture from an environment the analysis could not rebuild, so the commit is reviewed and scored as
+     * usual and the server holds the score out of every figure until someone accepts it. Holding, not halting: a halt
+     * stopped every later commit of the project on one commit's own defect.
      */
-    public void requireHealthy(TestRun run, double haltShare, int minTests) {
+    public Optional<String> heldReason(TestRun run, double holdShare, int minTests) {
         int executed = run.getTests() - run.getSkipped();
-        /** a share of 1 or more turns the check off: a project whose tests need a database or Docker CI lacks would halt on every commit */
-        if (BooleanUtils.and(new boolean[] { haltShare < 1.0, executed >= minTests, run.failedShare() >= haltShare })) {
-            throw new IllegalStateException(String.format(Locale.ROOT,
-                    "%d of %d executed tests failed (%.0f%%, the halt threshold is %.0f%%): most likely an environment the analysis cannot rebuild, not the commit",
+        /** a share of 1 or more turns the check off: a project whose tests need a database or Docker CI lacks would hold every commit */
+        if (BooleanUtils.and(new boolean[] { holdShare < 1.0, executed >= minTests, run.failedShare() >= holdShare })) {
+            return Optional.of(String.format(Locale.ROOT,
+                    "%d of %d executed tests failed (%.0f%%, the hold threshold is %.0f%%): either the commit broke what most tests share or the analysis could not rebuild their environment",
                     run.getFailures() + run.getErrors(),
                     executed,
                     run.failedShare() * 100,
-                    haltShare * 100));
+                    holdShare * 100));
         }
+        return Optional.empty();
     }
     /**
      * A report that cannot be read is left out with a warning: one truncated file, from a test JVM killed mid-write,

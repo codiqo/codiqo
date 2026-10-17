@@ -1588,10 +1588,14 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   already watches that file, ends its loop whatever `stop-on-first-failure` says and shows the cause in the log, the
   `abort-reason` output and the job summary. A module that runs its tests in the build JVM
   (`forkCount=0`) fails the compile run in `JacocoAgentInjector.requireAttachable`. A javac or Error Prone crash in the compile run
-  (the test run prints the tests' own output) is a system failure too, never the author's build failure. A test run where at least `testFailureHaltShare` (0.75) of at
-  least `testFailureHaltMinTests` (20) executed tests failed halts as well: it is an environment the analysis cannot
-  rebuild; `codiqo.testFailureHaltShare` / `codiqo.testFailureHaltMinTests` (Gradle `-P`, action inputs
-  `test-failure-halt-share` / `-min-tests`) override them, and a share of 1 or more turns the check off. A run that
+  (the test run prints the tests' own output) is a system failure too, never the author's build failure. A test run where at least `testFailureHoldShare` (0.75) of at
+  least `testFailureHoldMinTests` (20) executed tests failed does NOT halt: such a run cannot tell a commit that broke
+  what its tests share (a test bootstrap, a fixture) from an environment the analysis cannot rebuild, and halting stopped
+  the whole project on one commit's own defect. The commit is reviewed and scored as usual, `TestRunModel.heldReason`
+  carries `TestRuns.heldReason`, and the server stores the scored commit excluded as `UNHEALTHY_TEST_RUN` until someone
+  who may include it accepts the score in codiqo-web. `codiqo.testFailureHoldShare` / `codiqo.testFailureHoldMinTests`
+  (Gradle `-P`, action inputs `test-failure-hold-share` / `-min-tests`) override them, and a share of 1 or more turns the
+  check off. A run that
   fails after the server accepted its submission (`RunArgs.submissionAccepted`) has scored its commit and halts nothing.
   The action calls `halt-project` for a submit step that died outside the JVM (deadline, OOM kill).
 - **The Maven fork builds twice** (`BuildPhase`): `clean package -DskipTests` (with the time-machine ladder; package, not test-compile, so a sibling module's packaged artifact exists), then `verify`

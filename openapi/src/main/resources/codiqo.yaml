@@ -788,6 +788,7 @@ components:
         - INCOMPLETE_HISTORY
         - LOCAL_REVIEW_FAILURE
         - SYSTEM_FAILURE
+        - UNHEALTHY_TEST_RUN
 
     TestRunModel:
       type: object
@@ -834,6 +835,12 @@ components:
           maxItems: 100
           items:
             type: string
+        heldReason:
+          description: |
+            Present when so many executed tests failed that the run cannot tell the commit's own failures from an
+            environment the analysis could not rebuild. The server scores the commit as usual and holds it out of every
+            figure, as UNHEALTHY_TEST_RUN with this reason, until someone who may include the commit accepts the score.
+          type: string
 
     AnalysisBuildFailureModel:
       type: object
