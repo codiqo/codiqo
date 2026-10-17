@@ -95,8 +95,8 @@ public class GradleModelCollector {
         request.setHotspotsCommitId(stringProp(root, "codiqo.hotspotsCommitId", null));
         request.setFailOnJdtlsError(boolProp(root, "codiqo.failOnJdtlsError", ext.isFailOnJdtlsError()));
         request.setFailOnUninstrumentedModule(boolProp(root, "codiqo.failOnUninstrumentedModule", ext.isFailOnUninstrumentedModule()));
-        request.setTestFailureHaltShare(stringProp(root, "codiqo.testFailureHaltShare", ext.getTestFailureHaltShare()));
-        request.setTestFailureHaltMinTests(stringProp(root, "codiqo.testFailureHaltMinTests", ext.getTestFailureHaltMinTests()));
+        request.setTestFailureHoldShare(stringProp(root, "codiqo.testFailureHoldShare", ext.getTestFailureHoldShare()));
+        request.setTestFailureHoldMinTests(stringProp(root, "codiqo.testFailureHoldMinTests", ext.getTestFailureHoldMinTests()));
 
         request.setJdtlsVersion(stringProp(root, "codiqo.jdtlsVersion", ext.getJdtlsVersion()));
         request.setJdtlsUseSnapshot(boolProp(root, "codiqo.jdtlsUseSnapshot", ext.isJdtlsUseSnapshot()));

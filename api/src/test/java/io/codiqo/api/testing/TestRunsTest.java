@@ -1,8 +1,6 @@
 package io.codiqo.api.testing;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
@@ -12,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -103,19 +102,20 @@ class TestRunsTest {
         assertEquals(List.of(), run.getSkippedTests());
     }
     @Test
-    void mostTestsFailingIsUnhealthy() {
+    void mostTestsFailingHoldsTheScore() {
         TestRun run = TestRun.builder().tests(40).failures(25).errors(5).skipped(0).testTime(Duration.ZERO).build();
 
-        IllegalStateException err = assertThrows(IllegalStateException.class, () -> TestRuns.requireHealthy(run, 0.75, 20));
-        assertTrue(err.getMessage().contains("30 of 40"), err.getMessage());
+        Optional<String> reason = TestRuns.heldReason(run, 0.75, 20);
+        assertTrue(reason.isPresent());
+        assertTrue(reason.get().contains("30 of 40"), reason.get());
     }
     /** a project whose tests need a database or Docker the CI lacks turns the check off with a share of 1 or more */
     @Test
     void aShareOfOneOrMoreTurnsTheCheckOff() {
         TestRun allFailed = TestRun.builder().tests(40).failures(40).errors(0).skipped(0).testTime(Duration.ZERO).build();
 
-        assertDoesNotThrow(() -> TestRuns.requireHealthy(allFailed, 1.0, 20));
-        assertThrows(IllegalStateException.class, () -> TestRuns.requireHealthy(allFailed, 0.99, 20));
+        assertEquals(Optional.empty(), TestRuns.heldReason(allFailed, 1.0, 20));
+        assertTrue(TestRuns.heldReason(allFailed, 0.99, 20).isPresent());
     }
     @Test
     void aFewFailuresOrTooFewTestsAreHealthy() {
@@ -123,9 +123,9 @@ class TestRunsTest {
         TestRun tooFew = TestRun.builder().tests(10).failures(10).errors(0).skipped(0).testTime(Duration.ZERO).build();
         TestRun mostlySkipped = TestRun.builder().tests(100).failures(15).errors(0).skipped(90).testTime(Duration.ZERO).build();
 
-        assertDoesNotThrow(() -> TestRuns.requireHealthy(someFailed, 0.75, 20));
-        assertDoesNotThrow(() -> TestRuns.requireHealthy(tooFew, 0.75, 20), "ten tests prove nothing about the environment");
-        assertDoesNotThrow(() -> TestRuns.requireHealthy(mostlySkipped, 0.75, 20), "the share is of executed tests, and only ten executed");
+        assertEquals(Optional.empty(), TestRuns.heldReason(someFailed, 0.75, 20));
+        assertEquals(Optional.empty(), TestRuns.heldReason(tooFew, 0.75, 20), "ten tests prove nothing about the environment");
+        assertEquals(Optional.empty(), TestRuns.heldReason(mostlySkipped, 0.75, 20), "the share is of executed tests, and only ten executed");
     }
     private static final class NoopLog implements Log {
         @Override
