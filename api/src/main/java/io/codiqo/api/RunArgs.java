@@ -109,10 +109,6 @@ public class RunArgs {
     public static final long REVIEW_TRACE_MAX_BYTES = 16L * 1024 * 1024;
     /** how much of a rejected review answer an error or a warning quotes: enough to tell prose from broken JSON */
     public static final int REVIEW_ANSWER_PREVIEW = 512;
-    /** the agent turns of a local review: the coordinator's review and its repair round */
-    public static final int REVIEW_TURNS = 2;
-    /** the agent turns of each follow-up after the build (the labelling, the triage): its prompt and its repair round */
-    public static final int REVIEW_FOLLOW_UP_TURNS = 2;
 
     public static final int SCORE_PRECISION = 2;
     /** the 0-10 scale of the quality dimensions, the architecture impact and the senior-review score */
@@ -458,7 +454,11 @@ public class RunArgs {
     @Nullable
     private Integer llmMaxTokens = (int) Short.MAX_VALUE;
 
-    /** Attempts for a transport or unparseable-response failure. Validated {@code >= 1} — this counts attempts, not extra retries — and clamped in {@link #validate()}. */
+    /**
+     * Carried in the scoring configuration, but no LLM call reads it: JsonCompletionClient makes one attempt and fails on
+     * an answer that is cut off or cannot be read, and the OpenAI client retries connection failures, 429 and 5xx itself.
+     * Validated {@code >= 1} and clamped in {@link #validate()}.
+     */
     @Nullable
     private Short llmMaxRetries = 3;
 
@@ -548,13 +548,6 @@ public class RunArgs {
 
     /** Local review: the reviewers' notes on what they could not verify kept for the commit page; three per reviewer are asked for. */
     private transient int reviewMaxNotChecked = 12;
-
-    /**
-     * Local review: reviewer areas that may go unreviewed before the review fails. An area is unreviewed when its reviewer
-     * ended without an answer and no answered retry covers it. 0 fails on the first one, so a broken review is
-     * investigated instead of scored with less.
-     */
-    private transient int reviewMaxUnreviewedAreas = 0;
 
     /**
      * Local review: context window declared for both models. OpenCode compacts a conversation that reaches it; both

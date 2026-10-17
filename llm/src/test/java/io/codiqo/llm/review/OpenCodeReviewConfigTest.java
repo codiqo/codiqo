@@ -4,10 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -15,10 +13,10 @@ import org.junit.jupiter.api.Test;
 
 import com.google.common.collect.Lists;
 
-import io.codiqo.llm.client.LlmJson;
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.GoldenText;
 import io.codiqo.llm.PromptFences;
+import io.codiqo.llm.client.LlmJson;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -83,7 +81,7 @@ class OpenCodeReviewConfigTest {
         assertTrue(reviewer.contains("at most 12 steps") && reviewer.contains("by step 4"), "a reviewer keeps eight steps for its answer: " + reviewer);
         assertTrue(coordinator.contains("JSON RULES") && reviewer.contains("JSON RULES"), "both agents carry the shared JSON rules");
         assertTrue(reviewer.contains("LAST message is ALWAYS the JSON object"), "a reviewer that ends without the JSON loses its findings");
-        assertTrue(coordinator.contains("ONE more subagent"), "an unanswered area is retried once");
+        assertFalse(coordinator.contains("Retry"), "an unanswered area fails the review, so the coordinator retries none");
         for (String placeholder : List.of("[(", "[#", "[/]", "${")) {
             assertFalse(coordinator.contains(placeholder) || reviewer.contains(placeholder), "unfilled placeholder " + placeholder);
         }
@@ -246,14 +244,8 @@ class OpenCodeReviewConfigTest {
                 new ReviewUnit("U2", "a/Service.java", "Builder(String)", "NEW", "41-44"))));
     }
     @Test
-    void theTurnsSentToASessionReadAsBefore() {
+    void theReviewTurnReadsAsBefore() {
         assertEquals("Review commit 1a2b3c of this repository.", OpenCodeReviewConfig.reviewPrompt("1a2b3c"));
-        assertEquals("Your last step failed on the way from the model: provider.invalid-output: stream cut. Continue the task from where it stopped. "
-                + "Keep everything you have already done and do not repeat finished work; end with the answer the task asks for.",
-                OpenCodeReviewConfig.resumePrompt("provider.invalid-output: stream cut"));
-        assertEquals("Your last answer could not be read: Unexpected character ('}' (code 125)) at 1:7. Reply with the same answer as one corrected JSON object "
-                + "and nothing else, every field in the shape your instructions give it: an object stays an object and a list stays a list, even with one item. "
-                + "Do not review again and do not call any tool.", OpenCodeReviewConfig.repairPrompt("Unexpected character ('}' (code 125)) at 1:7"));
     }
     private static StaticFinding finding(String tool) {
         return new StaticFinding(tool, "Rule", "warning", "a/Service.java", 2, "flagged");

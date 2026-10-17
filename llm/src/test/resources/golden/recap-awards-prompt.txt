@@ -54,10 +54,7 @@ Write, in English:
 
 # OUTPUT FORMAT
 
-**CRITICAL: Output ONLY valid JSON - your response must start with { and end with }**
-
-Do NOT wrap the JSON in markdown code fences.
-Do NOT add any text, explanation, or commentary before or after the JSON.
+Answer with this JSON object:
 
 {
   "intro": "<one sentence>",

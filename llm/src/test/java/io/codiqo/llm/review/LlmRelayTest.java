@@ -210,7 +210,10 @@ class LlmRelayTest {
             assertEquals(2, attempts.get());
         }
     }
-    /** a stream cut after the answer started cannot become a 502; it ends with an error event the client raises */
+    /**
+     * A stream cut after the answer started cannot become a 502 for the client; it ends with an error event the client
+     * raises, and it is counted as the provider's 502, since the 200 the client saw would hide it.
+     */
     @Test
     void aStreamCutShortEndsWithAnErrorEvent() throws Exception {
         HttpServer cutting = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -232,6 +235,8 @@ class LlmRelayTest {
 
             assertTrue(response.body().contains("data: " + FIRST_CHUNK), response.body());
             assertTrue(response.body().contains("cut short"), "the cut is visible to the client: " + response.body());
+            assertEquals(Optional.of("the LLM provider answered 502 once during the review"), through.providerErrors());
+            assertTrue(through.providerFailed());
         } finally {
             cutting.stop(0);
         }
@@ -269,6 +274,23 @@ class LlmRelayTest {
             assertTrue(counting.providerFailed());
         } finally {
             failing.stop(0);
+        }
+    }
+    /** a provider that failed and then answered again is named, but a review that fails after that is the commit's failure */
+    @Test
+    void aProviderThatAnsweredAgainHasNotFailed() throws Exception {
+        List<Integer> statuses = List.of(HttpResponseStatus.TOO_MANY_REQUESTS.code(), HttpResponseStatus.OK.code());
+        AtomicInteger calls = new AtomicInteger();
+        HttpServer recovering = fakeProxy(exchange -> respond(exchange, statuses.get(calls.getAndIncrement()), MODELS));
+        try (LlmRelay counting = relayTo(recovering)) {
+            assertEquals(HttpResponseStatus.TOO_MANY_REQUESTS.code(), getModels(counting).statusCode());
+            assertTrue(counting.providerFailed(), "the latest answer failed");
+            assertEquals(HttpResponseStatus.OK.code(), getModels(counting).statusCode());
+
+            assertTrue(counting.providerErrors().orElseThrow().startsWith("the LLM provider answered 429 once during the review"));
+            assertFalse(counting.providerFailed(), "the provider answered again");
+        } finally {
+            recovering.stop(0);
         }
     }
     /** a request the provider only refused, such as a prompt over the model's context, is named but is the commit's failure */

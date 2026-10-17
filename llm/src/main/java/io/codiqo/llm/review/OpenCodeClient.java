@@ -41,14 +41,6 @@ import tools.jackson.databind.node.ObjectNode;
  * which for a coordinator includes every foreground sub-agent it started; a pinned OpenCode version keeps it stable.
  */
 public class OpenCodeClient implements Closeable {
-    /** without an id every later call goes to {@code /api/session//...} and fails with a 404 that names nothing */
-    private static String sessionId(JsonNode answer, String what) throws IOException {
-        String toReturn = answer.path("data").path("id").asString();
-        if (StringUtils.isNotBlank(toReturn)) {
-            return toReturn;
-        }
-        throw new IOException("OpenCode created " + what + " without an id: " + StringUtils.abbreviate(answer.toString(), RunArgs.REVIEW_ANSWER_PREVIEW));
-    }
     private static final String USER = "opencode";
     private static final MediaType JSON = MediaType.get(HttpHeaderValues.APPLICATION_JSON.toString());
     private static final int PAGE = 100;
@@ -76,12 +68,6 @@ public class OpenCodeClient implements Closeable {
     public String fork(String sessionId) throws IOException {
         return sessionId(post(path("api", "session", sessionId, "fork"), mapper.createObjectNode()), "a fork of " + sessionId);
     }
-    /** a fork holding the session's history before the given message, which the fork leaves out with everything after it */
-    public String fork(String sessionId, String beforeMessageId) throws IOException {
-        ObjectNode body = mapper.createObjectNode();
-        body.put("before", beforeMessageId);
-        return sessionId(post(path("api", "session", sessionId, "fork"), body), "a fork of " + sessionId + " before " + beforeMessageId);
-    }
     public void prompt(String sessionId, String text) throws IOException {
         ObjectNode body = mapper.createObjectNode();
         body.put("text", text);
@@ -90,17 +76,32 @@ public class OpenCodeClient implements Closeable {
     public void awaitIdle(String sessionId) throws IOException {
         post(path("api", "experimental", "session", sessionId, "wait"), mapper.createObjectNode());
     }
+    public String finalAnswer(String sessionId) throws IOException {
+        Optional<String> toReturn = answer(sessionId);
+        if (toReturn.isPresent()) {
+            return toReturn.get();
+        }
+        throw new IOException("session " + sessionId + " finished without an answer");
+    }
     /**
      * The text of the newest assistant message that has any, read from the assistant messages newest first and
-     * followed page by page: a single unordered page of 100 messages, with tool results and the repair turn counted in,
-     * could hold only the oldest messages of a long coordinator session and miss its actual answer.
+     * followed page by page: a single unordered page of 100 messages, with tool results counted in, could hold only the
+     * oldest messages of a long coordinator session and miss its actual answer. Empty when no assistant message of the
+     * session has text; a failed request to OpenCode is an {@link IOException}, never an empty answer.
      */
-    public String finalAnswer(String sessionId) throws IOException {
-        return text(finalAnswerMessage(sessionId));
-    }
-    /** the id of the message {@link #finalAnswer} reads, to fork the session from before it */
-    public String finalAnswerId(String sessionId) throws IOException {
-        return finalAnswerMessage(sessionId).path("id").asString();
+    public Optional<String> answer(String sessionId) throws IOException {
+        Optional<String> cursor = Optional.empty();
+        do {
+            JsonNode page = messagePage(sessionId, Optional.of(ASSISTANT), ORDER_NEWEST_FIRST, cursor);
+            for (JsonNode message : page.path("data")) {
+                String text = text(message);
+                if (StringUtils.isNotBlank(text)) {
+                    return Optional.of(text);
+                }
+            }
+            cursor = nextPage(page);
+        } while (cursor.isPresent());
+        return Optional.empty();
     }
     /**
      * The error the session's last turn ended with, when it failed: OpenCode records it on the newest assistant
@@ -212,6 +213,14 @@ public class OpenCodeClient implements Closeable {
         }
         return toReturn.build();
     }
+    /** without an id every later call goes to {@code /api/session//...} and fails with a 404 that names nothing */
+    private static String sessionId(JsonNode answer, String what) throws IOException {
+        String toReturn = answer.path("data").path("id").asString();
+        if (StringUtils.isNotBlank(toReturn)) {
+            return toReturn;
+        }
+        throw new IOException("OpenCode created " + what + " without an id: " + StringUtils.abbreviate(answer.toString(), RunArgs.REVIEW_ANSWER_PREVIEW));
+    }
     /** the last page still carries a cursor, so an empty page ends the list as well as a missing cursor does */
     private static Optional<String> nextPage(JsonNode page) {
         JsonNode next = page.path("cursor").path("next");
@@ -230,19 +239,6 @@ public class OpenCodeClient implements Closeable {
                 tokens.path("cache").path("read").asLong(),
                 tokens.path("output").asLong(),
                 tokens.path("reasoning").asLong());
-    }
-    private JsonNode finalAnswerMessage(String sessionId) throws IOException {
-        Optional<String> cursor = Optional.empty();
-        do {
-            JsonNode page = messagePage(sessionId, Optional.of(ASSISTANT), ORDER_NEWEST_FIRST, cursor);
-            for (JsonNode message : page.path("data")) {
-                if (StringUtils.isNotBlank(text(message))) {
-                    return message;
-                }
-            }
-            cursor = nextPage(page);
-        } while (cursor.isPresent());
-        throw new IOException("session " + sessionId + " finished without an answer");
     }
     private static String text(JsonNode message) {
         String text = message.path("text").asString();

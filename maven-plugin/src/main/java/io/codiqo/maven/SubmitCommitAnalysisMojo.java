@@ -205,7 +205,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
             /** the review wrote its trace before it was joined; it goes with the review it explains, never alone */
             File reviewTrace = ReviewTrace.file(ctx.getArgs(), ctx.getArgs().getCommitId());
             AnalysisAcceptedModel response;
-            if (BooleanUtils.and(new boolean[] { Objects.nonNull(ctx.getSubmissionModel().getLocalReview()), reviewTrace.isFile() })) {
+            if (Objects.nonNull(ctx.getSubmissionModel().getLocalReview())) {
                 response = AnalysisSubmitter.submit(
                         apiUrl,
                         credential(),

@@ -1,7 +1,5 @@
 package io.codiqo.llm.review;
 
-import static java.util.function.Predicate.not;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -156,6 +154,13 @@ public final class LlmRelay implements AutoCloseable {
     /** every answer of the model's end point that was not a success, retried ones included, by status */
     private final Multiset<Integer> providerErrors = ConcurrentHashMultiset.create();
     /**
+     * Whether the model's end point failed the latest call it answered, a refused request ({@link #REFUSED_REQUESTS})
+     * not counting as a failure. A review that fails right after the provider failed is the provider's failure; one that
+     * fails after the provider answered again, such as a labelling answer with a unit left out after a few 429s that
+     * OpenCode retried, is the commit's, and halting the project for it would halt it again on every resume.
+     */
+    private final AtomicBoolean lastAnswerFailed = new AtomicBoolean();
+    /**
      * What the provider's last 429 said. On 16 Oct 2026 the provider refused every call for over eight hours after an
      * evening of heavy load, and nothing recorded whether that was a short rate limit or an exhausted usage quota: the
      * relay passed the body on without reading it, and the halts said only that sessions finished without an answer.
@@ -218,13 +223,12 @@ public final class LlmRelay implements AutoCloseable {
         return toReturn;
     }
     /**
-     * Whether the provider failed during the review, rather than only refused one of its requests: any failed answer
-     * other than a refused request ({@link #REFUSED_REQUESTS}), the relay's own 502 or 504 for an end point that could
-     * not be reached or did not answer in time included. A review that fails after nothing but refused requests failed
-     * on its own prompt, so halting the project for it and reviewing the commit again would only repeat the failure.
+     * Whether the provider failed the latest call it answered: a failed answer other than a refused request, the relay's
+     * own 502 or 504 for an end point that could not be reached, did not answer in time or cut its answer short included.
+     * A refused request is the commit's own prompt, which the same commit would ask again after every resume.
      */
     public boolean providerFailed() {
-        return providerErrors.elementSet().stream().anyMatch(not(REFUSED_REQUESTS::contains));
+        return lastAnswerFailed.get();
     }
     @Override
     public void close() {
@@ -314,7 +318,7 @@ public final class LlmRelay implements AutoCloseable {
                 log.warn("llm relay: %s %s failed: %s", exchange.getRequestMethod(), path, err.getMessage());
                 boolean timedOut = err instanceof HttpTimeoutException;
                 int status = (timedOut ? HttpResponseStatus.GATEWAY_TIMEOUT : HttpResponseStatus.BAD_GATEWAY).code();
-                providerErrors.add(status);
+                answered(status);
                 respond(exchange, status, error(timedOut ? "the model's end point did not answer in time" : "the model's end point could not be reached", "api_error"));
                 return;
             }
@@ -325,9 +329,8 @@ public final class LlmRelay implements AutoCloseable {
 
         if (HttpStatusClass.valueOf(response.statusCode()) == HttpStatusClass.SUCCESS) {
             rateLimitRecovered(sentAt);
-        } else {
-            providerErrors.add(response.statusCode());
         }
+        answered(response.statusCode());
 
         Optional<Duration> retryIn = Optional.empty();
         byte[] readAhead = ArrayUtils.EMPTY_BYTE_ARRAY;
@@ -355,22 +358,39 @@ public final class LlmRelay implements AutoCloseable {
         try (InputStream in = response.body(); OutputStream out = exchange.getResponseBody()) {
             out.write(readAhead);
             byte[] buffer = new byte[BUFFER_BYTES];
-            try {
-                for (int read = in.read(buffer); read >= 0; read = in.read(buffer)) {
-                    out.write(buffer, 0, read);
-                    out.flush();
-                }
-            } catch (IOException err) {
-                /**
-                 * The status was sent with the first byte, so a cut can no longer be a 502. A streamed answer ends with
-                 * an error event, which an OpenAI client raises; a plain body is left short, which no client parses.
-                 */
-                log.warn("llm relay: %s %s was cut short after the answer started: %s", exchange.getRequestMethod(), path, err.getMessage());
-                if (streamed) {
-                    out.write((StringUtils.LF + "data: " + error("the model's answer was cut short", "api_error") + EVENT_END).getBytes(StandardCharsets.UTF_8));
-                }
-                throw err;
+            for (int read = upstreamRead(in, buffer, out, exchange, path, streamed); read >= 0; read = upstreamRead(in, buffer, out, exchange, path, streamed)) {
+                out.write(buffer, 0, read);
+                out.flush();
             }
+        }
+    }
+    /**
+     * One read of the provider's answer. A read that fails is the provider cutting its answer short, counted as the
+     * relay's 502 like an end point that could not be reached: the 200 already went out with the first byte, so neither
+     * the status OpenCode saw nor the providerErrors summary would otherwise show it, and the review that failed on the
+     * cut would exclude the commit as its own failure. A failure to write to OpenCode is not the provider's and is not
+     * counted. A streamed answer ends with an error event, which an OpenAI client raises; a plain body is left short,
+     * which no client parses.
+     */
+    private int upstreamRead(InputStream in, byte[] buffer, OutputStream out, HttpExchange exchange, String path, boolean streamed) throws IOException {
+        try {
+            return in.read(buffer);
+        } catch (IOException err) {
+            log.warn("llm relay: %s %s was cut short after the answer started: %s", exchange.getRequestMethod(), path, err.getMessage());
+            answered(HttpResponseStatus.BAD_GATEWAY.code());
+            if (streamed) {
+                out.write((StringUtils.LF + "data: " + error("the model's answer was cut short", "api_error") + EVENT_END).getBytes(StandardCharsets.UTF_8));
+            }
+            throw err;
+        }
+    }
+    /** records how the model's end point answered a call: every status but a success is counted */
+    private void answered(int status) {
+        if (HttpStatusClass.valueOf(status) == HttpStatusClass.SUCCESS) {
+            lastAnswerFailed.set(false);
+        } else {
+            providerErrors.add(status);
+            lastAnswerFailed.set(BooleanUtils.negate(REFUSED_REQUESTS.contains(status)));
         }
     }
     /**

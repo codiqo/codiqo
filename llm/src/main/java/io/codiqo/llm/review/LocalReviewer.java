@@ -7,7 +7,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.function.Consumer;
 import java.util.Optional;
 import java.util.Set;
 
@@ -23,6 +22,7 @@ import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Joiner;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
@@ -53,32 +53,14 @@ import tools.jackson.databind.exc.MismatchedInputException;
 public class LocalReviewer {
     private static final int SHORT_SHA = 8;
     private static final String BLOCK_CATEGORIES = "blockCategories";
-    /** the labelling and the triage, each a follow-up turn after the build */
+    /** the follow-up turns after the build, the labelling and the triage, each in a fork of the coordinator */
     private static final int FOLLOW_UPS = 2;
     /**
-     * How many times a turn whose model answer failed on the way is resumed. OpenCode retries a provider error itself,
-     * up to ten times, and continues an answer the relay reported cut short ({@code provider.internal}), but an answer
-     * it reads as broken ({@code provider.invalid-output}) fails the turn at once, and a failed coordinator turn would
-     * fail the whole review.
+     * The turn errors OpenCode records when a request that was fine got an answer that broke on the way. OpenCode has
+     * already retried the provider when it records one, so a review that fails on it is the provider's failure; any other
+     * turn error, a refused request among them, follows from what the commit asks and is the commit's.
      */
-    private static final int TURN_RESUMES = 2;
-    /**
-     * Every reviewer answer that cannot be read gets one correction, and this bounds them in one review. Each correction
-     * is a turn the review's time budget ({@link #longestReview}) must hold, so the bound has to be finite. It was 2 per
-     * review, which failed a production commit on 14 Oct 2026 after a 30-minute review whose third of nine reviewers answered
-     * in an unreadable shape. Production reviews run at most 9 reviewers (95th percentile 8, measured 14 Oct 2026), so
-     * 16 lets every reviewer of any review seen so far be corrected; a review needing more has a problem a correction
-     * will not fix, and fails.
-     */
-    @VisibleForTesting
-    static final int REVIEWER_REPAIRS = 16;
-    /** the turns one reviewer's correction can take: the correction in its session, then the final answer in a fork */
-    @VisibleForTesting
-    public static final int CORRECTION_TURNS = 2;
-    /** the title the coordinator is told to give a retry; models also write "Retry konquer steps", so the colon is optional */
-    private static final String RETRY_TITLE_PREFIX = "retry";
-    /** the errors of a request that was fine and an answer that broke on the way; a refused request is not resumed */
-    private static final Set<String> RESUMABLE_ERRORS = Set.of(
+    private static final Set<String> PROVIDER_TURN_ERRORS = Set.of(
             "provider.transport",
             "provider.internal",
             "provider.invalid-output",
@@ -112,17 +94,9 @@ public class LocalReviewer {
         try (Repository repository = new FileRepositoryBuilder().findGitDir(directory.toFile()).setMustExist(true).build()) {
             ObjectId resolved = repository.resolve(commit);
             if (Objects.nonNull(resolved)) {
-                return new ReviewTarget(repository.getWorkTree().toPath(), resolved.name(), ReviewLanguages.namingRules(changedFiles(repository, resolved.name()), languages));
+                return new ReviewTarget(repository.getWorkTree().toPath(), resolved.name(), ReviewLanguages.namingRules(JGit.changedFileNames(repository, resolved.name()), languages));
             }
             throw new IOException("unknown commit " + commit + " in " + repository.getWorkTree());
-        }
-    }
-    private List<String> changedFiles(Repository repository, String sha) {
-        try {
-            return JGit.changedFileNames(repository, sha);
-        } catch (IOException err) {
-            log.warn("could not list the files %s changes (%s); the reviewers are given the naming rules of every language", sha, err.getMessage());
-            return List.of();
         }
     }
     private ReviewOutcome runReview(
@@ -136,20 +110,19 @@ public class LocalReviewer {
                 return runReview(workTree, sha, namingRules, new ReviewEndpoint(relay.getUrl(), relay.getSecret(), null), units, findings);
             } catch (IOException | RuntimeException err) {
                 /**
-                 * A turn that timed out says only "timeout"; the provider failing underneath it is the cause worth
-                 * reading, and it makes the failure the provider's rather than the commit's. On 14 Oct 2026 two reviews
-                 * of real commits failed this way (one with 466 answers of 429, another with 102),
-                 * and both commits were excluded and never retried. Requests the provider only refused (a prompt over
-                 * the model's context) are named too but stay the commit's failure: halting the project for them would
-                 * halt it again on every resume, since the same commit asks the same prompt.
+                 * A turn that timed out says only "timeout", so the provider's failed answers are added to the error.
+                 * The review is the provider's failure, a ReviewProviderException that halts the project instead of
+                 * excluding the commit, when the provider failed the latest call it answered or OpenCode ended a turn
+                 * with a provider error. A review that failed after the provider answered again (an answer in the
+                 * wrong shape after a few retried 429s) or only on refused requests (a prompt over the model's context)
+                 * is the commit's failure: the same commit would fail the same way after every resume.
                  */
                 Optional<String> providerErrors = relay.providerErrors();
+                if (BooleanUtils.or(new boolean[] { relay.providerFailed(), isProviderTurnFailure(err) })) {
+                    throw new ReviewProviderException(err.getMessage(), providerErrors.orElse("OpenCode recorded the provider's failure; the relay counted none"), err);
+                }
                 if (providerErrors.isPresent()) {
-                    String message = err.getMessage() + "; " + providerErrors.get();
-                    if (relay.providerFailed()) {
-                        throw new ReviewProviderException(err.getMessage(), providerErrors.get(), err);
-                    }
-                    throw new IOException(message, err);
+                    throw new IOException(err.getMessage() + "; " + providerErrors.get(), err);
                 }
                 throw err;
             }
@@ -167,11 +140,25 @@ public class LocalReviewer {
             try (OpenCodeClient client = new OpenCodeClient(server.getUrl(), server.getPassword(), args.getReviewTimeout())) {
                 String sessionId = client.createSession(workTree, OpenCodeReviewConfig.COORDINATOR, "codiqo review " + StringUtils.left(sha, SHORT_SHA));
                 List<String> forkIds = Lists.newArrayList();
+                ReviewOutcome toReturn;
                 try {
-                    return review(client, sessionId, forkIds, workTree, sha, units, findings, watch);
-                } finally {
-                    ReviewTrace.write(args, client, sha, sessionId, forkIds, log);
+                    toReturn = review(client, sessionId, forkIds, sha, units, findings, watch);
+                } catch (Throwable err) {
+                    /**
+                     * A failed review still leaves its trace, the record of what the agents did before it failed, an
+                     * Error such as an OutOfMemoryError included: skipping it would also leave an earlier run's trace of
+                     * the commit to pass for this one's. A trace that cannot be written then is attached to the review's
+                     * error rather than thrown in its place, which would lose the cause the halt or exclusion reports.
+                     */
+                    try {
+                        ReviewTrace.write(args, client, sha, sessionId, forkIds, log);
+                    } catch (IOException | RuntimeException traceErr) {
+                        err.addSuppressed(traceErr);
+                    }
+                    throw err;
                 }
+                ReviewTrace.write(args, client, sha, sessionId, forkIds, log);
+                return toReturn;
             }
         }
     }
@@ -179,7 +166,6 @@ public class LocalReviewer {
             OpenCodeClient client,
             String sessionId,
             List<String> forkIds,
-            Path workTree,
             String sha,
             Optional<BuildSource<ReviewUnit>> units,
             Optional<BuildSource<StaticFinding>> findings,
@@ -187,16 +173,8 @@ public class LocalReviewer {
         LocalReview review;
         try (ProgressStage stage = ProgressStage.start(args, "review")) {
             log.info("reviewing %s with %s (coordinator session %s) and %s (reviewers)", sha, args.getReviewCoordinatorModel(), sessionId, args.getReviewReviewerModel());
-            turn(client, sessionId, OpenCodeReviewConfig.reviewPrompt(sha), log);
-
+            turn(client, sessionId, OpenCodeReviewConfig.reviewPrompt(sha));
             String answer = client.finalAnswer(sessionId);
-            Optional<JacksonException> unreadable = unreadable(answer);
-            if (unreadable.isPresent()) {
-                /** One slip, such as an unclosed string in a long answer, must not cost a review the agents already finished. */
-                log.warn("the coordinator's answer is not valid JSON (%s); asking it to correct the answer", unreadable.get().getOriginalMessage());
-                turn(client, sessionId, OpenCodeReviewConfig.repairPrompt(unreadable.get().getOriginalMessage()), log);
-                answer = client.finalAnswer(sessionId);
-            }
 
             List<SessionUsage> sessions = Lists.newArrayList();
             sessions.add(withConfiguredModel(client.usage(sessionId)));
@@ -204,23 +182,20 @@ public class LocalReviewer {
                 sessions.add(withConfiguredModel(child));
             }
 
-            ReviewerAnswers reviewers = reviewerAnswers(client, sessions, forkIds);
-            if (CollectionUtils.isNotEmpty(reviewers.getUnanswered())) {
-                log.warn("%d of %d reviewer sessions ended without an answer: %s",
-                        reviewers.getUnanswered().size(),
-                        reviewers.getTotal(),
-                        reviewers.getUnanswered());
-            }
+            ReviewerAnswers reviewers = reviewerAnswers(client, sessions);
 
             LlmScoringResponse.Bugs bugs;
-            LlmScoringResponse assessment = null;
+            LlmScoringResponse assessment;
+            List<LocalReviewModels.Task> tasks;
             try {
                 bugs = readBugs(answer);
                 assessment = LlmJson.readAnswerIgnoring(answer, LlmScoringResponse.class, BLOCK_CATEGORIES);
-                assessment.setBlockCategories(reviewers.getBlockCategories());
+                tasks = LocalReviewModels.tasks(answer);
             } catch (JacksonException err) {
-                throw new IOException("the review answer holds no findings object: " + StringUtils.abbreviate(answer, RunArgs.REVIEW_ANSWER_PREVIEW), err);
+                throw new IOException("the coordinator's answer is not the JSON object asked for: " + StringUtils.abbreviate(answer, RunArgs.REVIEW_ANSWER_PREVIEW), err);
             }
+            assessment.setBlockCategories(reviewers.getBlockCategories());
+            log.info("the coordinator split the review of %s into %d areas", sha, tasks.size());
             review = new LocalReview(
                     sha,
                     bugs,
@@ -229,10 +204,8 @@ public class LocalReviewer {
                     answer,
                     assessment,
                     reviewers.getTotal(),
-                    reviewers.getUnanswered(),
                     reviewers.getObservations(),
-                    reviewers.getNotChecked(),
-                    reviewers.getCorrected());
+                    reviewers.getNotChecked());
             stage.detail(progressDetail(review));
             stage.succeeded();
         }
@@ -262,12 +235,11 @@ public class LocalReviewer {
             ForkAnswer<UnitLabels> answer = ask(client, forkId, OpenCodeReviewConfig.labelPrompt(sha, units), UnitLabels.class, "labelling");
 
             toReturn = answer.getParsed();
-            /**
-             * A model writes "labels": null, or a null among the labels, now and then although the JSON rules forbid it.
-             * Either is no label; read as one, it threw a NullPointerException past the labelling's own failure handling,
-             * which failed the whole review and with it the build.
-             */
-            toReturn.setLabels(CollectionUtils.emptyIfNull(toReturn.getLabels()).stream().filter(Objects::nonNull).toList());
+            List<String> problems = UnitLabelling.problems(units, toReturn);
+            if (CollectionUtils.isNotEmpty(problems)) {
+                throw new IOException("the labelling answer is not one label per listed unit (" + Joiner.on("; ").join(problems) + "): "
+                        + StringUtils.abbreviate(answer.getAnswer(), RunArgs.REVIEW_ANSWER_PREVIEW));
+            }
             toReturn.setAnswer(answer.getAnswer());
             toReturn.setUsage(answer.getUsage());
             stage.detail(String.format("%d labels for %d units", toReturn.getLabels().size(), units.size()));
@@ -289,6 +261,11 @@ public class LocalReviewer {
             ForkAnswer<FindingTriage> answer = ask(client, forkId, OpenCodeReviewConfig.triagePrompt(findings), FindingTriage.class, "triage");
 
             toReturn = answer.getParsed();
+            List<String> problems = toReturn.problems(findings);
+            if (CollectionUtils.isNotEmpty(problems)) {
+                throw new IOException("the triage answer is not one verdict per listed finding (" + Joiner.on("; ").join(problems) + "): "
+                        + StringUtils.abbreviate(answer.getAnswer(), RunArgs.REVIEW_ANSWER_PREVIEW));
+            }
             toReturn.setAnswer(answer.getAnswer());
             toReturn.setUsage(answer.getUsage());
             toReturn.setFindings(findings);
@@ -298,31 +275,23 @@ public class LocalReviewer {
         return Optional.of(toReturn);
     }
     private <T> ForkAnswer<T> ask(OpenCodeClient client, String forkId, String prompt, Class<T> type, String name) throws IOException {
-        turn(client, forkId, prompt, log);
-
+        turn(client, forkId, prompt);
         String answer = client.finalAnswer(forkId);
+
         T parsed;
         try {
             parsed = LlmJson.readAnswer(answer, type);
         } catch (JacksonException err) {
-            log.warn("the %s answer is not valid JSON (%s); asking for a corrected answer", name, err.getOriginalMessage());
-            turn(client, forkId, OpenCodeReviewConfig.repairPrompt(err.getOriginalMessage()), log);
-            answer = client.finalAnswer(forkId);
-            try {
-                parsed = LlmJson.readAnswer(answer, type);
-            } catch (JacksonException again) {
-                throw new IOException("the " + name + " answer is not the JSON object asked for: " + StringUtils.abbreviate(answer, RunArgs.REVIEW_ANSWER_PREVIEW), again);
-            }
+            throw new IOException("the " + name + " answer is not the JSON object asked for: " + StringUtils.abbreviate(answer, RunArgs.REVIEW_ANSWER_PREVIEW), err);
         }
         return new ForkAnswer<>(parsed, answer, withConfiguredModel(client.usage(forkId)));
     }
     @VisibleForTesting
     public static String progressDetail(LocalReview review) {
         LlmScoringResponse.Bugs bugs = review.getBugs();
-        return String.format("%d bugs, %d sessions, %d of %d reviewers unanswered, %d input / %d output tokens",
+        return String.format("%d bugs, %d sessions, %d reviewers, %d input / %d output tokens",
                 bugs.getBlocking().size() + bugs.getMajor().size() + bugs.getMinor().size(),
                 review.getSessions().size(),
-                review.getUnansweredReviewers().size(),
                 review.getReviewers(),
                 review.totalInputTokens(),
                 review.totalOutputTokens());
@@ -341,33 +310,28 @@ public class LocalReviewer {
             throw new IOException("the build's " + what + " never arrived", err);
         }
     }
-    private ReviewerAnswers reviewerAnswers(OpenCodeClient client, List<SessionUsage> sessions, List<String> forkIds) throws IOException {
+    private ReviewerAnswers reviewerAnswers(OpenCodeClient client, List<SessionUsage> sessions) throws IOException {
         Map<Pair<String, String>, LlmScoringResponse.CodeBlockCategoryView> labels = Maps.newLinkedHashMap();
         /** the coordinator is told not to repeat them, so the reviewers' own answers are the only place they exist */
         Set<String> observations = Sets.newLinkedHashSet();
         Set<String> notChecked = Sets.newLinkedHashSet();
         List<String> unanswered = Lists.newArrayList();
         int total = 0;
-        int repairs = 0;
-        int answeredRetries = 0;
         for (SessionUsage session : sessions) {
             if (OpenCodeReviewConfig.REVIEWER.equals(session.getAgent())) {
                 total++;
-                String text;
-                try {
-                    text = client.finalAnswer(session.getSessionId());
-                } catch (IOException err) {
-                    log.warn("reviewer session %s ended with no answer at all: %s", session.getSessionId(), err.getMessage());
+                requireTurnSucceeded(client, session.getSessionId());
+                Optional<String> text = client.answer(session.getSessionId());
+                if (text.isEmpty()) {
                     unanswered.add(session.getSessionId());
                     continue;
                 }
-                if (isRetry(client.session(session.getSessionId()).path("title").asString())) {
-                    answeredRetries++;
-                }
 
-                ReviewerAnswer answer = readReviewerAnswer(client, session.getSessionId(), text, repairs < REVIEWER_REPAIRS, forkIds::add, log);
-                if (answer.isCorrected()) {
-                    repairs++;
+                ReviewerAnswer answer;
+                try {
+                    answer = readReviewerAnswer(text.get());
+                } catch (JacksonException err) {
+                    throw new IOException("reviewer session " + session.getSessionId() + " answered in an unreadable shape: " + err.getOriginalMessage(), err);
                 }
                 if (answer.getLabels().isEmpty()) {
                     log.warn("reviewer session %s labelled none of its code units", session.getSessionId());
@@ -386,97 +350,32 @@ public class LocalReviewer {
                 }
             }
         }
-        int unreviewed = unreviewedAreas(unanswered.size(), answeredRetries);
-        if (unreviewed > args.getReviewMaxUnreviewedAreas()) {
-            log.error("%d of %d reviewer sessions ended without an answer and %d answered retries cover them: %d areas went unreviewed (%s); the review fails",
-                    unanswered.size(),
-                    total,
-                    answeredRetries,
-                    unreviewed,
-                    unanswered);
-            throw new IOException(unreviewed + " reviewer areas went unreviewed: sessions " + unanswered + " ended without an answer");
+        if (CollectionUtils.isNotEmpty(unanswered)) {
+            throw new IOException(unanswered.size() + " of " + total + " reviewer sessions ended without an answer, so their areas went unreviewed: " + unanswered);
         }
-        return new ReviewerAnswers(total, unanswered, Lists.newArrayList(labels.values()),
+        return new ReviewerAnswers(total, Lists.newArrayList(labels.values()),
                 observations.stream().limit(args.getReviewMaxObservations()).toList(),
-                notChecked.stream().limit(args.getReviewMaxNotChecked()).toList(),
-                repairs);
+                notChecked.stream().limit(args.getReviewMaxNotChecked()).toList());
     }
     /**
-     * Areas left without a review: each reviewer that ended with no answer, less each answered retry the coordinator
-     * started for one. A retry may split an area in two, so this can undercount by one per split, never overcount.
+     * A reviewer's labels, observations and what it could not verify. An answer without "unitLabels" is unreadable, not
+     * one that labels nothing: a reviewer with no units sends [], and a production reviewer (14 Oct 2026) answered with a
+     * single finding object, which read as no labels at all and silently dropped its judgement of its units.
      */
     @VisibleForTesting
-    static int unreviewedAreas(int unanswered, int answeredRetries) {
-        return Math.max(0, unanswered - answeredRetries);
-    }
-    @VisibleForTesting
-    static boolean isRetry(String title) {
-        return StringUtils.startsWithIgnoreCase(StringUtils.strip(title), RETRY_TITLE_PREFIX);
-    }
-    /**
-     * A reviewer's labels, observations and what it could not verify. An answer that cannot be read, broken JSON, a label
-     * written as a bare string or no "unitLabels" at all, gets a correction in its own session: the session's whole
-     * history is an unchanged prefix, so the provider's prompt cache serves it, and the reviewer is told what was wrong.
-     * One such slip in ten reviewers excluded whole commits. A correction that is still unreadable leaves the bad answer
-     * in the context, where it anchors the model on its own mistake (a production commit, 14 Oct 2026: "Now..." again after
-     * the correction), so the second attempt is a fork from before that answer: every tool result is kept, the prefix is
-     * still cached, and the reviewer is asked only for its final answer. An answer still unreadable after both fails the
-     * review, since dropping that reviewer's labels would judge with less.
-     */
-    @VisibleForTesting
-    static ReviewerAnswer readReviewerAnswer(OpenCodeClient client, String sessionId, String text, boolean mayCorrect, Consumer<String> forks, Log log) throws IOException {
-        String problem;
-        try {
-            return parseReviewerAnswer(text, false);
-        } catch (JacksonException err) {
-            if (BooleanUtils.negate(mayCorrect)) {
-                log.error("reviewer session %s answered in an unreadable shape (%s) after %d corrections in this review; the review fails",
-                        sessionId,
-                        err.getOriginalMessage(),
-                        REVIEWER_REPAIRS);
-                throw err;
-            }
-            problem = err.getOriginalMessage();
-            log.warn("reviewer session %s answered in an unreadable shape (%s); asking it to correct the answer", sessionId, problem);
-        }
-
-        String unreadableAnswer = client.finalAnswerId(sessionId);
-        turn(client, sessionId, OpenCodeReviewConfig.repairPrompt(problem), log);
-        String corrected = client.finalAnswer(sessionId);
-        try {
-            return parseReviewerAnswer(corrected, true);
-        } catch (JacksonException err) {
-            log.warn("reviewer session %s still answered in an unreadable shape after a correction (%s); asking a fork from before its answer for the final answer",
-                    sessionId,
-                    err.getOriginalMessage());
-        }
-
-        String forkId = client.fork(sessionId, unreadableAnswer);
-        forks.accept(forkId);
-        turn(client, forkId, OpenCodeReviewConfig.finalAnswerPrompt(), log);
-        try {
-            return parseReviewerAnswer(client.finalAnswer(forkId), true);
-        } catch (JacksonException err) {
-            log.error("reviewer session %s and its fork %s both answered in an unreadable shape (%s); the review fails", sessionId, forkId, err.getOriginalMessage());
-            throw err;
-        }
-    }
-    /**
-     * An answer without "unitLabels" is unreadable, not one that labels nothing: a reviewer with no units sends [], and
-     * one final answer of a production review (14 Oct 2026) was a single finding object, which read as no labels at all and
-     * silently dropped that reviewer's judgement of its units.
-     */
-    private static ReviewerAnswer parseReviewerAnswer(String text, boolean corrected) {
+    public static ReviewerAnswer readReviewerAnswer(String text) {
         ReviewerFields fields = LlmJson.readAnswer(text, ReviewerFields.class);
         if (Objects.isNull(fields.getUnitLabels())) {
             throw MismatchedInputException.from((JsonParser) null, ReviewerFields.class,
                     "the answer has no \"unitLabels\" field; it is the object the ANSWER FORMAT shows, with [] when your paths hold no unit");
         }
+        if (fields.getUnitLabels().contains(null)) {
+            throw MismatchedInputException.from((JsonParser) null, ReviewerFields.class, "\"unitLabels\" holds a null entry; every entry is a label object");
+        }
         return new ReviewerAnswer(
-                CollectionUtils.emptyIfNull(fields.getUnitLabels()).stream().toList(),
+                fields.getUnitLabels().stream().toList(),
                 CollectionUtils.emptyIfNull(fields.getObservations()).stream().toList(),
-                CollectionUtils.emptyIfNull(fields.getNotChecked()).stream().toList(),
-                corrected);
+                CollectionUtils.emptyIfNull(fields.getNotChecked()).stream().toList());
     }
     private SessionUsage withConfiguredModel(SessionUsage usage) {
         String model = usage.getModel();
@@ -486,37 +385,24 @@ public class LocalReviewer {
         return usage.withModel(model);
     }
     /**
-     * The longest a review can legitimately take, for a caller that waits for it. Every turn the agents take is one
-     * {@link OpenCodeClient#awaitIdle} call, bounded on its own by {@link RunArgs#getReviewTimeout()}: the coordinator's
-     * review, its optional repair round and, for each follow-up after the build (the labelling and the triage), its
-     * prompt and optional repair round, each of them resumed up to {@value #TURN_RESUMES} times. The other requests
-     * read finished sessions and return at once. A caller that
-     * allowed only one review timeout failed the build while every turn was still inside its own limit, for example a
-     * 28-minute review followed by a 6-minute triage.
+     * The longest a review can legitimately take, for a caller that waits for it: the startup, then the coordinator's
+     * review and each follow-up after the build, every one a {@link OpenCodeClient#awaitIdle} call bounded on its own by
+     * {@link RunArgs#getReviewTimeout()}. A caller that allowed only one review timeout failed the build while every turn
+     * was still inside its own limit, for example a 28-minute review followed by a 6-minute triage.
      */
     public static Duration longestReview(RunArgs args) {
-        int turns = (RunArgs.REVIEW_TURNS + REVIEWER_REPAIRS * CORRECTION_TURNS + FOLLOW_UPS * RunArgs.REVIEW_FOLLOW_UP_TURNS) * (1 + TURN_RESUMES);
-        return args.getReviewStartupTimeout().plus(args.getReviewTimeout().multipliedBy(turns));
+        return args.getReviewStartupTimeout().plus(args.getReviewTimeout().multipliedBy(1 + FOLLOW_UPS));
     }
     /**
-     * One turn of a session, resumed in the same session when its model answer failed on the way: the session keeps
-     * every step already taken, so only the broken step is redone. A turn that keeps failing, or fails on a request
-     * the provider refused, is left as it ended, and reading its answer then fails the review.
+     * One turn of a session. OpenCode retries a provider error itself before it gives a turn up, so a turn that still
+     * ends with an error on its newest assistant message ({@code provider.invalid-output}, {@code provider.transport})
+     * fails the review here, with the error OpenCode recorded, rather than later as an answer that cannot be read.
      */
     @VisibleForTesting
-    public static void turn(OpenCodeClient client, String sessionId, String text, Log log) throws IOException {
+    public static void turn(OpenCodeClient client, String sessionId, String text) throws IOException {
         client.prompt(sessionId, text);
         client.awaitIdle(sessionId);
-        for (int resume = 1; resume <= TURN_RESUMES; resume++) {
-            Optional<JsonNode> failed = client.turnError(sessionId).filter(error -> RESUMABLE_ERRORS.contains(error.path("type").asString()));
-            if (failed.isEmpty()) {
-                return;
-            }
-            String problem = failed.get().path("type").asString() + ": " + failed.get().path("message").asString();
-            log.warn("session %s: the model's answer failed on the way (%s); resuming the turn, %d of %d", sessionId, problem, resume, TURN_RESUMES);
-            client.prompt(sessionId, OpenCodeReviewConfig.resumePrompt(problem));
-            client.awaitIdle(sessionId);
-        }
+        requireTurnSucceeded(client, sessionId);
     }
     @VisibleForTesting
     public static LlmScoringResponse.Bugs readBugs(String answer) {
@@ -526,24 +412,22 @@ public class LocalReviewer {
         toReturn.setMinor(Lists.newArrayList(CollectionUtils.emptyIfNull(toReturn.getMinor())));
         return toReturn;
     }
-    private static Optional<JacksonException> unreadable(String answer) {
-        try {
-            LlmJson.readAnswer(answer, LlmScoringResponse.Bugs.class);
-            LlmJson.readAnswerIgnoring(answer, LlmScoringResponse.class, BLOCK_CATEGORIES);
-            return Optional.empty();
-        } catch (JacksonException err) {
-            return Optional.of(err);
+    /** fails with the error OpenCode recorded on the session's newest assistant message, when its last turn ended with one */
+    private static void requireTurnSucceeded(OpenCodeClient client, String sessionId) throws IOException {
+        Optional<JsonNode> failed = client.turnError(sessionId);
+        if (failed.isPresent()) {
+            throw new TurnFailedException(sessionId, failed.get().path("type").asString(), failed.get().path("message").asString());
         }
     }
-
+    private static boolean isProviderTurnFailure(Throwable err) {
+        return err instanceof TurnFailedException turn && PROVIDER_TURN_ERRORS.contains(turn.getType());
+    }
     @Value
     public static class ReviewerAnswers {
         int total;
-        List<String> unanswered;
         List<LlmScoringResponse.CodeBlockCategoryView> blockCategories;
         List<String> observations;
         List<String> notChecked;
-        int corrected;
     }
 
     /**
@@ -553,7 +437,7 @@ public class LocalReviewer {
     @Data
     @NoArgsConstructor
     public static class ReviewerFields {
-        /** strict: an entry written as a sentence, or no field at all, fails the read, and the reviewer is asked for a correction */
+        /** strict: an entry written as a sentence, or no field at all, fails the read and with it the review */
         private List<LlmScoringResponse.CodeBlockCategoryView> unitLabels;
 
         /** a lone observation written as a string, not a one-item list, says the same thing and is read as one */
@@ -565,11 +449,10 @@ public class LocalReviewer {
     }
 
     @Value
-    static class ReviewerAnswer {
+    public static class ReviewerAnswer {
         List<LlmScoringResponse.CodeBlockCategoryView> labels;
         List<String> observations;
         List<String> notChecked;
-        boolean corrected;
     }
 
     @FunctionalInterface
@@ -577,6 +460,20 @@ public class LocalReviewer {
         List<T> await() throws Exception;
     }
 
+    /** a turn that OpenCode ended with an error, which names the session, the error's type and its message */
+    private static final class TurnFailedException extends IOException {
+        private static final long serialVersionUID = 1L;
+
+        private final String type;
+
+        private TurnFailedException(String sessionId, String type, String message) {
+            super("session " + sessionId + " ended its turn with " + type + ": " + message);
+            this.type = type;
+        }
+        public String getType() {
+            return type;
+        }
+    }
     private static final class ReviewTarget extends ImmutableTriple<Path, String, List<String>> {
         private ReviewTarget(Path workTree, String sha, List<String> namingRules) {
             super(workTree, sha, namingRules);
