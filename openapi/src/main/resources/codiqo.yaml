@@ -47,10 +47,19 @@ tags:
   - name: CommitIndex
     description: Project-scoped commit metadata indexing for CI fan-out
 
+# The server reads the caller's credential from these two headers (the apiKey and bearerAuth schemes below). The
+# Spring server interface receives them as typed arguments of each operation, so a controller method needs neither
+# the raw request nor a header name of its own. Every operation with `security` carries them, and the headers match
+# the schemes' names; CodiqoSpecTest checks both. Client generators ignore the extension.
+x-codiqo-credential-args: &credentialArgs
+  - '@RequestHeader(value = "X-API-Key", required = false) String xApiKey'
+  - '@RequestHeader(value = "Authorization", required = false) String authorization'
+
 paths:
   /api/v1/analyses:
     post:
       operationId: submitAnalysis
+      x-spring-provide-args: *credentialArgs
       tags: [Analysis]
       summary: Submit commit analysis for risk scoring
       requestBody:
@@ -75,6 +84,7 @@ paths:
   /api/v1/analyses/uploads:
     post:
       operationId: openAnalysisUpload
+      x-spring-provide-args: *credentialArgs
       tags: [Analysis]
       summary: Open a staged upload of a commit analysis
       description: |
@@ -105,6 +115,7 @@ paths:
   /api/v1/analyses/uploads/{uploadId}/files:
     put:
       operationId: putAnalysisUploadFiles
+      x-spring-provide-args: *credentialArgs
       tags: [Analysis]
       summary: Attach a batch of changed files
       description: Each file is stored under its path, so a batch sent again replaces the files it carries.
@@ -130,6 +141,7 @@ paths:
   /api/v1/analyses/uploads/{uploadId}/duplication:
     put:
       operationId: putAnalysisUploadDuplication
+      x-spring-provide-args: *credentialArgs
       tags: [Analysis]
       summary: Attach the duplication report
       description: The CPD report of the changed files.
@@ -155,6 +167,7 @@ paths:
   /api/v1/analyses/uploads/{uploadId}/dependencies:
     put:
       operationId: putAnalysisUploadDependencies
+      x-spring-provide-args: *credentialArgs
       tags: [Analysis]
       summary: Attach the dependency registry
       description: The resolved dependencies of the build.
@@ -180,6 +193,7 @@ paths:
   /api/v1/analyses/uploads/{uploadId}/full-coverage:
     put:
       operationId: putAnalysisUploadFullCoverage
+      x-spring-provide-args: *credentialArgs
       tags: [Analysis]
       summary: Attach the full project coverage
       description: The coverage of the whole project, not only the changed lines.
@@ -205,6 +219,7 @@ paths:
   /api/v1/analyses/uploads/{uploadId}/index:
     put:
       operationId: putAnalysisUploadIndex
+      x-spring-provide-args: *credentialArgs
       tags: [Analysis]
       summary: Attach the codebase index
       description: The codebase index used for callers and blast radius.
@@ -230,6 +245,7 @@ paths:
   /api/v1/analyses/uploads/{uploadId}/local-review:
     put:
       operationId: putAnalysisUploadLocalReview
+      x-spring-provide-args: *credentialArgs
       tags: [Analysis]
       summary: Attach the local review
       description: The local review's bugs, sessions and assessment.
@@ -255,6 +271,7 @@ paths:
   /api/v1/analyses/uploads/{uploadId}/review-trace:
     put:
       operationId: putAnalysisUploadReviewTrace
+      x-spring-provide-args: *credentialArgs
       tags: [Analysis]
       summary: Attach the local review's trace
       description: |
@@ -286,6 +303,7 @@ paths:
   /api/v1/analyses/uploads/{uploadId}/finalize:
     post:
       operationId: finalizeAnalysisUpload
+      x-spring-provide-args: *credentialArgs
       tags: [Analysis]
       summary: Finalize a staged upload and submit it for scoring
       description: |
@@ -317,6 +335,7 @@ paths:
   /api/v1/analyses/uncommitted:
     post:
       operationId: submitUncommittedAnalysis
+      x-spring-provide-args: *credentialArgs
       tags: [Analysis]
       summary: Submit an analysis of uncommitted working-tree changes
       description: |
@@ -347,6 +366,7 @@ paths:
   /api/v1/analyses/{analysisId}:
     get:
       operationId: getAnalysis
+      x-spring-provide-args: *credentialArgs
       tags: [Analysis]
       summary: Get analysis result with risk score
       parameters:
@@ -371,6 +391,7 @@ paths:
   /api/v1/analyses/commit/{commitSha}:
     get:
       operationId: getAnalysisByCommitSha
+      x-spring-provide-args: *credentialArgs
       tags: [Analysis]
       summary: Get analysis result by commit SHA
       parameters:
@@ -393,6 +414,7 @@ paths:
         - bearerAuth: []
     delete:
       operationId: deleteAnalysis
+      x-spring-provide-args: *credentialArgs
       tags: [Analysis]
       summary: Permanently delete an analysis and all associated data
       parameters:
@@ -415,6 +437,7 @@ paths:
   /api/v1/analyses/commit/{commitSha}/exclude:
     patch:
       operationId: excludeAnalysis
+      x-spring-provide-args: *credentialArgs
       tags: [Analysis]
       summary: Exclude (soft-delete) an analysis
       parameters:
@@ -443,6 +466,7 @@ paths:
   /api/v1/projects/{projectId}/commits:
     post:
       operationId: indexCommits
+      x-spring-provide-args: *credentialArgs
       tags: [CommitIndex]
       summary: Upsert a batch of commit metadata records (idempotent on sha)
       parameters:
@@ -475,6 +499,7 @@ paths:
   /api/v1/projects/{projectId}/commits/missing-analyses:
     get:
       operationId: listMissingAnalyses
+      x-spring-provide-args: *credentialArgs
       tags: [CommitIndex]
       summary: List indexed commits that have no completed analysis yet
       parameters:
@@ -512,6 +537,7 @@ paths:
   /api/v1/projects/{projectId}/halt:
     post:
       operationId: haltProject
+      x-spring-provide-args: *credentialArgs
       tags: [CommitIndex]
       summary: Stop the project's analysis runs until an administrator resumes them
       description: |
@@ -546,6 +572,7 @@ paths:
   /api/v1/projects/{projectId}/commits/fix-commits:
     get:
       operationId: listFixCommits
+      x-spring-provide-args: *credentialArgs
       tags: [Hotspots]
       summary: List the project's scored commits since a time, and which of them fixed a defect
       description: |
@@ -562,9 +589,8 @@ paths:
           in: query
           required: true
           description: |
-            An ISO-8601 instant such as 2026-01-01T00:00:00Z. Declared as a plain string: as a date-time it becomes an
-            OffsetDateTime parameter, which JAX-RS cannot read from a query string (no String constructor, valueOf or
-            fromString), so every call would fail.
+            An ISO-8601 instant such as 2026-01-01T00:00:00Z, declared as a plain string: the server parses it itself
+            and answers 400 for a value it cannot read.
           schema:
             type: string
       responses:
@@ -583,6 +609,7 @@ paths:
   /api/v1/projects/{projectId}/tags:
     get:
       operationId: listProjectTags
+      x-spring-provide-args: *credentialArgs
       tags: [Analysis]
       summary: The project's tag vocabulary
       description: |
@@ -611,6 +638,7 @@ paths:
   /api/v1/projects/{projectId}/commits/{commitSha}:
     get:
       operationId: getCommitStatus
+      x-spring-provide-args: *credentialArgs
       tags: [CommitIndex]
       summary: Indexed commit metadata + current analysis state
       parameters:
@@ -641,6 +669,7 @@ paths:
   /api/v1/projects/{projectId}/hotspots:
     post:
       operationId: submitHotspots
+      x-spring-provide-args: *credentialArgs
       tags: [Hotspots]
       summary: Replace the project's hotspot snapshot with the one computed from its latest commit
       description: |
