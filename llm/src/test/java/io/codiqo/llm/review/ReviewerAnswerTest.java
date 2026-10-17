@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test;
 import tools.jackson.core.JacksonException;
 
 /**
- * The reviewer answers that excluded six commits of one project on 13 Oct 2026: a label written as a bare string, a lone
+ * The reviewer answers that excluded six production commits: a label written as a bare string, a lone
  * observation written as a string, an answer cut off mid-object, and the review topics and unchecked items two later
  * commits wrote where the labels go. A shape that says what the format says is read; any other fails the review.
  */
@@ -20,7 +20,7 @@ class ReviewerAnswerTest {
             {"unitLabels":[{"file":"server/Router.java","signature":"route()","category":"MECHANICAL","reason":"annotation-only"}],
              "observations":["Adds a router"]}""";
     private static final String BARE_LABEL = """
-            {"unitLabels":["CreateFreeSpinsResponse.getFreeSpin(): MECHANICAL — annotation-only change, adds @JsonIgnore with no logic change"],
+            {"unitLabels":["CreateOrderResponse.getOrder(): MECHANICAL — annotation-only change, adds @JsonIgnore with no logic change"],
              "observations":["Adds a router"]}""";
     private static final String LONE_OBSERVATION = """
             {"unitLabels":[{"file":"server/Router.java","signature":"route()","category":"MECHANICAL","reason":"annotation-only"}],
@@ -34,7 +34,7 @@ class ReviewerAnswerTest {
              "notChecked":["tests were not executed","the enum default comes from an external protobuf artifact"]}""";
     private static final String LONE_NOT_CHECKED = """
             {"unitLabels":[],"observations":[],"notChecked":"tests were not executed"}""";
-    /** a production review, 14 Oct 2026: a reviewer's final answer that was one finding, with no labels at all */
+    /** a production review: a reviewer's final answer that was one finding, with no labels at all */
     private static final String ONE_FINDING = """
             {"type":"LOGIC","title":"Non-idempotent insert","description":"fails on re-execution","file":"a/B.java","line":3,"confidence":"HIGH"}""";
     private static final String CUT = """

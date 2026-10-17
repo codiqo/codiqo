@@ -236,7 +236,7 @@ class LocalAssessmentTest {
     private static LlmScoringResponse review() {
         LlmScoringResponse toReturn = new LlmScoringResponse();
         toReturn.setSummary("review summary");
-        toReturn.setTags(new LlmScoringResponse.Tags(List.of("pubsub"), List.of("free-spins")));
+        toReturn.setTags(new LlmScoringResponse.Tags(List.of("pubsub"), List.of("promotions")));
         toReturn.setTaskTypes(List.of(TaskType.FEATURE, TaskType.TEST));
         toReturn.setTaskComplexity(5);
         toReturn.setTaskComplexityNew(4);

@@ -40,7 +40,7 @@ public class OpenCodeReviewConfig {
      * the binary: everything denied, then the shell (any command), the file tools, directories outside the project and
      * web access allowed. Its {@code ask} on {@code .env} files becomes {@code deny}: an {@code ask}, and any call no
      * rule matches, waits for an answer nobody gives in a headless review. The read-only git list this replaced refused
-     * 2,973 of 7,719 shell calls in production reviews from 12 to 15 Oct 2026, nearly all of them read-only pipes.
+     * 2,973 of 7,719 shell calls in four days of production reviews, nearly all of them read-only pipes.
      */
     private static final List<Pair<String, String>> EXPLORE_ALLOWED = List.of(
             Pair.of("shell", "*"), Pair.of("read", "*"), Pair.of("grep", "*"), Pair.of("glob", "*"),

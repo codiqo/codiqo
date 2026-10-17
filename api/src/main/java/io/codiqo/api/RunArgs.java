@@ -536,7 +536,7 @@ public class RunArgs {
     /**
      * Local review: tool steps a reviewer may take. 25 left a quarter of them without an answer on large commits once they
      * also labelled code units; at 35 about a quarter still reached the cap, and the few caught mid tool call lost every
-     * finding (13 Oct 2026: 9 of 253 reviewer sessions).
+     * finding (9 of 253 reviewer sessions in one day of production reviews).
      */
     private transient int reviewReviewerSteps = 64;
 
@@ -561,7 +561,7 @@ public class RunArgs {
     /**
      * Local review: the whole review, coordinator and sub-agents together; a 270-file commit took 13-16 minutes at 35
      * reviewer steps. At 64 steps reviews average about four times longer: a complexity-8 commit passed 30 minutes, and
-     * on 13 Oct 2026 complex reviews took 34-60 minutes (db944f44 finished 12 seconds under 60), so the limit is 90.
+     * complex production reviews took 34-60 minutes (one finished 12 seconds under 60), so the limit is 90.
      */
     private transient Duration reviewTimeout = Duration.ofMinutes(90);
 
@@ -574,8 +574,8 @@ public class RunArgs {
     private transient int reviewRelayRetries = 3;
 
     /**
-     * Local review: rounds of waiting out the provider's rate limit before the review gives up. On 14 Oct 2026 the
-     * provider's limit was exhausted for seven hours and 14 production commits were excluded within minutes each: a
+     * Local review: rounds of waiting out the provider's rate limit before the review gives up. When the provider's
+     * limit was once exhausted for seven hours, 14 production commits were excluded within minutes each: a
      * limit lifts in minutes, so a 429 is waited out round by round, each round twice as long as the last, every call of
      * the review waiting for the same round. A limit that outlasts them ends the review as the provider's failure.
      */
@@ -1254,7 +1254,7 @@ public class RunArgs {
      * These eight factors replace the model's judgment when the scoring prompt is skipped; the defaults are what the
      * model gave per band on scored commits (its median, or its mean where that sat well below the median). In the two
      * lowest bands the model's factors spread above the median, so their defaults are its mean: on 1,000 replayed
-     * commits (6 Oct 2026) the medians left those bands' bonus 13-22% short.
+     * commits the medians left those bands' bonus 13-22% short.
      */
     private double qualityFactorWellCovered = 0.95;
 

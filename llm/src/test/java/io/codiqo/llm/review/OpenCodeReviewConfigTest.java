@@ -162,7 +162,7 @@ class OpenCodeReviewConfigTest {
         }
     }
     /**
-     * Commands production reviewers were refused on 12 to 15 Oct 2026 under the read-only git list, each one simple
+     * Commands of the shapes production reviewers were refused under the former read-only git list, each one simple
      * command as OpenCode checks it after splitting pipes and chains, and the git writes and builds that stay refused
      * because they would change the clone or the build running in it. The last matching rule decides, as in OpenCode.
      */
@@ -173,15 +173,15 @@ class OpenCodeReviewConfigTest {
             List<JsonNode> rules = Lists.newArrayList();
             agents.path(agent).path("permissions").forEach(rules::add);
 
-            for (String allowed : List.of("head -40", "tail -20", "ls", "ls -la server-model/src/main/resources/db/", "echo ---", "wc -l",
+            for (String allowed : List.of("head -40", "tail -20", "ls", "ls -la service/src/main/resources/db/", "echo ---", "wc -l",
                     "sort", "uniq -c", "pwd", "cat pom.xml", "cd /tmp/codiqo12583705868237947062",
                     "grep -rn \"<version>\" --include=pom.xml .", "grep -rn \"x -> y\" src", "find . -iname \"README*\" -not -path \"./.git/*\"",
-                    "find / -name \"gateway-api*.jar\" 2>/dev/null", "sed -n '150,230p'", "git show --stat=200 --name-status 56e47f2e",
-                    "git -C /tmp/codiqo1 show 7cf740e:pom.xml", "git -C /tmp/codiqo1 log --oneline -3", "git grep -n countLineAwards HEAD -- .",
-                    "git blame -L 10,40 a/B.java", "git ls-tree -r --name-only HEAD src", "git merge-base --is-ancestor 101a2606f 41cf1c3f6",
-                    "git branch --contains 4567988dd 2>/dev/null", "git branch -a", "git tag", "git tag -l 'v*'", "git remote -v",
-                    "git config --get core.homedir", "git diff --name-only a b", "git cat-file -e b071e7eab:a.java",
-                    "git show 97c625f:pom.xml > /tmp/opencode/pom_prev.xml 2>/dev/null", "curl -s --max-time 15 https://repo1.maven.org/maven2/x",
+                    "find / -name \"client-api*.jar\" 2>/dev/null", "sed -n '150,230p'", "git show --stat=200 --name-status 1a2b3c4d",
+                    "git -C /tmp/codiqo1 show 1a2b3c4:pom.xml", "git -C /tmp/codiqo1 log --oneline -3", "git grep -n countLines HEAD -- .",
+                    "git blame -L 10,40 a/B.java", "git ls-tree -r --name-only HEAD src", "git merge-base --is-ancestor 1a2b3c4d5 5d4c3b2a1",
+                    "git branch --contains 1a2b3c4d5 2>/dev/null", "git branch -a", "git tag", "git tag -l 'v*'", "git remote -v",
+                    "git config --get core.homedir", "git diff --name-only a b", "git cat-file -e 1a2b3c4d5:a.java",
+                    "git show 1a2b3c4:pom.xml > /tmp/opencode/pom_prev.xml 2>/dev/null", "curl -s --max-time 15 https://repo1.maven.org/maven2/x",
                     "unzip -l x.jar", "jar tf x.jar", "git merge-base main HEAD", "python3 -c 'print(1+1)'", "which java mvn 2>/dev/null", "sed -E 's/a/b/' x")) {
                 assertEquals("allow", shellEffect(rules, allowed), allowed);
             }

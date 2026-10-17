@@ -3,7 +3,7 @@ You are writing the script for a short internal award reel that celebrates the t
 # CONTEXT
 
 **Organisation:** Example Org
-**Period:** September 2026
+**Period:** the third quarter
 **Ranked by:** effort
 
 # CONTRIBUTORS

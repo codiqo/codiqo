@@ -320,7 +320,7 @@ class LocalReviewModelsTest {
     void theCommitLevelPiecesTravelInTheSubmission() {
         LlmScoringResponse assessment = new LlmScoringResponse();
         assessment.setSummary("adds a cancel endpoint");
-        assessment.setTags(new LlmScoringResponse.Tags(List.of("pubsub"), List.of("free-spins")));
+        assessment.setTags(new LlmScoringResponse.Tags(List.of("pubsub"), List.of("promotions")));
         assessment.setTaskTypes(List.of(LlmScoringResponse.TaskType.FEATURE, LlmScoringResponse.TaskType.TEST));
         assessment.setTaskComplexity(5);
         LlmScoringResponse.QualityDimensions dims = new LlmScoringResponse.QualityDimensions();

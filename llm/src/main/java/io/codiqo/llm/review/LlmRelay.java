@@ -158,8 +158,8 @@ public final class LlmRelay implements AutoCloseable {
     /** every answer of the model's end point that was not a success, retried ones included, by status */
     private final Multiset<Integer> providerErrors = ConcurrentHashMultiset.create();
     /**
-     * What the provider's last 429 said. On 16 Oct 2026 the provider refused every call for over eight hours after an
-     * evening of heavy load, and nothing recorded whether that was a short rate limit or an exhausted usage quota: the
+     * What the provider's last 429 said. Once the provider refused every call for over eight hours after an evening
+     * of heavy load, and nothing recorded whether that was a short rate limit or an exhausted usage quota: the
      * relay passed the body on without reading it, and the halts said only that sessions finished without an answer.
      */
     private final AtomicReference<String> lastRateLimitText = new AtomicReference<>();
@@ -487,7 +487,7 @@ public final class LlmRelay implements AutoCloseable {
     /**
      * The wait a 429 is passed on with, which OpenCode keeps before it calls again; empty once the rounds ran out.
      * OpenCode 2 retries a rate-limited call itself (ten times, 2 seconds doubling to at most 10, or the answer's
-     * {@code retry-after-ms} up to 15 minutes, read from its binary on 14 Oct 2026) and has no setting for it, so the
+     * {@code retry-after-ms} up to 15 minutes, read from its binary) and has no setting for it, so the
      * relay steers that retry instead of retrying on top of it. Every call refused while a round lasts gets the same
      * deadline. The provider's own error body goes on with the wait: OpenCode 2.0.25 reads it to tell a rate limit, which
      * it retries, from an exhausted quota or budget ({@code insufficient_quota}, "quota exceeded"), which it does not. A

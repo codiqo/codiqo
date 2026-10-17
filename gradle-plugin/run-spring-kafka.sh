@@ -21,8 +21,8 @@ OUT="${OUT:-/Users/andreyborisov/dev/tmp/reports-gradle}"
 MODE="${MODE:-fast}"
 RESTORE_REF="${RESTORE_REF:-main}"
 
-# dev-testing baseline: 10 random code-bearing commits (>=1 .java changed) from the last
-# 3 months on main (window 2026-04-10..2026-07-01, drawn 2026-07-09). Number in () = java lines changed.
+# dev-testing baseline: 10 random code-bearing commits (>=1 .java changed) from three months
+# of main. Number in () = java lines changed.
 COMMITS=(
   87710eacc15cb02c86aaed5593764f775af5a84d  # GH-4504: Fix silent record loss with two failing asy (48)
   ca2337ba789c5778a10197bda17a62915247ff6c  # GH-4489: Fix unbounded cache in DelegatingDeserializ (51)

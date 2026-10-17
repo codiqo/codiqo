@@ -360,7 +360,7 @@ public class LocalReviewer {
     }
     /**
      * A reviewer's labels, observations and what it could not verify. An answer without "unitLabels" is unreadable, not
-     * one that labels nothing: a reviewer with no units sends [], and a production reviewer (14 Oct 2026) answered with a
+     * one that labels nothing: a reviewer with no units sends [], and a production reviewer once answered with a
      * single finding object, which read as no labels at all and silently dropped its judgement of its units.
      */
     @VisibleForTesting

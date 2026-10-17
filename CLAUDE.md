@@ -1050,8 +1050,9 @@ alike, and inside method bodies. A kept comment is written to be understood by s
 that produced it, so it covers, in full sentences:
 
 - **what** the constraint or decision is;
-- **why** it holds — the cause, with the concrete evidence (the failure that was observed, the project it was observed
-  on, the number that was measured, the issue or spec that defines it);
+- **why** it holds — the cause, with the concrete evidence (the failure that was observed, the number that was
+  measured, the issue or spec that defines it), never a date, a customer's or private project's name or a private
+  commit hash: the repository is public, and evidence that needs them to stand is not evidence a reader can check;
 - **what breaks** if the code is changed without honouring it.
 
 A one-line hint that leaves the reader to reconstruct the reasoning is worse than no comment: either expand it until it
