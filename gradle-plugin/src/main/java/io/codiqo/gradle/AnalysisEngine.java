@@ -618,7 +618,7 @@ public class AnalysisEngine {
                     args,
                     args.getGit().getWorkTree().toPath(),
                     args.getCommitId(),
-                    LocalReviewRun.endpoint(args, request.getResourceUrl(), () -> credential),
+                    LocalReviewRun.endpoint(args, request.getResourceUrl(), request.getRootCode(), () -> credential),
                     ConventionGuidance.read(args, logFactory.getLogger(ConventionGuidance.class)),
                     () -> ProjectTags.fetch(request.getApiUrl(), credential, request.getConnectTimeoutSeconds(), request.getReadTimeoutSeconds(), request.getRootCode(), log),
                     DefaultLanguageProcessors.reviewLanguages(),
