@@ -45,7 +45,6 @@ import io.codiqo.submit.auth.CodiqoApiClients;
 import io.codiqo.submit.auth.CodiqoCredential;
 import lombok.experimental.UtilityClass;
 import io.netty.handler.codec.http.HttpResponseStatus;
-import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 
 @UtilityClass
@@ -225,30 +224,26 @@ public class AnalysisSubmitter {
         }
     }
     /**
-     * The trace explains the review and judges nothing, so one the server refuses (a server that predates it answers
-     * 404, an oversized one 413) or that cannot be read costs the trace only, never the submission.
+     * Sends the trace with the same retries as every other part of the upload, and fails the submission when it cannot:
+     * a trace over the server's limit ({@link RunArgs#REVIEW_TRACE_MAX_BYTES}, which the server refuses with 413), one
+     * that cannot be read, or one the server keeps refusing is a defect to fix, not a commit to score without its trace.
      */
     @SuppressWarnings("unchecked")
-    private static void putReviewTrace(ApiClient apiClient, AnalysisApi client, String apiUrl, UUID uploadId, File trace, Log log) {
+    private static void putReviewTrace(ApiClient apiClient, AnalysisApi client, String apiUrl, UUID uploadId, File trace, Log log) throws ApiException {
         if (trace.length() > RunArgs.REVIEW_TRACE_MAX_BYTES) {
-            log.warn(String.format("the review trace %s is %d KB, more than the server keeps; it is not attached", trace, trace.length() / FileUtils.ONE_KB));
-            return;
+            throw new IllegalStateException(String.format("the review trace %s is %d KB, more than the server keeps (%d KB)",
+                    trace, trace.length() / FileUtils.ONE_KB, RunArgs.REVIEW_TRACE_MAX_BYTES / FileUtils.ONE_KB));
         }
-        try {
-            JsonNode document = apiClient.getObjectMapper().readTree(trace);
-            /** the agents' commands ran with the build's environment, and the Action redacts its logs only after the submission */
-            SecretRedaction.redact(document, System.getenv());
-            Map<String, Object> body = apiClient.getObjectMapper().treeToValue(document, Map.class);
-            ApiRetry.callOptional(log, "putAnalysisUploadReviewTrace", apiUrl, () -> {
-                client.putAnalysisUploadReviewTrace(uploadId, body);
-                return uploadId;
-            });
-            log.info(String.format("upload %s: review trace attached (%d KB)", uploadId, trace.length() / FileUtils.ONE_KB));
-        } catch (ApiException err) {
-            log.warn(String.format("the review trace was not attached (HTTP %d): %s", err.getCode(), err.getMessage()));
-        } catch (JacksonException err) {
-            log.warn(String.format("the review trace %s could not be read: %s", trace, err.getMessage()));
-        }
+
+        JsonNode document = apiClient.getObjectMapper().readTree(trace);
+        /** the agents' commands ran with the build's environment, and the Action redacts its logs only after the submission */
+        SecretRedaction.redact(document, System.getenv());
+        Map<String, Object> body = apiClient.getObjectMapper().treeToValue(document, Map.class);
+        ApiRetry.call(log, "putAnalysisUploadReviewTrace", apiUrl, () -> {
+            client.putAnalysisUploadReviewTrace(uploadId, body);
+            return uploadId;
+        });
+        log.info(String.format("upload %s: review trace attached (%d KB)", uploadId, trace.length() / FileUtils.ONE_KB));
     }
     private static void putFiles(AnalysisApi client, String apiUrl, UUID uploadId, List<FileChangeModel> files, Log log) throws ApiException {
         ApiRetry.call(log, "putAnalysisUploadFiles", apiUrl, () -> {

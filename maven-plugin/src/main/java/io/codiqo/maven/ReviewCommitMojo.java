@@ -209,7 +209,7 @@ public class ReviewCommitMojo extends AbstractMojo {
             }
         }
         getLog().info(String.format("review of %s: %d finding(s) in %ds; tokens: %,d input (+%,d cached), %,d output across %d session(s); "
-                + "%d of %d reviewers answered",
+                + "%d reviewers",
                 review.getCommit(),
                 total,
                 review.getTook().toSeconds(),
@@ -217,7 +217,6 @@ public class ReviewCommitMojo extends AbstractMojo {
                 review.totalCachedInputTokens(),
                 review.totalOutputTokens(),
                 review.getSessions().size(),
-                review.getReviewers() - review.getUnansweredReviewers().size(),
                 review.getReviewers()));
     }
     private void logTriage(FindingTriage triage) {
@@ -286,7 +285,6 @@ public class ReviewCommitMojo extends AbstractMojo {
         report.put("bugs", review.getBugs());
         report.put("sessions", review.getSessions());
         report.put("reviewers", review.getReviewers());
-        report.put("unansweredReviewers", review.getUnansweredReviewers());
         report.put("answer", review.getAnswer());
         if (Objects.nonNull(review.getAssessment())) {
             report.put("assessment", review.getAssessment());

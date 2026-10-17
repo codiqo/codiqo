@@ -1,7 +1,6 @@
 package io.codiqo.llm.client;
 
 import java.io.IOException;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
@@ -17,19 +16,17 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionStreamOptions;
 
 import io.codiqo.api.RunArgs;
-import io.codiqo.api.logging.Log;
 import io.codiqo.llm.client.OpenAIClientWrapper.StreamingResult;
 
 /**
- * one prompt in, one JSON object out, with the sampling knobs and retry policy the module has settled on: the
- * shape every secondary LLM call in codiqo takes — no tools, no multi-turn, no validation loop.
+ * one prompt in, one JSON object out, with the sampling knobs the module has settled on: the shape every secondary
+ * LLM call in codiqo takes — no tools, no multi-turn, no validation loop, and one attempt.
  * the old scoring client deliberately does NOT sit on top of it, since scoring runs a tool-call loop and
  * re-prompts on validation failure.
  */
 public class JsonCompletionClient implements LlmClient {
     private static final String FINISH_REASON_STOP = "stop";
 
-    private final Log log;
     private final OpenAIClient client;
     private final OpenAIClientWrapper wrapper;
     private final String model;
@@ -38,10 +35,9 @@ public class JsonCompletionClient implements LlmClient {
     private final Integer seed;
     private final Integer maxTokens;
     private final Integer numCtx;
-    private final int maxRetries;
 
-    public JsonCompletionClient(RunArgs args, ExecutorService executor, Log log, Map<String, String> additionalHeaders) {
-        this(args, executor, log, additionalHeaders, args.getLlmMaxTokens());
+    public JsonCompletionClient(RunArgs args, ExecutorService executor, Map<String, String> additionalHeaders) {
+        this(args, executor, additionalHeaders, args.getLlmMaxTokens());
     }
     /**
      * {@code maxCompletionTokens} is separate from the scoring allowance because these calls answer with a
@@ -51,8 +47,7 @@ public class JsonCompletionClient implements LlmClient {
      * against the author's explicit request. Leave room for reasoning models, which spend real tokens before
      * the answer.
      */
-    public JsonCompletionClient(RunArgs args, ExecutorService executor, Log log, Map<String, String> additionalHeaders, Integer maxCompletionTokens) {
-        this.log = Objects.requireNonNull(log);
+    public JsonCompletionClient(RunArgs args, ExecutorService executor, Map<String, String> additionalHeaders, Integer maxCompletionTokens) {
 
         this.client = OpenAIClientFactory.buildStreamingClient(args, executor, additionalHeaders);
         this.wrapper = new OpenAIClientWrapper(client);
@@ -63,7 +58,6 @@ public class JsonCompletionClient implements LlmClient {
         this.seed = args.getLlmSeed();
         this.maxTokens = maxCompletionTokens;
         this.numCtx = args.getLlmNumCtx();
-        this.maxRetries = args.getLlmMaxRetries();
 
     }
     public <T> Result<T> complete(String label, String prompt, Class<T> responseType) throws Exception {
@@ -106,29 +100,15 @@ public class JsonCompletionClient implements LlmClient {
         }
 
         /**
-         * a failed attempt was still billed for its prompt, so its tokens accumulate into the usage the
-         * caller meters — LlmUsage is "one logical operation, however many round trips it took", and
-         * reporting only the winning attempt under-reports real spend by the provider's retry rate
+         * One call: the OpenAI client already retries a connection failure, a 429 and a 5xx itself, and the
+         * response format holds the answer to JSON, so an answer that is cut off or cannot be read is a defect
+         * to see, not one to retry until it passes.
          */
-        LlmUsage usage = LlmUsage.NONE;
-        Exception lastError = null;
-        for (int attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                StreamingResult result = wrapper.stream(paramsBuilder.build(), new OpenAIClientWrapper.StreamingHandler() {});
-                usage = usage.plus(LlmUsage.of(result));
-                if (FINISH_REASON_STOP.equals(result.getFinishReason())) {
-                    T response = LlmJson.readAnswer(result.getContent().toString(), responseType);
-                    return new Result<>(response, usage);
-                }
-                lastError = new IOException("unexpected finishReason: " + result.getFinishReason());
-            } catch (Exception err) {
-                lastError = err;
-            }
-            if (attempt < maxRetries) {
-                log.warn(String.format(Locale.ROOT, "%s attempt %d/%d failed: %s, retrying", label, attempt, maxRetries, lastError.getMessage()));
-            }
+        StreamingResult result = wrapper.stream(paramsBuilder.build(), new OpenAIClientWrapper.StreamingHandler() {});
+        if (FINISH_REASON_STOP.equals(result.getFinishReason())) {
+            return new Result<>(LlmJson.readAnswer(result.getContent().toString(), responseType), LlmUsage.of(result));
         }
-        throw lastError;
+        throw new IOException(label + ": unexpected finishReason: " + result.getFinishReason());
     }
     @Override
     public void close() {

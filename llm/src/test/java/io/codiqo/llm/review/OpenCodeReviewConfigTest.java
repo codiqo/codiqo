@@ -4,10 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -15,10 +13,10 @@ import org.junit.jupiter.api.Test;
 
 import com.google.common.collect.Lists;
 
-import io.codiqo.llm.client.LlmJson;
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.GoldenText;
 import io.codiqo.llm.PromptFences;
+import io.codiqo.llm.client.LlmJson;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -83,7 +81,7 @@ class OpenCodeReviewConfigTest {
         assertTrue(reviewer.contains("at most 12 steps") && reviewer.contains("by step 4"), "a reviewer keeps eight steps for its answer: " + reviewer);
         assertTrue(coordinator.contains("JSON RULES") && reviewer.contains("JSON RULES"), "both agents carry the shared JSON rules");
         assertTrue(reviewer.contains("LAST message is ALWAYS the JSON object"), "a reviewer that ends without the JSON loses its findings");
-        assertTrue(coordinator.contains("ONE more subagent"), "an unanswered area is retried once");
+        assertFalse(coordinator.contains("Retry"), "an unanswered area fails the review, so the coordinator retries none");
         for (String placeholder : List.of("[(", "[#", "[/]", "${")) {
             assertFalse(coordinator.contains(placeholder) || reviewer.contains(placeholder), "unfilled placeholder " + placeholder);
         }
@@ -164,7 +162,7 @@ class OpenCodeReviewConfigTest {
         }
     }
     /**
-     * Commands production reviewers were refused on 12 to 15 Oct 2026 under the read-only git list, each one simple
+     * Commands of the shapes production reviewers were refused under the former read-only git list, each one simple
      * command as OpenCode checks it after splitting pipes and chains, and the git writes and builds that stay refused
      * because they would change the clone or the build running in it. The last matching rule decides, as in OpenCode.
      */
@@ -175,15 +173,15 @@ class OpenCodeReviewConfigTest {
             List<JsonNode> rules = Lists.newArrayList();
             agents.path(agent).path("permissions").forEach(rules::add);
 
-            for (String allowed : List.of("head -40", "tail -20", "ls", "ls -la server-model/src/main/resources/db/", "echo ---", "wc -l",
+            for (String allowed : List.of("head -40", "tail -20", "ls", "ls -la service/src/main/resources/db/", "echo ---", "wc -l",
                     "sort", "uniq -c", "pwd", "cat pom.xml", "cd /tmp/codiqo12583705868237947062",
                     "grep -rn \"<version>\" --include=pom.xml .", "grep -rn \"x -> y\" src", "find . -iname \"README*\" -not -path \"./.git/*\"",
-                    "find / -name \"gateway-api*.jar\" 2>/dev/null", "sed -n '150,230p'", "git show --stat=200 --name-status 56e47f2e",
-                    "git -C /tmp/codiqo1 show 7cf740e:pom.xml", "git -C /tmp/codiqo1 log --oneline -3", "git grep -n countLineAwards HEAD -- .",
-                    "git blame -L 10,40 a/B.java", "git ls-tree -r --name-only HEAD src", "git merge-base --is-ancestor 101a2606f 41cf1c3f6",
-                    "git branch --contains 4567988dd 2>/dev/null", "git branch -a", "git tag", "git tag -l 'v*'", "git remote -v",
-                    "git config --get core.homedir", "git diff --name-only a b", "git cat-file -e b071e7eab:a.java",
-                    "git show 97c625f:pom.xml > /tmp/opencode/pom_prev.xml 2>/dev/null", "curl -s --max-time 15 https://repo1.maven.org/maven2/x",
+                    "find / -name \"client-api*.jar\" 2>/dev/null", "sed -n '150,230p'", "git show --stat=200 --name-status 1a2b3c4d",
+                    "git -C /tmp/codiqo1 show 1a2b3c4:pom.xml", "git -C /tmp/codiqo1 log --oneline -3", "git grep -n countLines HEAD -- .",
+                    "git blame -L 10,40 a/B.java", "git ls-tree -r --name-only HEAD src", "git merge-base --is-ancestor 1a2b3c4d5 5d4c3b2a1",
+                    "git branch --contains 1a2b3c4d5 2>/dev/null", "git branch -a", "git tag", "git tag -l 'v*'", "git remote -v",
+                    "git config --get core.homedir", "git diff --name-only a b", "git cat-file -e 1a2b3c4d5:a.java",
+                    "git show 1a2b3c4:pom.xml > /tmp/opencode/pom_prev.xml 2>/dev/null", "curl -s --max-time 15 https://repo1.maven.org/maven2/x",
                     "unzip -l x.jar", "jar tf x.jar", "git merge-base main HEAD", "python3 -c 'print(1+1)'", "which java mvn 2>/dev/null", "sed -E 's/a/b/' x")) {
                 assertEquals("allow", shellEffect(rules, allowed), allowed);
             }
@@ -246,14 +244,8 @@ class OpenCodeReviewConfigTest {
                 new ReviewUnit("U2", "a/Service.java", "Builder(String)", "NEW", "41-44"))));
     }
     @Test
-    void theTurnsSentToASessionReadAsBefore() {
+    void theReviewTurnReadsAsBefore() {
         assertEquals("Review commit 1a2b3c of this repository.", OpenCodeReviewConfig.reviewPrompt("1a2b3c"));
-        assertEquals("Your last step failed on the way from the model: provider.invalid-output: stream cut. Continue the task from where it stopped. "
-                + "Keep everything you have already done and do not repeat finished work; end with the answer the task asks for.",
-                OpenCodeReviewConfig.resumePrompt("provider.invalid-output: stream cut"));
-        assertEquals("Your last answer could not be read: Unexpected character ('}' (code 125)) at 1:7. Reply with the same answer as one corrected JSON object "
-                + "and nothing else, every field in the shape your instructions give it: an object stays an object and a list stays a list, even with one item. "
-                + "Do not review again and do not call any tool.", OpenCodeReviewConfig.repairPrompt("Unexpected character ('}' (code 125)) at 1:7"));
     }
     private static StaticFinding finding(String tool) {
         return new StaticFinding(tool, "Rule", "warning", "a/Service.java", 2, "flagged");

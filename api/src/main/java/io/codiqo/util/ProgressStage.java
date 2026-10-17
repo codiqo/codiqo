@@ -50,9 +50,22 @@ public final class ProgressStage implements AutoCloseable {
         this.name = name;
         this.startedAt = System.currentTimeMillis();
     }
+    public void succeeded() {
+        succeeded = true;
+    }
+    /** a short note shown after the duration, such as the stage's peak heap */
+    public void detail(String text) {
+        detail = StringUtils.defaultString(text);
+    }
+    @Override
+    public void close() {
+        long now = System.currentTimeMillis();
+        String event = succeeded ? "STAGE_FINISHED" : "STAGE_FAILED";
+        append(progressFile, Joiner.on(FIELD_SEPARATOR).join(now, event, name, now - startedAt, detail));
+    }
     public static ProgressStage start(RunArgs args, String name) {
         ProgressStage toReturn = new ProgressStage(args.getBuildProgressFile(), name);
-        toReturn.append(Joiner.on(FIELD_SEPARATOR).join(toReturn.startedAt, "STAGE_STARTED", name));
+        append(toReturn.progressFile, Joiner.on(FIELD_SEPARATOR).join(toReturn.startedAt, "STAGE_STARTED", name));
         return toReturn;
     }
     /**
@@ -66,22 +79,9 @@ public final class ProgressStage implements AutoCloseable {
      * </pre>
      */
     public static void abort(RunArgs args, String cause, String trace) {
-        new ProgressStage(args.getBuildProgressFile(), "abort").append(Joiner.on(FIELD_SEPARATOR).join(System.currentTimeMillis(), "ABORT", oneField(cause), oneField(trace)));
+        append(args.getBuildProgressFile(), Joiner.on(FIELD_SEPARATOR).join(System.currentTimeMillis(), "ABORT", oneField(cause), oneField(trace)));
     }
-    public void succeeded() {
-        succeeded = true;
-    }
-    /** a short note shown after the duration, such as the stage's peak heap */
-    public void detail(String text) {
-        detail = StringUtils.defaultString(text);
-    }
-    @Override
-    public void close() {
-        long now = System.currentTimeMillis();
-        String event = succeeded ? "STAGE_FINISHED" : "STAGE_FAILED";
-        append(Joiner.on(FIELD_SEPARATOR).join(now, event, name, now - startedAt, detail));
-    }
-    private void append(String line) {
+    private static void append(File progressFile, String line) {
         if (Objects.nonNull(progressFile)) {
             synchronized (LOCK) {
                 try {
@@ -91,7 +91,11 @@ public final class ProgressStage implements AutoCloseable {
                             StandardCharsets.UTF_8,
                             StandardOpenOption.CREATE, StandardOpenOption.APPEND);
                 } catch (IOException err) {
-                    // progress is for a watcher; losing a line must not fail the analysis it describes
+                    /**
+                     * The progress file only feeds a watcher outside the JVM (the GitHub Action's log loop), and the
+                     * analysis it describes does not depend on it. A full disk or a removed directory losing one line
+                     * must not fail a commit's analysis, so the failure is printed where the build log shows it.
+                     */
                     System.err.println("[codiqo] failed to write build progress to " + progressFile + ": " + err);
                 }
             }

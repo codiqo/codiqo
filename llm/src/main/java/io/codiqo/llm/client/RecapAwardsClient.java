@@ -32,7 +32,7 @@ public class RecapAwardsClient implements LlmClient {
 
     public RecapAwardsClient(RunArgs args, ExecutorService executor, Log log, Map<String, String> additionalHeaders) {
         this.log = Objects.requireNonNull(log);
-        this.completions = new JsonCompletionClient(args, executor, log, additionalHeaders);
+        this.completions = new JsonCompletionClient(args, executor, additionalHeaders);
     }
     public JsonCompletionClient.Result<RecapAwardsResponse> write(
             String organization,
