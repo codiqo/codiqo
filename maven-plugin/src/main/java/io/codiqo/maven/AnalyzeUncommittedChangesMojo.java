@@ -109,13 +109,14 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
             String sha = WorkingTreeCommit.create(workTree, includeUntracked);
             if (CommitExclusions.hasAnalyzableFile(JGit.changedFileNames(args.getGit(), sha), DefaultLanguageProcessors.supportedExtensions())) {
                 CodiqoCredential credential = credential();
+                String projectCode = project.getGroupId() + ":" + project.getArtifactId();
                 reviewRun = LocalReviewRun.start(
                         args,
                         workTree,
                         sha,
-                        LocalReviewRun.endpoint(args, resourceUrl, () -> credential),
+                        LocalReviewRun.endpoint(args, resourceUrl, projectCode, () -> credential),
                         LocalReviewGuidance.read(args, getLog()),
-                        () -> ProjectTags.fetch(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds, project.getGroupId() + ":" + project.getArtifactId(), new MavenMessageReporter(getLog())),
+                        () -> ProjectTags.fetch(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds, projectCode, new MavenMessageReporter(getLog())),
                         DefaultLanguageProcessors.reviewLanguages(),
                         new MavenLogFactory(getLog()));
                 getLog().info("local review of the uncommitted changes started next to the analysis");

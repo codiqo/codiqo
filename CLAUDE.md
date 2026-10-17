@@ -1522,7 +1522,8 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   atomically. Build API clients with `CodiqoApiClients.newApiClient`, which authorises each request as it is sent.
 - Every local review calls its model (`codiqo.review.baseUrl`, default `RunArgs.DEFAULT_LLM_PROXY_URL`) through
   `LlmRelay`, a loopback relay that refuses callers without its per-review secret. For the backend's LLM proxy it adds
-  the credential per request; a direct endpoint (a local Ollama daemon) gets its own key, or none, and the whole review
+  the credential and the project's code (`LocalReviewRun.PROJECT_HEADER`, `X-Codiqo-Project`, the code the REST API
+  names the project by, so a project with an LLM key of its own pays for its reviews) per request; a direct endpoint (a local Ollama daemon) gets its own key, or none, and the whole review
   timeout to start answering instead of the relay's first-byte limit. The relay also sets the scoring prompt's sampling
   (`temperature`, `top_p`, `seed` from `RunArgs`) on every chat completion: OpenCode 2.0 sends none of them, wherever
   its configuration puts them (checked on 2.0.20 and 2.0.25). It sets them on the OpenAI SDK's own request body

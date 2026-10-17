@@ -124,7 +124,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
             Repository clone = args.getGit();
             // a commit that changes nothing the analysis reads is excluded after the build, so its review would be paid for and dropped
             if (CommitExclusions.hasAnalyzableFile(JGit.changedFileNames(clone, args.getCommitId()), DefaultLanguageProcessors.supportedExtensions())) {
-                ReviewEndpoint endpoint = LocalReviewRun.endpoint(args, resourceUrl, this::credential);
+                ReviewEndpoint endpoint = LocalReviewRun.endpoint(args, resourceUrl, projectId(), this::credential);
                 reviewRun = LocalReviewRun.start(
                         args,
                         clone.getWorkTree().toPath(),

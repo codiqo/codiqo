@@ -39,6 +39,13 @@ import io.codiqo.submit.auth.CodiqoCredential;
  * developer's uncommitted changes are reviewed the same way.
  */
 public final class LocalReviewRun implements AutoCloseable {
+    /**
+     * Tells the backend's LLM proxy which project a review is for, by the code the REST API names the project by. A
+     * project with an LLM key of its own pays for its reviews with that key, provided the member owns the project or has
+     * committed to it; without the header every review is paid for by the organization's key.
+     */
+    public static final String PROJECT_HEADER = "X-Codiqo-Project";
+
     /** enough unmatched labels to show the drift, few enough to keep the log readable */
     private static final int UNMATCHED_LABEL_SAMPLE = 10;
 
@@ -144,11 +151,18 @@ public final class LocalReviewRun implements AutoCloseable {
         });
         return new LocalReviewRun(review, findings, units, languages, logFactory);
     }
-    /** the endpoint the review's models are called at, with the member's credential when it is Codiqo's own proxy */
-    public static ReviewEndpoint endpoint(RunArgs args, String resourceUrl, Callable<CodiqoCredential> credential) throws Exception {
+    /**
+     * The endpoint the review's models are called at. When it is Codiqo's own proxy, every call carries the member's
+     * credential and names the project ({@link #PROJECT_HEADER}); a direct endpoint gets neither.
+     */
+    public static ReviewEndpoint endpoint(RunArgs args, String resourceUrl, String projectCode, Callable<CodiqoCredential> credential) throws Exception {
         ReviewEndpoint toReturn = new ReviewEndpoint(args.getReviewBaseUrl(), null, null);
         if (toReturn.isProxiedBy(resourceUrl)) {
-            toReturn = new ReviewEndpoint(args.getReviewBaseUrl(), null, credential.call());
+            CodiqoCredential member = credential.call();
+            toReturn = new ReviewEndpoint(args.getReviewBaseUrl(), null, header -> {
+                member.accept(header);
+                header.accept(PROJECT_HEADER, projectCode);
+            });
         }
         return toReturn;
     }
