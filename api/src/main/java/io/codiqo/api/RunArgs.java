@@ -535,10 +535,14 @@ public class RunArgs {
 
     /**
      * Local review: tool steps a reviewer may take. 25 left a quarter of them without an answer on large commits once they
-     * also labelled code units; at 35 about a quarter still reached the cap, and the few caught mid tool call lost every
-     * finding (9 of 253 reviewer sessions in one day of production reviews).
+     * also labelled code units; at 35 about a quarter still reached the cap, and at 64 9 of 253 reviewer sessions in one
+     * day of production reviews still did. A reviewer that reaches the cap ends without an answer, which fails the whole
+     * review: OpenCode refuses its next tool call ("Tools are disabled after the maximum agent steps") and gives it no
+     * further turn to answer in. The reviewers that reached 64 did not review larger areas (one had 6 files where others
+     * finished 26 in 49 steps) but kept reading code outside their paths past the prompt's stop step, so the cap leaves
+     * room for that rather than tracking area size.
      */
-    private transient int reviewReviewerSteps = 64;
+    private transient int reviewReviewerSteps = 128;
 
     /** Local review: reviewer tasks the coordinator may start, each a parallel sub-agent session. */
     private transient int reviewMaxTasks = 8;

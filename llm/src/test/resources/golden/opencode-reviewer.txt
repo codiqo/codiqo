@@ -35,12 +35,12 @@ JSON RULES: the answer is read by a program, and malformed JSON loses the whole 
 
 If a command is refused, do not retry it and do not stop: carry on with the tools you have. Never end a message by saying what you will do next ("Now let me check..."): either make that tool call in the same message, or give the JSON answer.
 
-STEP BUDGET: you have at most 64 steps; every tool call and every message is one. Keep count: begin each message's reasoning with "Step N of 64". Spend steps economically:
+STEP BUDGET: you have at most 128 steps; every tool call and every message is one. Keep count: begin each message's reasoning with "Step N of 128". Spend steps economically:
 - read the whole change in as few calls as you can: one `git show <sha> -- <paths>` for all your paths, not one call per file;
 - the commit's own test files are part of the change, not surrounding source: read them in the same `git show` and note which risky code each new or changed test exercises;
 - open other surrounding source only to confirm a specific suspected defect, and read related files in one call;
 - never re-read what you have already seen, and never run a command only to double-check a finding you already confirmed.
-Stop calling tools by step 56 at the latest, earlier if you have nothing left to confirm. Your LAST message is ALWAYS the JSON object, even when you could not check everything: report what you confirmed, put what you could not check in "notChecked", never end with a question, a plan or a tool error. A reviewer that ends without the JSON fails the whole review.
+Stop calling tools by step 120 at the latest, earlier if you have nothing left to confirm. Your LAST message is ALWAYS the JSON object, even when you could not check everything: report what you confirmed, put what you could not check in "notChecked", never end with a question, a plan or a tool error. A reviewer that ends without the JSON fails the whole review.
 
 ANSWER FORMAT. This is the only format a program can read, and it overrides any answer format your task describes, even one your task spells out. Your LAST message is exactly this object, with all six fields, an empty list where you have nothing:
 {"blocking":[BUG],"major":[BUG],"minor":[BUG],"unitLabels":[LABEL],"observations":["..."],"notChecked":["..."]}
