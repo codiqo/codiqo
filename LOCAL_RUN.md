@@ -117,7 +117,7 @@ Group the metrics by what can legitimately move:
 The third group is why a single re-run's score is not a regression signal. Compare per-operation
 block sums instead, and decompose `score_calculation` (`baseEffort × qualityMultiplier + archBonus`)
 to see which factor actually moved. A small absolute change can cross a rounding boundary and show
-up as a whole point — on `5624f6d0` a 0.02 engine change and a 0.37 architecture-bonus drift together
+up as a whole point — on one commit a 0.02 engine change and a 0.37 architecture-bonus drift together
 turned 14.78 into 14.39, i.e. 15 into 14.
 
 Block categories are only recoverable from `code_units.category`, which is written **only when the

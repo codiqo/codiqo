@@ -88,7 +88,7 @@ public class ProjectHalts {
     /**
      * The root cause names the failure, except for a review the model's provider failed: the provider's answers are
      * added by the {@link ReviewProviderException} that wraps the root cause, so the reason is the root cause followed
-     * by them. On 16 Oct 2026 nine projects halted with "session ... finished without an answer" while the provider
+     * by them. Nine projects once halted with "session ... finished without an answer" while the provider
      * answered 429 for eight hours, and only the detail said so, which the halt banner in codiqo-web does not show. The
      * failure is shortened rather than the summary: a failure that fills the reason's limit on its own would cut off
      * exactly the part the banner needs.

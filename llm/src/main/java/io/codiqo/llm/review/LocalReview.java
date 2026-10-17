@@ -23,23 +23,14 @@ public class LocalReview {
      */
     LlmScoringResponse assessment;
 
-    /** reviewer sessions the coordinator started, a retried area counting twice */
+    /** reviewer sessions the coordinator started */
     int reviewers;
-
-    /**
-     * Reviewer sessions that ended without a readable JSON answer, usually at their step limit. Their findings never
-     * reached the coordinator unless it retried the area, so a high count means part of the commit went unreviewed.
-     */
-    List<String> unansweredReviewers;
 
     /** the reviewers' risk observations, each a short concrete fact; asked for only when the review assesses */
     List<String> observations;
 
     /** what the reviewers say they could not verify: an external artifact, a test they could not run, a refused command */
     List<String> notChecked;
-
-    /** reviewer answers that could be read only after a correction turn */
-    int correctedAnswers;
 
     public long totalInputTokens() {
         return getSessions().stream().mapToLong(SessionUsage::getInputTokens).sum();

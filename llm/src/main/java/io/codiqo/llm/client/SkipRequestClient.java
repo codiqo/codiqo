@@ -67,7 +67,7 @@ public class SkipRequestClient implements LlmClient {
 
     public SkipRequestClient(RunArgs args, ExecutorService executor, Log log, Map<String, String> additionalHeaders) {
         this.log = Objects.requireNonNull(log);
-        this.completions = new JsonCompletionClient(args, executor, log, additionalHeaders, MAX_COMPLETION_TOKENS);
+        this.completions = new JsonCompletionClient(args, executor, additionalHeaders, MAX_COMPLETION_TOKENS);
     }
     /**
      * Returns the grounded skip reason plus what the classification cost. Usage is returned even when no request was

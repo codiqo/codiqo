@@ -914,7 +914,7 @@ class FinalScoreCalculatorTest {
     }
     @Test
     void validateReportsCosmeticAddedPointingAtContextLine() {
-        // the a95206ac failure shape: a cited number lands on unchanged context
+        // the failure shape of a real regression: a cited number lands on unchanged context
         LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 2, VALIDATION_DIFF);
         LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder()
                 .file("Foo.java")

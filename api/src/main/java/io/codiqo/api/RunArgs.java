@@ -109,10 +109,6 @@ public class RunArgs {
     public static final long REVIEW_TRACE_MAX_BYTES = 16L * 1024 * 1024;
     /** how much of a rejected review answer an error or a warning quotes: enough to tell prose from broken JSON */
     public static final int REVIEW_ANSWER_PREVIEW = 512;
-    /** the agent turns of a local review: the coordinator's review and its repair round */
-    public static final int REVIEW_TURNS = 2;
-    /** the agent turns of each follow-up after the build (the labelling, the triage): its prompt and its repair round */
-    public static final int REVIEW_FOLLOW_UP_TURNS = 2;
 
     public static final int SCORE_PRECISION = 2;
     /** the 0-10 scale of the quality dimensions, the architecture impact and the senior-review score */
@@ -458,7 +454,11 @@ public class RunArgs {
     @Nullable
     private Integer llmMaxTokens = (int) Short.MAX_VALUE;
 
-    /** Attempts for a transport or unparseable-response failure. Validated {@code >= 1} — this counts attempts, not extra retries — and clamped in {@link #validate()}. */
+    /**
+     * Carried in the scoring configuration, but no LLM call reads it: JsonCompletionClient makes one attempt and fails on
+     * an answer that is cut off or cannot be read, and the OpenAI client retries connection failures, 429 and 5xx itself.
+     * Validated {@code >= 1} and clamped in {@link #validate()}.
+     */
     @Nullable
     private Short llmMaxRetries = 3;
 
@@ -535,10 +535,14 @@ public class RunArgs {
 
     /**
      * Local review: tool steps a reviewer may take. 25 left a quarter of them without an answer on large commits once they
-     * also labelled code units; at 35 about a quarter still reached the cap, and the few caught mid tool call lost every
-     * finding (13 Oct 2026: 9 of 253 reviewer sessions).
+     * also labelled code units; at 35 about a quarter still reached the cap, and at 64 9 of 253 reviewer sessions in one
+     * day of production reviews still did. A reviewer that reaches the cap ends without an answer, which fails the whole
+     * review: OpenCode refuses its next tool call ("Tools are disabled after the maximum agent steps") and gives it no
+     * further turn to answer in. The reviewers that reached 64 did not review larger areas (one had 6 files where others
+     * finished 26 in 49 steps) but kept reading code outside their paths past the prompt's stop step, so the cap leaves
+     * room for that rather than tracking area size.
      */
-    private transient int reviewReviewerSteps = 64;
+    private transient int reviewReviewerSteps = 128;
 
     /** Local review: reviewer tasks the coordinator may start, each a parallel sub-agent session. */
     private transient int reviewMaxTasks = 8;
@@ -548,13 +552,6 @@ public class RunArgs {
 
     /** Local review: the reviewers' notes on what they could not verify kept for the commit page; three per reviewer are asked for. */
     private transient int reviewMaxNotChecked = 12;
-
-    /**
-     * Local review: reviewer areas that may go unreviewed before the review fails. An area is unreviewed when its reviewer
-     * ended without an answer and no answered retry covers it. 0 fails on the first one, so a broken review is
-     * investigated instead of scored with less.
-     */
-    private transient int reviewMaxUnreviewedAreas = 0;
 
     /**
      * Local review: context window declared for both models. OpenCode compacts a conversation that reaches it; both
@@ -568,7 +565,7 @@ public class RunArgs {
     /**
      * Local review: the whole review, coordinator and sub-agents together; a 270-file commit took 13-16 minutes at 35
      * reviewer steps. At 64 steps reviews average about four times longer: a complexity-8 commit passed 30 minutes, and
-     * on 13 Oct 2026 complex reviews took 34-60 minutes (db944f44 finished 12 seconds under 60), so the limit is 90.
+     * complex production reviews took 34-60 minutes (one finished 12 seconds under 60), so the limit is 90.
      */
     private transient Duration reviewTimeout = Duration.ofMinutes(90);
 
@@ -581,8 +578,8 @@ public class RunArgs {
     private transient int reviewRelayRetries = 3;
 
     /**
-     * Local review: rounds of waiting out the provider's rate limit before the review gives up. On 14 Oct 2026 the
-     * provider's limit was exhausted for seven hours and 14 production commits were excluded within minutes each: a
+     * Local review: rounds of waiting out the provider's rate limit before the review gives up. When the provider's
+     * limit was once exhausted for seven hours, 14 production commits were excluded within minutes each: a
      * limit lifts in minutes, so a 429 is waited out round by round, each round twice as long as the last, every call of
      * the review waiting for the same round. A limit that outlasts them ends the review as the provider's failure.
      */
@@ -1261,7 +1258,7 @@ public class RunArgs {
      * These eight factors replace the model's judgment when the scoring prompt is skipped; the defaults are what the
      * model gave per band on scored commits (its median, or its mean where that sat well below the median). In the two
      * lowest bands the model's factors spread above the median, so their defaults are its mean: on 1,000 replayed
-     * commits (6 Oct 2026) the medians left those bands' bonus 13-22% short.
+     * commits the medians left those bands' bonus 13-22% short.
      */
     private double qualityFactorWellCovered = 0.95;
 

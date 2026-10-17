@@ -1,7 +1,7 @@
 package io.codiqo.llm.review;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -9,7 +9,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
-import java.util.Objects;
+import java.util.Optional;
 
 import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.AfterEach;
@@ -21,27 +21,25 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
 import io.codiqo.api.RunArgs;
-import io.codiqo.llm.NoopLog;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.JsonNodeFactory;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * A turn whose model answer failed on the way is resumed in the same session, as OpenCode 2.0.25 records such a turn:
- * idle, its newest assistant message finished with {@code error}. OpenCode retries a provider error itself only before
- * the answer starts, so a stream cut after its first tokens reaches the review as exactly this.
+ * A turn is sent once. OpenCode 2.0.25 records a turn it gave up as idle, its newest assistant message finished with
+ * {@code error}; such a turn fails the review with that error rather than being prompted again.
  */
-class ResumedTurnTest {
+class TurnTest {
     private static final String SESSION = "ses_coordinator";
-    private static final String CUT = "provider.invalid-output";
+    private static final String PROMPT = "Review commit 1a2b3c of this repository.";
 
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final List<String> prompts = Lists.newCopyOnWriteArrayList();
-    /** what each finished turn left on its newest assistant message: an error type, or null for an answer */
-    private final List<String> outcomes = Lists.newCopyOnWriteArrayList();
     private HttpServer server;
     private String url;
+    /** the error type the turn ends with, or none for a turn that answered */
+    private Optional<String> error = Optional.empty();
 
     @BeforeEach
     void start() throws IOException {
@@ -55,45 +53,23 @@ class ResumedTurnTest {
         server.stop(0);
     }
     @Test
-    void aTurnCutOnTheWayIsResumedInTheSameSession() throws Exception {
-        outcomes.add(CUT);
-        outcomes.add("ok");
+    void aTurnThatAnsweredIsSentOnce() throws Exception {
+        turn();
 
-        turn("Review commit 1a2b3c of this repository.");
-
-        assertEquals(2, prompts.size(), prompts.toString());
-        assertEquals("Review commit 1a2b3c of this repository.", prompts.get(0));
-        assertTrue(prompts.get(1).startsWith("Your last step failed on the way from the model: provider.invalid-output: stream cut"), prompts.get(1));
+        assertEquals(List.of(PROMPT), prompts);
     }
     @Test
-    void aRequestTheProviderRefusedIsNotResumed() throws Exception {
-        outcomes.add("provider.invalid-request");
+    void aTurnThatEndedWithAnErrorFailsWithIt() {
+        error = Optional.of("provider.invalid-output");
 
-        turn("Review commit 1a2b3c of this repository.");
+        IOException err = assertThrows(IOException.class, this::turn);
 
-        assertEquals(1, prompts.size(), "resuming would only send the refused request again");
+        assertEquals("session ses_coordinator ended its turn with provider.invalid-output: stream cut", err.getMessage());
+        assertEquals(List.of(PROMPT), prompts, "the turn is not prompted again");
     }
-    @Test
-    void aTurnThatKeepsFailingIsResumedTwiceAndLeftAsItEnded() throws Exception {
-        for (int i = 0; i < 5; i++) {
-            outcomes.add(CUT);
-        }
-
-        turn("Review commit 1a2b3c of this repository.");
-
-        assertEquals(3, prompts.size(), "the turn and two resumes: reading its answer then fails the review");
-    }
-    @Test
-    void aTurnThatAnsweredIsLeftAlone() throws Exception {
-        outcomes.add("ok");
-
-        turn("Review commit 1a2b3c of this repository.");
-
-        assertEquals(1, prompts.size());
-    }
-    private void turn(String text) throws IOException {
+    private void turn() throws IOException {
         try (OpenCodeClient client = new OpenCodeClient(url, "pw", Duration.ofSeconds(10))) {
-            LocalReviewer.turn(client, SESSION, text, new NoopLog());
+            LocalReviewer.turn(client, SESSION, PROMPT);
         }
     }
     private void handle(HttpExchange exchange) throws IOException {
@@ -102,7 +78,7 @@ class ResumedTurnTest {
         if (route.equals("POST /api/session/" + SESSION + "/prompt")) {
             prompts.add(mapper.readTree(exchange.getRequestBody().readAllBytes()).path("text").asString());
         } else if (route.equals("GET /api/session/" + SESSION + "/message")) {
-            body = newestAssistant(prompts.size());
+            body = newestAssistant();
         }
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.sendResponseHeaders(HttpResponseStatus.OK.code(), bytes.length == 0 ? -1 : bytes.length);
@@ -110,15 +86,13 @@ class ResumedTurnTest {
             out.write(bytes);
         }
     }
-    /** the newest assistant message after the given number of turns, as one page newest first */
-    private String newestAssistant(int turns) {
-        String outcome = outcomes.get(Math.min(turns, outcomes.size()) - 1);
+    private String newestAssistant() {
         ObjectNode message = JsonNodeFactory.instance.objectNode().put("type", "assistant");
-        if (Objects.equals(outcome, "ok")) {
-            message.put("finish", "stop").put("text", "{}");
-        } else {
+        if (error.isPresent()) {
             message.put("finish", "error");
-            message.putObject("error").put("type", outcome).put("message", "stream cut");
+            message.putObject("error").put("type", error.get()).put("message", "stream cut");
+        } else {
+            message.put("finish", "stop").put("text", "{}");
         }
         ObjectNode toReturn = JsonNodeFactory.instance.objectNode();
         toReturn.putArray("data").add(message);
