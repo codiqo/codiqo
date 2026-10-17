@@ -81,6 +81,6 @@ public class CodiqoExtension {
     private boolean failOnJdtlsError;
     private boolean failOnUninstrumentedModule = true;
     /** unset keeps RunArgs' threshold; 1 or more turns the check off for a project whose tests need what CI lacks */
-    private String testFailureHaltShare;
-    private String testFailureHaltMinTests;
+    private String testFailureHoldShare;
+    private String testFailureHoldMinTests;
 }

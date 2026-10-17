@@ -294,7 +294,10 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                 TestRun testRun = TestRuns.read(reactors.stream().flatMap(reactor -> TestReportDirectories.resolve(reactor).stream()).distinct().toList(), new MavenMessageReporter(getLog()));
                 getLog().info(String.format(Locale.ROOT, "test run: %d tests, %d failed, %d errors, %d skipped in %s",
                         testRun.getTests(), testRun.getFailures(), testRun.getErrors(), testRun.getSkipped(), testRun.getTestTime()));
-                TestRuns.requireHealthy(testRun, args.getTestFailureHaltShare(), args.getTestFailureHaltMinTests());
+                TestRuns.heldReason(testRun, args.getTestFailureHoldShare(), args.getTestFailureHoldMinTests()).ifPresent(reason -> {
+                    getLog().warn(reason + ": the commit is scored and its score held until someone accepts it");
+                    args.setTestRunHeldReason(reason);
+                });
                 args.setTestRun(testRun);
             }
             relaxOutOfModuleResourceDirs(clone.getWorkTree());

@@ -651,6 +651,10 @@ public class RunArgs {
     @Nullable
     private transient TestRun testRun;
 
+    /** Why the commit's score is held ({@link io.codiqo.api.testing.TestRuns#heldReason}), decided once where the test run is read; unset when it is not held. */
+    @Nullable
+    private transient String testRunHeldReason;
+
     /** How long the build's compile run took, and its test run, for the submission's test-run record. */
     @Nullable
     private transient Duration compilePhaseTook;
@@ -663,15 +667,15 @@ public class RunArgs {
     private transient Instant analysisStartedAt;
 
     /**
-     * The share of executed tests that, failing or erroring, halts the project instead of scoring the commit; 1 or more
-     * turns the check off. A run where
-     * most tests fail is almost never the commit's doing: it is an environment the analysis cannot rebuild (a backdated
-     * commit whose database, service or certificate is gone), and every hour's retry would pay for its review again.
+     * The share of executed tests that, failing or erroring, holds the commit's score out of every figure until someone
+     * accepts it; 1 or more turns the check off. A run where most tests fail is either a commit that broke what they
+     * share (a test bootstrap, a fixture) or an environment the analysis cannot rebuild (a backdated commit whose
+     * database, service or certificate is gone), and only a person can tell which.
      */
-    private double testFailureHaltShare = 0.75;
+    private double testFailureHoldShare = 0.75;
 
-    /** Below this many executed tests a failed share proves nothing about the environment, so it never halts. */
-    private int testFailureHaltMinTests = 20;
+    /** Below this many executed tests a failed share proves nothing about the environment, so it never holds. */
+    private int testFailureHoldMinTests = 20;
 
     /**
      * Set once the server accepted the commit's submission. A run that fails after that has scored its commit, so it does
