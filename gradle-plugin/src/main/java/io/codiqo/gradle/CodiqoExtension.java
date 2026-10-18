@@ -48,6 +48,8 @@ public class CodiqoExtension {
     private String reviewCoordinatorModel;
     private String reviewReviewerModel;
     private String reviewTimeoutMinutes;
+    private String reviewTemperature;
+    private String reviewTopP;
     private String reviewRelayRetries;
     private String reviewRelayTimeoutSeconds;
     /** where the review's trace of every session and tool call goes; unset, the analysis's output directory */

@@ -48,6 +48,7 @@ import com.google.common.base.Joiner;
 import com.google.common.collect.ConcurrentHashMultiset;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multiset;
+import com.openai.core.JsonMissing;
 import com.openai.core.ObjectMappers;
 import com.openai.models.ErrorObject;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
@@ -255,8 +256,7 @@ public final class LlmRelay implements AutoCloseable {
             try {
                 body = sampled(body);
             } catch (IOException err) {
-                log.error("llm relay: refused a chat completion that is not a JSON request, which would leave without the review's sampling: %s",
-                        err.getMessage());
+                log.error("llm relay: refused a chat completion that is not a JSON request, which would leave without the review's sampling: %s", err.getMessage());
                 respond(exchange, HttpResponseStatus.BAD_REQUEST.code(), error("not a chat completion request", "invalid_request_error"));
                 return;
             }
@@ -387,13 +387,15 @@ public final class LlmRelay implements AutoCloseable {
         }
     }
     /**
-     * The request with the review's sampling set, read and written as the OpenAI SDK's own request body, which keeps
-     * every field it does not model ({@code stream} among them) as it came.
+     * The request with the review's sampling set and no seed, whatever the agent sent, read and written as the OpenAI
+     * SDK's own request body, which keeps every field it does not model ({@code stream} among them) as it came.
      */
+    @SuppressWarnings("deprecation") // OpenAI deprecated seed; it is only ever removed here
     private byte[] sampled(byte[] body) throws IOException {
         ChatCompletionCreateParams.Body chat = OPENAI.readValue(body, ChatCompletionCreateParams.Body.class).toBuilder()
                 .temperature(temperature)
                 .topP(topP)
+                .seed(JsonMissing.of())
                 .build();
         return OPENAI.writeValueAsBytes(chat);
     }

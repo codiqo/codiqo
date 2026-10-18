@@ -94,14 +94,14 @@ class LlmRelayTest {
         assertEquals(CREDENTIAL, upstreamAuthorization.get(), "the secret never leaves the machine; the credential replaces it");
         assertEquals("/v1/models", upstreamPath.get());
     }
-    /** OpenCode sends no sampling, so every chat completion leaves with the review's, whatever the agent sent, and no seed */
+    /** every chat completion leaves with the review's sampling and no seed, whatever the agent sent */
     @Test
     void aChatCompletionLeavesWithTheReviewsSampling() throws Exception {
         firstChunkRead.countDown();
         HttpRequest request = HttpRequest.newBuilder(URI.create(relay.getUrl() + "/chat/completions"))
                 .header(HttpHeaderNames.AUTHORIZATION.toString(), RequestAuthorizer.bearer(relay.getSecret()))
                 .header(HttpHeaderNames.CONTENT_TYPE.toString(), HttpHeaderValues.APPLICATION_JSON.toString())
-                .POST(HttpRequest.BodyPublishers.ofString(JSON.objectNode().put("model", "m").put("stream", true).put("temperature", 0.3).toString()))
+                .POST(HttpRequest.BodyPublishers.ofString(JSON.objectNode().put("model", "m").put("stream", true).put("temperature", 0.3).put("seed", 42).toString()))
                 .build();
         HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
 

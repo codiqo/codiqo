@@ -75,6 +75,8 @@ public class GradleModelCollector {
         request.setReviewCoordinatorModel(stringProp(root, "codiqo.review.coordinatorModel", ext.getReviewCoordinatorModel()));
         request.setReviewReviewerModel(stringProp(root, "codiqo.review.reviewerModel", ext.getReviewReviewerModel()));
         request.setReviewTimeoutMinutes(stringProp(root, "codiqo.review.timeoutMinutes", ext.getReviewTimeoutMinutes()));
+        request.setReviewTemperature(stringProp(root, "codiqo.review.temperature", ext.getReviewTemperature()));
+        request.setReviewTopP(stringProp(root, "codiqo.review.topP", ext.getReviewTopP()));
         request.setReviewRelayRetries(stringProp(root, "codiqo.review.relayRetries", ext.getReviewRelayRetries()));
         request.setReviewRelayTimeoutSeconds(stringProp(root, "codiqo.review.relayTimeoutSeconds", ext.getReviewRelayTimeoutSeconds()));
         request.setReviewTraceDirectory(stringProp(root, "codiqo.review.traceDirectory", ext.getReviewTraceDirectory()));

@@ -378,6 +378,13 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     @Parameter(property = "codiqo.review.timeoutMinutes")
     private Integer reviewTimeoutMinutes;
 
+    /** the review agents' sampling, which the relay sets on every call; a direct endpoint's model may want its own */
+    @Parameter(property = "codiqo.review.temperature")
+    private Double reviewTemperature;
+
+    @Parameter(property = "codiqo.review.topP")
+    private Double reviewTopP;
+
     /** retries of a call through the relay, to the Codiqo proxy or a direct endpoint, that failed on the way (network error, timeout, 429 or 5xx) */
     @Parameter(property = "codiqo.review.relayRetries")
     private Integer reviewRelayRetries;
@@ -1730,6 +1737,8 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         Optional.ofNullable(reviewCoordinatorModel).ifPresent(args::setReviewCoordinatorModel);
         Optional.ofNullable(reviewReviewerModel).ifPresent(args::setReviewReviewerModel);
         Optional.ofNullable(reviewTimeoutMinutes).ifPresent(minutes -> args.setReviewTimeout(Duration.ofMinutes(minutes)));
+        Optional.ofNullable(reviewTemperature).ifPresent(args::setReviewTemperature);
+        Optional.ofNullable(reviewTopP).ifPresent(args::setReviewTopP);
         Optional.ofNullable(reviewRelayRetries).ifPresent(args::setReviewRelayRetries);
         Optional.ofNullable(reviewRelayTimeoutSeconds).ifPresent(seconds -> args.setReviewRelayRequestTimeout(Duration.ofSeconds(seconds)));
     }
