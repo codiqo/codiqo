@@ -69,9 +69,9 @@ import okhttp3.HttpUrl;
  * a review out lasting it keeps going, and it never reaches OpenCode's configuration on disk.
  *
  * <p>
- * Each chat completion leaves with the scoring prompt's sampling ({@code temperature}, {@code top_p}, {@code seed}):
- * OpenCode 2.0 sends none of them, wherever its configuration puts them, so two reviews of one commit varied far more
- * than the provider requires.
+ * Each chat completion leaves with the review's sampling ({@code temperature}, {@code top_p}; {@link
+ * RunArgs#getReviewTemperature()}): OpenCode 2.0 sends none, wherever its configuration puts them, and leaves the
+ * choice to the provider.
  *
  * <p>
  * Other processes on the machine can reach a loop back port, so the agents must present a secret made for this
@@ -151,9 +151,8 @@ public final class LlmRelay implements AutoCloseable {
      * and the review fails within minutes as the provider's failure, which halts the project and aborts the run.
      */
     private final AtomicBoolean rateLimitExhausted = new AtomicBoolean();
-    private final Double temperature;
-    private final Double topP;
-    private final Integer seed;
+    private final double temperature;
+    private final double topP;
     private final String secret;
     /** every answer of the model's end point that was not a success, retried ones included, by status */
     private final Multiset<Integer> providerErrors = ConcurrentHashMultiset.create();
@@ -181,9 +180,8 @@ public final class LlmRelay implements AutoCloseable {
         this.rateLimitRetries = Math.max(0, args.getReviewRelayRateLimitRetries());
         this.rateLimitBackoff = Objects.requireNonNull(args.getReviewRelayRateLimitBackoff());
         this.rateLimitMaxBackoff = Objects.requireNonNull(args.getReviewRelayRateLimitMaxBackoff());
-        this.temperature = args.getLlmTemperature();
-        this.topP = args.getLlmTopP();
-        this.seed = args.getLlmSeed();
+        this.temperature = args.getReviewTemperature();
+        this.topP = args.getReviewTopP();
         this.log = Objects.requireNonNull(log);
 
         this.secret = RandomStringUtils.secure().nextAlphanumeric(SECRET_LENGTH);
@@ -257,7 +255,7 @@ public final class LlmRelay implements AutoCloseable {
             try {
                 body = sampled(body);
             } catch (IOException err) {
-                log.error("llm relay: refused a chat completion that is not a JSON request, which would leave without the scoring prompt's sampling: %s",
+                log.error("llm relay: refused a chat completion that is not a JSON request, which would leave without the review's sampling: %s",
                         err.getMessage());
                 respond(exchange, HttpResponseStatus.BAD_REQUEST.code(), error("not a chat completion request", "invalid_request_error"));
                 return;
@@ -389,16 +387,15 @@ public final class LlmRelay implements AutoCloseable {
         }
     }
     /**
-     * The request with the scoring prompt's sampling set, read and written as the OpenAI SDK's own request body, which
-     * keeps every field it does not model ({@code stream} among them) as it came.
+     * The request with the review's sampling set, read and written as the OpenAI SDK's own request body, which keeps
+     * every field it does not model ({@code stream} among them) as it came.
      */
-    @SuppressWarnings("deprecation") // OpenAI deprecated seed; Ollama, which serves the review's models, still honours it
     private byte[] sampled(byte[] body) throws IOException {
-        ChatCompletionCreateParams.Body.Builder chat = OPENAI.readValue(body, ChatCompletionCreateParams.Body.class).toBuilder();
-        Optional.ofNullable(temperature).ifPresent(chat::temperature);
-        Optional.ofNullable(topP).ifPresent(chat::topP);
-        Optional.ofNullable(seed).ifPresent(value -> chat.seed(value.longValue()));
-        return OPENAI.writeValueAsBytes(chat.build());
+        ChatCompletionCreateParams.Body chat = OPENAI.readValue(body, ChatCompletionCreateParams.Body.class).toBuilder()
+                .temperature(temperature)
+                .topP(topP)
+                .build();
+        return OPENAI.writeValueAsBytes(chat);
     }
     private Duration backoff(int attempt) {
         return retryBackoff.multipliedBy(1L << attempt);

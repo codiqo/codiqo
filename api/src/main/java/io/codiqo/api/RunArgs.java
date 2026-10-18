@@ -554,6 +554,18 @@ public class RunArgs {
      */
     private transient int reviewReviewerSteps = 256;
 
+    /**
+     * Local review: the agents' sampling temperature, which the relay sets on every chat completion since OpenCode sends
+     * none. The review used the scoring prompt's 0.0 until a coordinator ran one grep 95 times with the same reasoning
+     * up to its step cap: near-greedy decoding over a context that grows by the same block repeats that block. 1.0 is
+     * what DeepSeek-V4.1-Flash's model card recommends and what its agentic evaluations use, as GLM-5.3-Flash's do. No
+     * seed goes with it: a fixed seed over a nearly identical context draws the same tokens again.
+     */
+    private transient double reviewTemperature = 1.0;
+
+    /** Local review: the agents' nucleus-sampling cut-off, set beside {@link #reviewTemperature}; 0.95 as in both models' agentic evaluations. */
+    private transient double reviewTopP = 0.95;
+
     /** Local review: reviewer tasks the coordinator may start, each a parallel sub-agent session. */
     private transient int reviewMaxTasks = 8;
 
