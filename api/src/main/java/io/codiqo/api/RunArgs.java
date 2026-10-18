@@ -531,7 +531,15 @@ public class RunArgs {
 
     private transient String reviewReviewerModel = LlmModelUsageIntent.LOCAL_REVIEW_SUB_AGENT.model().id();
 
-    private transient int reviewCoordinatorSteps = 40;
+    /**
+     * Local review: tool steps the coordinator may take. At 40, a coordinator that reviewed a commit's production files
+     * itself before starting its reviewers started them at its 34th step and reached the cap while checking their
+     * reports; OpenCode then ends the session with its own instruction to summarise the work in prose, which "overrides
+     * all other instructions", so the JSON answer was never written and the review failed. Coordinators that finished
+     * took 29 to 33 of their 40 steps. Like a reviewer's, the cap guards against a runaway session rather than budgeting
+     * the work: the prompt has the coordinator start its reviewers before it reads any code, and count its steps.
+     */
+    private transient int reviewCoordinatorSteps = 128;
 
     /**
      * Local review: tool steps a reviewer may take. 25 left a quarter of them without an answer on large commits once they
@@ -540,9 +548,11 @@ public class RunArgs {
      * review: OpenCode refuses its next tool call ("Tools are disabled after the maximum agent steps") and gives it no
      * further turn to answer in. The reviewers that reached 64 did not review larger areas (one had 6 files where others
      * finished 26 in 49 steps) but kept reading code outside their paths past the prompt's stop step, so the cap leaves
-     * room for that rather than tracking area size.
+     * room for that rather than tracking area size. At 256, twice the coordinator's, it guards against a runaway session
+     * and is no budget the work runs into: the prompt still asks for economy and names a stop step, and
+     * {@link #reviewTimeout} bounds the review's time.
      */
-    private transient int reviewReviewerSteps = 128;
+    private transient int reviewReviewerSteps = 256;
 
     /** Local review: reviewer tasks the coordinator may start, each a parallel sub-agent session. */
     private transient int reviewMaxTasks = 8;
@@ -565,9 +575,13 @@ public class RunArgs {
     /**
      * Local review: the whole review, coordinator and sub-agents together; a 270-file commit took 13-16 minutes at 35
      * reviewer steps. At 64 steps reviews average about four times longer: a complexity-8 commit passed 30 minutes, and
-     * complex production reviews took 34-60 minutes (one finished 12 seconds under 60), so the limit is 90.
+     * complex production reviews took 34-60 minutes (one finished 12 seconds under 60), so the limit was 90. With a
+     * 256-step reviewer and a 128-step coordinator the longest review a healthy provider allows is about 65 minutes: a
+     * reviewer stopping at step 248 and the coordinator's own 120 steps at the slowest measured pace, 10.5 seconds a
+     * step. A provider slowing down multiplies that (one rate-limited day took the 90th percentile from 28 to 88
+     * minutes), so the limit is 150.
      */
-    private transient Duration reviewTimeout = Duration.ofMinutes(90);
+    private transient Duration reviewTimeout = Duration.ofMinutes(150);
 
     private transient Duration reviewStartupTimeout = Duration.ofSeconds(60);
 
