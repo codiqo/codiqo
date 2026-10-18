@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 
 import com.google.common.collect.Lists;
 
+import io.codiqo.llm.client.LlmJson;
 import io.codiqo.llm.schema.LlmScoringResponse;
 
 class FindingTriageTest {
@@ -21,6 +22,13 @@ class FindingTriageTest {
         assertEquals(List.of(), triage(
                 verdict("PMD", "GodClass", 3, FindingVerdict.Verdict.HARMLESS),
                 defect(verdict("spotbugs", "OS_OPEN_STREAM", 19, FindingVerdict.Verdict.DEFECT))).problems(ASKED), "the tool is matched in any case");
+    }
+    /** a coordinator once answered the triage under the list's own name, "findings": that is reported as such */
+    @Test
+    void anAnswerUnderAnotherFieldNameHasNoVerdictsList() {
+        FindingTriage answer = LlmJson.readAnswer("{\"findings\":[{\"tool\":\"Error Prone\",\"rule\":\"StringSplitter\",\"file\":\"a/Service.java\",\"line\":3,\"verdict\":\"false_positive\"}]}", FindingTriage.class);
+
+        assertEquals(List.of("no \"verdicts\" list"), answer.problems(ASKED));
     }
     /** anything but one verdict with a known value per asked finding is named, so the review fails on it */
     @Test

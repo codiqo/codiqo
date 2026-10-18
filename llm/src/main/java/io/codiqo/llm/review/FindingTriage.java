@@ -18,7 +18,8 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 public class FindingTriage {
-    private List<FindingVerdict> verdicts = Lists.newArrayList();
+    /** null when the answer has no such field, which {@link #problems} reports instead of judging no finding */
+    private List<FindingVerdict> verdicts;
     private SessionUsage usage;
     private String answer;
     /** what the triage was asked about, kept beside the verdicts for the tool's severity; never part of the answer */
