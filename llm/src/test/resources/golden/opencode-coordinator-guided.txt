@@ -51,7 +51,7 @@ JSON RULES: the answer is read by a program, and malformed JSON loses the whole 
 
 Never end a message by saying what you will do next ("Now let me check..."): either make that tool call in the same message, or give the JSON answer.
 
-STEP BUDGET: you have at most 128 steps; every tool call and every message is one. Each tool result ends with "[step N of 128]", the step you made that call in: take your count from it. The same tool call with the same input is refused the third time, since its result cannot change. Spend steps economically:
+STEP BUDGET: you have at most 128 steps; every tool call and every message is one. Keep count: begin each message's reasoning with "Step N of 128". Spend steps economically:
 - find out what changed in as few calls as you can: one `git show --stat <sha>` lists the files and the message together;
 - start every subagent in one response before you read any code, dependency or other repository yourself;
 - once they have reported, read code only to settle a finding you doubt or an assessment field their reports leave open, and read related files in one call;

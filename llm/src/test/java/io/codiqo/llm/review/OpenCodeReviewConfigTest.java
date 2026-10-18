@@ -79,7 +79,7 @@ class OpenCodeReviewConfigTest {
         assertTrue(coordinator.contains("AT MOST 5 " + OpenCodeReviewConfig.REVIEWER), coordinator);
         assertTrue(coordinator.contains("at most 30 steps") && coordinator.contains("by step 22"), "the coordinator keeps eight steps for its answer: " + coordinator);
         assertTrue(reviewer.contains("at most 12 steps") && reviewer.contains("by step 4"), "a reviewer keeps eight steps for its answer: " + reviewer);
-        assertTrue(coordinator.contains("\"[step N of 30]\"") && reviewer.contains("\"[step N of 12]\""), "both agents read their step from the tool results, against their own cap");
+        assertTrue(coordinator.contains("\"Step N of 30\"") && reviewer.contains("\"Step N of 12\""), "both agents count their steps against their own cap");
         assertTrue(coordinator.contains("before you read any changed file yourself"), "the coordinator starts its reviewers before it reviews anything");
         assertTrue(coordinator.contains("JSON RULES") && reviewer.contains("JSON RULES"), "both agents carry the shared JSON rules");
         assertTrue(coordinator.contains("LAST message is ALWAYS the JSON object") && reviewer.contains("LAST message is ALWAYS the JSON object"),

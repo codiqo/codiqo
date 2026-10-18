@@ -144,7 +144,7 @@ public final class OpenCodeServer implements Closeable {
     private static Process launch(RunArgs args, ObjectNode config, Path workTree, File home, int port, String password, File logFile) throws IOException {
         File configDir = new File(home, "config/opencode");
         FileUtils.forceMkdir(configDir);
-        JsonMapper.builder().build().writeValue(new File(configDir, "opencode.json"), ReviewGuard.install(config, home));
+        JsonMapper.builder().build().writeValue(new File(configDir, "opencode.json"), config);
 
         ProcessBuilder builder = new ProcessBuilder(args.getReviewExecutable(), "serve", "--port", Integer.toString(port), "--hostname", RunArgs.LOOPBACK_HOST)
                 .directory(workTree.toFile())
