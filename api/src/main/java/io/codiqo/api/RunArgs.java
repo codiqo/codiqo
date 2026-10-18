@@ -575,9 +575,13 @@ public class RunArgs {
     /**
      * Local review: the whole review, coordinator and sub-agents together; a 270-file commit took 13-16 minutes at 35
      * reviewer steps. At 64 steps reviews average about four times longer: a complexity-8 commit passed 30 minutes, and
-     * complex production reviews took 34-60 minutes (one finished 12 seconds under 60), so the limit is 90.
+     * complex production reviews took 34-60 minutes (one finished 12 seconds under 60), so the limit was 90. With a
+     * 256-step reviewer and a 128-step coordinator the longest review a healthy provider allows is about 65 minutes: a
+     * reviewer stopping at step 248 and the coordinator's own 120 steps at the slowest measured pace, 10.5 seconds a
+     * step. A provider slowing down multiplies that (one rate-limited day took the 90th percentile from 28 to 88
+     * minutes), so the limit is 150.
      */
-    private transient Duration reviewTimeout = Duration.ofMinutes(90);
+    private transient Duration reviewTimeout = Duration.ofMinutes(150);
 
     private transient Duration reviewStartupTimeout = Duration.ofSeconds(60);
 

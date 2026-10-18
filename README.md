@@ -289,7 +289,7 @@ submitted value, then organisation override, then project override.
 | `codiqo.review` | `true` | The local AI review of every commit |
 | `codiqo.review.baseUrl` | Codiqo's model proxy | The model endpoint: any OpenAI-compatible URL, such as a local Ollama |
 | `codiqo.review.coordinatorModel`, `codiqo.review.reviewerModel` | `deepseek-v4.1-flash:cloud`, `glm-5.3-flash:cloud` | The models that judge and review |
-| `codiqo.review.timeoutMinutes` | `60` | The time a review may take |
+| `codiqo.review.timeoutMinutes` | `150` | The time a review may take |
 | `codiqo.buildTimeoutMinutes` | `45` | The time the build of one commit may take |
 | `codiqo.skipOnBuildFailure` | `true` | Carry on when a commit's build fails, instead of failing the whole run |
 | `codiqo.excludePaths`, `codiqo.excludeAuthorEmails` | none, `*bot*` | Files and commit authors kept out of the analysis |

@@ -1671,7 +1671,10 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   of the JSON. Both prompts therefore carry the same STEP BUDGET: count each step ("Step N of M"), spend them
   economically, stop calling tools `STEPS_RESERVED_FOR_ANSWER` (8) before the cap, and never end on a plan. The
   coordinator also starts every reviewer before it reads any code: one that reviewed production files itself first
-  reached its cap of 40 while checking the reports. The reviewer's whole answer format is stated once, at the end of
+  reached its cap of 40 while checking the reports. The time limits follow the caps: `reviewTimeout` is 150 minutes
+  (about 65 for a healthy provider at the caps' stop steps), and codiqo-action raises the per-commit deadline to the
+  review limit plus 30 minutes for the follow-ups, 180 by default (`REVIEW_PLUGIN_DEFAULT_MINUTES`); change them
+  together, or the outer deadline kills the analysis before the review can time out on its own. The reviewer's whole answer format is stated once, at the end of
   its prompt (`ANSWER FORMAT`), and overrides any format a task describes, so the coordinator's task prompts name paths and purpose, never an answer
   shape. `notChecked` holds up to three notes each on what a reviewer could not verify (an external artifact, a test it
   could not run, a refused command), `[]` when it checked everything; a lone string is read as one item, as for
