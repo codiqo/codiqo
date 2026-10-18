@@ -144,7 +144,7 @@ public final class OpenCodeServer implements Closeable {
     private static Process launch(RunArgs args, ObjectNode config, Path workTree, File home, int port, String password, File logFile) throws IOException {
         File configDir = new File(home, "config/opencode");
         FileUtils.forceMkdir(configDir);
-        JsonMapper.builder().build().writeValue(new File(configDir, "opencode.json"), config);
+        JsonMapper.builder().build().writeValue(new File(configDir, "opencode.json"), ReviewGuard.install(config, home));
 
         ProcessBuilder builder = new ProcessBuilder(args.getReviewExecutable(), "serve", "--port", Integer.toString(port), "--hostname", RunArgs.LOOPBACK_HOST)
                 .directory(workTree.toFile())
@@ -152,7 +152,7 @@ public final class OpenCodeServer implements Closeable {
                 .redirectOutput(logFile);
         /**
          * OpenCode reads configuration from more places than its global directory, and every one of them is closed
-         * here, as checked against OpenCode 2.0.20 in a scratch repository. It merges the reviewed repository's own
+         * here, as checked against OpenCode 2.0.20 and 2.0.32 in a scratch repository. It merges the reviewed repository's own
          * {@code opencode.json} and {@code .opencode/} agents and plugins unless {@code OPENCODE_DISABLE_PROJECT_CONFIG}
          * is set, so reviewing a commit could otherwise run that repository's plugin code or widen the agents' tools;
          * and it reads {@code OPENCODE_CONFIG}, {@code OPENCODE_CONFIG_CONTENT} and their siblings from the environment,

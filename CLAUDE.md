@@ -1668,8 +1668,18 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
 - **The step caps are guards, not budgets** (`reviewCoordinatorSteps` 128, `reviewReviewerSteps` 256). An agent that
   reaches its cap is lost: a reviewer's next tool call is refused and it never answers, and a coordinator gets
   OpenCode's own max-steps instruction, which "overrides all other instructions" and asks for a prose summary instead
-  of the JSON. Both prompts therefore carry the same STEP BUDGET: count each step ("Step N of M"), spend them
-  economically, stop calling tools `STEPS_RESERVED_FOR_ANSWER` (8) before the cap, and never end on a plan. The
+  of the JSON. Both prompts therefore carry the same STEP BUDGET: read the step from the tool results, spend them
+  economically, stop calling tools `STEPS_RESERVED_FOR_ANSWER` (8) before the cap, and never end on a plan.
+- **Every review runs the `review-guard` OpenCode plugin** (`ReviewGuard`, resources `review-guard/`), written into the
+  review's home and registered in the configuration with each agent's step cap. It ends every tool result with
+  `[step N of M]` (the distinct messages that called a tool, per session, so a sub-agent counts its own) and refuses a
+  third identical tool call in a session with an error the model reads. Asked to count, only 13 of 31 reviewer sessions
+  did and no coordinator did, and one coordinator ran the same grep 95 times until its cap; OpenCode 2.0.32 has no
+  setting for either (`doom_loop` catches only repeated failures). Checked against 2.0.32 with a scripted model: a
+  plugin must be a directory with its `package.json`, a hook that throws turns into the tool's error, and the reviewed
+  repository's own `.opencode/plugins` stay unloaded under `OPENCODE_DISABLE_PROJECT_CONFIG`.
+- **Sampling is the relay's**: OpenCode 2.0.32 sends no `temperature`, `top_p` or `seed`, so `LlmRelay` sets the
+  scoring prompt's on every chat completion (`llmTemperature` 0.0, `llmTopP` 0.8, `llmSeed` 42). The
   coordinator also starts every reviewer before it reads any code: one that reviewed production files itself first
   reached its cap of 40 while checking the reports. The time limits follow the caps: `reviewTimeout` is 150 minutes
   (about 65 for a healthy provider at the caps' stop steps), and codiqo-action raises the per-commit deadline to the

@@ -66,6 +66,25 @@ class LlmJsonAnswerTest {
     void aStrayBraceRightBeforeTheAnswerDoesNotHideIt() {
         assertEquals(1, read("Merged {" + FINDINGS).getBlocking().size());
     }
+    /**
+     * A reviewer once wrote one label's field name twice ({@code {"file":"file":...}}): the labels after the fault parse
+     * on their own, and the last one was read as the whole answer, which then failed for a missing field. The answer must
+     * fail on its own fault instead.
+     */
+    @Test
+    void aLabelAfterTheFaultOfABrokenAnswerDoesNotStandInForIt() {
+        String label = "{\"file\":\"C.java\",\"signature\":\"c()\",\"category\":\"ROUTINE\",\"reason\":\"adds a check\"}";
+        String broken = "Merged:\n{\"blocking\":[],\"major\":[],\"minor\":[],\"unitLabels\":[{\"file\":\"file\":\"B.java\"}," + label + "],\"observations\":[]}";
+
+        JacksonException err = assertThrows(JacksonException.class, () -> read(broken));
+
+        assertTrue(Strings.CS.contains(err.getOriginalMessage(), "expecting comma"), err.getOriginalMessage());
+    }
+    /** a brace in the prose that is never closed is not an answer, and covers nothing after it */
+    @Test
+    void anUnclosedBraceInTheProseDoesNotHideTheAnswer() {
+        assertEquals(1, read("The handler opens `try {` and never closes it.\n" + FINDINGS).getBlocking().size());
+    }
     private static LlmScoringResponse.Bugs read(String answer) {
         return LlmJson.readAnswer(answer, LlmScoringResponse.Bugs.class);
     }
