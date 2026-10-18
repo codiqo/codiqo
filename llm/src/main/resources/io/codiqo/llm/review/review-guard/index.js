@@ -25,6 +25,13 @@ export default {
       return toReturn;
     };
 
+    // A refused call is a step too, so its error carries the note: a hook that throws gets no execute.after. A call
+    // the permissions deny keeps OpenCode's own error, which a plugin cannot change, and goes without one.
+    const stepNote = (call) => {
+      const max = steps[call.agent];
+      return max === undefined ? undefined : `[step ${session(call.sessionID).messages.size} of ${max}]`;
+    };
+
     ctx.tool.hook("execute.before", (call) => {
       const state = session(call.sessionID);
       state.messages.add(call.messageID);
@@ -32,16 +39,17 @@ export default {
       const runs = (state.calls.get(key) ?? 0) + 1;
       state.calls.set(key, runs);
       if (runs > REPEAT_LIMIT) {
-        throw new Error(
+        const refusal =
           `Refused: this exact ${call.tool} call already ran ${REPEAT_LIMIT} times in this session, and its result cannot change. ` +
-            "Use the result you already have, or make a different call.");
+          "Use the result you already have, or make a different call.";
+        const note = stepNote(call);
+        throw new Error(note === undefined ? refusal : `${refusal}\n\n${note}`);
       }
     });
 
     ctx.tool.hook("execute.after", (call) => {
-      const max = steps[call.agent];
-      if (call.status === "completed" && max !== undefined) {
-        const note = `[step ${session(call.sessionID).messages.size} of ${max}]`;
+      const note = stepNote(call);
+      if (call.status === "completed" && note !== undefined) {
         const content = call.result.content;
         let noted;
         if (typeof content === "string") noted = `${content}\n\n${note}`;

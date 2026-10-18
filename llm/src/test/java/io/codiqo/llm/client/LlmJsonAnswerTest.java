@@ -85,6 +85,11 @@ class LlmJsonAnswerTest {
     void anUnclosedBraceInTheProseDoesNotHideTheAnswer() {
         assertEquals(1, read("The handler opens `try {` and never closes it.\n" + FINDINGS).getBlocking().size());
     }
+    /** an example in the prose that opens like an object and is never closed covers only what the parser read of it */
+    @Test
+    void anUnclosedObjectLikeExampleInTheProseDoesNotHideTheAnswer() {
+        assertEquals(1, read("Each finding looks like {\"title\": followed by its text.\n" + FINDINGS).getBlocking().size());
+    }
     private static LlmScoringResponse.Bugs read(String answer) {
         return LlmJson.readAnswer(answer, LlmScoringResponse.Bugs.class);
     }

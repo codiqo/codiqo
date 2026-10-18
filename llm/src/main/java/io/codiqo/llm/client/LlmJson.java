@@ -2,6 +2,7 @@ package io.codiqo.llm.client;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -76,10 +77,11 @@ public class LlmJson {
      *
      * <p>
      * An object nested in a broken one never stands in for it. A broken candidate that opens with a field name is a
-     * broken answer, and everything up to its own closing brace (found by counting braces outside strings, or the end of
-     * the text when a string is never closed) lies inside it: a reviewer once wrote {@code {"file":"file":...}} in one of
-     * its labels, and the label after it was read as the whole answer, which then failed for a missing
-     * {@code unitLabels} field. Any other broken candidate, a brace in prose, covers only what the parser read of it.
+     * broken answer, and everything up to its own closing brace (found by counting braces outside strings) lies inside
+     * it: a reviewer once wrote {@code {"file":"file":...}} in one of its labels, and the label after it was read as the
+     * whole answer, which then failed for a missing {@code unitLabels} field. A candidate that is never closed, and any
+     * other broken candidate (a brace in prose), covers only what the parser read of it; an answer whose last string is
+     * never closed is read to its end that way.
      * When no object is left, the broken candidate the parser read furthest is returned from its opening brace, so the
      * caller's read fails with Jackson's own error at the real fault rather than at the prose before it, and with the
      * answer as it is when nothing looks like an object at all.
@@ -109,7 +111,7 @@ public class LlmJson {
                 }
                 long covered = candidate.getFailedAt();
                 if (opensWithField(trimmed, start)) {
-                    covered = Math.max(covered, closingBrace(trimmed, start));
+                    covered = Math.max(covered, closingBrace(trimmed, start).orElse(0));
                 }
                 brokenUntil = Math.max(brokenUntil, covered);
             }
@@ -121,8 +123,11 @@ public class LlmJson {
     private static boolean opensWithField(String text, int start) {
         return Strings.CS.startsWith(StringUtils.stripStart(text.substring(start + 1), null), "\"");
     }
-    /** just past the brace that closes the one at {@code start}, counting braces outside strings, or the text's end */
-    private static int closingBrace(String text, int start) {
+    /**
+     * Just past the brace that closes the one at {@code start}, counting braces outside strings; empty when it is never
+     * closed, since the text after an unclosed fragment of prose can still hold the whole answer.
+     */
+    private static OptionalInt closingBrace(String text, int start) {
         int depth = 0;
         boolean inString = false;
         for (int i = start; i < text.length(); i++) {
@@ -140,11 +145,11 @@ public class LlmJson {
             } else if (c == '}') {
                 depth--;
                 if (depth == 0) {
-                    return i + 1;
+                    return OptionalInt.of(i + 1);
                 }
             }
         }
-        return text.length();
+        return OptionalInt.empty();
     }
     /** the object that starts at {@code start}, up to its own closing brace, or where in the text its parse failed */
     private static Candidate objectAt(String text, int start) {

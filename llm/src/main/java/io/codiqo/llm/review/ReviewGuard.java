@@ -8,6 +8,8 @@ import java.util.Objects;
 
 import org.apache.commons.io.FileUtils;
 
+import com.google.common.annotations.VisibleForTesting;
+
 import lombok.experimental.UtilityClass;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -21,12 +23,13 @@ import tools.jackson.databind.node.ObjectNode;
  * to ignore ({@code OPENCODE_DISABLE_PROJECT_CONFIG}). It loads only as a directory with its {@code package.json}.
  */
 @UtilityClass
-class ReviewGuard {
-    static final String DIRECTORY = "review-guard";
+public class ReviewGuard {
+    @VisibleForTesting
+    public static final String DIRECTORY = "review-guard";
     private static final List<String> FILES = List.of("package.json", "index.js");
 
     /** @return a copy of the configuration that loads the plugin written under {@code home}, told each agent's step cap */
-    ObjectNode install(ObjectNode config, File home) throws IOException {
+    public ObjectNode install(ObjectNode config, File home) throws IOException {
         File plugin = new File(home, DIRECTORY);
         for (String name : FILES) {
             String resource = DIRECTORY + "/" + name;
