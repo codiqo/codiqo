@@ -1664,7 +1664,17 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   listed finding (`FindingTriage.problems`), and a turn OpenCode ended with an error, the reviewers' sessions included
   (`LocalReviewer.turn`):
   OpenCode has already retried the provider by then. Never add a correction turn, a fork asked for a final answer or a
-  resume prompt: fix the prompt or the schema that let the shape through. The reviewer's whole answer format is stated once, at the end of
+  resume prompt: fix the prompt or the schema that let the shape through.
+- **The step caps are guards, not budgets** (`reviewCoordinatorSteps` 128, `reviewReviewerSteps` 256). An agent that
+  reaches its cap is lost: a reviewer's next tool call is refused and it never answers, and a coordinator gets
+  OpenCode's own max-steps instruction, which "overrides all other instructions" and asks for a prose summary instead
+  of the JSON. Both prompts therefore carry the same STEP BUDGET: count each step ("Step N of M"), spend them
+  economically, stop calling tools `STEPS_RESERVED_FOR_ANSWER` (8) before the cap, and never end on a plan. The
+  coordinator also starts every reviewer before it reads any code: one that reviewed production files itself first
+  reached its cap of 40 while checking the reports. The time limits follow the caps: `reviewTimeout` is 150 minutes
+  (about 65 for a healthy provider at the caps' stop steps), and codiqo-action raises the per-commit deadline to the
+  review limit plus 30 minutes for the follow-ups, 180 by default (`REVIEW_PLUGIN_DEFAULT_MINUTES`); change them
+  together, or the outer deadline kills the analysis before the review can time out on its own. The reviewer's whole answer format is stated once, at the end of
   its prompt (`ANSWER FORMAT`), and overrides any format a task describes, so the coordinator's task prompts name paths and purpose, never an answer
   shape. `notChecked` holds up to three notes each on what a reviewer could not verify (an external artifact, a test it
   could not run, a refused command), `[]` when it checked everything; a lone string is read as one item, as for

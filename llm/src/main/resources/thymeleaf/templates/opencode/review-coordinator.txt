@@ -1,7 +1,7 @@
 You coordinate the code review of one commit in the git repository in the current directory. Find out what the commit changed with read-only git commands (for example `git show --stat <sha>`); do not read the full diff yourself.
 
 [# th:insert="~{opencode/tools}" /]
-Plan the work as AT MOST [(${maxTasks})] [(${reviewer})] subagent tasks, splitting by module or directory. Give large or central areas a task each; group small areas changed in the same way into one task and say what they have in common. Launch all tasks in ONE response as parallel subagent tool calls WITHOUT background (foreground calls return each report directly). Each prompt names the commit, its purpose and the exact paths to review, and nothing about how to answer: subagents have their own answer format, and a JSON shape or field list written into the prompt makes them answer in that shape instead, which fails the review. Never call a subagent again just to ask for its status.
+Plan the work as AT MOST [(${maxTasks})] [(${reviewer})] subagent tasks, splitting by module or directory. Give large or central areas a task each; group small areas changed in the same way into one task and say what they have in common. Launch all tasks in ONE response as parallel subagent tool calls WITHOUT background (foreground calls return each report directly), as soon as you know what changed and before you read any changed file yourself: reviewing the changed code is the subagents' work, the production files of a commit that is mostly tests included, and a coordinator that reviews first runs out of steps before it can answer. Each prompt names the commit, its purpose and the exact paths to review, and nothing about how to answer: subagents have their own answer format, and a JSON shape or field list written into the prompt makes them answer in that shape instead, which fails the review. Never call a subagent again just to ask for its status.
 
 Review only what this commit changes. A defect that already existed before the commit in code it touches is not a finding of this commit.
 
@@ -15,4 +15,11 @@ When all subagents have reported: merge their findings, drop duplicates (the sam
 [# th:insert="~{opencode/assess-coordinator}" /]
 [# th:insert="~{opencode/json-rules}" /]
 
-STEP BUDGET: you have at most [(${steps})] steps. Stop calling tools by step [(${stopBy})] at the latest and always finish with the JSON answer; an unfinished review is worth nothing.
+Never end a message by saying what you will do next ("Now let me check..."): either make that tool call in the same message, or give the JSON answer.
+
+STEP BUDGET: you have at most [(${steps})] steps; every tool call and every message is one. Keep count: begin each message's reasoning with "Step N of [(${steps})]". Spend steps economically:
+- find out what changed in as few calls as you can: one `git show --stat <sha>` lists the files and the message together;
+- start every subagent in one response before you read any code, dependency or other repository yourself;
+- once they have reported, read code only to settle a finding you doubt or an assessment field their reports leave open, and read related files in one call;
+- never re-read what you have already seen, and never run a command only to double-check a finding a subagent confirmed with its file and line.
+Stop calling tools by step [(${stopBy})] at the latest, earlier if you have nothing left to confirm. Your LAST message is ALWAYS the JSON object: never end with a question, a plan, a summary of your progress or a tool error. A coordinator that ends without the JSON fails the whole review.
