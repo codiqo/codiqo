@@ -44,6 +44,7 @@ class AnalysisEngineReviewTest {
         request.setReviewBaseUrl("http://127.0.0.1:11434/v1");
         request.setReviewTimeoutMinutes("45");
         request.setReviewRelayRetries("5");
+        request.setReviewTemperature("0.6");
         RunArgs args = new RunArgs();
 
         AnalysisEngine.applyReviewSettings(request, args);
@@ -52,6 +53,8 @@ class AnalysisEngineReviewTest {
         assertEquals("http://127.0.0.1:11434/v1", args.getReviewBaseUrl());
         assertEquals(Duration.ofMinutes(45), args.getReviewTimeout());
         assertEquals(5, args.getReviewRelayRetries());
+        assertEquals(0.6, args.getReviewTemperature());
+        assertEquals(new RunArgs().getReviewTopP(), args.getReviewTopP());
         assertEquals(new RunArgs().getReviewCoordinatorModel(), args.getReviewCoordinatorModel(), "an unset setting keeps its default");
         assertEquals(new File("/work/build/codiqo"), args.getReviewTraceDirectory());
     }

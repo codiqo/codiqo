@@ -1524,9 +1524,12 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   `LlmRelay`, a loopback relay that refuses callers without its per-review secret. For the backend's LLM proxy it adds
   the credential and the project's code (`LocalReviewRun.PROJECT_HEADER`, `X-Codiqo-Project`, the code the REST API
   names the project by, so a project with an LLM key of its own pays for its reviews) per request; a direct endpoint (a local Ollama daemon) gets its own key, or none, and the whole review
-  timeout to start answering instead of the relay's first-byte limit. The relay also sets the scoring prompt's sampling
-  (`temperature`, `top_p`, `seed` from `RunArgs`) on every chat completion: OpenCode 2.0 sends none of them, wherever
-  its configuration puts them (checked on 2.0.20 and 2.0.25). It sets them on the OpenAI SDK's own request body
+  timeout to start answering instead of the relay's first-byte limit. The relay also sets the review's sampling
+  (`reviewTemperature` 1.0, `reviewTopP` 0.95, and no seed) on every chat completion: OpenCode 2.0 sends none of them,
+  wherever its configuration puts them (checked on 2.0.20, 2.0.25 and 2.0.32). It used the scoring prompt's 0.0 / 0.8 /
+  seed 42 until a coordinator ran one grep 95 times with the same reasoning up to its step cap; 1.0 / 0.95 is what
+  DeepSeek-V4.1-Flash's model card recommends and both review models' agentic evaluations use, and a fixed seed over a
+  nearly identical context would draw the same tokens again. Scoring keeps `llmTemperature` / `llmTopP` / `llmSeed`. It sets them on the OpenAI SDK's own request body
   (`ChatCompletionCreateParams.Body`, read and written with `ObjectMappers.jsonMapper()`), which keeps every field it
   does not model as OpenCode sent it; its error bodies are the SDK's `ErrorObject`. A chat completion it cannot read is
   refused with 400, since it would leave without that sampling. Write OpenAI JSON with the SDK's
