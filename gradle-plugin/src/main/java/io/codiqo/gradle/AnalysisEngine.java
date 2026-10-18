@@ -691,6 +691,8 @@ public class AnalysisEngine {
         Optional.ofNullable(request.getReviewReviewerModel()).filter(StringUtils::isNotBlank).ifPresent(args::setReviewReviewerModel);
         Optional.ofNullable(request.getReviewTimeoutMinutes()).filter(StringUtils::isNotBlank).map(Long::parseLong)
                 .ifPresent(minutes -> args.setReviewTimeout(Duration.ofMinutes(minutes)));
+        Optional.ofNullable(request.getReviewTemperature()).filter(StringUtils::isNotBlank).map(Double::parseDouble).ifPresent(args::setReviewTemperature);
+        Optional.ofNullable(request.getReviewTopP()).filter(StringUtils::isNotBlank).map(Double::parseDouble).ifPresent(args::setReviewTopP);
         Optional.ofNullable(request.getReviewRelayRetries()).filter(StringUtils::isNotBlank).map(Integer::parseInt).ifPresent(args::setReviewRelayRetries);
         Optional.ofNullable(request.getReviewRelayTimeoutSeconds()).filter(StringUtils::isNotBlank).map(Long::parseLong)
                 .ifPresent(seconds -> args.setReviewRelayRequestTimeout(Duration.ofSeconds(seconds)));

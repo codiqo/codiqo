@@ -94,23 +94,23 @@ class LlmRelayTest {
         assertEquals(CREDENTIAL, upstreamAuthorization.get(), "the secret never leaves the machine; the credential replaces it");
         assertEquals("/v1/models", upstreamPath.get());
     }
-    /** OpenCode sends no sampling, so every chat completion leaves with the scoring prompt's, whatever the agent sent */
+    /** every chat completion leaves with the review's sampling and no seed, whatever the agent sent */
     @Test
-    void aChatCompletionLeavesWithTheScoringPromptsSampling() throws Exception {
+    void aChatCompletionLeavesWithTheReviewsSampling() throws Exception {
         firstChunkRead.countDown();
         HttpRequest request = HttpRequest.newBuilder(URI.create(relay.getUrl() + "/chat/completions"))
                 .header(HttpHeaderNames.AUTHORIZATION.toString(), RequestAuthorizer.bearer(relay.getSecret()))
                 .header(HttpHeaderNames.CONTENT_TYPE.toString(), HttpHeaderValues.APPLICATION_JSON.toString())
-                .POST(HttpRequest.BodyPublishers.ofString(JSON.objectNode().put("model", "m").put("stream", true).put("temperature", 1.0).toString()))
+                .POST(HttpRequest.BodyPublishers.ofString(JSON.objectNode().put("model", "m").put("stream", true).put("temperature", 0.3).put("seed", 42).toString()))
                 .build();
         HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
 
         RunArgs args = relayArgs();
         JsonNode forwarded = JsonMapper.builder().build().readTree(upstreamBody.get());
         assertEquals(HttpResponseStatus.OK.code(), response.statusCode());
-        assertEquals(args.getLlmTemperature(), forwarded.path("temperature").asDouble());
-        assertEquals(args.getLlmTopP(), forwarded.path("top_p").asDouble());
-        assertEquals(args.getLlmSeed(), forwarded.path("seed").asInt());
+        assertEquals(args.getReviewTemperature(), forwarded.path("temperature").asDouble());
+        assertEquals(args.getReviewTopP(), forwarded.path("top_p").asDouble());
+        assertTrue(forwarded.path("seed").isMissingNode(), "a fixed seed would draw the same tokens over a nearly identical context");
         assertEquals("m", forwarded.path("model").asString(), "the rest of the request is untouched");
     }
     /**
@@ -132,10 +132,10 @@ class LlmRelayTest {
         RunArgs args = relayArgs();
         JsonMapper mapper = JsonMapper.builder().build();
         ObjectNode expected = (ObjectNode) mapper.readTree(sent);
-        expected.put("temperature", args.getLlmTemperature()).put("top_p", args.getLlmTopP()).put("seed", args.getLlmSeed());
+        expected.put("temperature", args.getReviewTemperature()).put("top_p", args.getReviewTopP());
         assertEquals(expected, mapper.readTree(upstreamBody.get()));
     }
-    /** it could not leave with the scoring prompt's sampling, so the turn fails rather than going on unseeded */
+    /** it could not leave with the review's sampling, so the turn fails rather than going on with the provider's */
     @Test
     void aBodyThatIsNotAChatCompletionRequestIsRefused() throws Exception {
         firstChunkRead.countDown();

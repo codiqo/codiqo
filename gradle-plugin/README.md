@@ -143,8 +143,8 @@ call their models through Codiqo's LLM proxy with the run's credential. A review
 excludes the commit as `LOCAL_REVIEW_FAILURE`; the review's trace goes with the submission.
 `-Pcodiqo.review=false` turns it off. The other settings match the Maven goal's:
 `-Pcodiqo.review.baseUrl`, `.coordinatorModel`, `.reviewerModel`, `.timeoutMinutes`,
-`.relayRetries`, `.relayTimeoutSeconds` and `.traceDirectory` (default: the analysis's output
-directory).
+`.temperature`, `.topP`, `.relayRetries`, `.relayTimeoutSeconds` and `.traceDirectory` (default: the
+analysis's output directory).
 
 ## codiqoIndexCommits
 

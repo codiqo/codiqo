@@ -53,6 +53,8 @@ public class AnalysisRequest implements Serializable {
     private String reviewCoordinatorModel;
     private String reviewReviewerModel;
     private String reviewTimeoutMinutes;
+    private String reviewTemperature;
+    private String reviewTopP;
     private String reviewRelayRetries;
     private String reviewRelayTimeoutSeconds;
     private String reviewTraceDirectory;
