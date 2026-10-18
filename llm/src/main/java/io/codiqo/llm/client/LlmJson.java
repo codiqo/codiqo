@@ -1,19 +1,9 @@
 package io.codiqo.llm.client;
 
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import java.util.stream.Collectors;
-
-import org.apache.commons.lang3.StringUtils;
 
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Range;
 
 import lombok.Value;
 import lombok.experimental.UtilityClass;
@@ -38,10 +28,6 @@ import tools.jackson.databind.util.StdDateFormat;
 @UtilityClass
 public class LlmJson {
     private static final ObjectMapper ANSWER_MAPPER = responseMapper();
-    /** where an answer object can start: an opening brace and a field name */
-    private static final Pattern OBJECT_START = Pattern.compile("\\{\\s*\"");
-    /** a JSON string, its escapes included */
-    private static final Pattern STRING_LITERAL = Pattern.compile("\"(?:[^\"\\\\]|\\\\.)*\"");
     /** reads one value and stops there, so the text after an object does not decide whether the object parses */
     private static final ObjectReader OBJECT_FINDER = ANSWER_MAPPER.reader().without(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
 
@@ -76,48 +62,32 @@ public class LlmJson {
         return ANSWER_MAPPER.treeToValue(answer, type);
     }
     /**
-     * The JSON object inside a model's answer. Each opening brace followed by a field name is a candidate, which Jackson
-     * reads as one object and no further, so a markdown fence and prose before or after the object do not matter
-     * (coordinators routinely open with "All 7 reviewers reported..."), while a brace in prose ({@code if (x) { return; }})
-     * or an empty example ({@code {}}) is never one. The longest object read wins, so a short example in the prose
-     * cannot stand in for the answer, and the objects nested in one that was read are not candidates of their own.
+     * The JSON object inside a model's answer: the largest structure Jackson reads from any opening brace, read one value
+     * deep and no further. A markdown fence and prose before or after the object do not matter (coordinators routinely
+     * open with "All 7 reviewers reported..."), and neither does a brace in that prose ({@code if (x) { return; }}, before
+     * 59 of 1,645 answers in a week of reviews) or a whole object quoted from the reviewed code ({@code {"mcpServers": {}}},
+     * before 2 of them): each is smaller than the answer. The objects nested in one that was read are not tried.
      *
      * <p>
-     * A candidate Jackson cannot read is a broken answer, and no object inside it stands in for it: a reviewer once wrote
-     * {@code {"file":"file":...}} in one of its labels, and the label after the fault was taken for the whole answer,
-     * which then failed for a missing {@code unitLabels} field. Inside means before its own closing brace or, when it
-     * never closes (an unfinished example in the prose), before the fault. With no object left, the broken candidate
-     * that read furthest is returned from its opening brace, so the caller's read fails with Jackson's error at the real
-     * fault; with no candidate at all, the text is returned as it is.
+     * When the largest structure is one Jackson could not read, the answer is broken, and it is returned from its opening
+     * brace so the caller's read fails with Jackson's error at the real fault: a reviewer once wrote
+     * {@code {"file":"file":...}} in one of its labels, and taking the next label for the answer failed the review for a
+     * missing {@code unitLabels} field instead. Size is measured up to the fault, so an answer that breaks before most of
+     * its text cannot be told from a fragment, and one of its nested objects is taken; that read then fails on a missing
+     * field. Text with no brace is returned as it is.
      */
     private static String jsonObject(String raw) {
         String text = raw.strip();
-        Map<Boolean, List<Candidate>> byCompleteness = candidates(text).stream().collect(Collectors.partitioningBy(Candidate::isComplete));
-        List<Candidate> broken = byCompleteness.get(false);
-        List<Range<Integer>> brokenSpans = broken.stream()
-                .map(candidate -> Range.closedOpen(candidate.getStart(), closingBrace(text, candidate.getStart()).orElse(candidate.getEnd())))
-                .toList();
-        Optional<Candidate> answer = byCompleteness.get(true).stream()
-                .filter(candidate -> brokenSpans.stream().noneMatch(span -> span.contains(candidate.getStart())))
-                .max(Comparator.comparingInt(Candidate::length));
-        if (answer.isPresent()) {
-            return text.substring(answer.get().getStart(), answer.get().getEnd());
+        Optional<Candidate> largest = Optional.empty();
+        int start = text.indexOf('{');
+        while (start >= 0) {
+            Candidate candidate = read(text, start);
+            if (candidate.length() > largest.map(Candidate::length).orElse(0)) {
+                largest = Optional.of(candidate);
+            }
+            start = text.indexOf('{', candidate.isComplete() ? candidate.getEnd() : start + 1);
         }
-        return broken.stream()
-                .max(Comparator.comparingInt(Candidate::length))
-                .map(candidate -> text.substring(candidate.getStart()))
-                .orElse(text);
-    }
-    private static List<Candidate> candidates(String text) {
-        List<Candidate> toReturn = Lists.newArrayList();
-        Matcher start = OBJECT_START.matcher(text);
-        int from = 0;
-        while (start.find(from)) {
-            Candidate candidate = read(text, start.start());
-            toReturn.add(candidate);
-            from = candidate.isComplete() ? candidate.getEnd() : start.start() + 1;
-        }
-        return toReturn;
+        return largest.map(candidate -> text.substring(candidate.getStart(), candidate.isComplete() ? candidate.getEnd() : text.length())).orElse(text);
     }
     private static Candidate read(String text, int start) {
         try (JsonParser parser = OBJECT_FINDER.createParser(text.substring(start))) {
@@ -127,25 +97,6 @@ public class LlmJson {
             long fault = Objects.isNull(err.getLocation()) ? 0 : Math.max(0, err.getLocation().getCharOffset());
             return new Candidate(start, start + Math.toIntExact(fault), false);
         }
-    }
-    /**
-     * Just past the brace that closes the one at {@code start}, counted with the strings from there on blanked out, since
-     * they hold code and its braces; empty when it never closes.
-     */
-    private static Optional<Integer> closingBrace(String text, int start) {
-        String braces = STRING_LITERAL.matcher(text.substring(start)).replaceAll(literal -> StringUtils.repeat(' ', literal.group().length()));
-        int depth = 0;
-        for (int i = 0; i < braces.length(); i++) {
-            depth += switch (braces.charAt(i)) {
-                case '{' -> 1;
-                case '}' -> -1;
-                default -> 0;
-            };
-            if (depth == 0) {
-                return Optional.of(start + i + 1);
-            }
-        }
-        return Optional.empty();
     }
 
     @Value
