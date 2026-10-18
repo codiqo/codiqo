@@ -3,11 +3,9 @@ package io.codiqo.llm.client;
 import java.util.Objects;
 import java.util.Optional;
 
-import org.apache.commons.lang3.BooleanUtils;
-import org.apache.commons.lang3.tuple.ImmutablePair;
-
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
 
+import lombok.Value;
 import lombok.experimental.UtilityClass;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.JsonParser;
@@ -64,62 +62,52 @@ public class LlmJson {
         return ANSWER_MAPPER.treeToValue(answer, type);
     }
     /**
-     * The JSON object inside a model's answer: the longest object that parses from some opening brace, read only as
-     * far as that object ends. That covers a bare object, a markdown fence around it, and prose before or after it;
-     * agent coordinators routinely open with "All 7 reviewers reported..." before the object, which a fence-only check
-     * rejected. A brace inside the prose, such as a quoted {@code if (x) { return; }}, does not parse and is skipped,
-     * wherever the prose is: cutting every candidate at the last closing brace of the whole text made trailing prose with
-     * a brace in it fail every candidate, because Jackson 3 rejects trailing tokens by default. The longest object wins
-     * so an example such as {@code {}} in the prose cannot stand in for the answer. An object that starts before the point
-     * where an earlier candidate failed (the parser read into it before failing) lies inside that broken object (a bug inside an answer whose string was never
-     * closed) and never stands in for it: the answer is then unreadable, as it is, so the caller asks for a repair. When
-     * nothing parses the answer is returned as it is, so the caller's read fails with Jackson's own error on the real text.
+     * The JSON object inside a model's answer: the largest structure Jackson reads from any opening brace, read one value
+     * deep and no further. A markdown fence and prose before or after the object do not matter (coordinators routinely
+     * open with "All 7 reviewers reported..."), and neither does a brace in that prose ({@code if (x) { return; }}, before
+     * 59 of 1,645 answers in a week of reviews) or a whole object quoted from the reviewed code ({@code {"mcpServers": {}}},
+     * before 2 of them): each is smaller than the answer. The objects nested in one that was read are not tried.
+     *
+     * <p>
+     * When the largest structure is one Jackson could not read, the answer is broken, and it is returned from its opening
+     * brace so the caller's read fails with Jackson's error at the real fault: a reviewer once wrote
+     * {@code {"file":"file":...}} in one of its labels, and taking the next label for the answer failed the review for a
+     * missing {@code unitLabels} field instead. Size is measured up to the fault, so an answer that breaks before most of
+     * its text cannot be told from a fragment, and one of its nested objects is taken; that read then fails on a missing
+     * field. Text with no brace is returned as it is.
      */
     private static String jsonObject(String raw) {
-        String trimmed = raw.strip();
-        String toReturn = trimmed;
-        int longest = 0;
-        long brokenUntil = -1;
-        int start = trimmed.indexOf('{');
+        String text = raw.strip();
+        Optional<Candidate> largest = Optional.empty();
+        int start = text.indexOf('{');
         while (start >= 0) {
-            Candidate candidate = objectAt(trimmed, start);
-            int next = start + 1;
-            if (candidate.getObject().isPresent()) {
-                String object = candidate.getObject().get();
-                if (BooleanUtils.and(new boolean[] { start >= brokenUntil, object.length() > longest })) {
-                    toReturn = object;
-                    longest = object.length();
-                }
-                /** the braces inside a parsed object only start the objects nested in it, never a longer one */
-                next = start + object.length();
-            } else {
-                brokenUntil = Math.max(brokenUntil, candidate.getFailedAt());
+            Candidate candidate = read(text, start);
+            if (candidate.length() > largest.map(Candidate::length).orElse(0)) {
+                largest = Optional.of(candidate);
             }
-            start = trimmed.indexOf('{', next);
+            start = text.indexOf('{', candidate.isComplete() ? candidate.getEnd() : start + 1);
         }
-        return toReturn;
+        return largest.map(candidate -> text.substring(candidate.getStart(), candidate.isComplete() ? candidate.getEnd() : text.length())).orElse(text);
     }
-    /** the object that starts at {@code start}, up to its own closing brace, or where in the text its parse failed */
-    private static Candidate objectAt(String text, int start) {
+    private static Candidate read(String text, int start) {
         try (JsonParser parser = OBJECT_FINDER.createParser(text.substring(start))) {
-            if (OBJECT_FINDER.readTree(parser) instanceof ObjectNode) {
-                return new Candidate(Optional.of(text.substring(start, start + Math.toIntExact(parser.currentLocation().getCharOffset()))), start);
-            }
-            return new Candidate(Optional.empty(), start);
+            OBJECT_FINDER.readTree(parser);
+            return new Candidate(start, start + Math.toIntExact(parser.currentLocation().getCharOffset()), true);
         } catch (JacksonException err) {
-            long offset = Objects.isNull(err.getLocation()) ? 0 : Math.max(0, err.getLocation().getCharOffset());
-            return new Candidate(Optional.empty(), start + offset);
+            long fault = Objects.isNull(err.getLocation()) ? 0 : Math.max(0, err.getLocation().getCharOffset());
+            return new Candidate(start, start + Math.toIntExact(fault), false);
         }
     }
-    private static final class Candidate extends ImmutablePair<Optional<String>, Long> {
-        private Candidate(Optional<String> object, long failedAt) {
-            super(object, failedAt);
-        }
-        private Optional<String> getObject() {
-            return getLeft();
-        }
-        private long getFailedAt() {
-            return getRight();
+
+    @Value
+    private static class Candidate {
+        int start;
+        /** past its closing brace when Jackson read it whole, otherwise where the read failed */
+        int end;
+        boolean complete;
+
+        private int length() {
+            return end - start;
         }
     }
 }
