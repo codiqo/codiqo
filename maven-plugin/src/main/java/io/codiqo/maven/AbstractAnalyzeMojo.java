@@ -1675,14 +1675,6 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     protected void doOnFailure(RunArgs args, Exception err) {
     }
     /**
-     * when {@link #scoresFailedBuild} holds, a build-pipeline failure does not exclude the commit
-     * outright: the change still represents real developer work, so score it in degraded mode instead.
-     * falls back to exclusion when it does not (no review started), when the commit has no analyzable diff files,
-     * and mirrors the revert gate that the successful-build path applies in doExecute. only reachable from
-     * historical commit analysis — analyze-uncommitted-changes never forks a build (it analyzes the working
-     * tree against the host session's already-resolved reactor), so it has no failure signal to degrade on.
-     */
-    /**
      * Excludes the commit with its raw git diff, so the backend still records what it changed (the build-failure path
      * does the same): indexing has not run, so the populator emits diff-only file models without code units or coverage.
      */
@@ -1704,6 +1696,14 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         SubmissionAssembly.excluded(ctx);
         doExcludeAnalysis(args.getCommitId(), reason, category, null, ctx.getSubmissionModel().getFiles());
     }
+    /**
+     * when {@link #scoresFailedBuild} holds, a build-pipeline failure does not exclude the commit
+     * outright: the change still represents real developer work, so score it in degraded mode instead.
+     * falls back to exclusion when it does not (no review started), when the commit has no analyzable diff files,
+     * and mirrors the revert gate that the successful-build path applies in doExecute. only reachable from
+     * historical commit analysis — analyze-uncommitted-changes never forks a build (it analyzes the working
+     * tree against the host session's already-resolved reactor), so it has no failure signal to degrade on.
+     */
     protected void doDegradedAnalysis(RunArgs args, String reason, AnalysisExcludeCategory category, String detail) throws Exception {
         doDegradedAnalysis(args, reason, category, detail, false);
     }

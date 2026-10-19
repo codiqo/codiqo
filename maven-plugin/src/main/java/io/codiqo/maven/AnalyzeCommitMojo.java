@@ -154,12 +154,6 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                     commitId, CommitExclusions.creditedAuthorEmail(args)));
         }
         doBeforeAnalysis(args);
-        /**
-         * After doBeforeAnalysis, which is where submit-commit-analysis learns the project is running and the commit
-         * may halt it. Checked in doPrepare, a missing agent failed before that, so it halted nothing and every
-         * scheduled run picked the same commit and failed the same way.
-         */
-        requireCoverageAgent(args);
 
         File temp = Files.createTempDirectory("codiqo").toFile();
         temp.deleteOnExit();
@@ -231,6 +225,13 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                 excludeWithDiff(args, new JGitDeltaAnalyzer(new MavenLogFactory(getLog()), args).analyze(), nothingToAnalyse.get().getReason(), nothingToAnalyse.get().getCategory());
                 return;
             }
+            /**
+             * After doBeforeAnalysis, which is where submit-commit-analysis learns the project is running and the commit
+             * may halt it: checked in doPrepare, a missing agent failed before that, so it halted nothing and every
+             * scheduled run picked the same commit and failed the same way. After the gate above too, since a commit with
+             * nothing to measure needs no agent, and before anything is built or reviewed.
+             */
+            requireCoverageAgent(args);
 
             /**
              * host-side ProjectBuilder calls (pre-flight, root and module model building) resolve snapshot parents
