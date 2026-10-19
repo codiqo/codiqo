@@ -3,7 +3,6 @@ package io.codiqo.gradle;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -283,12 +282,14 @@ public class GradleModelCollector {
                 + "declare a repository that serves it, or set codiqo.jdtLombokAgent=false for a project that does not use lombok", coordinate, failure));
     }
     private static String pinnedVersion(String key) {
-        try (InputStream stream = GradleModelCollector.class.getClassLoader().getResourceAsStream(VERSIONS_RESOURCE)) {
-            Properties versions = new Properties();
-            versions.load(Objects.requireNonNull(stream, VERSIONS_RESOURCE + " missing from the plugin classpath"));
-            return Objects.requireNonNull(versions.getProperty(key), key + " missing from " + VERSIONS_RESOURCE);
-        } catch (IOException err) {
-            throw new UncheckedIOException(err);
+        for (;;) {
+            try (InputStream stream = GradleModelCollector.class.getClassLoader().getResourceAsStream(VERSIONS_RESOURCE)) {
+                Properties versions = new Properties();
+                versions.load(Objects.requireNonNull(stream, VERSIONS_RESOURCE + " missing from the plugin classpath"));
+                return Objects.requireNonNull(versions.getProperty(key), key + " missing from " + VERSIONS_RESOURCE);
+            } catch (IOException err) {
+                ExceptionUtils.wrapAndThrow(err);
+            }
         }
     }
     private static boolean boolProp(Project project, String name, boolean fallback) {
