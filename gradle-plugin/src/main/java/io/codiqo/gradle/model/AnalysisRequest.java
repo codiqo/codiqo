@@ -82,6 +82,9 @@ public class AnalysisRequest implements Serializable {
     private boolean jdtlsUseSnapshot;
     private boolean jdtUseSharedIndex = true;
     private boolean jdtIncludeDecompiledSources;
+    private boolean jdtLombokAgent = true;
+    private String lombokAgentJar;
+    private String lombokAgentError;
     private long importTimeoutMinutes;
     private long lspQueryTimeoutSeconds;
 

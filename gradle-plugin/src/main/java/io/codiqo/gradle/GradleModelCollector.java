@@ -1,16 +1,22 @@
 package io.codiqo.gradle;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.Set;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.gradle.api.GradleException;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
+import org.gradle.api.artifacts.ResolveException;
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier;
 import org.gradle.api.artifacts.result.ResolvedArtifactResult;
 import org.gradle.api.plugins.JavaPluginExtension;
@@ -38,6 +44,8 @@ public class GradleModelCollector {
             "compileClasspath", "runtimeClasspath", "testCompileClasspath", "testRuntimeClasspath");
     private static final String JAR_PACKAGING = "jar";
     private static final String CODIQO_OUTPUT_DIR = "codiqo";
+    private static final String VERSIONS_RESOURCE = "codiqo.versions";
+    private static final String LOMBOK_MODULE = "org.projectlombok:lombok";
 
     public AnalysisRequest collect(Project root, CodiqoExtension ext) {
         AnalysisRequest request = new AnalysisRequest();
@@ -104,6 +112,10 @@ public class GradleModelCollector {
         request.setJdtlsUseSnapshot(boolProp(root, "codiqo.jdtlsUseSnapshot", ext.isJdtlsUseSnapshot()));
         request.setJdtUseSharedIndex(boolProp(root, "codiqo.jdtUseSharedIndex", ext.isJdtUseSharedIndex()));
         request.setJdtIncludeDecompiledSources(boolProp(root, "codiqo.jdtIncludeDecompiledSources", ext.isJdtIncludeDecompiledSources()));
+        request.setJdtLombokAgent(boolProp(root, "codiqo.jdtLombokAgent", ext.isJdtLombokAgent()));
+        if (request.isJdtLombokAgent()) {
+            resolveLombokAgent(root, request);
+        }
         request.setImportTimeoutMinutes(longProp(root, "codiqo.importTimeoutMinutes", ext.getImportTimeoutMinutes()));
         request.setLspQueryTimeoutSeconds(longProp(root, "codiqo.lspQueryTimeoutSeconds", ext.getLspQueryTimeoutSeconds()));
 
@@ -239,6 +251,45 @@ public class GradleModelCollector {
     }
     private static String stringProp(Project project, String name, String fallback) {
         return Optional.ofNullable(project.findProperty(name)).map(Object::toString).orElse(fallback);
+    }
+    /**
+     * The lombok jar the Maven goal attaches to the language server as well, at the version pinned in this plugin's
+     * codiqo.versions. It is resolved as Gradle's jacoco plugin resolves the JaCoCo agent codiqo pins, from the
+     * repositories of a project that applies the Java plugin: a root that only holds subprojects often declares no
+     * repository of its own, and resolving there failed every Gradle analysis of such a build. The first Java project
+     * that resolves it wins.
+     *
+     * <p>When none does, the reason travels to the worker instead of failing here, before the build: an excluded or
+     * build-failed commit never starts the language server and must still be reported, while a full analysis fails
+     * before its review starts, naming the switch. Starting the language server without lombok instead would stop call
+     * hierarchy at every member lombok generates in a project that uses it, and nothing would say so.
+     */
+    private static void resolveLombokAgent(Project root, AnalysisRequest request) {
+        String coordinate = Joiner.on(':').join(LOMBOK_MODULE, pinnedVersion("lombok.version"));
+        String failure = "no project of the build applies the Java plugin";
+        for (Project project : root.getAllprojects()) {
+            if (Objects.nonNull(project.getExtensions().findByType(JavaPluginExtension.class))) {
+                Configuration config = project.getConfigurations().detachedConfiguration(project.getDependencies().create(coordinate));
+                config.setTransitive(false);
+                try {
+                    request.setLombokAgentJar(config.getSingleFile().getAbsolutePath());
+                    return;
+                } catch (ResolveException err) {
+                    failure = project.getPath() + ": " + ExceptionUtils.getRootCauseMessage(err);
+                }
+            }
+        }
+        request.setLombokAgentError(String.format("codiqo attaches %s to the language server and no Java project of the build could resolve it (%s): "
+                + "declare a repository that serves it, or set codiqo.jdtLombokAgent=false for a project that does not use lombok", coordinate, failure));
+    }
+    private static String pinnedVersion(String key) {
+        try (InputStream stream = GradleModelCollector.class.getClassLoader().getResourceAsStream(VERSIONS_RESOURCE)) {
+            Properties versions = new Properties();
+            versions.load(Objects.requireNonNull(stream, VERSIONS_RESOURCE + " missing from the plugin classpath"));
+            return Objects.requireNonNull(versions.getProperty(key), key + " missing from " + VERSIONS_RESOURCE);
+        } catch (IOException err) {
+            throw new UncheckedIOException(err);
+        }
     }
     private static boolean boolProp(Project project, String name, boolean fallback) {
         return Optional.ofNullable(project.findProperty(name)).map(Object::toString).map(Boolean::parseBoolean).orElse(fallback);

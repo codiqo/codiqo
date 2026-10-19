@@ -26,6 +26,7 @@ class ExtensionDefaultsDriftTest {
         assertEquals(reference.isJdtlsUseSnapshot(), ext.isJdtlsUseSnapshot());
         assertEquals(reference.isJdtUseSharedIndex(), ext.isJdtUseSharedIndex());
         assertEquals(reference.isJdtIncludeDecompiledSources(), ext.isJdtIncludeDecompiledSources());
+        assertEquals(reference.isJdtLombokAgent(), ext.isJdtLombokAgent());
 
         assertEquals(reference.isReviewEnabled(), ext.isReview(), "local mode is the default on both build tools");
     }
