@@ -84,7 +84,7 @@ public final class LocalReviewRun implements AutoCloseable {
         LocalReview finished = reviewed.getReview();
         reviewed.getTriage().ifPresent(this::logTriage);
 
-        LocalReviewModel model = LocalReviewModels.toModel(finished, reviewed.getTriage());
+        LocalReviewModel model = LocalReviewModels.toModel(finished, reviewed.getLabels(), reviewed.getTriage());
         if (reviewed.getLabels().isPresent()) {
             labelById(ctx.getSubmissionModel(), checklist, finished, reviewed.getLabels().get());
         } else {
