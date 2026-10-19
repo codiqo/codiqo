@@ -77,6 +77,7 @@ public class CodiqoExtension {
     private boolean jdtlsUseSnapshot;
     private boolean jdtUseSharedIndex = true;
     private boolean jdtIncludeDecompiledSources;
+    private boolean jdtLombokAgent = true;
     private long importTimeoutMinutes = 15;
     private long lspQueryTimeoutSeconds = 30;
 

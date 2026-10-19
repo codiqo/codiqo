@@ -124,6 +124,8 @@ public class AnalysisEngine {
         args.setJdtlsUseSnapshot(request.isJdtlsUseSnapshot());
         args.setJdtUseSharedIndex(request.isJdtUseSharedIndex());
         args.setJdtIncludeDecompiledSources(request.isJdtIncludeDecompiledSources());
+        args.setJdtLombokAgent(request.isJdtLombokAgent());
+        Optional.ofNullable(request.getLombokAgentJar()).map(File::new).ifPresent(args.getAgents()::add);
         args.setImportTimeout(Duration.ofMinutes(request.getImportTimeoutMinutes()));
         args.setLspQueryTimeout(Duration.ofSeconds(request.getLspQueryTimeoutSeconds()));
         applyReviewSettings(request, args);
@@ -194,6 +196,15 @@ public class AnalysisEngine {
                 }
             }
             return;
+        }
+
+        /**
+         * Only a full analysis starts the language server, so a lombok agent the collector could not resolve fails the
+         * run here, before the review is paid for, and never an excluded or build-failed commit, which still gets
+         * reported. The run halts the project until the build's repositories serve the jar or the switch is off.
+         */
+        if (StringUtils.isNotBlank(request.getLombokAgentError())) {
+            throw new IllegalStateException(request.getLombokAgentError());
         }
 
         /**
