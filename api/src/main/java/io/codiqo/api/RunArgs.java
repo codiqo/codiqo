@@ -1341,6 +1341,18 @@ public class RunArgs {
     /** Let JDT decompile class files to answer reference queries for dependencies with no source jar. Off by default — decompiled callers are outside the analyzed project and cost import time. */
     private boolean jdtIncludeDecompiledSources = false;
 
+    /**
+     * Attach lombok to the language-server JVM as a Java agent (see {@link #agents}), so JDT resolves the members
+     * lombok generates and call hierarchy does not stop at them. On by default. A project that does not use lombok
+     * gains nothing from the agent and can turn it off: besides the generated members it patches JDT's search to
+     * support {@code @ExtensionMethod}, making every method pattern varargs, so a caller lookup for {@code get(Object)}
+     * also searches each file that calls any {@code get(..)}, the JDK's class files included. On a project whose
+     * benchmark field initialises a {@code ThreadLocal} with a method reference, that widened lookup reached the file
+     * and JDT threw "rExpression.descriptor is null" (an unguarded dereference added for
+     * eclipse-jdt/eclipse.jdt.core#5214), which fails the run while {@link #failOnJdtlsError} holds.
+     */
+    private boolean jdtLombokAgent = true;
+
     /** Debug port for the language-server JVM, attached with {@code suspend=y} so it waits for a debugger. Development only: set it and the analysis blocks until something connects. */
     @Nullable
     private transient Integer jdtDebugPort;

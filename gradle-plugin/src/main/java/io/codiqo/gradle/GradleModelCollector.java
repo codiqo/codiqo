@@ -1,9 +1,13 @@
 package io.codiqo.gradle;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.Set;
 
 import org.apache.commons.collections4.CollectionUtils;
@@ -11,6 +15,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.gradle.api.GradleException;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
+import org.gradle.api.artifacts.ResolveException;
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier;
 import org.gradle.api.artifacts.result.ResolvedArtifactResult;
 import org.gradle.api.plugins.JavaPluginExtension;
@@ -38,6 +43,8 @@ public class GradleModelCollector {
             "compileClasspath", "runtimeClasspath", "testCompileClasspath", "testRuntimeClasspath");
     private static final String JAR_PACKAGING = "jar";
     private static final String CODIQO_OUTPUT_DIR = "codiqo";
+    private static final String VERSIONS_RESOURCE = "codiqo.versions";
+    private static final String LOMBOK_MODULE = "org.projectlombok:lombok";
 
     public AnalysisRequest collect(Project root, CodiqoExtension ext) {
         AnalysisRequest request = new AnalysisRequest();
@@ -104,6 +111,10 @@ public class GradleModelCollector {
         request.setJdtlsUseSnapshot(boolProp(root, "codiqo.jdtlsUseSnapshot", ext.isJdtlsUseSnapshot()));
         request.setJdtUseSharedIndex(boolProp(root, "codiqo.jdtUseSharedIndex", ext.isJdtUseSharedIndex()));
         request.setJdtIncludeDecompiledSources(boolProp(root, "codiqo.jdtIncludeDecompiledSources", ext.isJdtIncludeDecompiledSources()));
+        request.setJdtLombokAgent(boolProp(root, "codiqo.jdtLombokAgent", ext.isJdtLombokAgent()));
+        if (request.isJdtLombokAgent()) {
+            request.setLombokAgentJar(lombokAgentJar(root));
+        }
         request.setImportTimeoutMinutes(longProp(root, "codiqo.importTimeoutMinutes", ext.getImportTimeoutMinutes()));
         request.setLspQueryTimeoutSeconds(longProp(root, "codiqo.lspQueryTimeoutSeconds", ext.getLspQueryTimeoutSeconds()));
 
@@ -239,6 +250,33 @@ public class GradleModelCollector {
     }
     private static String stringProp(Project project, String name, String fallback) {
         return Optional.ofNullable(project.findProperty(name)).map(Object::toString).orElse(fallback);
+    }
+    /**
+     * The lombok jar the Maven goal attaches to the language server as well, at the version pinned in this plugin's
+     * codiqo.versions, resolved here in the daemon from the root project's repositories as the project's own
+     * dependencies are. A root project that declares no repository cannot resolve it and fails here, before the build,
+     * naming the switch: starting the language server without lombok instead would stop call hierarchy at every member
+     * lombok generates in a project that uses it, and nothing would say so.
+     */
+    private static String lombokAgentJar(Project root) {
+        String coordinate = Joiner.on(':').join(LOMBOK_MODULE, pinnedVersion("lombok.version"));
+        Configuration config = root.getConfigurations().detachedConfiguration(root.getDependencies().create(coordinate));
+        config.setTransitive(false);
+        try {
+            return config.getSingleFile().getAbsolutePath();
+        } catch (ResolveException err) {
+            throw new GradleException("codiqo attaches " + coordinate + " to the language server and could not resolve it from the root project's repositories: "
+                    + "declare a repository that serves it, or set codiqo.jdtLombokAgent=false for a project that does not use lombok", err);
+        }
+    }
+    private static String pinnedVersion(String key) {
+        try (InputStream stream = GradleModelCollector.class.getClassLoader().getResourceAsStream(VERSIONS_RESOURCE)) {
+            Properties versions = new Properties();
+            versions.load(Objects.requireNonNull(stream, VERSIONS_RESOURCE + " missing from the plugin classpath"));
+            return Objects.requireNonNull(versions.getProperty(key), key + " missing from " + VERSIONS_RESOURCE);
+        } catch (IOException err) {
+            throw new UncheckedIOException(err);
+        }
     }
     private static boolean boolProp(Project project, String name, boolean fallback) {
         return Optional.ofNullable(project.findProperty(name)).map(Object::toString).map(Boolean::parseBoolean).orElse(fallback);

@@ -124,6 +124,10 @@ public class AnalysisEngine {
         args.setJdtlsUseSnapshot(request.isJdtlsUseSnapshot());
         args.setJdtUseSharedIndex(request.isJdtUseSharedIndex());
         args.setJdtIncludeDecompiledSources(request.isJdtIncludeDecompiledSources());
+        args.setJdtLombokAgent(request.isJdtLombokAgent());
+        if (request.isJdtLombokAgent()) {
+            args.getAgents().add(new File(request.getLombokAgentJar()));
+        }
         args.setImportTimeout(Duration.ofMinutes(request.getImportTimeoutMinutes()));
         args.setLspQueryTimeout(Duration.ofSeconds(request.getLspQueryTimeoutSeconds()));
         applyReviewSettings(request, args);

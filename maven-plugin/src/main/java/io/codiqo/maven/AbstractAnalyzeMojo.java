@@ -459,6 +459,9 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     @Parameter(property = "codiqo.jdtIncludeDecompiledSources", defaultValue = "false")
     protected boolean jdtIncludeDecompiledSources;
 
+    @Parameter(property = "codiqo.jdtLombokAgent", defaultValue = "true")
+    protected boolean jdtLombokAgent;
+
     @Parameter(property = "codiqo.jdtDebugPort")
     protected Integer jdtDebugPort;
 
@@ -576,6 +579,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         args.setBuildTool(BuildTool.MAVEN);
         args.setJdtUseSharedIndex(jdtUseSharedIndex);
         args.setJdtIncludeDecompiledSources(jdtIncludeDecompiledSources);
+        args.setJdtLombokAgent(jdtLombokAgent);
         args.setJdtDebugPort(jdtDebugPort);
 
         args.setDriverScoreCapMultiplier(driverScoreCapMultiplier);
@@ -597,7 +601,9 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             versions.load(stream);
             String codiqoVersion = requiredVersion(versions, "codiqo.version");
 
-            args.getAgents().addAll(apply(new DefaultArtifact(LOMBOK_GROUP_ID, LOMBOK_ARTIFACT_ID, JAR_EXTENSION, requiredVersion(versions, "lombok.version"))));
+            if (args.isJdtLombokAgent()) {
+                args.getAgents().addAll(apply(new DefaultArtifact(LOMBOK_GROUP_ID, LOMBOK_ARTIFACT_ID, JAR_EXTENSION, requiredVersion(versions, "lombok.version"))));
+            }
             timeMachineExtensionJars = apply(new DefaultArtifact(CODIQO_GROUP_ID, TIME_MACHINE_ARTIFACT_ID, JAR_EXTENSION, codiqoVersion));
 
             /**
