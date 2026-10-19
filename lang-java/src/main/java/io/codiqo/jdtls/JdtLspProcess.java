@@ -8,11 +8,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
+import java.util.zip.ZipOutputStream;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
@@ -27,6 +30,7 @@ import org.slf4j.event.Level;
 import org.zeroturnaround.process.JavaProcess;
 import org.zeroturnaround.process.Processes;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Lists;
 
 import io.codiqo.api.RunArgs;
@@ -41,6 +45,8 @@ public class JdtLspProcess implements Closeable {
     private static final int MIN_JDK_SUN_MISC_UNSAFE_FLAG = 23;
 
     private static final String JAR_EXTENSION = "jar";
+    private static final String RUNTIME_NAME_PREFIX = "JavaSE-";
+    private static final String EMPTY_SOURCES_ARCHIVE = "jdk-without-sources.zip";
     private static final long GRACEFUL_SHUTDOWN_MINUTES = 1L;
     private static final long FORCED_SHUTDOWN_SECONDS = 30L;
 
@@ -48,6 +54,7 @@ public class JdtLspProcess implements Closeable {
     private final Log log;
     private final JavaProcess process;
     private final File dataDir;
+    private final Map<String, Object> runtime;
 
     public JdtLspProcess(LogFactory logFactory, RunArgs args, Fetch fetch, int port) throws IOException {
         this.log = logFactory.getLogger(getClass());
@@ -73,6 +80,14 @@ public class JdtLspProcess implements Closeable {
         this.dataDir = data.toFile();
         this.dataDir.deleteOnExit();
 
+        /**
+         * the JDK the version check above read: codiqo.javaHome, else the one running codiqo. The server runs on exactly
+         * this JDK so that the runtime registered in its settings names the JDK it already knows about (see
+         * runtimeWithoutSources).
+         */
+        File languageServerJdk = Optional.ofNullable(args.getJavaHome()).orElseGet(SystemUtils::getJavaHome);
+        this.runtime = runtimeWithoutSources(languageServerJdk, spawnedJavaVersion, data);
+
         try (Stream<Path> files = Files.list(tempDir.resolve("plugins"))) {
             launcherJar = files
                     .filter(p -> p.getFileName().toString().startsWith("org.eclipse.equinox.launcher_"))
@@ -81,10 +96,7 @@ public class JdtLspProcess implements Closeable {
                     .orElseThrow(() -> new IllegalStateException("could not find 'equinox' launcher jar"));
         }
 
-        String java = SystemUtils.IS_OS_WINDOWS ? "java.exe" : "java";
-        if (Objects.nonNull(args.getJavaHome())) {
-            java = args.getJavaHome().toPath().normalize().resolve("bin").resolve(java).toFile().getAbsolutePath();
-        }
+        String java = languageServerJdk.toPath().normalize().resolve("bin").resolve(SystemUtils.IS_OS_WINDOWS ? "java.exe" : "java").toFile().getAbsolutePath();
 
         List<String> cmd = Lists.newArrayList();
         cmd.add(java);
@@ -121,6 +133,15 @@ public class JdtLspProcess implements Closeable {
          * keeps the call graph working regardless of how the host settings.xml names its repositories.
          */
         cmd.add("-Dmaven.legacyLocalRepo=true");
+
+        /**
+         * JDT launching scans the machine for further JDKs (/usr/lib/jvm, JAVA_HOME_* and friends) and binds each project
+         * to the one matching its release, unless the CI variable is true: GitHub's runners skipped the scan and bound
+         * every project to the server's JDK, while a workstation bound a Java 8 project to an installed JDK 8. A detected
+         * JDK also brings its own source attachment back (see runtimeWithoutSources). Off, every machine resolves the
+         * projects against the one runtime codiqo registers.
+         */
+        cmd.add("-DDetectVMInstallationsJob.disabled=true");
 
         cmd.add("--enable-native-access=ALL-UNNAMED");
         for (String pkg : new String[] {
@@ -193,6 +214,9 @@ public class JdtLspProcess implements Closeable {
     public CompletableFuture<Integer> onExit() {
         return exitFuture;
     }
+    public Map<String, Object> getRuntime() {
+        return runtime;
+    }
     @Override
     public void close() throws IOException {
         try {
@@ -224,6 +248,31 @@ public class JdtLspProcess implements Closeable {
                 }
             }
         }
+    }
+    /**
+     * The server's JDK as its one Java runtime (the java.configuration.runtimes entry), with an empty archive as its
+     * source attachment. Caller searches cover the JRE, and when the JDK ships lib/src.zip JDT parses and resolves the
+     * JDK's own source of every class calling a method of the searched name, under the analysed project's release:
+     * JDK 25's jdk.jpackage LinuxFromParams, which calls copyInto(a, b) and initialises fields with method references,
+     * resolved at Java 11 left a method reference without a descriptor, and the unguarded dereference JDT added for
+     * eclipse-jdt/eclipse.jdt.core#5214 threw "rExpression.descriptor is null", failing the run. GitHub's runner JDKs
+     * ship src.zip and the eclipse-temurin images do not, so the same commit failed on one and passed on the other.
+     * Without sources JDT skips those class files; a caller inside the JDK is outside every analysed project anyway.
+     *
+     * <p>The path is the real one because that is how JDT records the JDK the server runs on: another spelling (the
+     * runner's tool-cache symlink) registers a second runtime and leaves the first, sources and all, in place.
+     */
+    @VisibleForTesting
+    public static Map<String, Object> runtimeWithoutSources(File jdkHome, Runtime.Version version, Path dir) throws IOException {
+        Path emptySources = dir.resolve(EMPTY_SOURCES_ARCHIVE);
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(emptySources))) {
+            zip.finish();
+        }
+        return Map.of(
+                "name", RUNTIME_NAME_PREFIX + version.feature(),
+                "path", jdkHome.toPath().toRealPath().toString(),
+                "sources", emptySources.toString(),
+                "default", true);
     }
     public static Runtime.Version requireLanguageServerJdk(RunArgs args) throws IOException {
         Runtime.Version toReturn = detectSpawnedJavaVersion(args.getJavaHome());
