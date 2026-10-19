@@ -136,7 +136,6 @@ public final class LlmRelay implements AutoCloseable {
      * a round per refused call would end the review after one burst.
      */
     private final AtomicInteger rateLimitRound = new AtomicInteger();
-    /** guards {@link #rateLimitRoundStarted} and {@link #rateLimitRoundEnds} */
     private final Object rateLimitLock = new Object();
     private Instant rateLimitRoundStarted = Instant.EPOCH;
     private Instant rateLimitRoundEnds = Instant.EPOCH;
