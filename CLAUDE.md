@@ -1527,9 +1527,11 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   timeout to start answering instead of the relay's first-byte limit. The relay also sets the review's sampling
   (`reviewTemperature` 1.0, `reviewTopP` 0.95, and no seed) on every chat completion: OpenCode 2.0 sends none of them,
   wherever its configuration puts them (checked on 2.0.20, 2.0.25 and 2.0.32). It used the scoring prompt's 0.0 / 0.8 /
-  seed 42 until a coordinator ran one grep 95 times with the same reasoning up to its step cap; 1.0 / 0.95 is what
-  DeepSeek-V4.1-Flash's model card recommends and both review models' agentic evaluations use, and a fixed seed over a
-  nearly identical context would draw the same tokens again. Scoring keeps `llmTemperature` / `llmTopP` / `llmSeed`. It sets them on the OpenAI SDK's own request body
+  seed 42 until a coordinator ran one grep 95 times with the same reasoning up to its step cap; 1.0 / 0.95 is what the
+  model cards of both review models (GLM-5.3 coordinates, GLM-5.3-Flash reviews) use for their tool-using evaluation,
+  and a fixed seed over a nearly identical context would draw the same tokens again. At 1.0 deepseek-v4.1-flash, the
+  coordinator until then, closed its answer's last array with a brace in 2 of 83 reviews (none of 392 at 0.0): nothing
+  but the prompt holds that answer to JSON, so the coordinator moved to the non-flash GLM-5.3 (`LlmModelUsageIntent`). Scoring keeps `llmTemperature` / `llmTopP` / `llmSeed`. It sets them on the OpenAI SDK's own request body
   (`ChatCompletionCreateParams.Body`, read and written with `ObjectMappers.jsonMapper()`), which keeps every field it
   does not model as OpenCode sent it; its error bodies are the SDK's `ErrorObject`. A chat completion it cannot read is
   refused with 400, since it would leave without that sampling. Write OpenAI JSON with the SDK's
