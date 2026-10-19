@@ -5,8 +5,16 @@ package io.codiqo.api;
  * provider and key. {@link #operation()} is the operation code a call's usage is recorded under.
  */
 public enum LlmModelUsageIntent {
-    /** plans the local review and writes its commit-level answer, through the LLM proxy */
-    LOCAL_REVIEW_COORDINATOR(LlmModel.DEEPSEEK_V4_1_FLASH, "local_review"),
+    /**
+     * Plans the local review and writes its commit-level answer, through the LLM proxy. Nothing but the prompt holds that
+     * answer, one JSON object of several thousand tokens, to JSON: OpenCode's prompt API takes text only, and ollama.com
+     * ignored {@code format} and {@code response_format} for deepseek-v4.1-flash. The coordinator is therefore a non-flash
+     * model: at the review's temperature of 1.0 ({@code RunArgs.reviewTemperature}) deepseek-v4.1-flash closed the
+     * answer's last array with a brace in 2 of 83 reviews, against none of 392 at 0.0, and each of those reviews failed.
+     * Putting deepseek-v4.1-flash back here at 1.0 fails reviews that way, and lowering the temperature to 0.0 instead
+     * repeats tool calls. How often GLM-5.3 slips has not been measured.
+     */
+    LOCAL_REVIEW_COORDINATOR(LlmModel.GLM_5_3, "local_review"),
     /** reviews one part of the commit for the coordinator */
     LOCAL_REVIEW_SUB_AGENT(LlmModel.GLM_5_3_FLASH, "local_review"),
     SKIP_REQUEST_DETECTION(LlmModel.DEEPSEEK_V4_1_FLASH, "skip_request_detection"),
