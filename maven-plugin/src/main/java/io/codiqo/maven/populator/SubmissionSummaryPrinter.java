@@ -436,13 +436,12 @@ public class SubmissionSummaryPrinter implements SubmissionPopulator {
             if (emptyScaler) {
                 return fixed(driver) + " (no baseline samples in this bucket)";
             }
-            String lines = weighted(DriverScore.WEIGHT_LINES, projectedLines);
-            String invocations = weighted(DriverScore.WEIGHT_INVOCATIONS, projectedInvocations);
+            String l = weighted(DriverScore.WEIGHT_LINES, projectedLines);
+            String i = weighted(DriverScore.WEIGHT_INVOCATIONS, projectedInvocations);
             if (modify()) {
-                return fixed(driver) + " = (" + lines + "+" + invocations + ")/" + fixed(DriverScore.MODIFY_WEIGHT);
+                return fixed(driver) + " = (" + l + "+" + i + ")/" + fixed(DriverScore.MODIFY_WEIGHT);
             }
-            return fixed(driver) + " = (" + lines + "+" + weighted(DriverScore.WEIGHT_NCSS, projectedNcss) + "+" + invocations + ")/"
-                    + fixed(DriverScore.TOTAL_WEIGHT);
+            return fixed(driver) + " = (" + l + "+" + weighted(DriverScore.WEIGHT_NCSS, projectedNcss) + "+" + i + ")/" + fixed(DriverScore.TOTAL_WEIGHT);
         }
         public String deviationNcssLabel() {
             return modify() ? NOT_APPLICABLE : percent(deviationNcss);

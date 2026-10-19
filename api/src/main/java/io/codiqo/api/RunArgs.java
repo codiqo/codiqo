@@ -90,6 +90,8 @@ public class RunArgs {
     public static final String DEFAULT_LLM_PROXY_URL = "https://mcp.codiqo.io/v1";
     /** the address every loopback server binds to and advertises: the review relay, OpenCode, the browser login's callback */
     public static final String LOOPBACK_HOST = "127.0.0.1";
+    /** the per-run secret the review relay and OpenCode demand from their callers: 32 alphanumerics carry about 190 bits */
+    public static final int LOOPBACK_SECRET_LENGTH = 32;
     public static final int OLLAMA_PORT = 11434;
     /** a local Ollama daemon's OpenAI-compatible endpoint; a review against it is called directly, with no credential */
     public static final String DEFAULT_LOCAL_LLM_URL = loopbackUrl(OLLAMA_PORT).addPathSegment("v1").build().toString();

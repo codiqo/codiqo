@@ -108,15 +108,15 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
             Path workTree = args.getGit().getWorkTree().toPath();
             String sha = WorkingTreeCommit.create(workTree, includeUntracked);
             if (CommitExclusions.hasAnalyzableFile(JGit.changedFileNames(args.getGit(), sha), DefaultLanguageProcessors.supportedExtensions())) {
-                CodiqoCredential credential = credential();
+                CodiqoCredential creds = credential();
                 String projectCode = project.getGroupId() + ":" + project.getArtifactId();
                 reviewRun = LocalReviewRun.start(
                         args,
                         workTree,
                         sha,
-                        LocalReviewRun.endpoint(args, resourceUrl, projectCode, () -> credential),
+                        LocalReviewRun.endpoint(args, resourceUrl, projectCode, () -> creds),
                         LocalReviewGuidance.read(args, getLog()),
-                        () -> ProjectTags.fetch(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds, projectCode, new MavenMessageReporter(getLog())),
+                        () -> ProjectTags.fetch(apiUrl, creds, connectTimeoutSeconds, readTimeoutSeconds, projectCode, new MavenMessageReporter(getLog())),
                         DefaultLanguageProcessors.reviewLanguages(),
                         new MavenLogFactory(getLog()));
                 getLog().info("local review of the uncommitted changes started next to the analysis");
@@ -142,12 +142,12 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
                     throw new MojoFailureException("the uncommitted changes were not reviewed, so nothing was submitted: " + err.getMessage(), err);
                 }
             }
-            CodiqoCredential credential = credential();
+            CodiqoCredential creds = credential();
             Log reporter = new MavenMessageReporter(getLog());
 
             AnalysisAcceptedModel response = AnalysisSubmitter.submitUncommitted(
                     apiUrl,
-                    credential,
+                    creds,
                     connectTimeoutSeconds,
                     readTimeoutSeconds,
                     ctx.getSubmissionModel(),
@@ -159,7 +159,7 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
 
             AnalysisResultModel result = AnalysisSubmitter.awaitCompletion(
                     apiUrl,
-                    credential,
+                    creds,
                     connectTimeoutSeconds,
                     readTimeoutSeconds,
                     response.getAnalysisId(),
