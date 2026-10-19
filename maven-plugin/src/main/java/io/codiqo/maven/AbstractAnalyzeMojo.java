@@ -1577,22 +1577,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                 clientInfo.setName("codiqo-maven-plugin");
 
                 if (Objects.nonNull(skipReason)) {
-                    /**
-                     * excluded commits still carry the raw git diff so the backend persists per-file
-                     * changes (mirrors the build-failure exclusion path) — indexing has not run, so
-                     * the populator emits diff-only file models without code units or coverage
-                     */
-                    SubmissionContext excludeCtx = SubmissionContext.create(
-                            args,
-                            null,
-                            analysis,
-                            workTree,
-                            logFactory,
-                            project.getGroupId() + ":" + project.getArtifactId(),
-                            project.getName(),
-                            clientInfo);
-                    SubmissionAssembly.excluded(excludeCtx);
-                    doExcludeAnalysis(args.getCommitId(), skipReason, skipCategory, null, excludeCtx.getSubmissionModel().getFiles());
+                    excludeWithDiff(args, analysis, skipReason, skipCategory);
                 }
                 if (toApply.isTrue()) {
                     IndexingSummary index = registry.index(analysis);
@@ -1688,6 +1673,28 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     }
     /** runs once when the goal fails, before the failure is rethrown; a commit the run excluded is not a failure */
     protected void doOnFailure(RunArgs args, Exception err) {
+    }
+    /**
+     * Excludes the commit with its raw git diff, so the backend still records what it changed (the build-failure path
+     * does the same): indexing has not run, so the populator emits diff-only file models without code units or coverage.
+     */
+    protected void excludeWithDiff(RunArgs args, CommitAnalysis analysis, String reason, AnalysisExcludeCategory category) throws Exception {
+        ClientInfoModel clientInfo = new ClientInfoModel();
+        clientInfo.setBuildTool(ClientInfoModel.BuildToolEnum.MAVEN);
+        clientInfo.setVersion(runtimeInformation.getMavenVersion());
+        clientInfo.setName("codiqo-maven-plugin");
+
+        SubmissionContext ctx = SubmissionContext.create(
+                args,
+                null,
+                analysis,
+                args.getGit().getWorkTree().toPath().normalize(),
+                new MavenLogFactory(getLog()),
+                project.getGroupId() + ":" + project.getArtifactId(),
+                project.getName(),
+                clientInfo);
+        SubmissionAssembly.excluded(ctx);
+        doExcludeAnalysis(args.getCommitId(), reason, category, null, ctx.getSubmissionModel().getFiles());
     }
     /**
      * when {@link #scoresFailedBuild} holds, a build-pipeline failure does not exclude the commit

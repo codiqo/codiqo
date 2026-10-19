@@ -2,6 +2,7 @@ package io.codiqo.submit;
 
 import java.io.IOException;
 import java.util.Collection;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
@@ -9,6 +10,7 @@ import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 
@@ -69,12 +71,31 @@ public class CommitExclusions {
                     AnalysisExcludeCategory.FILTERED_BY_RULES));
         }
         if (BooleanUtils.negate(hasAnalyzableFile(changedFiles, extensions))) {
-            return Optional.of(new Exclusion(
-                    String.format("no diff files match registered languages %s or supported config files (%s) — changed files: %s",
-                            extensions, ConfigFiles.describeSupported(), changedFiles),
-                    AnalysisExcludeCategory.NO_ANALYZABLE_DIFF));
+            return Optional.of(noAnalyzableDiff(extensions, changedFiles));
         }
         return Optional.empty();
+    }
+    /**
+     * The analysable-file gate of {@link #afterDelta}, decided from git alone so the commit is never built: a commit
+     * that changes no file of a registered language and no supported config file used to be built and tested in full
+     * only to be excluded afterwards, and one whose build could not even start (a repository's first commit, holding
+     * only a {@code .gitignore} and no {@code pom.xml}) was excluded as a build failure instead. No changed file at all
+     * is what a shallow-clone boundary reports, which only the delta can tell, so that commit is left to
+     * {@link #afterDelta}. Decided ahead of the include-rules, so a commit that fails both is reported as having no
+     * analysable diff.
+     */
+    public static Optional<Exclusion> beforeBuild(Repository repo, String commitId, Collection<String> extensions) throws IOException {
+        List<String> changedFiles = JGit.changedFileNames(repo, commitId);
+        if (BooleanUtils.or(new boolean[] { changedFiles.isEmpty(), hasAnalyzableFile(changedFiles, extensions) })) {
+            return Optional.empty();
+        }
+        return Optional.of(noAnalyzableDiff(extensions, changedFiles));
+    }
+    private static Exclusion noAnalyzableDiff(Collection<String> extensions, Collection<String> changedFiles) {
+        return new Exclusion(
+                String.format("no diff files match registered languages %s or supported config files (%s) — changed files: %s",
+                        extensions, ConfigFiles.describeSupported(), changedFiles),
+                AnalysisExcludeCategory.NO_ANALYZABLE_DIFF);
     }
     public static boolean hasAnalyzableFile(Collection<String> changedFiles, Collection<String> extensions) {
         return changedFiles.stream().anyMatch(name -> BooleanUtils.or(new boolean[] {
