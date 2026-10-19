@@ -19,6 +19,7 @@ import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.CharUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
@@ -444,7 +445,7 @@ public final class SourceHiding {
             return NEW_FILE + side(line.substring(NEW_FILE.length()), NEW_SIDE, newPath);
         }
         if (line.startsWith(BINARY_FILES)) {
-            String sides = StringUtils.removeEnd(line.substring(BINARY_FILES.length()), BINARY_DIFFER);
+            String sides = Strings.CS.removeEnd(line.substring(BINARY_FILES.length()), BINARY_DIFFER);
             return BINARY_FILES
                     + side(StringUtils.substringBefore(sides, BINARY_AND), OLD_SIDE, oldPath)
                     + BINARY_AND
@@ -521,7 +522,7 @@ public final class SourceHiding {
         if (BooleanUtils.or(new boolean[] { first == DOUBLE_QUOTE, first == SINGLE_QUOTE })) {
             String content = token.substring(1, token.length() - 1);
             if (BooleanUtils.or(new boolean[] { MovedLineDetector.WORD_TOKEN.matcher(content).find(), StringUtils.isBlank(content),
-                    StringUtils.containsAny(content, BLOCK_COMMENT_ENDS) })) {
+                    Strings.CS.containsAny(content, BLOCK_COMMENT_ENDS) })) {
                 return first + text(content) + first;
             }
             return first + nonAscii(content) + first;
@@ -570,7 +571,7 @@ public final class SourceHiding {
         long bits = Long.parseUnsignedLong(hex(run, NON_ASCII_RUN_LENGTH * NON_ASCII_BITS_PER_CHAR / 4), 16);
         StringBuilder toReturn = new StringBuilder(NON_ASCII_RUN_LENGTH);
         for (int i = 0; i < NON_ASCII_RUN_LENGTH; i++) {
-            toReturn.append((char) (PRIVATE_USE_AREA + (bits & ((1 << NON_ASCII_BITS_PER_CHAR) - 1))));
+            toReturn.append((char) (PRIVATE_USE_AREA + (bits & (1 << NON_ASCII_BITS_PER_CHAR) - 1)));
             bits >>>= NON_ASCII_BITS_PER_CHAR;
         }
         return toReturn.toString();
@@ -624,7 +625,7 @@ public final class SourceHiding {
     }
     /**
      * A key is required as soon as the mode is on: a run that hid nothing because its key was missing would send the
-     * source the organization asked to keep, so it fails before the build starts.
+     * source the organisation asked to keep, so it fails before the build starts.
      */
     public static SourceHiding of(boolean hidden, Optional<String> key) {
         if (hidden) {

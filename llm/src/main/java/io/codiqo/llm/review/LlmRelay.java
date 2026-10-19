@@ -3,8 +3,8 @@ package io.codiqo.llm.review;
 import static java.util.function.Predicate.not;
 
 import java.io.IOException;
-import java.io.InterruptedIOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -30,15 +30,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.exception.ExceptionUtils;
-import org.apache.commons.lang3.time.DateUtils;
 import org.apache.commons.lang3.Strings;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.math.NumberUtils;
+import org.apache.commons.lang3.time.DateUtils;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -65,45 +66,40 @@ import io.netty.handler.codec.http.HttpStatusClass;
 import okhttp3.HttpUrl;
 
 /**
- * A loop back end point the review's agents call instead of the model's end point, which forwards each request with
- * the member's current credential when the end point is the backend's LLM proxy. The token is refreshed as it ages, so
- * a review out lasting it keeps going, and it never reaches OpenCode's configuration on disk.
+ * A loop back end point the review's agents call instead of the model's. For the backend's LLM proxy it attaches the
+ * member's credential per request, refreshed as it ages, so the token never reaches OpenCode's configuration on disk
+ * and a review that outlasts it keeps going. It also sets the review's sampling on every chat completion, since
+ * OpenCode 2.0 sends none.
  *
  * <p>
- * Each chat completion leaves with the review's sampling ({@code temperature}, {@code top_p}; {@link
- * RunArgs#getReviewTemperature()}): OpenCode 2.0 sends none, wherever its configuration puts them, and leaves the
- * choice to the provider.
- *
- * <p>
- * Other processes on the machine can reach a loop back port, so the agents must present a secret made for this
- * review; anything else is refused before it can spend the organization's budget.
+ * Any process on the machine can reach a loop back port, so a caller must present the secret made for this review;
+ * anything else is refused before it can spend the organization's budget.
  */
 public final class LlmRelay implements AutoCloseable {
-    /** the path prefix OpenAI clients put before {@code /chat/completions}, kept on both sides of the relay */
     public static final String API_PREFIX = "/v1";
 
     private static final String EVENT_END = StringUtils.repeat(StringUtils.LF, 2);
-    private static final int SECRET_LENGTH = 43;
-    private static final int BUFFER_BYTES = 8192;
     private static final List<String> FORWARDED_REQUEST_HEADERS = List.of(HttpHeaderNames.CONTENT_TYPE.toString(), HttpHeaderNames.ACCEPT.toString());
     private static final List<String> FORWARDED_RESPONSE_HEADERS = List.of(HttpHeaderNames.CONTENT_TYPE.toString(), HttpHeaderNames.RETRY_AFTER.toString());
     private static final String CHAT_COMPLETIONS = "/chat/completions";
-    /** read by OpenCode before {@code Retry-After}, in milliseconds */
     private static final String RETRY_AFTER_MS = "retry-after-ms";
-    /** OpenCode's own retry switch: "false" makes it give the call up */
     private static final String SHOULD_RETRY = "x-should-retry";
-    /** the most a rate-limit wait is doubled, so the shift cannot overflow; the maximum backoff caps it long before */
+    /**
+     * The most a rate-limit wait is doubled. The rounds are a setting with no bound of their own, and {@code 1L << n}
+     * wraps once n reaches 63; the maximum back off caps the wait long before this does.
+     */
     private static final int MAX_DOUBLINGS = 16;
-    /** how far each rate-limit wait is spread either way, as a share of it */
     private static final double JITTER = 0.2;
     /**
-     * How much of a 429's body the relay reads to quote it: an error object is a few hundred bytes. Only the quote is
-     * bounded; the whole body still goes on to OpenCode, which reads it to tell a rate limit from an exhausted quota.
+     * How much of a 429's body is read ahead to quote it: an error object is a few hundred bytes. The whole body still
+     * goes on to OpenCode, which reads it to tell a rate limit from an exhausted quota.
      */
     private static final int RATE_LIMIT_BODY_BYTES = 4096;
-    /** how much of the provider's 429 text a log line or a review's error quotes */
-    private static final int RATE_LIMIT_TEXT_CHARS = 300;
-    /** the headers in which providers state their limits and when they reset, logged with the 429 that carries them */
+    /**
+     * How much of the provider's 429 text is quoted. The quote ends up in the error of a failed review, which becomes
+     * the project's halt cause, and a provider's text has no bound of its own (an HTML error page, a policy notice).
+     */
+    private static final int RATE_LIMIT_TEXT_CHARS = 256;
     private static final String RATE_LIMIT_HEADER_PREFIX = "x-ratelimit";
     /**
      * The answers in which the provider refused a request itself: a prompt longer than the model's context (400 with
@@ -116,10 +112,8 @@ public final class LlmRelay implements AutoCloseable {
             HttpResponseStatus.UNPROCESSABLE_ENTITY.code());
 
     /**
-     * The only calls an OpenAI-compatible provider makes, as method and path after {@value #API_PREFIX}, matched exactly.
-     * The relay attaches the member's credential, whose scopes reach far more of the backend than the LLM proxy, so it
-     * must not forward whatever a caller asks for: the server context matches by string prefix, which let
-     * {@code /v1x} or {@code /v1/../api/...} through with any method.
+     * Matched exactly: the member's credential reaches far more of the backend than the LLM proxy, and the server
+     * context matches by prefix, which let {@code /v1x} or {@code /v1/../api/...} through with any method.
      */
     private static final Set<String> FORWARDED_CALLS = Set.of("POST " + CHAT_COMPLETIONS, "GET /models");
     private static final JsonMapper OPENAI = ObjectMappers.jsonMapper();
@@ -137,15 +131,13 @@ public final class LlmRelay implements AutoCloseable {
     private final Duration rateLimitBackoff;
     private final Duration rateLimitMaxBackoff;
     /**
-     * The rate limit's rounds since the last success. A round is one wait every call shares: a review runs up to nine
-     * reviewers in parallel on one key, so each call refused while a round lasts is told to come back when that round
-     * ends, not given a round of its own. Counting a round per refused call would end the review after one burst.
+     * The rate limit's rounds since the last success. A round is one wait every call shares: the reviewers run in
+     * parallel on one key, so each call refused while a round lasts is told to come back when that round ends. Counting
+     * a round per refused call would end the review after one burst.
      */
     private final AtomicInteger rateLimitRound = new AtomicInteger();
     private final Object rateLimitLock = new Object();
-    /** when the current rate-limit round started; guarded by {@link #rateLimitLock} */
     private Instant rateLimitRoundStarted = Instant.EPOCH;
-    /** when the current rate-limit round ends; guarded by {@link #rateLimitLock} */
     private Instant rateLimitRoundEnds = Instant.EPOCH;
     /**
      * Set once the rounds ran out. A limit that outlasts them outlasts the review, so every later call is refused at once
@@ -155,12 +147,11 @@ public final class LlmRelay implements AutoCloseable {
     private final double temperature;
     private final double topP;
     private final String secret;
-    /** every answer of the model's end point that was not a success, retried ones included, by status */
     private final Multiset<Integer> providerErrors = ConcurrentHashMultiset.create();
     /**
-     * What the provider's last 429 said. Once the provider refused every call for over eight hours after an evening
-     * of heavy load, and nothing recorded whether that was a short rate limit or an exhausted usage quota: the
-     * relay passed the body on without reading it, and the halts said only that sessions finished without an answer.
+     * What the provider's last 429 said, quoted by {@link #providerErrors()}: the status counts alone cannot tell a short
+     * rate limit from an exhausted usage quota, and a provider once refused every call for eight hours with nothing
+     * recorded to say which.
      */
     private final AtomicReference<String> lastRateLimitText = new AtomicReference<>();
     private final Log log;
@@ -173,8 +164,8 @@ public final class LlmRelay implements AutoCloseable {
         this.authorizer = Optional.ofNullable(upstream.getAuthorizer()).orElseGet(() -> direct(upstream.getApiKey()));
         this.retries = Math.max(0, args.getReviewRelayRetries());
         /**
-         * The relay's own first-byte limit catches a proxy that hangs. A direct endpoint keeps the wait OpenCode gave it
-         * before every review went through the relay: a local model evaluating a long prompt can take minutes to answer.
+         * A direct end point gets the whole review timeout to start answering: a local model evaluating a long prompt can
+         * take minutes before its first byte. The relay's own first-byte limit is for the proxy, where such a wait is a hang.
          */
         this.requestTimeout = Objects.isNull(upstream.getAuthorizer()) ? args.getReviewTimeout() : Objects.requireNonNull(args.getReviewRelayRequestTimeout());
         this.retryBackoff = Objects.requireNonNull(args.getReviewRelayRetryBackoff());
@@ -185,7 +176,7 @@ public final class LlmRelay implements AutoCloseable {
         this.topP = args.getReviewTopP();
         this.log = Objects.requireNonNull(log);
 
-        this.secret = RandomStringUtils.secure().nextAlphanumeric(SECRET_LENGTH);
+        this.secret = RandomStringUtils.secure().nextAlphanumeric(RunArgs.LOOPBACK_SECRET_LENGTH);
     }
     public String getUrl() {
         return RunArgs.loopbackUrl(server.getAddress().getPort()).encodedPath(API_PREFIX).build().toString();
@@ -194,8 +185,8 @@ public final class LlmRelay implements AutoCloseable {
         return secret;
     }
     /**
-     * The model's end point's failed answers so far, for the message of a review that failed: a turn that timed out
-     * while the provider answered 429 for an hour says only "timeout" on its own. Empty when every answer succeeded.
+     * The end point's failed answers so far, retried ones included, for the error of a review that failed: a turn that
+     * timed out while the provider answered 429 for an hour says only "timeout" on its own.
      */
     public Optional<String> providerErrors() {
         List<String> counts = providerErrors.entrySet().stream()
@@ -219,12 +210,10 @@ public final class LlmRelay implements AutoCloseable {
         return toReturn;
     }
     /**
-     * Whether the provider failed during the review, rather than only refused one of its requests: any failed answer
-     * other than a refused request ({@link #REFUSED_REQUESTS}), the relay's own 502 or 504 for an end point that could
-     * not be reached, did not answer in time or cut its answer short included. A refused request is the commit's own
-     * prompt, which the same commit would ask again after every resume. The calls of parallel reviewers share the relay,
-     * so this says nothing about which call failed: an answer in the wrong shape is the commit's failure whatever the
-     * provider did, and LocalReviewer decides that before it asks here.
+     * Whether the provider failed during the review: any failed answer but a {@link #REFUSED_REQUESTS refused request},
+     * the relay's own 502 and 504 for an end point that could not be reached, did not answer in time or cut its answer
+     * short included. Parallel reviewers share the relay, so this cannot say which call failed: LocalReviewer settles an
+     * answer in the wrong shape as the commit's failure before it asks here.
      */
     public boolean providerFailed() {
         return providerErrors.elementSet().stream().anyMatch(not(REFUSED_REQUESTS::contains));
@@ -280,13 +269,11 @@ public final class LlmRelay implements AutoCloseable {
             }
 
             /**
-             * The relay retries no call to the model: OpenCode retries a failed call itself, ten times with its own
-             * backoff, and retries stacked on retries are how one review answered "429 132 times". The credential is the
-             * exception, since its refresh is Codiqo's own login rather than a call to the model. One that still cannot
-             * be refreshed is the member's login ending, not the proxy being down: it is answered as 401, which an
-             * OpenAI client does not retry, so the agents stop instead of spending their step budget. A refresh that
-             * failed once is retried like before: a network blip on the way to the authenticated server says nothing
-             * about the login. Authorised per call: a call may come after the token expired.
+             * The relay retries no call to the model: OpenCode retries a failed call itself, and retries stacked on its
+             * own are how one review answered "429 132 times". Only the credential's refresh is retried, since it is
+             * Codiqo's own login, authorised per call because a call may come after the token expired. One that still
+             * cannot be refreshed is the member's login ending, not the proxy being down, so it answers 401, which an
+             * OpenAI client does not retry, and the agents stop instead of spending their step budget.
              */
             for (int attempt = 0;; attempt++) {
                 try {
@@ -309,9 +296,9 @@ public final class LlmRelay implements AutoCloseable {
                 response = http.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
             } catch (IOException err) {
                 /**
-                 * A 5xx-class answer, which OpenCode retries with its own backoff. It is counted as the provider's
-                 * failure like an answer it sent: an end point that cannot be reached or does not answer in time is the
-                 * outage ReviewProviderException exists for, and left uncounted it would exclude the commit for good.
+                 * Answered as a 5xx, which OpenCode retries, and counted as the provider's failure: an end point that
+                 * cannot be reached or does not answer in time is the outage ReviewProviderException exists for, and
+                 * left uncounted it would exclude the commit for good.
                  */
                 log.warn("llm relay: %s %s failed: %s", exchange.getRequestMethod(), path, err.getMessage());
                 boolean timedOut = err instanceof HttpTimeoutException;
@@ -356,7 +343,7 @@ public final class LlmRelay implements AutoCloseable {
         boolean streamed = response.headers().firstValue(HttpHeaderNames.CONTENT_TYPE.toString()).map(type -> Strings.CI.startsWith(type, HttpHeaderValues.TEXT_EVENT_STREAM)).orElse(false);
         try (InputStream in = response.body(); OutputStream out = exchange.getResponseBody()) {
             out.write(readAhead);
-            byte[] buffer = new byte[BUFFER_BYTES];
+            byte[] buffer = IOUtils.byteArray();
             for (int read = upstreamRead(in, buffer, out, exchange, path, streamed); read >= 0; read = upstreamRead(in, buffer, out, exchange, path, streamed)) {
                 out.write(buffer, 0, read);
                 out.flush();
@@ -364,12 +351,11 @@ public final class LlmRelay implements AutoCloseable {
         }
     }
     /**
-     * One read of the provider's answer. A read that fails is the provider cutting its answer short, counted as the
-     * relay's 502 like an end point that could not be reached: the 200 already went out with the first byte, so neither
-     * the status OpenCode saw nor the providerErrors summary would otherwise show it, and the review that failed on the
-     * cut would exclude the commit as its own failure. A read interrupted because the relay is closing, as when the run
-     * is stopped, is not the provider's and is not counted, and neither is a failure to write to OpenCode. A streamed
-     * answer ends with an error event, which an OpenAI client raises; a plain body is left short, which no client parses.
+     * One read of the provider's answer. A read that fails is the provider cutting its answer short after the 200 went
+     * out, so it is counted as the relay's 502: otherwise the review that failed on the cut would exclude the commit as
+     * its own failure. A streamed answer ends with an error event, which an OpenAI client raises; a plain body is left
+     * short, which no client parses. A read interrupted by the relay closing, which the JDK client reports as an
+     * IOException caused by an InterruptedException, is not the provider's and is not counted.
      */
     private int upstreamRead(InputStream in, byte[] buffer, OutputStream out, HttpExchange exchange, String path, boolean streamed) throws IOException {
         try {
@@ -390,7 +376,7 @@ public final class LlmRelay implements AutoCloseable {
      * The request with the review's sampling set and no seed, whatever the agent sent, read and written as the OpenAI
      * SDK's own request body, which keeps every field it does not model ({@code stream} among them) as it came.
      */
-    @SuppressWarnings("deprecation") // OpenAI deprecated seed; it is only ever removed here
+    @SuppressWarnings({ "deprecation", "unchecked" })
     private byte[] sampled(byte[] body) throws IOException {
         ChatCompletionCreateParams.Body chat = OPENAI.readValue(body, ChatCompletionCreateParams.Body.class).toBuilder()
                 .temperature(temperature)
@@ -403,7 +389,7 @@ public final class LlmRelay implements AutoCloseable {
         return retryBackoff.multipliedBy(1L << attempt);
     }
     /**
-     * The wait after the n-th 429 (from 0): the rate-limit backoff doubled n times, a longer {@code Retry-After}
+     * The wait after the n-th 429 (from 0): the rate-limit back off doubled n times, a longer {@code Retry-After}
      * instead, never beyond the maximum, then spread by up to a fifth either way so the review's parallel calls do not
      * all come back in the same second.
      */
@@ -414,10 +400,9 @@ public final class LlmRelay implements AutoCloseable {
         return ObjectUtils.min(Duration.ofMillis(Math.round(wait.toMillis() * spread)), rateLimitMaxBackoff);
     }
     /**
-     * The provider's own words for a 429 and the limits it states, for the log and a failed review's error: the
-     * {@code error.message} of an OpenAI error object, or the {@code error} string some providers send instead, or the
-     * raw body, followed by {@code Retry-After} and every {@code x-ratelimit-*} header, which is where providers say
-     * which limit was hit and when it resets.
+     * The provider's own words for a 429: the OpenAI error's {@code message}, the plain {@code error} string some
+     * providers send instead, or the raw body, followed by {@code Retry-After} and the {@code x-ratelimit-*} headers,
+     * where providers say which limit was hit and when it resets.
      */
     private static String rateLimitText(byte[] body, HttpResponse<?> answer) {
         String raw = new String(body, StandardCharsets.UTF_8);
@@ -448,7 +433,6 @@ public final class LlmRelay implements AutoCloseable {
         }
         return toReturn;
     }
-    /** the JDK client reports a read the relay's shutdown interrupted as an IOException caused by an InterruptedException */
     private static boolean isInterruption(IOException err) {
         return BooleanUtils.or(new boolean[] {
                 Thread.currentThread().isInterrupted(),
@@ -475,7 +459,6 @@ public final class LlmRelay implements AutoCloseable {
         server.start();
         return toReturn;
     }
-    /** a direct end point takes the configured key, if it has one, as the bearer token an OpenAI client would send */
     private static RequestAuthorizer direct(String apiKey) {
         return header -> {
             if (StringUtils.isNotBlank(apiKey)) {
@@ -487,8 +470,7 @@ public final class LlmRelay implements AutoCloseable {
      * The wait a 429 is passed on with, which OpenCode keeps before it calls again; empty once the rounds ran out.
      * OpenCode 2 retries a rate-limited call itself (ten times, 2 seconds doubling to at most 10, or the answer's
      * {@code retry-after-ms} up to 15 minutes, read from its binary) and has no setting for it, so the
-     * relay steers that retry instead of retrying on top of it. Every call refused while a round lasts gets the same
-     * deadline. The provider's own error body goes on with the wait: OpenCode 2.0.25 reads it to tell a rate limit, which
+     * relay steers that retry instead of retrying on top of it. The provider's own error body goes on with the wait: OpenCode 2.0.25 reads it to tell a rate limit, which
      * it retries, from an exhausted quota or budget ({@code insufficient_quota}, "quota exceeded"), which it does not. A
      * body of the relay's own would make every exhausted quota look like a rate limit and keep the review waiting
      * through every round, about 35 minutes with the defaults, for a quota that is not coming back.
@@ -509,15 +491,20 @@ public final class LlmRelay implements AutoCloseable {
             rateLimitRoundStarted = now;
             rateLimitRoundEnds = now.plus(rateLimitWait(answer, round - 1));
             log.warn("llm relay: %s %s answered 429; rate-limit round %d of %d, every call comes back in %s. The provider said: %s",
-                    exchange.getRequestMethod(), path, round, rateLimitRetries, Duration.between(now, rateLimitRoundEnds), providerSays);
+                    exchange.getRequestMethod(),
+                    path,
+                    round,
+                    rateLimitRetries,
+                    Duration.between(now, rateLimitRoundEnds),
+                    providerSays);
             return Optional.of(Duration.between(now, rateLimitRoundEnds));
         }
     }
     /**
-     * Ends the rate limit's rounds, but only for a call sent after the current round started. Reviewers call in
-     * parallel, so the answer to a call sent before the provider began refusing can arrive after a round started; it
-     * says nothing about the limit having lifted, and resetting on it made the next 429 start the schedule again at its
-     * first, shortest round, so a mixed burst could keep a review waiting past every configured round.
+     * Ends the rate limit's rounds, but only for a call sent after the current round started. A parallel call sent
+     * before the provider began refusing can succeed after a round started; it says nothing about the limit having
+     * lifted, and resetting on it would restart the schedule at its shortest round, so a mixed burst could keep the
+     * review waiting past every configured round.
      */
     private void rateLimitRecovered(Instant sentAt) {
         synchronized (rateLimitLock) {
@@ -534,7 +521,6 @@ public final class LlmRelay implements AutoCloseable {
         exchange.getResponseHeaders().set(SHOULD_RETRY, Boolean.FALSE.toString());
         respond(exchange, HttpResponseStatus.TOO_MANY_REQUESTS.code(), error("the LLM provider is still rate limiting after every round of waiting", "rate_limit_exhausted"));
     }
-    /** the error body an OpenAI client reads, the SDK's own {@code {"error": ErrorObject}} */
     private static String error(String message, String type) throws JsonProcessingException {
         return OPENAI.writeValueAsString(Map.of("error", ErrorObject.builder().message(message).type(type).code(Optional.empty()).param(Optional.empty()).build()));
     }

@@ -45,7 +45,6 @@ import tools.jackson.databind.node.ObjectNode;
  * Standard input is closed: a run that waits for an interactive permission answer would otherwise hang for good.
  */
 public final class OpenCodeServer implements Closeable {
-    private static final int PASSWORD_LENGTH = 32;
     private static final Duration READY_POLL = Duration.ofMillis(250);
     private static final Duration READY_REQUEST_TIMEOUT = Duration.ofSeconds(1);
     private static final int SHUTDOWN_SECONDS = 15;
@@ -112,7 +111,7 @@ public final class OpenCodeServer implements Closeable {
     }
     public static OpenCodeServer start(RunArgs args, ObjectNode config, Path workTree, Log log) throws IOException {
         int port = freePort();
-        String password = RandomStringUtils.secure().nextAlphanumeric(PASSWORD_LENGTH);
+        String password = RandomStringUtils.secure().nextAlphanumeric(RunArgs.LOOPBACK_SECRET_LENGTH);
         File home = Files.createTempDirectory("codiqo-opencode").toFile();
         File logFile = new File(home, "opencode.log");
 

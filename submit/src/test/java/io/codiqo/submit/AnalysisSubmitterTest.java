@@ -44,14 +44,14 @@ import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.LocalReviewModel;
 import io.codiqo.client.model.ProjectModel;
 import io.codiqo.submit.auth.ApiKeyCredential;
+import io.netty.handler.codec.http.HttpHeaderNames;
+import io.netty.handler.codec.http.HttpHeaderValues;
+import io.netty.handler.codec.http.HttpResponseStatus;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.JsonNodeFactory;
 import tools.jackson.databind.node.ObjectNode;
-import io.netty.handler.codec.http.HttpResponseStatus;
-import io.netty.handler.codec.http.HttpHeaderNames;
-import io.netty.handler.codec.http.HttpHeaderValues;
 
 class AnalysisSubmitterTest {
     private static final String API_KEY = "test-api-key";
@@ -336,7 +336,7 @@ class AnalysisSubmitterTest {
         toReturn.setLocalReview(new LocalReviewModel().bugs(new BugsModel()));
         return toReturn;
     }
-    private static File trace(Path dir) throws IOException {
+    private static File trace(Path dir) {
         ObjectNode trace = JSON.objectNode().put("commit", SHA);
         trace.putArray("sessions").addObject().putArray("messages").addObject().put("role", "assistant");
         File toReturn = dir.resolve("codiqo-review-trace-01234567.json").toFile();

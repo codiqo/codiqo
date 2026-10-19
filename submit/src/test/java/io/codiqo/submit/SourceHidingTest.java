@@ -16,6 +16,7 @@ import java.util.regex.Matcher;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.slf4j.event.Level;
@@ -186,7 +187,7 @@ class SourceHidingTest {
         String sent = json.writeValueAsString(submission);
 
         for (String source : SOURCE) {
-            assertFalse(StringUtils.containsIgnoreCase(sent, source), source + " leaked: " + sent);
+            assertFalse(Strings.CI.contains(sent, source), source + " leaked: " + sent);
         }
         assertTrue(submission.getSourceHidden());
         FileChangeModel retry = submission.getFiles().get(0);
@@ -392,7 +393,7 @@ class SourceHidingTest {
      * Every number and flag of the result, without where it sits: a list sorted by a hashed path comes in another order,
      * and a key or a text is expected to differ, but no count, line, score or multiplier may.
      */
-    private Multiset<String> numbers(ScoringClient.ScoringResult result) {
+    private static Multiset<String> numbers(ScoringClient.ScoringResult result) {
         Multiset<String> toReturn = HashMultiset.create();
         ObjectMapper mapper = JsonMapper.builder().build();
         collect(mapper.valueToTree(result.getResponse()), "response", toReturn);

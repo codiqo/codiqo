@@ -12,7 +12,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.io.FilenameUtils;
-import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -40,7 +40,7 @@ public class ErrorProneWarnings {
     private static final Pattern WARNING = Pattern.compile("^\\[WARNING\\] (.+?):\\[(\\d+),\\d+\\] \\[([A-Z][A-Za-z0-9]*)\\] (.+)$");
 
     public boolean isWarning(String line) {
-        return StringUtils.startsWith(line, WARNING_PREFIX) && WARNING.matcher(line).matches();
+        return Strings.CS.startsWith(line, WARNING_PREFIX) && WARNING.matcher(line).matches();
     }
     /**
      * The findings on files inside the work tree, by their path relative to it. Both sides are compared as real paths:

@@ -11,6 +11,7 @@ import java.util.regex.Pattern;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import com.google.common.base.CharMatcher;
 import com.google.common.base.Splitter;
@@ -40,14 +41,12 @@ public class SecretRedaction {
     private static final Set<String> ALWAYS = Set.of("CODIQO_API_KEY", "CODIQO_SETTINGS_XML");
     private static final Pattern SECRET_NAME = Pattern.compile("(?i).*(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE_?KEY|CREDENTIAL).*");
 
-    /** redacts in place: every string value of the tree, whatever its depth */
     public void redact(JsonNode document, Map<String, String> environment) {
         List<String> secrets = secrets(environment);
         if (CollectionUtils.isNotEmpty(secrets)) {
             redact(document, secrets);
         }
     }
-    /** the text with every secret of the environment replaced, as {@link #redact(JsonNode, Map)} does for each string */
     public String redactText(String text, Map<String, String> environment) {
         return scrub(StringUtils.defaultString(text), secrets(environment));
     }
@@ -73,7 +72,7 @@ public class SecretRedaction {
     private String scrub(String value, List<String> secrets) {
         String toReturn = value;
         for (String secret : secrets) {
-            toReturn = StringUtils.replace(toReturn, secret, PLACEHOLDER);
+            toReturn = Strings.CS.replace(toReturn, secret, PLACEHOLDER);
         }
         return toReturn;
     }
