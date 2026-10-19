@@ -8,6 +8,7 @@ import java.util.Optional;
  */
 public enum LlmModel {
     DEEPSEEK_V4_1_FLASH("deepseek-v4.1-flash:cloud", RunArgs.DEFAULT_NUM_CTX),
+    GLM_5_3("glm-5.3:cloud", RunArgs.DEFAULT_NUM_CTX),
     GLM_5_3_FLASH("glm-5.3-flash:cloud", RunArgs.DEFAULT_NUM_CTX);
 
     private final String id;
