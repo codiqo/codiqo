@@ -96,6 +96,13 @@
             <artifactId>codiqo-api</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- embedded as a resource (see the build below), not loaded on this classpath; declared so the reactor builds it first -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>codiqo-jdtls-extension</artifactId>
+            <version>${project.version}</version>
+            <scope>provided</scope>
+        </dependency>
         <dependency>
             <groupId>org.eclipse.collections</groupId>
             <artifactId>eclipse-collections-api</artifactId>
@@ -169,4 +176,37 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <!--
+                        the language server installs extension bundles from files, so the jar travels inside this one
+                        and JdtLspProcess writes it next to the server it starts: no repository lookup at analysis
+                        time, wherever codiqo runs (a Maven or Gradle build, a CI runner, a forked build)
+                    -->
+                    <execution>
+                        <id>embed-jdtls-extension</id>
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>copy</goal>
+                        </goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>${project.groupId}</groupId>
+                                    <artifactId>codiqo-jdtls-extension</artifactId>
+                                    <version>${project.version}</version>
+                                    <destFileName>codiqo-jdtls-extension.jar</destFileName>
+                                </artifactItem>
+                            </artifactItems>
+                            <outputDirectory>${project.build.outputDirectory}/jdtls</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

@@ -110,13 +110,15 @@ public class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, C
     private final Log log;
     private final RunArgs args;
     private final Map<String, Object> runtime;
+    private final Path extensionBundle;
     private final Launcher<LanguageServer> launcher;
     private final Future<Void> startListening;
 
-    public JdtLspClient(LogFactory logFactory, RunArgs args, Map<String, Object> runtime, Socket socket) throws IOException {
+    public JdtLspClient(LogFactory logFactory, RunArgs args, Map<String, Object> runtime, Path extensionBundle, Socket socket) throws IOException {
         this.log = logFactory.getLogger(getClass());
         this.args = Objects.requireNonNull(args);
         this.runtime = Objects.requireNonNull(runtime);
+        this.extensionBundle = Objects.requireNonNull(extensionBundle);
         this.launcher = new Builder<LanguageServer>()
                 .setLocalService(this)
                 .setRemoteInterface(LanguageServer.class)
@@ -504,7 +506,7 @@ public class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, C
         java.put("rename", Map.of("enabled", true));
         java.put("telemetry", Map.of("enabled", false));
 
-        Map<String, Serializable> toApply = Map.<String, Serializable>of("bundles", (Serializable) List.of(), "settings", (Serializable) Map.of("java", java));
+        Map<String, Serializable> toApply = Map.<String, Serializable>of("bundles", (Serializable) List.of(extensionBundle.toString()), "settings", (Serializable) Map.of("java", java));
         params.setInitializationOptions(toApply);
 
         LanguageServer remoteProxy = launcher.getRemoteProxy();

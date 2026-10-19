@@ -83,6 +83,10 @@
         <dorkbox.desktop.version>1.1</dorkbox.desktop.version>
         <jarchivelib.version>1.2.0</jarchivelib.version>
         <ecj.version>3.46.100</ecj.version>
+        <jdt-core.version>3.47.0</jdt-core.version>
+        <jdt-manipulation.version>1.25.0</jdt-manipulation.version>
+        <eclipse-resources.version>3.24.100</eclipse-resources.version>
+        <eclipse-common.version>3.21.0</eclipse-common.version>
         <lsp4j.version>1.0.0</lsp4j.version>
         <openrewrite.version>8.90.4</openrewrite.version>
         <openrewrite.recipe.version>2.41.1</openrewrite.recipe.version>
@@ -856,6 +860,26 @@
                 <version>${ecj.version}</version>
             </dependency>
             <dependency>
+                <groupId>org.eclipse.jdt</groupId>
+                <artifactId>org.eclipse.jdt.core</artifactId>
+                <version>${jdt-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.eclipse.jdt</groupId>
+                <artifactId>org.eclipse.jdt.core.manipulation</artifactId>
+                <version>${jdt-manipulation.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.eclipse.platform</groupId>
+                <artifactId>org.eclipse.core.resources</artifactId>
+                <version>${eclipse-resources.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.eclipse.platform</groupId>
+                <artifactId>org.eclipse.equinox.common</artifactId>
+                <version>${eclipse-common.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>org.eclipse.lsp4j</groupId>
                 <artifactId>org.eclipse.lsp4j</artifactId>
                 <version>${lsp4j.version}</version>
@@ -1422,6 +1446,7 @@
     <modules>
         <module>api</module>
         <module>core</module>
+        <module>jdtls-extension</module>
         <module>lang-java</module>
         <module>lang-config</module>
         <module>maven-time-machine</module>

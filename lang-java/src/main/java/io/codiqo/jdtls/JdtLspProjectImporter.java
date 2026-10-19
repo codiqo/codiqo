@@ -62,6 +62,8 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
     private static final long DETACH_TIMEOUT_SECONDS = 60;
     private static final long DETACH_POLL_MILLIS = 250;
     private static final String JAVA_EXTENSION = "java";
+    /** declared by codiqo-jdtls-extension's plugin.xml; renaming it there without here fails every analysis at import */
+    private static final String SOURCES_ONLY_CALLERS_COMMAND = "codiqo.callHierarchy.sourcesOnly";
     private static final Set<String> TYPELESS_SOURCES = Set.of("package-info.java", "module-info.java");
 
     private final CompletableFuture<JdtLspClient> clientFuture = new CompletableFuture<>();
@@ -91,6 +93,7 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
                 c.initialize();
                 c.ready().get(args.getImportTimeout().getSeconds(), TimeUnit.SECONDS);
                 detachShadowingProjects();
+                limitCallerSearchesToSources();
                 stopWatch.stop();
                 log.info("JDT loaded project: %s in: %s ", args.getGit().getWorkTree(), stopWatch);
                 return;
@@ -194,6 +197,17 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
         }
         return uris;
     }
+    /**
+     * Restricts the server's call hierarchy searches to the workspace's own source folders (SourcesOnlyCallerSearch in
+     * codiqo-jdtls-extension). Its default scope is every library jar and the JDK too, and a class file JDT cannot
+     * resolve failed the search: scala-library 2.13 on a test classpath turned every one-argument apply(..) lookup
+     * into a StackOverflowError. Sent after the shadowing projects are gone, because the scope covers the projects
+     * present when it is built. A server that does not know the command fails the import here, before any lookup.
+     */
+    private void limitCallerSearchesToSources() throws Exception {
+        Number projects = (Number) executeCommand(SOURCES_ONLY_CALLERS_COMMAND, List.of());
+        log.info("call hierarchy searches limited to the sources of %d Java project(s)", projects.intValue());
+    }
     private Object executeCommand(String command, List<Object> arguments) throws Exception {
         ExecuteCommandParams params = new ExecuteCommandParams(command, arguments);
         return getLangServer().getWorkspaceService().executeCommand(params).get(args.getLspQueryTimeout().getSeconds(), TimeUnit.SECONDS);
@@ -218,7 +232,7 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
 
         Thread acceptThread = new Thread(() -> {
             try {
-                JdtLspClient toSet = new JdtLspClient(logFactory, args, jdt.getRuntime(), serverSocket.accept());
+                JdtLspClient toSet = new JdtLspClient(logFactory, args, jdt.getRuntime(), jdt.getExtensionBundle(), serverSocket.accept());
                 curr.set(toSet);
                 clientFuture.complete(toSet);
                 log.info("JDT LSP client connected on port :" + port);
