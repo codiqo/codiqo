@@ -109,12 +109,14 @@ public class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, C
     private final ExecutorService executor = DaemonExecutors.newCachedDaemonPool("codiqo-jdtls");
     private final Log log;
     private final RunArgs args;
+    private final Map<String, Object> runtime;
     private final Launcher<LanguageServer> launcher;
     private final Future<Void> startListening;
 
-    public JdtLspClient(LogFactory logFactory, RunArgs args, Socket socket) throws IOException {
+    public JdtLspClient(LogFactory logFactory, RunArgs args, Map<String, Object> runtime, Socket socket) throws IOException {
         this.log = logFactory.getLogger(getClass());
         this.args = Objects.requireNonNull(args);
+        this.runtime = Objects.requireNonNull(runtime);
         this.launcher = new Builder<LanguageServer>()
                 .setLocalService(this)
                 .setRemoteInterface(LanguageServer.class)
@@ -329,7 +331,7 @@ public class JdtLspClient implements LanguageClient, Supplier<LanguageServer>, C
         configuration.put("checkProjectSettingsExclusions", false);
         configuration.put("updateBuildConfiguration", "automatic");
         configuration.put("workspaceCacheLimit", 90);
-        configuration.put("runtimes", List.of());
+        configuration.put("runtimes", List.of(runtime));
 
         Map<String, Object> mavenConfig = Maps.newHashMap();
         mavenConfig.put("notCoveredPluginExecutionSeverity", "warning");

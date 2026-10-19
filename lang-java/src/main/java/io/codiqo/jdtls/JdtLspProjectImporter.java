@@ -218,7 +218,7 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
 
         Thread acceptThread = new Thread(() -> {
             try {
-                JdtLspClient toSet = new JdtLspClient(logFactory, args, serverSocket.accept());
+                JdtLspClient toSet = new JdtLspClient(logFactory, args, jdt.getRuntime(), serverSocket.accept());
                 curr.set(toSet);
                 clientFuture.complete(toSet);
                 log.info("JDT LSP client connected on port :" + port);
