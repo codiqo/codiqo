@@ -25,6 +25,7 @@ import io.codiqo.client.model.CodeUnitModel;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.LocalAssessmentModel;
 import io.codiqo.client.model.LocalReviewModel;
+import io.codiqo.client.model.LocalReviewSessionModel;
 import io.codiqo.client.model.SignatureChangesModel;
 import io.codiqo.client.model.StaticAnalysisFindingModel;
 import io.codiqo.client.model.StaticAnalysisReviewModel;
@@ -422,6 +423,27 @@ class LocalReviewModelsTest {
         assertNull(nested.getCategory());
         assertEquals(0, labelling.getApplied());
         assertEquals(List.of("src/watchdog.dotted#report()", "src/watchdog.dotted#Other.report()"), labelling.getUnmatched());
+    }
+    /** the labelling and triage forks spend tokens on the commit as well, so the submission counts them after the review's own */
+    @Test
+    void theFollowUpForksCountAmongTheSubmittedSessions() {
+        LocalReview review = new LocalReview("abc", new LlmScoringResponse.Bugs(), List.of(
+                new SessionUsage("ses_1", OpenCodeReviewConfig.COORDINATOR, "coordinator-model", 10, 100, 2, 0),
+                new SessionUsage("ses_2", OpenCodeReviewConfig.REVIEWER, "reviewer-model", 5, 1_000, 3, 0)), Duration.ofSeconds(90), PLAN, null, 1, List.of(), List.of());
+        UnitLabels labels = new UnitLabels();
+        labels.setUsage(new SessionUsage("ses_3", OpenCodeReviewConfig.COORDINATOR, "coordinator-model", 7, 800, 4, 0));
+        FindingTriage triage = new FindingTriage();
+        triage.setFindings(List.of());
+        triage.setVerdicts(List.of());
+        triage.setUsage(new SessionUsage("ses_4", OpenCodeReviewConfig.COORDINATOR, "coordinator-model", 6, 700, 1, 0));
+
+        LocalReviewModel model = LocalReviewModels.toModel(review, Optional.of(labels), Optional.of(triage));
+
+        assertEquals(List.of(10L, 5L, 7L, 6L), model.getSessions().stream().map(LocalReviewSessionModel::getInputTokens).toList());
+        assertEquals(List.of("coordinator-model", "reviewer-model", "coordinator-model", "coordinator-model"),
+                model.getSessions().stream().map(LocalReviewSessionModel::getModel).toList());
+        assertEquals(90_000L, model.getTookMs(), "the forks wait for the build, so their time is not the review's");
+        assertEquals(2, LocalReviewModels.toModel(review).getSessions().size());
     }
     private static CodeUnitModel unit(String name) {
         return new CodeUnitModel().name(name).signature("sig:" + name).operation(CodeUnitModel.OperationEnum.MODIFY);

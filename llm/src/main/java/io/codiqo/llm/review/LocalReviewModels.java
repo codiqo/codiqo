@@ -65,9 +65,18 @@ public class LocalReviewModels {
     public static final Set<CodeUnitModel.OperationEnum> LABELLED_OPERATIONS = Sets.immutableEnumSet(CodeUnitModel.OperationEnum.NEW, CodeUnitModel.OperationEnum.MODIFY);
 
     public LocalReviewModel toModel(LocalReview review) {
-        return toModel(review, Optional.empty());
+        return toModel(review, Optional.empty(), Optional.empty());
     }
     public LocalReviewModel toModel(LocalReview review, Optional<FindingTriage> triage) {
+        return toModel(review, Optional.empty(), triage);
+    }
+    /**
+     * The submission's sessions are the review's own, then the follow-up forks that labelled the units and triaged the
+     * findings, and the server sums an analysis's review tokens and session count from them. The forks run on the
+     * coordinator's model with its whole context: on one commit reviewed with GLM-5.3 coordinating, the single fork was
+     * about a fifth of the review's model cost at Ollama's list prices, and leaving it out under-reported that cost.
+     */
+    public LocalReviewModel toModel(LocalReview review, Optional<UnitLabels> labels, Optional<FindingTriage> triage) {
         LlmScoringResponse.Bugs found = LlmScoringResponse.Bugs.builder()
                 .blocking(Lists.newArrayList(CollectionUtils.emptyIfNull(review.getBugs().getBlocking())))
                 .major(Lists.newArrayList(CollectionUtils.emptyIfNull(review.getBugs().getMajor())))
@@ -90,6 +99,8 @@ public class LocalReviewModels {
         for (SessionUsage session : review.getSessions()) {
             toReturn.addSessionsItem(toModel(session));
         }
+        labels.map(UnitLabels::getUsage).ifPresent(usage -> toReturn.addSessionsItem(toModel(usage)));
+        triage.map(FindingTriage::getUsage).ifPresent(usage -> toReturn.addSessionsItem(toModel(usage)));
         toReturn.setObservations(CollectionUtils.emptyIfNull(review.getObservations()).stream().toList());
         toReturn.setReasoning(reasoning(review, triage));
         if (Objects.nonNull(review.getAssessment())) {
