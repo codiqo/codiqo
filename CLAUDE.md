@@ -1601,6 +1601,13 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   check off. A run that
   fails after the server accepted its submission (`RunArgs.submissionAccepted`) has scored its commit and halts nothing.
   The action calls `halt-project` for a submit step that died outside the JVM (deadline, OOM kill).
+- **A commit with nothing to analyse is never built** (`CommitExclusions.beforeBuild`, right after the analysis
+  checkout): when git (`JGit.changedFileNames`, a root commit against the empty tree) shows no file of a registered
+  language and no supported config file, the commit is excluded as `NO_ANALYZABLE_DIFF` with its diff-only file models
+  (`excludeWithDiff`), so the backend still records what changed. Built first, 217 such commits in 30 days ran a whole
+  build and test run only to be excluded, and a repository's first commit (a `.gitignore`, no `pom.xml`) failed to build
+  and was excluded as `BUILD_FAILURE`. No changed file at all is a shallow-clone boundary, left to the after-build
+  `INCOMPLETE_HISTORY` gate. Gradle builds before its worker starts, so it still decides after the build.
 - **The Maven fork builds twice** (`BuildPhase`): `clean package -DskipTests` (with the time-machine ladder; package, not test-compile, so a sibling module's packaged artifact exists), then `verify`
   without `clean` at the offset that compiled, within what the compile run that compiled left of `buildTimeout` (each
   ladder rung has a whole `buildTimeout` of its own). The review starts in between
