@@ -61,8 +61,11 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.api.testing.TestRun;
 import io.codiqo.api.testing.TestRuns;
 import io.codiqo.client.model.AnalysisExcludeCategory;
+import io.codiqo.core.DefaultLanguageProcessors;
+import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.submit.CommitExclusions;
 import io.codiqo.submit.CommitExclusions.Exclusion;
+import io.codiqo.maven.logging.MavenLogFactory;
 import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.util.JGit;
 import io.codiqo.util.MemoryReport;
@@ -122,8 +125,9 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     }
     /**
      * Runs once the commit has passed the exclusions decided before analysis (skipped merges, filtered authors) and
-     * before the analysis checkout replaces the user's repository in {@code args}. The exclusions that need the computed
-     * delta (include-rules, nothing analysable) are only known after the build.
+     * before the analysis checkout replaces the user's repository in {@code args}. A commit with nothing analysable is
+     * excluded right after that checkout, before its build; the include-rules need the computed delta and are only
+     * known after the build.
      */
     protected void doBeforeAnalysis(RunArgs args) throws Exception {
     }
@@ -220,6 +224,13 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                 getLog().info(String.format("checked out commit ID: %s", commitId));
             }
             args.setAnalysisStartedAt(Instant.now());
+
+            Optional<Exclusion> nothingToAnalyse = CommitExclusions.beforeBuild(clone, commitId, DefaultLanguageProcessors.supportedExtensions());
+            if (nothingToAnalyse.isPresent()) {
+                getLog().warn(String.format("commit %s skipped before its build: %s", commitId, nothingToAnalyse.get().getReason()));
+                excludeWithDiff(args, new JGitDeltaAnalyzer(new MavenLogFactory(getLog()), args).analyze(), nothingToAnalyse.get().getReason(), nothingToAnalyse.get().getCategory());
+                return;
+            }
 
             /**
              * host-side ProjectBuilder calls (pre-flight, root and module model building) resolve snapshot parents
