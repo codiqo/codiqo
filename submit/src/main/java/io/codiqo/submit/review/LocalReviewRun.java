@@ -54,7 +54,6 @@ public final class LocalReviewRun implements AutoCloseable {
     private final CompletableFuture<List<StaticFinding>> buildFindings;
     private final CompletableFuture<List<ReviewUnit>> buildUnits;
     private final List<ReviewLanguage> languages;
-    private final LogFactory logFactory;
     private final Log log;
 
     private LocalReviewRun(
@@ -67,7 +66,6 @@ public final class LocalReviewRun implements AutoCloseable {
         this.buildFindings = buildFindings;
         this.buildUnits = buildUnits;
         this.languages = languages;
-        this.logFactory = logFactory;
         this.log = logFactory.getLogger(LocalReviewRun.class);
     }
     /**
