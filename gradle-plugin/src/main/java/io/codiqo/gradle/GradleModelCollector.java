@@ -12,6 +12,7 @@ import java.util.Set;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.gradle.api.GradleException;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
@@ -113,7 +114,7 @@ public class GradleModelCollector {
         request.setJdtIncludeDecompiledSources(boolProp(root, "codiqo.jdtIncludeDecompiledSources", ext.isJdtIncludeDecompiledSources()));
         request.setJdtLombokAgent(boolProp(root, "codiqo.jdtLombokAgent", ext.isJdtLombokAgent()));
         if (request.isJdtLombokAgent()) {
-            request.setLombokAgentJar(lombokAgentJar(root));
+            resolveLombokAgent(root, request);
         }
         request.setImportTimeoutMinutes(longProp(root, "codiqo.importTimeoutMinutes", ext.getImportTimeoutMinutes()));
         request.setLspQueryTimeoutSeconds(longProp(root, "codiqo.lspQueryTimeoutSeconds", ext.getLspQueryTimeoutSeconds()));
@@ -253,21 +254,33 @@ public class GradleModelCollector {
     }
     /**
      * The lombok jar the Maven goal attaches to the language server as well, at the version pinned in this plugin's
-     * codiqo.versions, resolved here in the daemon from the root project's repositories as the project's own
-     * dependencies are. A root project that declares no repository cannot resolve it and fails here, before the build,
-     * naming the switch: starting the language server without lombok instead would stop call hierarchy at every member
-     * lombok generates in a project that uses it, and nothing would say so.
+     * codiqo.versions. It is resolved as Gradle's jacoco plugin resolves the JaCoCo agent codiqo pins, from the
+     * repositories of a project that applies the Java plugin: a root that only holds subprojects often declares no
+     * repository of its own, and resolving there failed every Gradle analysis of such a build. The first Java project
+     * that resolves it wins.
+     *
+     * <p>When none does, the reason travels to the worker instead of failing here, before the build: an excluded or
+     * build-failed commit never starts the language server and must still be reported, while a full analysis fails
+     * before its review starts, naming the switch. Starting the language server without lombok instead would stop call
+     * hierarchy at every member lombok generates in a project that uses it, and nothing would say so.
      */
-    private static String lombokAgentJar(Project root) {
+    private static void resolveLombokAgent(Project root, AnalysisRequest request) {
         String coordinate = Joiner.on(':').join(LOMBOK_MODULE, pinnedVersion("lombok.version"));
-        Configuration config = root.getConfigurations().detachedConfiguration(root.getDependencies().create(coordinate));
-        config.setTransitive(false);
-        try {
-            return config.getSingleFile().getAbsolutePath();
-        } catch (ResolveException err) {
-            throw new GradleException("codiqo attaches " + coordinate + " to the language server and could not resolve it from the root project's repositories: "
-                    + "declare a repository that serves it, or set codiqo.jdtLombokAgent=false for a project that does not use lombok", err);
+        String failure = "no project of the build applies the Java plugin";
+        for (Project project : root.getAllprojects()) {
+            if (Objects.nonNull(project.getExtensions().findByType(JavaPluginExtension.class))) {
+                Configuration config = project.getConfigurations().detachedConfiguration(project.getDependencies().create(coordinate));
+                config.setTransitive(false);
+                try {
+                    request.setLombokAgentJar(config.getSingleFile().getAbsolutePath());
+                    return;
+                } catch (ResolveException err) {
+                    failure = project.getPath() + ": " + ExceptionUtils.getRootCauseMessage(err);
+                }
+            }
         }
+        request.setLombokAgentError(String.format("codiqo attaches %s to the language server and no Java project of the build could resolve it (%s): "
+                + "declare a repository that serves it, or set codiqo.jdtLombokAgent=false for a project that does not use lombok", coordinate, failure));
     }
     private static String pinnedVersion(String key) {
         try (InputStream stream = GradleModelCollector.class.getClassLoader().getResourceAsStream(VERSIONS_RESOURCE)) {
