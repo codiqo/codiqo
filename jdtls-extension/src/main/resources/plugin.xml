@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?eclipse version="3.4"?>
+<plugin>
+   <extension point="org.eclipse.jdt.ls.core.delegateCommandHandler">
+      <delegateCommandHandler class="io.codiqo.jdtls.extension.SourcesOnlyCallerSearch">
+         <command id="codiqo.callHierarchy.sourcesOnly"/>
+      </delegateCommandHandler>
+   </extension>
+</plugin>

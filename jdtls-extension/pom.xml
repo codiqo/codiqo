@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.codiqo</groupId>
+        <artifactId>codiqo-parent</artifactId>
+        <version>1.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+    <artifactId>codiqo-jdtls-extension</artifactId>
+    <packaging>jar</packaging>
+    <name>Codiqo jdt.ls Extension</name>
+    <description>OSGi bundle loaded into the Eclipse JDT language server through its initializationOptions bundles: a delegate command that limits call hierarchy searches to the sources of the workspace's Java projects. Embedded in codiqo-lang-java, which extracts it next to the server it starts.</description>
+    <dependencies>
+        <dependency>
+            <groupId>org.eclipse.jdt</groupId>
+            <artifactId>org.eclipse.jdt.core</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.jdt</groupId>
+            <artifactId>org.eclipse.jdt.core.manipulation</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.platform</groupId>
+            <artifactId>org.eclipse.core.resources</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.platform</groupId>
+            <artifactId>org.eclipse.equinox.common</artifactId>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <!--
+                        packaged at process-classes, not package, so that a reactor build stopping at test still hands
+                        codiqo-lang-java a jar to embed; before package Maven resolves a sibling module to its
+                        target/classes directory, which maven-dependency-plugin's copy refuses
+                    -->
+                    <execution>
+                        <id>default-jar</id>
+                        <phase>process-classes</phase>
+                    </execution>
+                </executions>
+                <configuration>
+                    <!-- the language server provides org.eclipse.jdt.ls.core; the copy in this module only compiles against it -->
+                    <excludes>
+                        <exclude>org/eclipse/**</exclude>
+                    </excludes>
+                    <archive>
+                        <manifestEntries>
+                            <Bundle-ManifestVersion>2</Bundle-ManifestVersion>
+                            <Bundle-Name>Codiqo jdt.ls Extension</Bundle-Name>
+                            <Bundle-SymbolicName>io.codiqo.jdtls.extension;singleton:=true</Bundle-SymbolicName>
+                            <Bundle-Version>1.0.0</Bundle-Version>
+                            <Bundle-RequiredExecutionEnvironment>JavaSE-21</Bundle-RequiredExecutionEnvironment>
+                            <Require-Bundle>org.eclipse.core.runtime,org.eclipse.core.resources,org.eclipse.jdt.core,org.eclipse.jdt.core.manipulation,org.eclipse.jdt.ls.core</Require-Bundle>
+                        </manifestEntries>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

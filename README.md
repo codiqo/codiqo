@@ -399,6 +399,7 @@ measured.
 | `maven-plugin` | The Maven goals |
 | `gradle-plugin` | The Gradle plugin and its init script |
 | `lang-java`, `lang-config` | Java parsing and metrics (PMD, JaCoCo, SpotBugs, JDT LS); build and schema files |
+| `jdtls-extension` | A bundle loaded into JDT LS that keeps caller searches inside the project's sources |
 | `core`, `api`, `submit` | The analysis engine, its settings and the submission model |
 | `llm` | The local AI review and the scoring rules |
 | `maven-time-machine`, `maven-*-injector`, `maven-build-eventspy` | Maven extensions that replay historical builds and attach coverage and test limits |
