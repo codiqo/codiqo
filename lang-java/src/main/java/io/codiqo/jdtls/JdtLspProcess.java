@@ -47,6 +47,7 @@ public class JdtLspProcess implements Closeable {
     private static final String JAR_EXTENSION = "jar";
     private static final String RUNTIME_NAME_PREFIX = "JavaSE-";
     private static final String EMPTY_SOURCES_ARCHIVE = "jdk-without-sources.zip";
+    private static final String EXTENSION_BUNDLE_RESOURCE = "jdtls/codiqo-jdtls-extension.jar";
     private static final long GRACEFUL_SHUTDOWN_MINUTES = 1L;
     private static final long FORCED_SHUTDOWN_SECONDS = 30L;
 
@@ -55,6 +56,7 @@ public class JdtLspProcess implements Closeable {
     private final JavaProcess process;
     private final File dataDir;
     private final Map<String, Object> runtime;
+    private final Path extensionBundle;
 
     public JdtLspProcess(LogFactory logFactory, RunArgs args, Fetch fetch, int port) throws IOException {
         this.log = logFactory.getLogger(getClass());
@@ -87,6 +89,7 @@ public class JdtLspProcess implements Closeable {
          */
         File languageServerJdk = Optional.ofNullable(args.getJavaHome()).orElseGet(SystemUtils::getJavaHome);
         this.runtime = runtimeWithoutSources(languageServerJdk, spawnedJavaVersion, data);
+        this.extensionBundle = extractExtensionBundle(data);
 
         try (Stream<Path> files = Files.list(tempDir.resolve("plugins"))) {
             launcherJar = files
@@ -217,6 +220,9 @@ public class JdtLspProcess implements Closeable {
     public Map<String, Object> getRuntime() {
         return runtime;
     }
+    public Path getExtensionBundle() {
+        return extensionBundle;
+    }
     @Override
     public void close() throws IOException {
         try {
@@ -248,6 +254,21 @@ public class JdtLspProcess implements Closeable {
                 }
             }
         }
+    }
+    /**
+     * Writes the codiqo-jdtls-extension bundle that codiqo-lang-java carries as a resource (see its pom) into the
+     * server's data directory: the server installs extension bundles from files named in its initialization options,
+     * and taking the jar from this classpath, rather than resolving it from a repository, works wherever codiqo runs.
+     * A jar without the resource is a broken build of codiqo, and the analysis stops here instead of searching
+     * libraries again.
+     */
+    @VisibleForTesting
+    public static Path extractExtensionBundle(Path dir) throws IOException {
+        Path toReturn = dir.resolve(FilenameUtils.getName(EXTENSION_BUNDLE_RESOURCE));
+        try (InputStream in = JdtLspProcess.class.getClassLoader().getResourceAsStream(EXTENSION_BUNDLE_RESOURCE)) {
+            Files.copy(Objects.requireNonNull(in, EXTENSION_BUNDLE_RESOURCE + " is missing from the codiqo-lang-java jar"), toReturn);
+        }
+        return toReturn;
     }
     /**
      * The server's JDK as its one Java runtime (the java.configuration.runtimes entry), with an empty archive as its
