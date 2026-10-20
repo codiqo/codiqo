@@ -7,6 +7,7 @@ import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.URI;
+import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
@@ -203,14 +204,25 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
      * resolve failed the search: scala-library 2.13 on a test classpath turned every one-argument apply(..) lookup
      * into a StackOverflowError. Sent after the shadowing projects are gone, because the scope covers the projects
      * present when it is built. A server that does not know the command fails the import here, before any lookup.
+     *
+     * <p>This one command goes in with the import budget, not the query budget. jdt.ls withholds every workspace
+     * command that is not one of its hardcoded index-independent ones (java.project.list, java.project.getAll, ...)
+     * until the index manager settles — JDTLanguageServer.executeCommand blocks on IndexManager.waitForIndex before
+     * dispatching — and this call is sent exactly when the manager is grinding through the freshly imported workspace.
+     * Waited on with lspQueryTimeout, it timed out on loaded CI runners whose indexing outlasted 30 seconds by a wide
+     * margin, failing the whole import. The command itself answers instantly once dispatched, so once the larger wait
+     * ends, an unknown command still fails the import here — after the index wait instead of before it.
      */
     private void limitCallerSearchesToSources() throws Exception {
-        Number projects = (Number) executeCommand(SOURCES_ONLY_CALLERS_COMMAND, List.of());
+        Number projects = (Number) executeCommand(SOURCES_ONLY_CALLERS_COMMAND, List.of(), args.getImportTimeout());
         log.info("call hierarchy searches limited to the sources of %d Java project(s)", projects.intValue());
     }
     private Object executeCommand(String command, List<Object> arguments) throws Exception {
+        return executeCommand(command, arguments, args.getLspQueryTimeout());
+    }
+    private Object executeCommand(String command, List<Object> arguments, Duration timeout) throws Exception {
         ExecuteCommandParams params = new ExecuteCommandParams(command, arguments);
-        return getLangServer().getWorkspaceService().executeCommand(params).get(args.getLspQueryTimeout().getSeconds(), TimeUnit.SECONDS);
+        return getLangServer().getWorkspaceService().executeCommand(params).get(timeout.getSeconds(), TimeUnit.SECONDS);
     }
     private void start() throws IOException {
         try (ServerSocket socket = new ServerSocket(0)) {
