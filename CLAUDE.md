@@ -1688,7 +1688,9 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   review limit plus 30 minutes for the follow-ups, 180 by default (`REVIEW_PLUGIN_DEFAULT_MINUTES`); change them
   together, or the outer deadline kills the analysis before the review can time out on its own. The reviewer's whole answer format is stated once, at the end of
   its prompt (`ANSWER FORMAT`), and overrides any format a task describes, so the coordinator's task prompts name paths and purpose, never an answer
-  shape. `notChecked` holds up to three notes each on what a reviewer could not verify (an external artifact, a test it
+  shape. It holds for a task that says it is not a review too, and the coordinator starts a subagent only to review an
+  area: GLM-5.3 once started one with "Reply with the single word: done" after its reviewer had reported, and the
+  `done` it got back excluded a commit whose review was complete. `notChecked` holds up to three notes each on what a reviewer could not verify (an external artifact, a test it
   could not run, a refused command), `[]` when it checked everything; a lone string is read as one item, as for
   `observations`.
 - The reviewers' `observations` and `notChecked` are collected from their own answers (`LocalReviewer.reviewerAnswers`,
