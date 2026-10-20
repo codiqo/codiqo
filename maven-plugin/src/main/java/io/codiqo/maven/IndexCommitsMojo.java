@@ -95,6 +95,20 @@ public class IndexCommitsMojo extends AbstractMojo {
     @Parameter(property = "codiqo.firstParentOnly", defaultValue = "true")
     private boolean firstParentOnly;
 
+    /** nullable, like the analysis goals': unset keeps the {@link RunArgs} default */
+    @Parameter(property = "codiqo.jdtlsVersion")
+    private String jdtlsVersion;
+
+    @Parameter(property = "codiqo.jdtlsUseSnapshot", defaultValue = "false")
+    private boolean jdtlsUseSnapshot;
+
+    /**
+     * Where the resolved language-server version lands for the job's cache key; the GitHub Action
+     * reads it before restoring its download cache.
+     */
+    @Parameter(property = "codiqo.indexMetadataFile", defaultValue = "${project.build.directory}/codiqo/index-metadata.properties")
+    private File indexMetadataFile;
+
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         try (Repository repo = JGit.openRepository(project.getBasedir())) {
@@ -110,6 +124,8 @@ public class IndexCommitsMojo extends AbstractMojo {
             Optional.ofNullable(includeAuthorEmails).ifPresent(args::setIncludeAuthorEmails);
             Optional.ofNullable(excludeAuthorEmails).ifPresent(args::setExcludeAuthorEmails);
             args.setFirstParentOnly(firstParentOnly);
+            Optional.ofNullable(jdtlsVersion).ifPresent(args::setJdtlsVersion);
+            args.setJdtlsUseSnapshot(jdtlsUseSnapshot);
 
             Date cutoff = Date.from(LocalDate.now(ZoneOffset.UTC).minus(Period.parse(commitWindow)).atStartOfDay(ZoneOffset.UTC).toInstant());
             List<CommitModel> commits = CommitIndexer.extractCommits(repo, args, indexRef, cutoff, resolvedBranch);
@@ -122,6 +138,7 @@ public class IndexCommitsMojo extends AbstractMojo {
             Log log = new MavenMessageReporter(getLog());
             CommitIndexPublisher.indexBatches(log, client, apiUrl, projectId, buildProjectMetadata(projectId, repo), commits, batchSize);
             writeMissingAnalyses(log, client, repo, projectId, resolvedBranch);
+            args.writeIndexMetadata(indexMetadataFile.toPath());
         } catch (MojoExecutionException | MojoFailureException err) {
             throw err;
         } catch (Exception err) {

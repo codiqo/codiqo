@@ -3,6 +3,7 @@ package io.codiqo.api;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
@@ -17,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -1399,6 +1401,20 @@ public class RunArgs {
             return Optional.empty();
         }
         return Optional.of(parseArchiveVersion(jdtlsArchiveName));
+    }
+    /**
+     * The settings a CI job needs before it decides whether its cached downloads still apply, keyed early enough for
+     * an actions/cache step: the pinned language-server milestone, or the resolved snapshot build (the one network
+     * look-up, {@code latest.txt}). Written as a properties file so the GitHub Action can read a single key without
+     * scraping the build log.
+     */
+    public void writeIndexMetadata(Path file) throws IOException {
+        Properties metadata = new Properties();
+        metadata.setProperty("jdtlsVersion", jdtlsUseSnapshot ? effectiveJdtlsVersion() : jdtlsVersion);
+        Files.createDirectories(file.toAbsolutePath().getParent());
+        try (OutputStream out = Files.newOutputStream(file)) {
+            metadata.store(out, "codiqo index metadata");
+        }
     }
     private String parseArchiveVersion(String archiveName) {
         Matcher matcher = JDTLS_ARCHIVE_VERSION.matcher(archiveName);

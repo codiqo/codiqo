@@ -6,12 +6,16 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.Locale;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.DefaultParser;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import net.sourceforge.pmd.lang.rule.RulePriority;
 
@@ -165,6 +169,28 @@ class RunArgsCliTest {
         args.setJdtlsArchiveName("unexpected-name.tar.gz");
 
         assertEquals("1.63.0", args.effectiveJdtlsVersion());
+    }
+    /** the cache-key file the GitHub Action reads before restoring its language-server download cache */
+    @Test
+    void indexMetadataReportsThePinnedVersionWithoutNetwork(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("nested/index-metadata.properties");
+
+        new RunArgs().writeIndexMetadata(file);
+
+        assertEquals(List.of("jdtlsVersion=1.63.0"), nonCommentLines(file));
+    }
+    @Test
+    void indexMetadataReportsAnOverriddenVersion(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("index-metadata.properties");
+        RunArgs args = new RunArgs();
+        args.setJdtlsVersion("1.58.0");
+
+        args.writeIndexMetadata(file);
+
+        assertEquals(List.of("jdtlsVersion=1.58.0"), nonCommentLines(file));
+    }
+    private static List<String> nonCommentLines(Path file) throws Exception {
+        return Files.readAllLines(file).stream().filter(line -> !line.startsWith("#")).toList();
     }
     /** the whole point of the accessor: no archive name means no download, so a caller that only reports the version cannot hang or fail on an unreachable download.eclipse.org */
     @Test
