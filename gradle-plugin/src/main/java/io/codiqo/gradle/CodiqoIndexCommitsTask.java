@@ -90,6 +90,10 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
             FileUtils.forceMkdir(outputFile.getParentFile());
             FileUtils.writeLines(outputFile, StandardCharsets.UTF_8.name(), resolveShas(root, ext, repo, branch, commits));
             getLogger().lifecycle("codiqo: wrote the commit list to " + outputFile.getAbsolutePath());
+
+            filter.setJdtlsVersion(prop("codiqo.jdtlsVersion", ext.getJdtlsVersion()));
+            filter.setJdtlsUseSnapshot(Boolean.parseBoolean(prop("codiqo.jdtlsUseSnapshot", String.valueOf(ext.isJdtlsUseSnapshot()))));
+            filter.writeIndexMetadata(resolveMetadataFile(root, ext).toPath());
         }
     }
     /**
@@ -153,6 +157,13 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
                     "cannot resolve branch: HEAD is detached and no default branch is available; set -Pcodiqo.branch explicitly"));
         }
         return current;
+    }
+    private File resolveMetadataFile(Project root, CodiqoExtension ext) {
+        String override = prop("codiqo.indexMetadataFile", ext.getIndexMetadataFile());
+        if (StringUtils.isNotBlank(override)) {
+            return new File(override);
+        }
+        return new File(root.getLayout().getBuildDirectory().getAsFile().get(), "codiqo/index-metadata.properties");
     }
     private File resolveOutputFile(Project root, CodiqoExtension ext) {
         String override = prop("codiqo.indexOutputFile", ext.getIndexOutputFile());

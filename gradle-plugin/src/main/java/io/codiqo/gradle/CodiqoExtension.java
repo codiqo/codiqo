@@ -28,6 +28,8 @@ public class CodiqoExtension {
 
     private String commitWindow = "P3M";
     private String indexOutputFile;
+    /** where the resolved language-server version lands for the job's cache key; the GitHub Action reads it */
+    private String indexMetadataFile;
 
     private boolean skipOnBuildFailure = true;
 
