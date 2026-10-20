@@ -149,7 +149,7 @@ public class RunArgs {
      * {@link #effectiveJdtlsVersion()}, so moving this forces a full re-index of every dependency jar.
      */
     @Nullable
-    private String jdtlsVersion = "1.62.0";
+    private String jdtlsVersion = "1.63.0";
 
     /**
      * Resolve the language server from the {@code snapshots} channel instead of a pinned milestone. Snapshots move,

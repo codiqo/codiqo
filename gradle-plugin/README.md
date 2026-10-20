@@ -60,7 +60,7 @@ Config overrides (project properties, or a `codiqo { … }` extension block): `-
 `-Pcodiqo.outputDirectory`, `-Pcodiqo.javaHome`, `-Pcodiqo.ignoreCoverage`, `-Pcodiqo.ignoreCpd`,
 `-Pcodiqo.ignoreDiagnostics`, `-Pcodiqo.ignoreComplexity`, `-Pcodiqo.hotspots`, `-Pcodiqo.hotspotsCommitId`, `-Pcodiqo.testTimeoutMinutes`,
 `-Pcodiqo.perTestTimeoutMinutes`, `-Pcodiqo.importTimeoutMinutes`, `-Pcodiqo.lspQueryTimeoutSeconds`,
-`-Pcodiqo.jdtlsVersion`, `-Pcodiqo.jdtUseSharedIndex`, `-Pcodiqo.jdtLombokAgent`, `-Pcodiqo.failOnUninstrumentedModule`,
+`-Pcodiqo.jdtlsVersion` (default `1.63.0`), `-Pcodiqo.jdtUseSharedIndex`, `-Pcodiqo.jdtLombokAgent`, `-Pcodiqo.failOnUninstrumentedModule`,
 `-Pcodiqo.analysisMaxHeap`, `-Pcodiqo.skipOnBuildFailure`,
 `-Pcodiqo.firstParentOnly`, `-Pcodiqo.excludeRevertedCommits`, `-Pcodiqo.includeBranches`,
 `-Pcodiqo.include/excludeAuthorEmails`, `-Pcodiqo.testTimeoutMinutes`,

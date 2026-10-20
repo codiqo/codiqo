@@ -73,7 +73,7 @@ public class CodiqoExtension {
     private Long perTestTimeoutMinutes;
     private boolean ignoreTestFailures = true;
 
-    private String jdtlsVersion = "1.62.0";
+    private String jdtlsVersion = "1.63.0";
     private boolean jdtlsUseSnapshot;
     private boolean jdtUseSharedIndex = true;
     private boolean jdtIncludeDecompiledSources;

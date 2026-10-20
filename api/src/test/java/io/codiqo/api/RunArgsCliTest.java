@@ -143,7 +143,7 @@ class RunArgsCliTest {
     void jdtlsBaseUrlDefaultsToVersionedMilestones() {
         RunArgs args = new RunArgs();
 
-        assertEquals("https://download.eclipse.org/jdtls/milestones/1.62.0", args.jdtlsBaseUrl().build().toString());
+        assertEquals("https://download.eclipse.org/jdtls/milestones/1.63.0", args.jdtlsBaseUrl().build().toString());
     }
     @Test
     void jdtlsBaseUrlUsesFlatSnapshotsWhenSnapshotsEnabled() {
@@ -164,7 +164,7 @@ class RunArgsCliTest {
         RunArgs args = new RunArgs();
         args.setJdtlsArchiveName("unexpected-name.tar.gz");
 
-        assertEquals("1.62.0", args.effectiveJdtlsVersion());
+        assertEquals("1.63.0", args.effectiveJdtlsVersion());
     }
     /** the whole point of the accessor: no archive name means no download, so a caller that only reports the version cannot hang or fail on an unreachable download.eclipse.org */
     @Test

@@ -295,7 +295,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     @Parameter(property = "codiqo.diffContextLines", defaultValue = "10")
     protected int diffContextLines;
 
-    @Parameter(property = "codiqo.jdtlsVersion", defaultValue = "1.62.0")
+    @Parameter(property = "codiqo.jdtlsVersion", defaultValue = "1.63.0")
     protected String jdtlsVersion;
 
     @Parameter(property = "codiqo.jdtlsUseSnapshot", defaultValue = "false")
