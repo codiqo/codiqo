@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -24,6 +25,35 @@ class JdtlsArchiveTest {
               <title>Temporary shutdown.</title>
             """;
 
+    /** nothing listens on download.eclipse.org in this test: the default build comes from codiqo's own release */
+    @Test
+    void theDefaultVersionIsCodiqosMirroredBuild() {
+        RunArgs args = new RunArgs();
+
+        assertEquals(RunArgs.JDTLS_MIRRORED_ARCHIVE, args.resolveJdtlsArchiveName());
+        assertEquals("https://github.com/codiqo/codiqo/releases/download/jdtls-1.63.0/jdt-language-server-1.63.0-202610191322.tar.gz",
+                args.jdtlsArchiveUrl().toString());
+        assertEquals(Optional.of(RunArgs.JDTLS_MIRRORED_SHA256), args.jdtlsArchiveSha256());
+        assertEquals(RunArgs.JDTLS_MIRRORED_VERSION, args.effectiveJdtlsVersion());
+    }
+    @Test
+    void anotherVersionComesFromEclipseWithoutADigest() {
+        RunArgs args = new RunArgs();
+        args.setJdtlsVersion("1.62.0");
+        args.setJdtlsArchiveName("jdt-language-server-1.62.0-202610131109.tar.gz");
+
+        assertEquals("https://download.eclipse.org/jdtls/milestones/1.62.0/jdt-language-server-1.62.0-202610131109.tar.gz", args.jdtlsArchiveUrl().toString());
+        assertEquals(Optional.empty(), args.jdtlsArchiveSha256());
+    }
+    @Test
+    void theSnapshotsChannelIsNeverMirrored() {
+        RunArgs args = new RunArgs();
+        args.setJdtlsUseSnapshot(true);
+        args.setJdtlsArchiveName("jdt-language-server-1.64.0-202610211200.tar.gz");
+
+        assertEquals("https://download.eclipse.org/jdtls/snapshots/jdt-language-server-1.64.0-202610211200.tar.gz", args.jdtlsArchiveUrl().toString());
+        assertEquals(Optional.empty(), args.jdtlsArchiveSha256());
+    }
     @Test
     void latestNamesOneArchive() throws Exception {
         assertEquals(ARCHIVE, RunArgs.jdtlsArchiveName(latest(), ARCHIVE + "\n"));

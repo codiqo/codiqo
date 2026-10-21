@@ -230,7 +230,7 @@ public class AnalysisEngine {
          * failed download ends the run with nothing stored (DownloadFailedException).
          */
         try (Fetch fetch = new Fetch(args)) {
-            fetch.download(logFactory, args.jdtlsArchiveUrl());
+            fetch.downloadJdtls(logFactory, args);
         }
 
         Optional<LocalReviewRun> review = startReview(request, args, logFactory, log);

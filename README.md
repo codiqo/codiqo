@@ -297,7 +297,7 @@ submitted value, then organisation override, then project override.
 | `codiqo.firstParentOnly`, `codiqo.excludeRevertedCommits` | `true`, `true` | Which commits of the history count |
 | `codiqo.ignoreCoverage`, `codiqo.ignoreCpd` | `false`, `false` | Skip a measurement for projects that cannot run it |
 | `codiqo.pmdRules`, `codiqo.pmdMinPriority` | PMD's best practices, design, error-prone, performance and multithreading rules plus Codiqo's code style; `HIGH` | The PMD rules applied and the lowest priority reported |
-| `codiqo.jdtlsVersion` | `1.63.0` | The Eclipse JDT LS milestone that resolves callers; a new version rebuilds the shared dependency index once |
+| `codiqo.jdtlsVersion` | `1.63.0` | The Eclipse JDT LS milestone that resolves callers; a new version rebuilds the shared dependency index once. The default build is downloaded from Codiqo's own GitHub release and checked against its SHA-256; any other version comes from download.eclipse.org |
 
 **The scoring settings that move the number most:**
 

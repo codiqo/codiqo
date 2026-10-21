@@ -1,5 +1,7 @@
 package io.codiqo.util;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -19,12 +21,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import org.junit.jupiter.api.Test;
+import org.slf4j.event.Level;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.google.common.hash.Hashing;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 
 class FetchTest {
@@ -33,6 +38,8 @@ class FetchTest {
     private static final int UNAVAILABLE = 503;
     private static final int DECLARED_LENGTH = 1024;
     private static final byte[] PART = new byte[16];
+    private static final String PART_SHA256 = Hashing.sha256().hashBytes(PART).toString();
+    private static final String OTHER_SHA256 = Hashing.sha256().hashBytes(new byte[1]).toString();
     private static final int REQUEST_BUFFER = 8192;
 
     @Test
@@ -85,12 +92,7 @@ class FetchTest {
     @Test
     void aCacheThatCannotBeWrittenIsNotAFailedDownload(@TempDir Path dir) throws Exception {
         Path notADirectory = Files.createFile(dir.resolve("cache"));
-        HttpServer server = serve(exchange -> {
-            exchange.sendResponseHeaders(OK, PART.length);
-            try (OutputStream body = exchange.getResponseBody()) {
-                body.write(PART);
-            }
-        });
+        HttpServer server = servePart();
         try (Fetch fetch = new Fetch(new RunArgs(), notADirectory)) {
             IOException err = assertThrows(IOException.class, () -> fetch.download(logs(), url(server)));
 
@@ -98,6 +100,40 @@ class FetchTest {
         } finally {
             server.stop(0);
         }
+    }
+    @Test
+    void aFileWithItsDigestEntersTheCache(@TempDir Path cache) throws Exception {
+        HttpServer server = servePart();
+        try (Fetch fetch = new Fetch(new RunArgs(), cache)) {
+            Path downloaded = fetch.download(clazz -> new Quiet(), url(server), PART_SHA256);
+
+            assertArrayEquals(PART, Files.readAllBytes(downloaded));
+        } finally {
+            server.stop(0);
+        }
+    }
+    /** a damaged or replaced file never enters the cache, so the next run downloads it again instead of running it */
+    @Test
+    void aFileWithAnotherDigestIsAFailedDownloadAndIsNotCached(@TempDir Path cache) throws Exception {
+        HttpServer server = servePart();
+        try (Fetch fetch = new Fetch(new RunArgs(), cache)) {
+            DownloadFailedException err = assertThrows(DownloadFailedException.class, () -> fetch.download(logs(), url(server), OTHER_SHA256));
+
+            assertTrue(err.getMessage().endsWith("SHA-256 is " + PART_SHA256 + ", not " + OTHER_SHA256), err.getMessage());
+            try (var files = Files.list(cache)) {
+                assertEquals(0, files.count());
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+    private static HttpServer servePart() throws IOException {
+        return serve(exchange -> {
+            exchange.sendResponseHeaders(OK, PART.length);
+            try (OutputStream body = exchange.getResponseBody()) {
+                body.write(PART);
+            }
+        });
     }
     private static HttpServer serve(HttpHandler handler) throws IOException {
         HttpServer toReturn = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -111,5 +147,21 @@ class FetchTest {
     /** only a download that succeeded logs, so a failed one never asks for a logger */
     private static LogFactory logs() {
         return clazz -> fail("a failed download logs nothing");
+    }
+    private static final class Quiet implements Log {
+        @Override
+        public boolean isLoggable(Level level) {
+            return false;
+        }
+        @Override
+        public void logEx(Level level, String message, Object[] formatArgs, Throwable error) {
+        }
+        @Override
+        public void log(Level level, String message, Object... formatArgs) {
+        }
+        @Override
+        public int numErrors() {
+            return 0;
+        }
     }
 }
