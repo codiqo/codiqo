@@ -11,6 +11,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.commons.lang3.tuple.ImmutableTriple;
@@ -39,7 +40,10 @@ import lombok.Value;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.JsonParser;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.annotation.JsonDeserialize;
 import tools.jackson.databind.exc.MismatchedInputException;
+import tools.jackson.databind.util.StdConverter;
 
 /**
  * Reviews one commit with OpenCode: a coordinator agent is given only the repository root and the commit id, works out
@@ -66,6 +70,18 @@ public class LocalReviewer {
             "provider.rate-limit",
             "provider.timeout",
             "provider.unknown");
+    /**
+     * Reads the coordinator's answer, whose blastRadiusAnalysis carries the signature changes flat ({@link FlatBlastRadius}):
+     * the changed signatures as "signatureChanges", with hasBreakingChanges and breakingChangeType beside them, where
+     * LlmScoringResponse nests all three in an object named "signatureChanges". Asked for that object, the coordinator model
+     * wrote "signatureChanges" as the list and moved one of the other two fields up beside it in 2 of about 100 production
+     * reviews, and each of those answers failed its review: a field named like a list that holds an object is a trap. The
+     * mix-in changes this read only; LlmScoringResponse keeps its nested shape everywhere else, the server's own reads and
+     * stored responses included.
+     */
+    private static final ObjectMapper COORDINATOR_ANSWER = LlmJson.responseMapper().rebuild()
+            .addMixIn(LlmScoringResponse.class, CoordinatorAnswer.class)
+            .build();
 
     private final RunArgs args;
     private final ReviewEndpoint endpoint;
@@ -187,7 +203,7 @@ public class LocalReviewer {
             List<LocalReviewModels.Task> tasks;
             try {
                 bugs = readBugs(answer);
-                assessment = LlmJson.readAnswerIgnoring(answer, LlmScoringResponse.class, BLOCK_CATEGORIES);
+                assessment = readAssessment(answer);
                 tasks = LocalReviewModels.tasks(answer);
             } catch (JacksonException err) {
                 throw new ReviewAnswerException("the coordinator's answer is not the JSON object asked for: " + StringUtils.abbreviate(answer, RunArgs.REVIEW_ANSWER_PREVIEW), err);
@@ -318,8 +334,12 @@ public class LocalReviewer {
         for (SessionUsage session : sessions) {
             if (OpenCodeReviewConfig.REVIEWER.equals(session.getAgent())) {
                 total++;
-                requireTurnSucceeded(client, session.getSessionId());
-                Optional<String> text = client.answer(session.getSessionId());
+                List<List<JsonNode>> turns = client.turns(session.getSessionId());
+                if (turns.size() > 1) {
+                    log.warn("the coordinator continued reviewer session %s %d time(s); its answer is that of the first turn that ended with one",
+                            session.getSessionId(), turns.size() - 1);
+                }
+                Optional<String> text = reviewerAnswer(session.getSessionId(), turns);
                 if (text.isEmpty()) {
                     unanswered.add(session.getSessionId());
                     continue;
@@ -413,9 +433,44 @@ public class LocalReviewer {
         toReturn.setMinor(Lists.newArrayList(CollectionUtils.emptyIfNull(toReturn.getMinor())));
         return toReturn;
     }
+    /**
+     * A reviewer's answer: that of the first turn of its session that ended with one ({@link OpenCodeClient#answerOf}).
+     * The subagent tool continues a reviewer through its sessionID, for two different reasons. A reviewer that answered
+     * was continued in 6 of 194 production reviews just before the coordinator's own answer, with "noop", "placeholder",
+     * "reply with an empty report" or "answer yes or no": read as the session's newest answer, the reply failed one
+     * review ("no") and, being a well-formed empty report, silently replaced two reviewers' reviews and observations. A
+     * reviewer cut off at its step cap was continued to finish, and only its second turn holds its review: reading the
+     * first turn alone excluded that commit. When no turn ended with an answer, the error the last one ended with fails
+     * the review as the provider's or the commit's, and without one the reviewer is unanswered.
+     */
+    @VisibleForTesting
+    public static Optional<String> reviewerAnswer(String sessionId, List<List<JsonNode>> turns) throws IOException {
+        for (List<JsonNode> turn : turns) {
+            Optional<String> toReturn = OpenCodeClient.answerOf(turn);
+            if (toReturn.isPresent()) {
+                return toReturn;
+            }
+        }
+        if (CollectionUtils.isNotEmpty(turns)) {
+            requireSucceeded(sessionId, OpenCodeClient.errorOf(turns.getLast()));
+        }
+        return Optional.empty();
+    }
+    /**
+     * The coordinator's assessment, read through {@code COORDINATOR_ANSWER} without its blockCategories. The unit labels
+     * are the reviewers' own ({@code reviewerAnswers}), which replace that field after the read, and a coordinator once
+     * collapsed every reviewer's labels into bare category names, a list of strings where label objects belong: read with
+     * the rest, that field alone failed an answer whose every field the review keeps was well formed.
+     */
+    @VisibleForTesting
+    public static LlmScoringResponse readAssessment(String answer) {
+        return LlmJson.readAnswerIgnoring(answer, COORDINATOR_ANSWER, LlmScoringResponse.class, BLOCK_CATEGORIES);
+    }
     /** fails with the error OpenCode recorded on the session's newest assistant message, when its last turn ended with one */
     private static void requireTurnSucceeded(OpenCodeClient client, String sessionId) throws IOException {
-        Optional<JsonNode> failed = client.turnError(sessionId);
+        requireSucceeded(sessionId, client.turnError(sessionId));
+    }
+    private static void requireSucceeded(String sessionId, Optional<JsonNode> failed) throws TurnFailedException {
         if (failed.isPresent()) {
             throw new TurnFailedException(sessionId, failed.get().path("type").asString(), failed.get().path("message").asString());
         }
@@ -471,6 +526,55 @@ public class LocalReviewer {
     @FunctionalInterface
     public interface BuildSource<T> {
         List<T> await() throws Exception;
+    }
+
+    /**
+     * The coordinator's answer reads its blastRadiusAnalysis as a {@link FlatBlastRadius}, see {@link #COORDINATOR_ANSWER}.
+     * Unwrapping the nested object onto its parent cannot express this format: Jackson does not unwrap a property named
+     * like a property of the object it holds, and the list is "signatureChanges" in both.
+     */
+    private interface CoordinatorAnswer {
+        @JsonDeserialize(converter = FlatBlastRadiusConverter.class)
+        void setBlastRadiusAnalysis(LlmScoringResponse.BlastRadiusAnalysis blastRadiusAnalysis);
+    }
+
+    /**
+     * The coordinator's blastRadiusAnalysis as its prompt asks for it. Only these fields are taken from the review; the
+     * caller counts are the analysis's own. The nested object written the old way fails the read: its "signatureChanges"
+     * is not a list. The signature fields stay null when the answer leaves them out, so a blastRadiusAnalysis without any
+     * of them carries no signature changes at all rather than a judgment of none, as an answer without the nested object
+     * did. One that names only some of them gets the defaults the nested object gave a left-out field: not breaking, no
+     * signatures. Both answers that failed on the nested object left one out, one of them hasBreakingChanges beside a
+     * breakingChangeType while its explanation said no caller breaks; requiring the field would fail such answers, and
+     * reading its absence as breaking would charge the breaking-change penalty the explanation rules out.
+     */
+    @Data
+    @NoArgsConstructor
+    private static class FlatBlastRadius {
+        private LlmScoringResponse.ModuleType moduleType;
+        private List<String> signatureChanges;
+        private Boolean hasBreakingChanges;
+        private LlmScoringResponse.BreakingChangeType breakingChangeType;
+        private String explanation;
+    }
+
+    private static final class FlatBlastRadiusConverter extends StdConverter<FlatBlastRadius, LlmScoringResponse.BlastRadiusAnalysis> {
+        @Override
+        public LlmScoringResponse.BlastRadiusAnalysis convert(FlatBlastRadius flat) {
+            LlmScoringResponse.BlastRadiusAnalysis toReturn = LlmScoringResponse.BlastRadiusAnalysis.builder()
+                    .moduleType(flat.getModuleType())
+                    .explanation(flat.getExplanation())
+                    .build();
+
+            if (BooleanUtils.or(new boolean[] { Objects.nonNull(flat.getSignatureChanges()), Objects.nonNull(flat.getHasBreakingChanges()), Objects.nonNull(flat.getBreakingChangeType()) })) {
+                toReturn.setSignatureChanges(LlmScoringResponse.SignatureChanges.builder()
+                        .hasBreakingChanges(Boolean.TRUE.equals(flat.getHasBreakingChanges()))
+                        .changedSignatures(Lists.newArrayList(CollectionUtils.emptyIfNull(flat.getSignatureChanges())))
+                        .breakingChangeType(flat.getBreakingChangeType())
+                        .build());
+            }
+            return toReturn;
+        }
     }
 
     /** an answer of the model in another shape than its prompt asks for, which is the commit's failure, never the provider's */

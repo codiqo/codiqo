@@ -45,6 +45,8 @@ public class OpenCodeClient implements Closeable {
     private static final MediaType JSON = MediaType.get(HttpHeaderValues.APPLICATION_JSON.toString());
     private static final int PAGE = 100;
     private static final String ASSISTANT = "assistant";
+    private static final String USER_MESSAGE = "user";
+    private static final String STOP = "stop";
     private static final String ORDER_NEWEST_FIRST = "desc";
     private static final String ORDER_OLDEST_FIRST = "asc";
 
@@ -142,6 +144,21 @@ public class OpenCodeClient implements Closeable {
         } while (cursor.isPresent());
         return toReturn;
     }
+    /**
+     * Every message of the session, oldest first, grouped into turns: a turn opens with a user message and holds every
+     * message up to the next one, the messages OpenCode adds on its own inside a turn included (the "continue" it sends
+     * after an answer the provider cut short is a synthetic message, not a user one).
+     */
+    public List<List<JsonNode>> turns(String sessionId) throws IOException {
+        List<List<JsonNode>> toReturn = Lists.newArrayList();
+        for (JsonNode message : messages(sessionId)) {
+            if (BooleanUtils.or(new boolean[] { toReturn.isEmpty(), USER_MESSAGE.equals(message.path("type").asString()) })) {
+                toReturn.add(Lists.newArrayList());
+            }
+            toReturn.getLast().add(message);
+        }
+        return toReturn;
+    }
     @Override
     public void close() {
         http.dispatcher().executorService().shutdown();
@@ -212,6 +229,27 @@ public class OpenCodeClient implements Closeable {
             toReturn.addPathSegment(segment);
         }
         return toReturn.build();
+    }
+    /**
+     * The answer a turn ended with: the text of its newest assistant message that has any, when its last assistant
+     * message stopped on its own ({@code finish} "stop"). A turn cut off on a tool call, at a step cap for one, or by an
+     * error ended with no answer, whatever its steps wrote: a reviewer writes "Step N of M" on every step, and a cut-off
+     * reviewer read by its newest text failed as an unreadable answer instead of an unanswered one. In 690 reviewer turns
+     * of production and local traces, every turn that stopped on its own carried its answer in that last message.
+     */
+    public static Optional<String> answerOf(List<JsonNode> turn) {
+        List<JsonNode> replies = Lists.reverse(turn).stream().filter(message -> ASSISTANT.equals(message.path("type").asString())).toList();
+        if (replies.stream().findFirst().filter(message -> STOP.equals(message.path("finish").asString())).isPresent()) {
+            return replies.stream().map(OpenCodeClient::text).filter(StringUtils::isNotBlank).findFirst();
+        }
+        return Optional.empty();
+    }
+    public static Optional<JsonNode> errorOf(List<JsonNode> turn) {
+        return Lists.reverse(turn).stream()
+                .filter(message -> ASSISTANT.equals(message.path("type").asString()))
+                .findFirst()
+                .map(message -> message.path("error"))
+                .filter(JsonNode::isObject);
     }
     /** without an id every later call goes to {@code /api/session//...} and fails with a 404 that names nothing */
     private static String sessionId(JsonNode answer, String what) throws IOException {

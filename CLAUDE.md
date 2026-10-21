@@ -1667,6 +1667,17 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   `unitLabels` holds only label objects (`{"file","signature","category","reason"}`); it is not the scoring response's
   `blockCategories`, which reviewers read as the topics of their review and filled with sentences. A string entry
   still fails the read, and so does an answer with no `unitLabels` (a reviewer with no units sends `[]`).
+  A reviewer's answer is that of the first turn of its session that ended with one, its last message stopping on its
+  own (`LocalReviewer.reviewerAnswer`, `OpenCodeClient.answerOf`): the subagent tool continues a reviewer through its
+  `sessionID`. The coordinator did so after a reviewer had answered in 6 of 194 reviews, with a no-op prompt ("noop",
+  "reply with an empty report", "answer yes or no") whose reply, read as the newest answer, failed one review and
+  silently emptied two reviewers' reports; and it continued a reviewer cut off at its step cap, whose review only its
+  second turn holds. A turn cut off on a tool call or an error has no answer, whatever its steps wrote. A continued
+  reviewer is logged as a warning.
+- **The coordinator writes `blastRadiusAnalysis` flat**: `signatureChanges` is the list of changed signatures, with
+  `hasBreakingChanges` and `breakingChangeType` beside it (`LocalReviewer.FlatBlastRadius`, read through the
+  `COORDINATOR_ANSWER` mix-in). Asked for the nested `signatureChanges` object, GLM-5.3 wrote it as the list in 2 of
+  about 100 reviews and failed them. `LlmScoringResponse` keeps the nested object everywhere else, the server included.
 - **Nothing the model writes is repaired, and no turn is sent twice.** An unreadable coordinator, reviewer, labelling or
   triage answer fails the review at once, and so does a reviewer session that ended without an answer (the coordinator
   retries no area), a coordinator that started no reviewer, a work split with no area or an area without paths
