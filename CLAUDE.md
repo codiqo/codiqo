@@ -1683,7 +1683,8 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   GLM-5.3 wrote a list in 2 of 48 reviews (once of single-key objects, once of nameless score objects whose dimension
   cannot be known), and each failed the read.
 - **An answer's text begins with `{`**: the step count belongs in the reasoning, and no summary or announcement precedes
-  the JSON. GLM-5.3 wrote "Step N of M" into the visible text of about 80% of its messages and put prose before about
+  the JSON. The shared `json-rules` say so, so the labelling and triage turns carry it in their own prompt as well as
+  in the coordinator's system prompt they inherit. GLM-5.3 wrote "Step N of M" into the visible text of about 80% of its messages and put prose before about
   65% of its answers; twice in about 230 answering turns its last message, stopped on its own, was only that prose
   ("… Composing the answer.", "… Final answer:"), and each failed its review (a labelling fork and a reviewer).
 - **The coordinator never starts a subagent in the background.** OpenCode's subagent tool takes `background`, and its

@@ -12,7 +12,7 @@ Judge each unit from its changed lines as the reviewers did:
 Answer with one JSON object and nothing else, one entry per id below, the id copied exactly:
 {"labels":[{"id":"U1","category":"MECHANICAL|ROUTINE|SUBSTANTIVE|INTRICATE","reason":"one sentence naming what in the changed lines makes it ROUTINE or harder; leave it out for MECHANICAL"}]}
 JSON RULES: the answer is read by a program, and malformed JSON loses the whole review.
-1. The answer is one JSON object and nothing else: no markdown code fences, no text before or after it.
+1. The answer is one JSON object and nothing else: its text begins with "{", with no step count, summary, announcement or markdown code fence before it, and nothing follows it.
 2. Every field name is double-quoted; no trailing commas; every array element is a complete object, never null.
 3. Leave an optional field out rather than writing null; an empty array is the right value when nothing was found.
 4. Inside strings a backslash may only come before one of " \ / n r t b f u. Write a newline as \n, a quote in code as \", a backslash in code as \; a regex such as \s is written \\s.
