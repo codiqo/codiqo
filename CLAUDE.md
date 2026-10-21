@@ -1678,6 +1678,19 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   `hasBreakingChanges` and `breakingChangeType` beside it (`LocalReviewer.FlatBlastRadius`, read through the
   `COORDINATOR_ANSWER` mix-in). Asked for the nested `signatureChanges` object, GLM-5.3 wrote it as the list in 2 of
   about 100 reviews and failed them. `LlmScoringResponse` keeps the nested object everywhere else, the server included.
+- **The coordinator's `qualityDimensions` is an object keyed by dimension name**, and `assess-coordinator` shows one
+  entry of it. Asked "for each of architectureImpact, …: {score, rationale, qualityGateMet}" without the wrapper,
+  GLM-5.3 wrote a list in 2 of 48 reviews (once of single-key objects, once of nameless score objects whose dimension
+  cannot be known), and each failed the read.
+- **An answer's text begins with `{`**: the step count belongs in the reasoning, and no summary or announcement precedes
+  the JSON. GLM-5.3 wrote "Step N of M" into the visible text of about 80% of its messages and put prose before about
+  65% of its answers; twice in about 230 answering turns its last message, stopped on its own, was only that prose
+  ("… Composing the answer.", "… Final answer:"), and each failed its review (a labelling fork and a reviewer).
+- **The coordinator never starts a subagent in the background.** OpenCode's subagent tool takes `background`, and its
+  result for one tells the model to end its response; a headless review ends with that turn, so the subagent's report
+  is never read. In 1 of 48 reviews GLM-5.3 started a second, background "verification" subagent after its reviewer had
+  reported, then ended on "Once it reports, I will … give the final JSON". OpenCode 2.1.2 has no setting that turns the
+  parameter off, so the prompt forbids it and any subagent started after the reviewers reported.
 - **Nothing the model writes is repaired, and no turn is sent twice.** An unreadable coordinator, reviewer, labelling or
   triage answer fails the review at once, and so does a reviewer session that ended without an answer (the coordinator
   retries no area), a coordinator that started no reviewer, a work split with no area or an area without paths
@@ -1691,7 +1704,7 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
 - **The step caps are guards, not budgets** (`reviewCoordinatorSteps` 128, `reviewReviewerSteps` 256). An agent that
   reaches its cap is lost: a reviewer's next tool call is refused and it never answers, and a coordinator gets
   OpenCode's own max-steps instruction, which "overrides all other instructions" and asks for a prose summary instead
-  of the JSON. Both prompts therefore carry the same STEP BUDGET: count each step ("Step N of M"), spend them
+  of the JSON. Both prompts therefore carry the same STEP BUDGET: count each step in the reasoning ("Step N of M"), spend them
   economically, stop calling tools `STEPS_RESERVED_FOR_ANSWER` (8) before the cap, and never end on a plan. The
   coordinator also starts every reviewer before it reads any code: one that reviewed production files itself first
   reached its cap of 40 while checking the reports. The time limits follow the caps: `reviewTimeout` is 150 minutes
