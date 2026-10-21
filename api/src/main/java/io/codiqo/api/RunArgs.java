@@ -1394,8 +1394,8 @@ public class RunArgs {
     /**
      * A milestone's build never changes once it is published, so a build of the pinned milestone already in the
      * download cache is the one {@code latest.txt} would name, and download.eclipse.org is asked only when none is
-     * there. Asking on every run failed every run while download.eclipse.org was down (21 Oct 2026), on runners whose
-     * cache held the archive. The snapshots channel always asks, since its build moves.
+     * there. Asking on every run failed every run while download.eclipse.org was down, on runners whose cache held the
+     * archive. The snapshots channel always asks, since its build moves.
      */
     @VisibleForTesting
     public String pinnedJdtlsArchiveName(Path cache) throws IOException {
@@ -1466,8 +1466,8 @@ public class RunArgs {
     }
     /**
      * The archive {@code latest.txt} names, which must be exactly one archive name. While download.eclipse.org was down
-     * (21 Oct 2026) it answered {@code latest.txt} with status 200 and a 7.9 KB "Temporary shutdown" page; taken for
-     * the name, the page missed the download cache and became the last path segment of the archive URL, the server
+     * it answered {@code latest.txt} with status 200 and a 7.9 KB "Temporary shutdown" page; taken for the name, the
+     * page missed the download cache and became the last path segment of the archive URL, the server
      * reset that request, and the run failed on an HTTP/2 stream reset that named nothing.
      */
     @VisibleForTesting

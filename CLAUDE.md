@@ -1610,9 +1610,11 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   downloads the language server before the review starts (Maven once the compile run proceeded, Gradle before
   `startReview`), so a failed download is never paid for. A pinned milestone already in the download cache
   (`~/.cache/fetch`, which the action caches) is used without asking download.eclipse.org
-  (`RunArgs.pinnedJdtlsArchiveName`), and `latest.txt` must name exactly one archive (`RunArgs.jdtlsArchiveName`). On
-  21 Oct 2026 download.eclipse.org answered every path with a 200 "Temporary shutdown" page; the page was taken for
-  the archive name, the download failed on an HTTP/2 stream reset, and thirteen projects were halted.
+  (`RunArgs.pinnedJdtlsArchiveName`), and `latest.txt` must name exactly one archive (`RunArgs.jdtlsArchiveName`).
+  During an outage download.eclipse.org answered every path with a 200 "Temporary shutdown" page; the page was taken
+  for the archive name, the download failed on an HTTP/2 stream reset, and thirteen projects were halted. Only the
+  host's part is a failed download (the request, its status, reading the body); a cache that cannot be written is an
+  ordinary failure and halts, since every later run on that runner would fail the same way.
 - **A commit with nothing to analyse is never built** (`CommitExclusions.beforeBuild`, right after the analysis
   checkout): when git (`JGit.changedFileNames`, a root commit against the empty tree) shows no file of a registered
   language and no supported config file, the commit is excluded as `NO_ANALYZABLE_DIFF` with its diff-only file models

@@ -13,7 +13,10 @@ import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.io.input.ProxyInputStream;
 import org.apache.commons.lang3.time.StopWatch;
+
+import com.google.common.annotations.VisibleForTesting;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.LogFactory;
@@ -33,8 +36,16 @@ public class Fetch implements Closeable {
     }
 
     private final OkHttpClient http;
+    private final Path cacheDir;
 
     public Fetch(RunArgs args) {
+        this(args, CACHE);
+    }
+    /** a cache of the test's own, so that a test neither reads nor fills the runner's */
+    @VisibleForTesting
+    public Fetch(RunArgs args, Path cacheDir) {
+        this.cacheDir = Objects.requireNonNull(cacheDir);
+
         Dispatcher dispatcher = new Dispatcher();
         dispatcher.setMaxRequests(args.getMaxRequests());
         dispatcher.setMaxRequestsPerHost(args.getMaxRequestsPerHost());
@@ -48,18 +59,29 @@ public class Fetch implements Closeable {
     public Path download(LogFactory logFactory, URL url) throws IOException {
         String external = url.toExternalForm();
         String fileName = external.substring(external.lastIndexOf('/') + 1);
-        Path cached = CACHE.resolve(fileName);
+        Path cached = cacheDir.resolve(fileName);
         Request request = new Request.Builder().url(url).build();
 
         if (Files.exists(cached)) {
             return cached;
         }
 
-        Path temp = CACHE.resolve(fileName + ".tmp");
+        /**
+         * Only what the download host can fix is a DownloadFailedException, which halts nothing: the request, its status
+         * and reading the body. Writing the cache (a full or read-only disk) stays an IOException and halts the project,
+         * since every later run on that runner would fail the same way and nobody would be told.
+         */
+        Path temp = cacheDir.resolve(fileName + ".tmp");
         StopWatch stopWatch = StopWatch.createStarted();
-        try (Response response = http.newCall(request).execute()) {
+        Response response;
+        try {
+            response = http.newCall(request).execute();
+        } catch (IOException err) {
+            throw new DownloadFailedException("failed to download from: " + url, err);
+        }
+        try (response) {
             if (response.isSuccessful()) {
-                try (InputStream in = response.body().byteStream();OutputStream out = Files.newOutputStream(temp)) {
+                try (InputStream in = new HostStream(response.body().byteStream(), url); OutputStream out = Files.newOutputStream(temp)) {
                     IOUtils.copy(in, out);
                     Files.move(temp, cached, StandardCopyOption.ATOMIC_MOVE);
                     stopWatch.stop();
@@ -71,10 +93,6 @@ public class Fetch implements Closeable {
             }
 
             throw new DownloadFailedException("failed to download from: " + url + " status: " + response.code());
-        } catch (DownloadFailedException err) {
-            throw err;
-        } catch (IOException err) {
-            throw new DownloadFailedException("failed to download from: " + url, err);
         }
     }
     @Override
@@ -91,6 +109,19 @@ public class Fetch implements Closeable {
                     }
                 }
             }
+        }
+    }
+    /** the response body: a read that fails is the download host's (a reset or cut stream), never the runner's */
+    private static final class HostStream extends ProxyInputStream {
+        private final URL url;
+
+        private HostStream(InputStream in, URL url) {
+            super(in);
+            this.url = url;
+        }
+        @Override
+        protected void handleIOException(IOException err) throws IOException {
+            throw new DownloadFailedException("failed to download from: " + url, err);
         }
     }
 }

@@ -15,7 +15,7 @@ import io.codiqo.util.DownloadFailedException;
 
 class JdtlsArchiveTest {
     private static final String ARCHIVE = "jdt-language-server-1.63.0-202610141200.tar.gz";
-    /** the opening of what download.eclipse.org served for every path, latest.txt included, on 21 Oct 2026 */
+    /** the opening of what download.eclipse.org served for every path, latest.txt included, during its outage */
     private static final String SHUTDOWN_PAGE = """
             <!DOCTYPE html>
             <html lang="en">
