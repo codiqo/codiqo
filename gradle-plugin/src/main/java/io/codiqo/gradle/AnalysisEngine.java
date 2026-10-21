@@ -159,18 +159,12 @@ public class AnalysisEngine {
             } catch (Exception err) {
                 /**
                  * A run that fails here submits nothing, so the next scheduled run would analyse the same commit and pay
-                 * for its review again, every hour; the project is halted until an administrator resumes it. A run
-                 * that was stopped is not a failure of codiqo's, and the thread's flag tells it apart as on Maven: an
-                 * interrupt often surfaces as an I/O error (ClosedByInterruptException, InterruptedIOException) whose
-                 * root cause is not an InterruptedException. A build the author broke with skipOnBuildFailure off is
-                 * the author's failure and halts nothing ({@link CommitBuildFailedException}).
+                 * for its review again, every hour; the project is halted until an administrator resumes it, unless the
+                 * failure halts nothing ({@link ProjectHalts#haltsNothing}: a stopped run, the author's broken build, a
+                 * failed download), the same rule as on Maven. A run that fails after its submission was accepted has
+                 * scored its commit, so it halts nothing either.
                  */
-                boolean haltsNothing = BooleanUtils.or(new boolean[] {
-                        Thread.currentThread().isInterrupted(),
-                        ExceptionUtils.getRootCause(err) instanceof InterruptedException,
-                        ExceptionUtils.indexOfThrowable(err, CommitBuildFailedException.class) >= 0 });
-                /** a run that fails after its submission was accepted has scored its commit, so it halts nothing */
-                if (BooleanUtils.negate(BooleanUtils.or(new boolean[] { haltsNothing, args.isSubmissionAccepted() }))) {
+                if (BooleanUtils.negate(BooleanUtils.or(new boolean[] { ProjectHalts.haltsNothing(err), args.isSubmissionAccepted() }))) {
                     ProjectHalts.halt(log, client, request.getApiUrl(), request.getRootCode(), args.getCommitId(), err, request.isSourceHidden());
                     ProgressStage.abort(args, ExceptionUtils.getRootCauseMessage(err), ProjectHalts.traceOf(args, args.getCommitId()));
                 }
@@ -229,6 +223,14 @@ public class AnalysisEngine {
             if (args.isFailOnUninstrumentedModule()) {
                 requireCoverage(request.getModules(), log);
             }
+        }
+
+        /**
+         * As on Maven, the language server the full analysis needs is downloaded before the review is paid for, and a
+         * failed download ends the run with nothing stored (DownloadFailedException).
+         */
+        try (Fetch fetch = new Fetch(args)) {
+            fetch.download(logFactory, args.jdtlsArchiveUrl());
         }
 
         Optional<LocalReviewRun> review = startReview(request, args, logFactory, log);

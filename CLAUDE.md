@@ -1602,7 +1602,17 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   (Gradle `-P`, action inputs `test-failure-hold-share` / `-min-tests`) override them, and a share of 1 or more turns the
   check off. A run that
   fails after the server accepted its submission (`RunArgs.submissionAccepted`) has scored its commit and halts nothing.
-  The action calls `halt-project` for a submit step that died outside the JVM (deadline, OOM kill).
+  The action calls `halt-project` for a submit step that died outside the JVM (deadline, OOM kill). Which failures halt
+  nothing is one rule for both plugins, `ProjectHalts.haltsNothing`.
+- **A run that cannot download what it needs stores nothing** (`DownloadFailedException`, which `Fetch` and the
+  language-server lookup throw): no halt, no exclusion, no submission, and no `ABORT` line, so the GitHub Action fails
+  the commit and the job without halting the project, and the next scheduled run tries again. The full analysis
+  downloads the language server before the review starts (Maven once the compile run proceeded, Gradle before
+  `startReview`), so a failed download is never paid for. A pinned milestone already in the download cache
+  (`~/.cache/fetch`, which the action caches) is used without asking download.eclipse.org
+  (`RunArgs.pinnedJdtlsArchiveName`), and `latest.txt` must name exactly one archive (`RunArgs.jdtlsArchiveName`). On
+  21 Oct 2026 download.eclipse.org answered every path with a 200 "Temporary shutdown" page; the page was taken for
+  the archive name, the download failed on an HTTP/2 stream reset, and thirteen projects were halted.
 - **A commit with nothing to analyse is never built** (`CommitExclusions.beforeBuild`, right after the analysis
   checkout): when git (`JGit.changedFileNames`, a root commit against the empty tree) shows no file of a registered
   language and no supported config file, the commit is excluded as `NO_ANALYZABLE_DIFF` with its diff-only file models

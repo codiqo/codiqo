@@ -68,8 +68,7 @@ public class JdtLspProcess implements Closeable {
         detector.detect(lookup, List.of());
 
         String os = RunArgs.JDTLS_CONFIG.get(lookup.getProperty("os.detected.classifier"));
-        String latest = args.resolveJdtlsArchiveName();
-        Path path = fetch.download(logFactory, args.jdtlsBaseUrl().addPathSegment(latest).build().url());
+        Path path = fetch.download(logFactory, args.jdtlsArchiveUrl());
         Archiver archiver = ArchiverFactory.createArchiver(FileType.get(path.toFile()));
         Path tempDir = Files.createTempDirectory("jdtls");
         tempDir.toFile().deleteOnExit();

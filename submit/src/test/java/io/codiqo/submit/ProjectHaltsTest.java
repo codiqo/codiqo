@@ -2,10 +2,12 @@ package io.codiqo.submit;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.lang.reflect.UndeclaredThrowableException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
@@ -23,6 +25,7 @@ import io.codiqo.client.api.CommitIndexApi;
 import io.codiqo.llm.review.ReviewProviderException;
 import io.codiqo.submit.auth.ApiKeyCredential;
 import io.codiqo.submit.review.LocalReviewException;
+import io.codiqo.util.DownloadFailedException;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaderValues;
 import io.netty.handler.codec.http.HttpResponseStatus;
@@ -35,6 +38,22 @@ class ProjectHaltsTest {
     private static final JsonNodeFactory JSON = JsonNodeFactory.instance;
     private static final String SHA = "0123456789abcdef0123456789abcdef01234567";
 
+    /** the chain the language-server download failed with while download.eclipse.org was down, as the halts recorded it */
+    @Test
+    void aFailedDownloadHaltsNothing() {
+        DownloadFailedException download = new DownloadFailedException("failed to download from: https://download.eclipse.org/jdtls/milestones/1.63.0/x",
+                new IOException("stream was reset: CANCEL"));
+
+        assertTrue(ProjectHalts.haltsNothing(new IllegalStateException(new UndeclaredThrowableException(download))));
+    }
+    @Test
+    void anAuthorsBrokenBuildHaltsNothing() {
+        assertTrue(ProjectHalts.haltsNothing(new IllegalStateException(new CommitBuildFailedException("commit 0123456: the compile failed"))));
+    }
+    @Test
+    void anyOtherFailureHalts() {
+        assertFalse(ProjectHalts.haltsNothing(new IllegalStateException(new UndeclaredThrowableException(new IOException("stream was reset: CANCEL")))));
+    }
     @Test
     void aHaltedProjectRefusesToRun() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);

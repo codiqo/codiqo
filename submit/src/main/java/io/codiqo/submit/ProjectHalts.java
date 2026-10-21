@@ -3,6 +3,7 @@ package io.codiqo.submit;
 import java.io.File;
 import java.util.Map;
 
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
@@ -13,6 +14,7 @@ import io.codiqo.client.api.CommitIndexApi;
 import io.codiqo.client.model.ProjectHaltRequestModel;
 import io.codiqo.llm.review.ReviewProviderException;
 import io.codiqo.llm.review.ReviewTrace;
+import io.codiqo.util.DownloadFailedException;
 import lombok.experimental.UtilityClass;
 
 /**
@@ -34,6 +36,21 @@ public class ProjectHalts {
     public String traceOf(RunArgs args, String commitSha) {
         File trace = ReviewTrace.file(args, commitSha);
         return trace.isFile() ? "review trace " + trace.getAbsolutePath() : "no review trace; see the commit's analysis log";
+    }
+    /**
+     * Whether a failed run leaves the project running. A run that was stopped is not a failure of codiqo's, and the
+     * thread's flag tells it apart: an interrupt often surfaces as an I/O error (ClosedByInterruptException,
+     * InterruptedIOException) whose root cause is not an InterruptedException. A build the author broke with
+     * skipOnBuildFailure off is the author's failure ({@link CommitBuildFailedException}). A tool that could not be
+     * downloaded is the download host's ({@link DownloadFailedException}): it heals on its own, and halting on it held
+     * thirteen projects until an administrator resumed each one after download.eclipse.org went down.
+     */
+    public boolean haltsNothing(Throwable err) {
+        return BooleanUtils.or(new boolean[] {
+                Thread.currentThread().isInterrupted(),
+                ExceptionUtils.getRootCause(err) instanceof InterruptedException,
+                ExceptionUtils.indexOfThrowable(err, CommitBuildFailedException.class) >= 0,
+                ExceptionUtils.indexOfThrowable(err, DownloadFailedException.class) >= 0 });
     }
     /** throws {@link ProjectHaltedException} when the server holds the project's runs */
     public void requireRunning(Log log, CommitIndexApi client, String apiUrl, String projectId) throws ApiException {

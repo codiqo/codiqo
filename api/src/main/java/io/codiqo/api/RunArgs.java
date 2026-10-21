@@ -6,6 +6,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -14,6 +15,7 @@ import java.nio.file.PathMatcher;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -22,6 +24,7 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
@@ -38,6 +41,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.eclipse.jgit.annotations.Nullable;
 import org.eclipse.jgit.lib.Repository;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.CaseFormat;
 import com.google.common.base.Splitter;
 import com.google.common.collect.Lists;
@@ -46,6 +50,8 @@ import com.google.common.collect.Sets;
 import edu.umd.cs.findbugs.Priorities;
 import io.codiqo.api.code.CompilerFinding;
 import io.codiqo.api.testing.TestRun;
+import io.codiqo.util.DownloadFailedException;
+import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
 import lombok.Data;
 import lombok.ToString;
@@ -136,6 +142,9 @@ public class RunArgs {
             "windows-x86_64", "config_win");
     public static final Path JDT_SHARED_INDEX = FileSystems.getDefault().getPath(System.getProperty("user.home"), ".cache", "jdtls");
     private static final Pattern JDTLS_ARCHIVE_VERSION = Pattern.compile("jdt-language-server-(\\d+\\.\\d+\\.\\d+)-");
+    private static final Pattern JDTLS_ARCHIVE_NAME = Pattern.compile("jdt-language-server-\\d+\\.\\d+\\.\\d+-\\d{12}\\.tar\\.gz");
+    private static final String JDTLS_LATEST = "latest.txt";
+    private static final int JDTLS_LATEST_PREVIEW = 120;
 
     /**
      * The commit under analysis, or blank for an uncommitted-changes run against the working tree. Blank disables
@@ -162,7 +171,7 @@ public class RunArgs {
 
     /**
      * The resolved {@code jdt-language-server-*.tar.gz} file name, memoized by {@link #resolveJdtlsArchiveName()}
-     * after the first {@code latest.txt} fetch. transient: a per-process cache of a remote lookup, not a setting.
+     * after the first lookup. transient: a per-process cache of that lookup, not a setting.
      */
     @Nullable
     private transient String jdtlsArchiveName;
@@ -1371,13 +1380,35 @@ public class RunArgs {
             return jdtlsArchiveName;
         }
         for (;;) {
-            try (InputStream io = jdtlsBaseUrl().addPathSegment("latest.txt").build().url().openStream()) {
-                jdtlsArchiveName = StringUtils.trim(IOUtils.toString(io, StandardCharsets.UTF_8));
+            try {
+                jdtlsArchiveName = jdtlsUseSnapshot ? latestJdtlsArchiveName() : pinnedJdtlsArchiveName(Fetch.CACHE);
                 return jdtlsArchiveName;
             } catch (Exception err) {
                 ExceptionUtils.wrapAndThrow(err);
             }
         }
+    }
+    public URL jdtlsArchiveUrl() {
+        return jdtlsBaseUrl().addPathSegment(resolveJdtlsArchiveName()).build().url();
+    }
+    /**
+     * A milestone's build never changes once it is published, so a build of the pinned milestone already in the
+     * download cache is the one {@code latest.txt} would name, and download.eclipse.org is asked only when none is
+     * there. Asking on every run failed every run while download.eclipse.org was down (21 Oct 2026), on runners whose
+     * cache held the archive. The snapshots channel always asks, since its build moves.
+     */
+    @VisibleForTesting
+    public String pinnedJdtlsArchiveName(Path cache) throws IOException {
+        String prefix = "jdt-language-server-" + jdtlsVersion + "-";
+        try (Stream<Path> files = Files.list(cache)) {
+            Optional<String> cached = files.map(file -> file.getFileName().toString())
+                    .filter(name -> BooleanUtils.and(new boolean[] { name.startsWith(prefix), JDTLS_ARCHIVE_NAME.matcher(name).matches() }))
+                    .max(Comparator.naturalOrder());
+            if (cached.isPresent()) {
+                return cached.get();
+            }
+        }
+        return latestJdtlsArchiveName();
     }
     /**
      * The shared-index directory for the resolved language-server version, created on demand. Creating it in a
@@ -1422,6 +1453,30 @@ public class RunArgs {
             return matcher.group(1);
         }
         return jdtlsVersion;
+    }
+    private String latestJdtlsArchiveName() throws DownloadFailedException {
+        URL latest = jdtlsBaseUrl().addPathSegment(JDTLS_LATEST).build().url();
+        String text;
+        try (InputStream io = latest.openStream()) {
+            text = IOUtils.toString(io, StandardCharsets.UTF_8);
+        } catch (IOException err) {
+            throw new DownloadFailedException("could not read " + latest, err);
+        }
+        return jdtlsArchiveName(latest, text);
+    }
+    /**
+     * The archive {@code latest.txt} names, which must be exactly one archive name. While download.eclipse.org was down
+     * (21 Oct 2026) it answered {@code latest.txt} with status 200 and a 7.9 KB "Temporary shutdown" page; taken for
+     * the name, the page missed the download cache and became the last path segment of the archive URL, the server
+     * reset that request, and the run failed on an HTTP/2 stream reset that named nothing.
+     */
+    @VisibleForTesting
+    public static String jdtlsArchiveName(URL latest, String text) throws DownloadFailedException {
+        String name = StringUtils.trim(text);
+        if (JDTLS_ARCHIVE_NAME.matcher(name).matches()) {
+            return name;
+        }
+        throw new DownloadFailedException(latest + " names no language-server archive: " + StringUtils.abbreviate(StringUtils.normalizeSpace(name), JDTLS_LATEST_PREVIEW));
     }
     private static double requireFinite(double value, String name) {
         if (Double.isFinite(value)) {
