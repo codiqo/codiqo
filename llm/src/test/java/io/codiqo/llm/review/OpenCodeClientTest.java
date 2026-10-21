@@ -13,6 +13,7 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -40,6 +41,7 @@ import tools.jackson.databind.node.ObjectNode;
 class OpenCodeClientTest {
     private static final String PASSWORD = "test-password";
     private static final String SESSION = "ses_parent";
+    private static final String CONTINUED = "ses_continued";
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
     private static final JsonNodeFactory JSON = JsonNodeFactory.instance;
     private static final String EMPTY_FINDINGS = emptyFindings();
@@ -124,6 +126,32 @@ class OpenCodeClientTest {
         assertEquals(4_000, tool.path("state").path("content").get(0).path("text").asString().length());
         assertEquals("done", messages.get(1).path("text").asString());
     }
+    /**
+     * a reviewer whose answer the provider cut short, which OpenCode continued within the same turn, and which the
+     * coordinator then asked for a one-word confirmation: two turns, the review being the first one's answer
+     */
+    @Test
+    void aReviewerTheCoordinatorContinuedKeepsItsReviewInItsFirstTurn() throws Exception {
+        try (OpenCodeClient client = new OpenCodeClient(url, PASSWORD, TIMEOUT)) {
+            List<List<JsonNode>> turns = client.turns(CONTINUED);
+
+            assertEquals(2, turns.size());
+            List<JsonNode> review = turns.iterator().next();
+            assertEquals(Optional.of(EMPTY_FINDINGS), OpenCodeClient.answerOf(review));
+            assertEquals(Optional.empty(), OpenCodeClient.errorOf(review), "OpenCode continued the cut answer, so the turn ended well");
+            assertEquals(Optional.of("no"), OpenCodeClient.answerOf(turns.getLast()));
+        }
+    }
+    /** a turn that ended with an error reports it and has no answer, though an earlier step of it wrote text */
+    @Test
+    void aTurnThatEndedWithAnErrorReportsItAndNoAnswer() {
+        ObjectNode failed = assistant(200).put("finish", "error");
+        failed.putObject("error").put("type", "provider.timeout").put("message", "no answer in time");
+        List<JsonNode> turn = List.of(JSON.objectNode().put("type", "user").put("text", "Review part of commit abc."), assistant(100).put("finish", "tool-calls").put("text", "Step 1."), failed);
+
+        assertEquals("provider.timeout", OpenCodeClient.errorOf(turn).orElseThrow().path("type").asString());
+        assertEquals(Optional.empty(), OpenCodeClient.answerOf(turn));
+    }
     @Test
     void aRejectedCallReportsTheRouteAndStatus() {
         try (OpenCodeClient client = new OpenCodeClient(url, "wrong-password", TIMEOUT)) {
@@ -142,6 +170,9 @@ class OpenCodeClientTest {
         respond(exchange, HttpResponseStatus.UNAUTHORIZED.code(), JSON.objectNode().put("_tag", "UnauthorizedError").put("message", "Authentication required").toString());
     }
     private static String body(String route, String query) {
+        if (route.equals("GET /api/session/" + CONTINUED + "/message")) {
+            return continuedReviewer(query);
+        }
         Matcher traced = TRACED_MESSAGES.matcher(route);
         if (BooleanUtils.and(new boolean[] { traced.matches(), BooleanUtils.negate(Strings.CS.contains(query, "type=")) })) {
             return tracePage(query);
@@ -199,6 +230,35 @@ class OpenCodeClientTest {
         ObjectNode message = assistant(100);
         message.putArray("content").add(tool);
         return page("trace-2", List.of(message));
+    }
+    /**
+     * what OpenCode recorded for the reviewer the coordinator continued in production, served oldest first over two
+     * pages: the first page names the order and the cursor carries it, so any other query is refused
+     */
+    private static String continuedReviewer(String query) {
+        if (BooleanUtils.and(new boolean[] { query.contains("order=asc"), BooleanUtils.negate(query.contains("cursor=")) })) {
+            ObjectNode cut = assistant(200).put("finish", "error");
+            cut.putObject("error").put("type", "provider.invalid-output").put("message", "OpenAI Chat stream ended without finish_reason");
+            return page("continued-2", List.of(
+                    JSON.objectNode().put("type", "user").put("text", "Review part of commit abc."),
+                    assistant(100).put("finish", "tool-calls").put("text", "Step 1 of 256."),
+                    cut,
+                    JSON.objectNode().put("type", "synthetic").put("text", "The previous response was interrupted. Continue from where you left off.")));
+        }
+        if (BooleanUtils.and(new boolean[] { query.contains("cursor=continued-2"), BooleanUtils.negate(query.contains("order=")) })) {
+            ObjectNode review = assistant(400).put("finish", "stop");
+            review.putArray("content").add(part("text", EMPTY_FINDINGS));
+            return page("continued-3", List.of(
+                    review,
+                    JSON.objectNode().put("type", "idle"),
+                    JSON.objectNode().put("type", "user").put("text", "Do not review anything. Answer with the single word yes or no."),
+                    assistant(600).put("finish", "stop").put("text", "no"),
+                    JSON.objectNode().put("type", "idle")));
+        }
+        if (query.contains("cursor=continued-3")) {
+            return page("continued-4", List.of());
+        }
+        throw new IllegalArgumentException("unexpected message query " + query);
     }
     private static void respond(HttpExchange exchange, int status, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);

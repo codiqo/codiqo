@@ -52,14 +52,15 @@ public class LlmJson {
     }
     /**
      * Reads an answer whose field {@code ignored} is taken from elsewhere: a malformed value there (a list of strings
-     * where objects were asked for) must not cost the rest of the answer.
+     * where objects were asked for) must not cost the rest of the answer. The mapper is the caller's, a
+     * {@link #responseMapper()} that may read a format of its own.
      */
-    public <T> T readAnswerIgnoring(String raw, Class<T> type, String ignored) {
-        JsonNode answer = ANSWER_MAPPER.readTree(jsonObject(raw));
+    public <T> T readAnswerIgnoring(String raw, ObjectMapper mapper, Class<T> type, String ignored) {
+        JsonNode answer = mapper.readTree(jsonObject(raw));
         if (answer instanceof ObjectNode object) {
             object.remove(ignored);
         }
-        return ANSWER_MAPPER.treeToValue(answer, type);
+        return mapper.treeToValue(answer, type);
     }
     /**
      * The JSON object inside a model's answer: the largest structure Jackson reads from any opening brace, read one value

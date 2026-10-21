@@ -113,7 +113,7 @@ class LlmJsonAnswerTest {
         merged.putArray("blockCategories").add("ROUTINE").add("MECHANICAL");
         String answer = "Writing the merged result.\n" + merged;
 
-        LlmScoringResponse read = LlmJson.readAnswerIgnoring(answer, LlmScoringResponse.class, "blockCategories");
+        LlmScoringResponse read = LlmJson.readAnswerIgnoring(answer, LlmJson.responseMapper(), LlmScoringResponse.class, "blockCategories");
 
         assertEquals("Adds a cancel endpoint", read.getSummary());
         assertEquals(6, read.getTaskComplexity());
