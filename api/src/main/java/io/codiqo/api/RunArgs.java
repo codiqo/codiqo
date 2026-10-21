@@ -1411,7 +1411,6 @@ public class RunArgs {
         }
         return jdtlsBaseUrl().addPathSegment(resolveJdtlsArchiveName()).build().url();
     }
-    /** the digest the downloaded archive must have, known for codiqo's mirrored build only */
     public Optional<String> jdtlsArchiveSha256() {
         if (isJdtlsMirrored()) {
             return Optional.of(JDTLS_MIRRORED_SHA256);

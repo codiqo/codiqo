@@ -98,7 +98,20 @@ public class Fetch implements Closeable {
         Request request = new Request.Builder().url(url).build();
 
         if (Files.exists(cached)) {
-            return cached;
+            boolean intact = true;
+            if (sha256.isPresent()) {
+                intact = sha256.get().equals(sha256Of(cached));
+            }
+            if (intact) {
+                return cached;
+            }
+            /**
+             * Only the digest's bytes run, wherever they came from: a cached copy that differs (replaced, or written by
+             * something other than this class) is deleted and downloaded again, since the cache is only a copy of the
+             * release, and keeping it would fail every run on that runner or run a file nobody checked.
+             */
+            logFactory.getLogger(Fetch.class).warn("cached %s does not match its SHA-256 %s; downloading it again from %s", cached, sha256.get(), url);
+            Files.delete(cached);
         }
 
         /**
@@ -138,12 +151,15 @@ public class Fetch implements Closeable {
      * the next run downloads it again. Whether the host served a damaged or a replaced file, running it is never right.
      */
     private static void requireDigest(Path file, String sha256, URL url) throws IOException {
-        String actual = com.google.common.io.Files.asByteSource(file.toFile()).hash(Hashing.sha256()).toString();
+        String actual = sha256Of(file);
         if (sha256.equals(actual)) {
             return;
         }
         Files.delete(file);
         throw new DownloadFailedException(url + " served a file whose SHA-256 is " + actual + ", not " + sha256);
+    }
+    private static String sha256Of(Path file) throws IOException {
+        return com.google.common.io.Files.asByteSource(file.toFile()).hash(Hashing.sha256()).toString();
     }
     /** the response body: a read that fails is the download host's (a reset or cut stream), never the runner's */
     private static final class HostStream extends ProxyInputStream {

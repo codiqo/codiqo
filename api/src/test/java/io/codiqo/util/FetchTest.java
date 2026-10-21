@@ -58,10 +58,7 @@ class FetchTest {
     }
     @Test
     void anUnreachableHostIsAFailedDownload(@TempDir Path cache) throws Exception {
-        int port;
-        try (ServerSocket closed = new ServerSocket(0)) {
-            port = closed.getLocalPort();
-        }
+        int port = closedPort();
         try (Fetch fetch = new Fetch(new RunArgs(), cache)) {
             assertThrows(DownloadFailedException.class, () -> fetch.download(logs(), URI.create("http://127.0.0.1:" + port + "/" + ARCHIVE).toURL()));
         }
@@ -125,6 +122,33 @@ class FetchTest {
             }
         } finally {
             server.stop(0);
+        }
+    }
+    /** nothing listens on the URL: a cached file with its digest needs no download */
+    @Test
+    void aCachedFileWithItsDigestIsUsedWithoutAsking(@TempDir Path cache) throws Exception {
+        Files.write(cache.resolve(ARCHIVE), PART);
+        try (Fetch fetch = new Fetch(new RunArgs(), cache)) {
+            Path cached = fetch.download(logs(), URI.create("http://127.0.0.1:" + closedPort() + "/" + ARCHIVE).toURL(), PART_SHA256);
+
+            assertArrayEquals(PART, Files.readAllBytes(cached));
+        }
+    }
+    @Test
+    void aCachedFileWithAnotherDigestIsDownloadedAgain(@TempDir Path cache) throws Exception {
+        Files.write(cache.resolve(ARCHIVE), new byte[1]);
+        HttpServer server = servePart();
+        try (Fetch fetch = new Fetch(new RunArgs(), cache)) {
+            Path downloaded = fetch.download(clazz -> new Quiet(), url(server), PART_SHA256);
+
+            assertArrayEquals(PART, Files.readAllBytes(downloaded));
+        } finally {
+            server.stop(0);
+        }
+    }
+    private static int closedPort() throws IOException {
+        try (ServerSocket closed = new ServerSocket(0)) {
+            return closed.getLocalPort();
         }
     }
     private static HttpServer servePart() throws IOException {
