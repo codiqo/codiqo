@@ -278,7 +278,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
              */
             if (compileOutcome instanceof BuildOutcome.Proceeded) {
                 try (Fetch fetch = new Fetch(args)) {
-                    fetch.download(new MavenLogFactory(getLog()), args.jdtlsArchiveUrl());
+                    fetch.downloadJdtls(new MavenLogFactory(getLog()), args);
                 }
             }
             doAfterCompile(args, compileOutcome);

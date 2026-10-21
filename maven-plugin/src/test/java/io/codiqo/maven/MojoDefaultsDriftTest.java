@@ -37,6 +37,9 @@ class MojoDefaultsDriftTest {
 
         assertEquals(String.valueOf(reference.getBuildTimeout().toMinutes()), defaultValueOf(pluginXml, "buildTimeoutMinutes"));
         assertEquals(String.valueOf(reference.getTestTimeout().toMinutes()), defaultValueOf(pluginXml, "testTimeoutMinutes"));
+
+        /** a Maven default off the mirrored build would download it from download.eclipse.org again */
+        assertEquals(reference.getJdtlsVersion(), defaultValueOf(pluginXml, "jdtlsVersion"));
     }
     /**
      * the fork timeout has to fire before the test-phase timeout is meaningless and before whatever outer deadline the

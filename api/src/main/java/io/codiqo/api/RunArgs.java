@@ -141,6 +141,16 @@ public class RunArgs {
             "linux-aarch_64", "config_linux_arm",
             "windows-x86_64", "config_win");
     public static final Path JDT_SHARED_INDEX = FileSystems.getDefault().getPath(System.getProperty("user.home"), ".cache", "jdtls");
+    /**
+     * The language-server build codiqo serves from its own GitHub release ({@code jdtls-<version>} on codiqo/codiqo),
+     * unmodified and checked against this digest, so that the default analysis never asks download.eclipse.org: while
+     * that host was down, every run that had to download the language server failed. Another {@link #jdtlsVersion} and
+     * the snapshots channel still come from download.eclipse.org. Upgrading the default means uploading the new build to
+     * a release of its own and changing all three constants; the Maven and Gradle defaults follow the version.
+     */
+    public static final String JDTLS_MIRRORED_VERSION = "1.63.0";
+    public static final String JDTLS_MIRRORED_ARCHIVE = "jdt-language-server-1.63.0-202610191322.tar.gz";
+    public static final String JDTLS_MIRRORED_SHA256 = "b1f2abe0b3cccb462cf64fb4a5587c7d09df60cf8be7748b152cbd89d018bdc4";
     private static final Pattern JDTLS_ARCHIVE_VERSION = Pattern.compile("jdt-language-server-(\\d+\\.\\d+\\.\\d+)-");
     private static final Pattern JDTLS_ARCHIVE_NAME = Pattern.compile("jdt-language-server-\\d+\\.\\d+\\.\\d+-\\d{12}\\.tar\\.gz");
     private static final String JDTLS_LATEST = "latest.txt";
@@ -160,7 +170,7 @@ public class RunArgs {
      * {@link #effectiveJdtlsVersion()}, so moving this forces a full re-index of every dependency jar.
      */
     @Nullable
-    private String jdtlsVersion = "1.63.0";
+    private String jdtlsVersion = JDTLS_MIRRORED_VERSION;
 
     /**
      * Resolve the language server from the {@code snapshots} channel instead of a pinned milestone. Snapshots move,
@@ -1379,6 +1389,10 @@ public class RunArgs {
         if (StringUtils.isNotBlank(jdtlsArchiveName)) {
             return jdtlsArchiveName;
         }
+        if (isJdtlsMirrored()) {
+            jdtlsArchiveName = JDTLS_MIRRORED_ARCHIVE;
+            return jdtlsArchiveName;
+        }
         for (;;) {
             try {
                 jdtlsArchiveName = jdtlsUseSnapshot ? latestJdtlsArchiveName() : pinnedJdtlsArchiveName(Fetch.CACHE);
@@ -1389,7 +1403,20 @@ public class RunArgs {
         }
     }
     public URL jdtlsArchiveUrl() {
+        if (isJdtlsMirrored()) {
+            return new HttpUrl.Builder().scheme("https").host("github.com")
+                    .addPathSegment("codiqo").addPathSegment("codiqo").addPathSegment("releases").addPathSegment("download")
+                    .addPathSegment("jdtls-" + JDTLS_MIRRORED_VERSION).addPathSegment(JDTLS_MIRRORED_ARCHIVE)
+                    .build().url();
+        }
         return jdtlsBaseUrl().addPathSegment(resolveJdtlsArchiveName()).build().url();
+    }
+    /** the digest the downloaded archive must have, known for codiqo's mirrored build only */
+    public Optional<String> jdtlsArchiveSha256() {
+        if (isJdtlsMirrored()) {
+            return Optional.of(JDTLS_MIRRORED_SHA256);
+        }
+        return Optional.empty();
     }
     /**
      * A milestone's build never changes once it is published, so a build of the pinned milestone already in the
@@ -1453,6 +1480,9 @@ public class RunArgs {
             return matcher.group(1);
         }
         return jdtlsVersion;
+    }
+    private boolean isJdtlsMirrored() {
+        return BooleanUtils.and(new boolean[] { BooleanUtils.negate(jdtlsUseSnapshot), JDTLS_MIRRORED_VERSION.equals(jdtlsVersion) });
     }
     private String latestJdtlsArchiveName() throws DownloadFailedException {
         URL latest = jdtlsBaseUrl().addPathSegment(JDTLS_LATEST).build().url();

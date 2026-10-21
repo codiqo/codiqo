@@ -1608,9 +1608,16 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   language-server lookup throw): no halt, no exclusion, no submission, and no `ABORT` line, so the GitHub Action fails
   the commit and the job without halting the project, and the next scheduled run tries again. The full analysis
   downloads the language server before the review starts (Maven once the compile run proceeded, Gradle before
-  `startReview`), so a failed download is never paid for. A pinned milestone already in the download cache
-  (`~/.cache/fetch`, which the action caches) is used without asking download.eclipse.org
-  (`RunArgs.pinnedJdtlsArchiveName`), and `latest.txt` must name exactly one archive (`RunArgs.jdtlsArchiveName`).
+  `startReview`), so a failed download is never paid for. The default language server comes from codiqo's own GitHub
+  release, never from download.eclipse.org: `RunArgs.JDTLS_MIRRORED_VERSION` / `_ARCHIVE` / `_SHA256` name the build,
+  `Fetch.downloadJdtls` downloads it from the release `jdtls-<version>` on codiqo/codiqo and checks its SHA-256 before
+  it enters the cache (a file that differs is a failed download). Upgrading the default means uploading the new
+  build, unmodified, to a release of its own (EPL-2.0 permits it; the release notes name the source and the licence)
+  and changing the three constants; `MojoDefaultsDriftTest` and `ExtensionDefaultsDriftTest` keep the Maven and
+  Gradle defaults on that version. Any other `jdtlsVersion`, and the snapshots channel, still come from
+  download.eclipse.org: a pinned milestone already in the download cache (`~/.cache/fetch`, which the action caches)
+  is used without asking (`RunArgs.pinnedJdtlsArchiveName`), and `latest.txt` must name exactly one archive
+  (`RunArgs.jdtlsArchiveName`).
   During an outage download.eclipse.org answered every path with a 200 "Temporary shutdown" page; the page was taken
   for the archive name, the download failed on an HTTP/2 stream reset, and thirteen projects were halted. Only the
   host's part is a failed download (the request, its status, reading the body); a cache that cannot be written is an

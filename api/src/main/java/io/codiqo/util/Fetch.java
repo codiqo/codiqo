@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 
 import org.apache.commons.io.IOUtils;
@@ -17,6 +18,7 @@ import org.apache.commons.io.input.ProxyInputStream;
 import org.apache.commons.lang3.time.StopWatch;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.hash.Hashing;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.LogFactory;
@@ -56,7 +58,40 @@ public class Fetch implements Closeable {
         ok.dispatcher(dispatcher);
         this.http = ok.build();
     }
+    /**
+     * The language-server archive the run resolved. Codiqo's mirrored build is checked against its digest before it
+     * enters the cache: codiqo serves it from a release of its own, and a damaged or replaced file there must never run.
+     */
+    public Path downloadJdtls(LogFactory logFactory, RunArgs args) throws IOException {
+        Optional<String> sha256 = args.jdtlsArchiveSha256();
+        if (sha256.isPresent()) {
+            return download(logFactory, args.jdtlsArchiveUrl(), sha256.get());
+        }
+        return download(logFactory, args.jdtlsArchiveUrl());
+    }
     public Path download(LogFactory logFactory, URL url) throws IOException {
+        return transfer(logFactory, url, Optional.empty());
+    }
+    public Path download(LogFactory logFactory, URL url, String sha256) throws IOException {
+        return transfer(logFactory, url, Optional.of(sha256));
+    }
+    @Override
+    public void close() throws IOException {
+        if (Objects.nonNull(http)) {
+            try {
+                ExecutorService service = http.dispatcher().executorService();
+                service.shutdown();
+            } finally {
+                http.connectionPool().evictAll();
+                if (Objects.nonNull(http.cache())) {
+                    try (okhttp3.Cache cache = http.cache()) {
+
+                    }
+                }
+            }
+        }
+    }
+    private Path transfer(LogFactory logFactory, URL url, Optional<String> sha256) throws IOException {
         String external = url.toExternalForm();
         String fileName = external.substring(external.lastIndexOf('/') + 1);
         Path cached = cacheDir.resolve(fileName);
@@ -83,9 +118,12 @@ public class Fetch implements Closeable {
             if (response.isSuccessful()) {
                 try (InputStream in = new HostStream(response.body().byteStream(), url); OutputStream out = Files.newOutputStream(temp)) {
                     IOUtils.copy(in, out);
-                    Files.move(temp, cached, StandardCopyOption.ATOMIC_MOVE);
-                    stopWatch.stop();
                 }
+                if (sha256.isPresent()) {
+                    requireDigest(temp, sha256.get(), url);
+                }
+                Files.move(temp, cached, StandardCopyOption.ATOMIC_MOVE);
+                stopWatch.stop();
 
                 logFactory.getLogger(Fetch.class).info("download from: %s to: %s took: %s", url, cached, stopWatch);
 
@@ -95,21 +133,17 @@ public class Fetch implements Closeable {
             throw new DownloadFailedException("failed to download from: " + url + " status: " + response.code());
         }
     }
-    @Override
-    public void close() throws IOException {
-        if (Objects.nonNull(http)) {
-            try {
-                ExecutorService service = http.dispatcher().executorService();
-                service.shutdown();
-            } finally {
-                http.connectionPool().evictAll();
-                if (Objects.nonNull(http.cache())) {
-                    try (okhttp3.Cache cache = http.cache()) {
-
-                    }
-                }
-            }
+    /**
+     * A file whose digest differs is a failed download: it never enters the cache, the run stops and stores nothing, and
+     * the next run downloads it again. Whether the host served a damaged or a replaced file, running it is never right.
+     */
+    private static void requireDigest(Path file, String sha256, URL url) throws IOException {
+        String actual = com.google.common.io.Files.asByteSource(file.toFile()).hash(Hashing.sha256()).toString();
+        if (sha256.equals(actual)) {
+            return;
         }
+        Files.delete(file);
+        throw new DownloadFailedException(url + " served a file whose SHA-256 is " + actual + ", not " + sha256);
     }
     /** the response body: a read that fails is the download host's (a reset or cut stream), never the runner's */
     private static final class HostStream extends ProxyInputStream {
