@@ -456,7 +456,12 @@ public class LocalReviewer {
         }
         return Optional.empty();
     }
-    /** the coordinator's assessment; its unit labels come from the reviewers' own answers, so its blockCategories are not read */
+    /**
+     * The coordinator's assessment, read through {@code COORDINATOR_ANSWER} without its blockCategories. The unit labels
+     * are the reviewers' own ({@code reviewerAnswers}), which replace that field after the read, and a coordinator once
+     * collapsed every reviewer's labels into bare category names, a list of strings where label objects belong: read with
+     * the rest, that field alone failed an answer whose every field the review keeps was well formed.
+     */
     @VisibleForTesting
     public static LlmScoringResponse readAssessment(String answer) {
         return LlmJson.readAnswerIgnoring(answer, COORDINATOR_ANSWER, LlmScoringResponse.class, BLOCK_CATEGORIES);
@@ -538,7 +543,10 @@ public class LocalReviewer {
      * caller counts are the analysis's own. The nested object written the old way fails the read: its "signatureChanges"
      * is not a list. The signature fields stay null when the answer leaves them out, so a blastRadiusAnalysis without any
      * of them carries no signature changes at all rather than a judgment of none, as an answer without the nested object
-     * did.
+     * did. One that names only some of them gets the defaults the nested object gave a left-out field: not breaking, no
+     * signatures. Both answers that failed on the nested object left one out, one of them hasBreakingChanges beside a
+     * breakingChangeType while its explanation said no caller breaks; requiring the field would fail such answers, and
+     * reading its absence as breaking would charge the breaking-change penalty the explanation rules out.
      */
     @Data
     @NoArgsConstructor
@@ -550,7 +558,6 @@ public class LocalReviewer {
         private String explanation;
     }
 
-    /** the defaults of a nested object that left a field out: not breaking, no signatures */
     private static final class FlatBlastRadiusConverter extends StdConverter<FlatBlastRadius, LlmScoringResponse.BlastRadiusAnalysis> {
         @Override
         public LlmScoringResponse.BlastRadiusAnalysis convert(FlatBlastRadius flat) {

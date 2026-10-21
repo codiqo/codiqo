@@ -244,7 +244,6 @@ public class OpenCodeClient implements Closeable {
         }
         return Optional.empty();
     }
-    /** the error the turn ended with, recorded on its newest assistant message, as {@link #turnError} reads it from a whole session */
     public static Optional<JsonNode> errorOf(List<JsonNode> turn) {
         return Lists.reverse(turn).stream()
                 .filter(message -> ASSISTANT.equals(message.path("type").asString()))
