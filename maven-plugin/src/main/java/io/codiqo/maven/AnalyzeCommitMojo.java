@@ -67,6 +67,7 @@ import io.codiqo.submit.CommitExclusions;
 import io.codiqo.submit.CommitExclusions.Exclusion;
 import io.codiqo.maven.logging.MavenLogFactory;
 import io.codiqo.maven.logging.MavenMessageReporter;
+import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
 import io.codiqo.util.MemoryReport;
 
@@ -268,6 +269,18 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             BuildOutcome compileOutcome = args.isTimeMachineEnabled()
                     ? buildWithBackoff(args, buildingReq)
                     : buildProject(args, invocationRequest(args, false, Duration.ZERO, BuildPhase.COMPILE), buildingReq, BuildPhase.COMPILE, args.getBuildTimeout());
+            /**
+             * The full analysis cannot run without the language server, so it is downloaded before the review starts and
+             * a failed download ends the run before anything is paid for or stored (DownloadFailedException). Downloaded
+             * where the analysis starts it, after the tests, a download.eclipse.org outage failed the run while its paid
+             * review was running. A commit whose compile was skipped is analysed degraded, without a language server.
+             * The archive lands in the download cache, where the analysis finds it.
+             */
+            if (compileOutcome instanceof BuildOutcome.Proceeded) {
+                try (Fetch fetch = new Fetch(args)) {
+                    fetch.download(new MavenLogFactory(getLog()), args.jdtlsArchiveUrl());
+                }
+            }
             doAfterCompile(args, compileOutcome);
             if (compileOutcome instanceof BuildOutcome.Skipped skipped) {
                 doDegradedAnalysis(args, skipped);
