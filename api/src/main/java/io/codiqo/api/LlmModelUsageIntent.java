@@ -21,7 +21,16 @@ public enum LlmModelUsageIntent {
     TAG_CONSOLIDATION(LlmModel.DEEPSEEK_V4_1_FLASH, "tag_consolidation"),
     AWARD_RECAP(LlmModel.DEEPSEEK_V4_1_FLASH, "award_recap"),
     AWARD_CITATION(LlmModel.DEEPSEEK_V4_1_FLASH, "award_citation"),
-    ORG_DIGEST(LlmModel.DEEPSEEK_V4_1_FLASH, "org_digest");
+    ORG_DIGEST(LlmModel.DEEPSEEK_V4_1_FLASH, "org_digest"),
+    /**
+     * Answers a member's questions in the dashboard's assistant, calling Codiqo's read tools over several steps before it
+     * answers. Measured on the assistant's own system prompt and its 26 tools, nine typical questions asked twice, the
+     * first step was the right tool with valid arguments in 15 of 18 calls for glm-5.3-flash, 14 for glm-5.3 and 12 for
+     * deepseek-v4.1-flash; no call was malformed, and the misses looked a project up before naming it. glm-5.3 costs
+     * about nine times as much per token on ollama.com for no better first step. Each extra step is another model call
+     * the organization pays for, so a model not measured this way may cost more for the same answer.
+     */
+    ASSISTANT(LlmModel.GLM_5_3_FLASH, "assistant");
 
     private final LlmModel model;
     private final String operation;
