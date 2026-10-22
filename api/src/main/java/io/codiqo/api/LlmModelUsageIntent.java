@@ -21,7 +21,12 @@ public enum LlmModelUsageIntent {
     TAG_CONSOLIDATION(LlmModel.DEEPSEEK_V4_1_FLASH, "tag_consolidation"),
     AWARD_RECAP(LlmModel.DEEPSEEK_V4_1_FLASH, "award_recap"),
     AWARD_CITATION(LlmModel.DEEPSEEK_V4_1_FLASH, "award_citation"),
-    ORG_DIGEST(LlmModel.DEEPSEEK_V4_1_FLASH, "org_digest");
+    ORG_DIGEST(LlmModel.DEEPSEEK_V4_1_FLASH, "org_digest"),
+    /**
+     * Answers a member's questions in the dashboard's assistant, calling Codiqo's read tools over several steps before it
+     * answers. A tool loop, like the local review's coordinator, so the same non-flash model.
+     */
+    ASSISTANT(LlmModel.GLM_5_3, "assistant");
 
     private final LlmModel model;
     private final String operation;
