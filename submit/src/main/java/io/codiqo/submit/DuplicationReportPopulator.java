@@ -128,7 +128,8 @@ public class DuplicationReportPopulator implements SubmissionPopulator {
         }
         return toReturn;
     }
-    private static void populateChangedLineCpd(SubmissionContext ctx, DuplicationReportModel duplicationReportModel,
+    @VisibleForTesting
+    public static void populateChangedLineCpd(SubmissionContext ctx, DuplicationReportModel duplicationReportModel,
             Map<String, Set<Integer>> duplicatedLinesByPath, Map<String, ChangedLines> changedByPath) {
         int addedDuplicated = 0;
         int addedTotal = 0;
@@ -160,6 +161,10 @@ public class DuplicationReportPopulator implements SubmissionPopulator {
         int changedTotal = addedTotal + modifiedTotal;
         if (changedTotal > 0) {
             duplicationReportModel.setChangedLineCpdPercent((addedDuplicated + modifiedDuplicated) * 100.0 / changedTotal);
+            duplicationReportModel.setAddedLines(addedTotal);
+            duplicationReportModel.setAddedDuplicatedLines(addedDuplicated);
+            duplicationReportModel.setModifiedLines(modifiedTotal);
+            duplicationReportModel.setModifiedDuplicatedLines(modifiedDuplicated);
         }
     }
     @VisibleForTesting

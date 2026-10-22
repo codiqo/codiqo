@@ -135,6 +135,10 @@ public class MetricsAggregator implements SubmissionPopulator {
         }
         if (changedExecutableLines > 0) {
             projectQualityModel.setChangedLineCoverage(changedCoveredLines * 100.0 / changedExecutableLines);
+            projectQualityModel.setAddedCoveredLines(addedCoveredLines);
+            projectQualityModel.setAddedExecutableLines(addedExecutableLines);
+            projectQualityModel.setModifiedCoveredLines(modifiedCoveredLines);
+            projectQualityModel.setModifiedExecutableLines(modifiedExecutableLines);
         }
         if (addedExecutableLines > 0) {
             projectQualityModel.setAddedLineCoverage(addedCoveredLines * 100.0 / addedExecutableLines);

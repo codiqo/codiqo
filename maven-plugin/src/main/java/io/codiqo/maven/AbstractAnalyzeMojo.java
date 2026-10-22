@@ -1278,7 +1278,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                 List<String> helpLines = Lists.newArrayList();
                 helpLines.addAll(sysout.helpUrlLines());
                 helpLines.addAll(syserr.helpUrlLines());
-                AnalysisExcludeCategory category = Maven.classifyForkFailure(helpLines);
+                AnalysisExcludeCategory category = Maven.classifyForkFailure(helpLines, buildFailureDetail(args, sysout, syserr).orElse(reason));
                 getLog().warn(String.format(Locale.ROOT, "fork build failed (exit code %d), skipping with category %s: %s", result.getExitCode(), category, reason));
                 return skipped(args, reason, category, false, sysout, syserr);
             } else {

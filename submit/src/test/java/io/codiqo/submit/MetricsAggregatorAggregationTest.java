@@ -94,6 +94,10 @@ class MetricsAggregatorAggregationTest {
         assertEquals(50.0, quality.getChangedLineCoverage(), 0.001, "(8+2) of (10+10)");
         assertEquals(60.0, quality.getAddedLineCoverage(), 0.001, "(5+1) of (6+4)");
         assertEquals(40.0, quality.getModifiedLineCoverage(), 0.001, "(3+1) of (4+6)");
+        assertEquals(6, quality.getAddedCoveredLines(), "the counts behind the shares travel too, so readers can pool them");
+        assertEquals(10, quality.getAddedExecutableLines());
+        assertEquals(4, quality.getModifiedCoveredLines());
+        assertEquals(10, quality.getModifiedExecutableLines());
     }
     @Test
     void fullProjectCoverageTotalsAndPerModuleBreakdownAgree() {

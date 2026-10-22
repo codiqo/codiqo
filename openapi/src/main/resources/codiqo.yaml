@@ -1545,6 +1545,26 @@ components:
             Line coverage of only the MODIFIED (amended) lines — added lines that replace deleted
             lines within a change block: covered modified lines / executable modified lines * 100.
             Deterministic. Answers "how well-covered is the code the author changed in place".
+        addedCoveredLines:
+          type: integer
+          minimum: 0
+          description: |
+            Executable added lines JaCoCo saw run (covered or partly covered): the numerator of addedLineCoverage.
+            With the three counts below it lets a reader pool coverage over several commits exactly, as covered
+            lines over executable lines, instead of averaging each commit's percentage. The changed-line counts are
+            the added ones plus the modified ones.
+        addedExecutableLines:
+          type: integer
+          minimum: 0
+          description: Executable added lines (covered, partly covered or missed), the denominator of addedLineCoverage.
+        modifiedCoveredLines:
+          type: integer
+          minimum: 0
+          description: Executable modified lines JaCoCo saw run, the numerator of modifiedLineCoverage.
+        modifiedExecutableLines:
+          type: integer
+          minimum: 0
+          description: Executable modified lines, the denominator of modifiedLineCoverage.
         cpdDuplicationPercent:
           type: number
           format: double
@@ -3102,6 +3122,25 @@ components:
           minimum: 0
           maximum: 100
           description: Percent of the MODIFIED (amended) lines that fall inside a detected clone.
+        addedLines:
+          type: integer
+          minimum: 0
+          description: |
+            The added lines the changed-line CPD percentages are taken over, the denominator of addedLineCpdPercent.
+            With the three counts below it lets a reader pool copy-paste over several commits exactly. The
+            changed-line counts are the added ones plus the modified ones.
+        addedDuplicatedLines:
+          type: integer
+          minimum: 0
+          description: Added lines inside a detected clone, the numerator of addedLineCpdPercent.
+        modifiedLines:
+          type: integer
+          minimum: 0
+          description: The modified lines the CPD percentages are taken over, the denominator of modifiedLineCpdPercent.
+        modifiedDuplicatedLines:
+          type: integer
+          minimum: 0
+          description: Modified lines inside a detected clone, the numerator of modifiedLineCpdPercent.
         clones:
           type: array
           items:
