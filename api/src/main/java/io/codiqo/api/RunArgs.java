@@ -599,6 +599,14 @@ public class RunArgs {
     private transient int reviewMaxNotChecked = 12;
 
     /**
+     * Local review: the calls an agent may make of its answer tool before its answer counts as refused. Every answer is
+     * a tool call whose arguments are checked as it is made, and a refused call tells the agent what to correct within
+     * the same turn; without a limit, an agent that keeps sending the same wrong answer would spend its steps on it until
+     * the step cap, and the review would fail far later for the same reason.
+     */
+    private transient int reviewAnswerAttempts = 3;
+
+    /**
      * Local review: context window declared for both models. OpenCode compacts a conversation that reaches it; both
      * default models serve 1M tokens, and declaring less keeps a runaway sub-agent from dragging a huge context through
      * every later step.

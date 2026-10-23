@@ -10,7 +10,6 @@ import lombok.experimental.UtilityClass;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.JsonParser;
 import tools.jackson.databind.DeserializationFeature;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.MapperFeature;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.ObjectReader;
@@ -18,7 +17,6 @@ import tools.jackson.databind.PropertyNamingStrategies;
 import tools.jackson.databind.SerializationFeature;
 import tools.jackson.databind.cfg.EnumFeature;
 import tools.jackson.databind.json.JsonMapper;
-import tools.jackson.databind.node.ObjectNode;
 import tools.jackson.databind.util.StdDateFormat;
 
 /**
@@ -49,18 +47,6 @@ public class LlmJson {
     }
     public <T> T readAnswer(String raw, Class<T> type) {
         return ANSWER_MAPPER.readValue(jsonObject(raw), type);
-    }
-    /**
-     * Reads an answer whose field {@code ignored} is taken from elsewhere: a malformed value there (a list of strings
-     * where objects were asked for) must not cost the rest of the answer. The mapper is the caller's, a
-     * {@link #responseMapper()} that may read a format of its own.
-     */
-    public <T> T readAnswerIgnoring(String raw, ObjectMapper mapper, Class<T> type, String ignored) {
-        JsonNode answer = mapper.readTree(jsonObject(raw));
-        if (answer instanceof ObjectNode object) {
-            object.remove(ignored);
-        }
-        return mapper.treeToValue(answer, type);
     }
     /**
      * The JSON object inside a model's answer: the largest structure Jackson reads from any opening brace, read one value

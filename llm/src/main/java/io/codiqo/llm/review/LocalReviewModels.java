@@ -51,12 +51,15 @@ import lombok.NoArgsConstructor;
 import lombok.Value;
 import lombok.experimental.UtilityClass;
 import tools.jackson.core.JsonParser;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.exc.MismatchedInputException;
 
 /** Maps a finished local review onto the submission: its {@code localReview} block and the code units' labels. */
 @UtilityClass
 public class LocalReviewModels {
     private static final String TEMPLATE_DIGEST = "opencode/review-digest";
+    private static final ObjectMapper ANSWER = LlmJson.responseMapper();
     /**
      * The units a review labels: what the commit adds or changes. A deleted unit is priced as a deletion and never
      * labelled, and it may share its name with a new one (a method moved into a nested class), which would hand the new
@@ -193,7 +196,7 @@ public class LocalReviewModels {
     }
     private static String reasoning(LocalReview review, Optional<FindingTriage> triage) {
         Context ctx = new Context();
-        ctx.setVariable("tasks", tasks(review.getAnswer()));
+        ctx.setVariable("tasks", tasks(ANSWER.readTree(review.getAnswer())));
         ctx.setVariable("reviewers", review.getReviewers());
         ctx.setVariable("observations", CollectionUtils.emptyIfNull(review.getObservations()));
         ctx.setVariable("notChecked", CollectionUtils.emptyIfNull(review.getNotChecked()));
@@ -202,12 +205,12 @@ public class LocalReviewModels {
     }
     /**
      * The coordinator's work split, every area a task with its paths. LocalReviewer reads it with the coordinator's
-     * findings, so a split in another shape than the prompt asks for fails the review there as the commit's failure, and
-     * the digest reads it again. A missing, null or empty list, a null task and a task without paths are refused rather
-     * than left out: a coordinator that split the commit into no area reviewed none of it.
+     * findings as the answer is submitted, so a split in another shape than the prompt asks for is refused there and
+     * corrected within the turn, and the digest reads it again. A missing, null or empty list, a null task and a task
+     * without paths are refused rather than left out: a coordinator that split the commit into no area reviewed none of it.
      */
-    public static List<Task> tasks(String answer) {
-        List<Task> toReturn = LlmJson.readAnswer(answer, Plan.class).getTasks();
+    public static List<Task> tasks(JsonNode answer) {
+        List<Task> toReturn = ANSWER.treeToValue(answer, Plan.class).getTasks();
         if (CollectionUtils.isEmpty(toReturn)) {
             throw MismatchedInputException.from((JsonParser) null, Plan.class, "the answer has no \"tasks\"; every area a subagent reviewed is one task with its paths");
         }

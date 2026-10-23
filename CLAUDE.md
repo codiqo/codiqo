@@ -1687,14 +1687,12 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
 - **A reviewer answers `unitLabels`, `observations` and `notChecked` beside its bugs** (`LocalReviewer.ReviewerFields`).
   `unitLabels` holds only label objects (`{"file","signature","category","reason"}`); it is not the scoring response's
   `blockCategories`, which reviewers read as the topics of their review and filled with sentences. A string entry
-  still fails the read, and so does an answer with no `unitLabels` (a reviewer with no units sends `[]`).
-  A reviewer's answer is that of the first turn of its session that ended with one, its last message stopping on its
-  own (`LocalReviewer.reviewerAnswer`, `OpenCodeClient.answerOf`): the subagent tool continues a reviewer through its
-  `sessionID`. The coordinator did so after a reviewer had answered in 6 of 194 reviews, with a no-op prompt ("noop",
-  "reply with an empty report", "answer yes or no") whose reply, read as the newest answer, failed one review and
-  silently emptied two reviewers' reports; and it continued a reviewer cut off at its step cap, whose review only its
-  second turn holds. A turn cut off on a tool call or an error has no answer, whatever its steps wrote. A continued
-  reviewer is logged as a warning.
+  is refused, and so is an answer with no `unitLabels` (a reviewer with no units sends `[]`).
+  A reviewer's answer is its first accepted `codiqo_submit_review` call (`ReviewAnswers`): the subagent tool continues a
+  reviewer through its `sessionID`, and the coordinator did so after a reviewer had answered in 6 of 194 reviews, with
+  a no-op prompt ("noop", "reply with an empty report", "answer yes or no") whose reply, read as the newest answer,
+  failed one review and silently emptied two reviewers' reports. A later call changes nothing and is logged as a
+  warning. A reviewer cut off at its step cap and continued gives its review in its second turn, its first call.
 - **The coordinator writes `blastRadiusAnalysis` flat**: `signatureChanges` is the list of changed signatures, with
   `hasBreakingChanges` and `breakingChangeType` beside it (`LocalReviewer.FlatBlastRadius`, read through the
   `COORDINATOR_ANSWER` mix-in). Asked for the nested `signatureChanges` object, GLM-5.3 wrote it as the list in 2 of
@@ -1703,30 +1701,48 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   entry of it. Asked "for each of architectureImpact, …: {score, rationale, qualityGateMet}" without the wrapper,
   GLM-5.3 wrote a list in 2 of 48 reviews (once of single-key objects, once of nameless score objects whose dimension
   cannot be known), and each failed the read.
-- **An answer's text begins with `{`**: the step count belongs in the reasoning, and no summary or announcement precedes
-  the JSON. The shared `json-rules` say so, so the labelling and triage turns carry it in their own prompt as well as
-  in the coordinator's system prompt they inherit. GLM-5.3 wrote "Step N of M" into the visible text of about 80% of its messages and put prose before about
-  65% of its answers; twice in about 230 answering turns its last message, stopped on its own, was only that prose
-  ("… Composing the answer.", "… Final answer:"), and each failed its review (a labelling fork and a reviewer).
+- **Every answer is a tool call** (`AnswerTool`), served by `ReviewAnswers`, a loopback MCP server beside `LlmRelay`
+  (both are a `LoopbackServer`, each with a secret of its own): `codiqo_submit_review` (reviewers),
+  `codiqo_submit_answer` (the coordinator), `codiqo_submit_labels` and `codiqo_submit_triage` (the forks). The
+  coordinator reads its reviewers' reviews with `codiqo_reviewer_reports`, since the subagent tool hands it only the
+  text of a reviewer's last message: each review with its session, and without its `unitLabels`, which come only with
+  `unitLabels: true` (the labelling turn's starting point). OpenCode cuts a tool's output at 51,200 bytes by default,
+  and five reviews of one commit were 36,000 characters, 21,000 of them labels. `codiqo_submit_answer` is turned away
+  until the coordinator has read every review submitted. Nothing an agent writes as text is read. A text answer had to be found in whatever the model wrote: GLM-5.3 put "Step N of M"
+  into the text of about 80% of its messages and prose before about 65% of its answers, and in 2 of about 85 reviews,
+  after the prompt already said an answer's text begins with `{`, its last message held only prose ("All checks are
+  done…", "… Final answer:") with the JSON left in its reasoning, which failed the review. OpenCode 2.1 names the
+  calling session in each call's `_meta["ai.opencode/sessionID"]`, names an MCP tool `<server>_<tool>` (its permission
+  action too), and offers MCP tools through Code Mode, a script in an `execute` tool, unless the server sets
+  `codemode: false`, as the review's does (checked on 2.1.1 and 2.1.2). The review waits until OpenCode lists the server
+  as connected (`OpenCodeClient.awaitMcpConnected`, `GET /api/mcp`) before it starts, so a server OpenCode cannot reach
+  costs nothing. The shared `answer-rules` close every answered prompt, the labelling and triage turns' included.
 - **The coordinator never starts a subagent in the background.** OpenCode's subagent tool takes `background`, and its
   result for one tells the model to end its response; a headless review ends with that turn, so the subagent's report
   is never read. In 1 of 48 reviews GLM-5.3 started a second, background "verification" subagent after its reviewer had
   reported, then ended on "Once it reports, I will … give the final JSON". OpenCode 2.1.2 has no setting that turns the
   parameter off, so the prompt forbids it and any subagent started after the reviewers reported.
-- **Nothing the model writes is repaired, and no turn is sent twice.** An unreadable coordinator, reviewer, labelling or
-  triage answer fails the review at once, and so does a reviewer session that ended without an answer (the coordinator
-  retries no area), a coordinator that started no reviewer, a work split with no area or an area without paths
-  (`LocalReviewModels.tasks`), a
-  labelling answer that is not one label with a known category per listed unit (`UnitLabelling.problems`; the
-  reviewers' labels are used by name only when no labelling turn ran), a triage answer that is not one verdict per
-  listed finding (`FindingTriage.problems`), and a turn OpenCode ended with an error, the reviewers' sessions included
-  (`LocalReviewer.turn`):
-  OpenCode has already retried the provider by then. Never add a correction turn, a fork asked for a final answer or a
-  resume prompt: fix the prompt or the schema that let the shape through.
+- **A wrong answer is refused within its turn, never repaired.** OpenCode checks a call's arguments against its tool's
+  schema (`AnswerTool.inputSchema`, which requires what the prompt asks for), and `ReviewAnswers` then runs the review's
+  own readers on them: `LocalReviewer.readCoordinatorAnswer` (findings, assessment, and a work split with areas and
+  paths, `LocalReviewModels.tasks`), `readReviewerAnswer`, `UnitLabelling.problems` (one label with a known category per
+  listed unit; the reviewers' labels are used by name only when no labelling turn ran) and `FindingTriage.problems` (one
+  verdict per listed finding). A refused call is answered with what is wrong, by the answer's own path
+  (`unitLabels[0]: …`), and the agent calls again in the same turn; after `reviewAnswerAttempts` (3) refused calls the
+  answer stays refused. A call to another answer tool than the session's (a fork carries the coordinator's prompt) is
+  turned away without counting. `LocalReviewer.answerOf` settles every session the same way, in this order: an
+  accepted answer stands, whatever the turn did after it (the closing sentence is one more model call); a turn
+  OpenCode ended with an error fails with that error, a refused call before it included, since OpenCode has already
+  retried the provider by then; a refused answer, and a turn the model ended on its own without the call (the old
+  prose-only answers), are the commit's failure (`ReviewAnswerException`); a session cut off without either, at its
+  step cap, is unanswered, and so fails the review (the coordinator retries no area), as a coordinator that started no
+  reviewer does. Codiqo itself never repairs an answer, reads one leniently, or sends a
+  correction turn, a fork asked for a final answer or a resume prompt: fix the prompt or the schema that let the shape
+  through.
 - **The step caps are guards, not budgets** (`reviewCoordinatorSteps` 128, `reviewReviewerSteps` 256). An agent that
   reaches its cap is lost: a reviewer's next tool call is refused and it never answers, and a coordinator gets
   OpenCode's own max-steps instruction, which "overrides all other instructions" and asks for a prose summary instead
-  of the JSON. Both prompts therefore carry the same STEP BUDGET: count each step in the reasoning ("Step N of M"), spend them
+  of the answer call. Both prompts therefore carry the same STEP BUDGET: count each step in the reasoning ("Step N of M"), spend them
   economically, stop calling tools `STEPS_RESERVED_FOR_ANSWER` (8) before the cap, and never end on a plan. The
   coordinator also starts every reviewer before it reads any code: one that reviewed production files itself first
   reached its cap of 40 while checking the reports. The time limits follow the caps: `reviewTimeout` is 150 minutes
@@ -1737,8 +1753,7 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   shape. It holds for a task that says it is not a review too, and the coordinator starts a subagent only to review an
   area: GLM-5.3 once started one with "Reply with the single word: done" after its reviewer had reported, and the
   `done` it got back excluded a commit whose review was complete. `notChecked` holds up to three notes each on what a reviewer could not verify (an external artifact, a test it
-  could not run, a refused command), `[]` when it checked everything; a lone string is read as one item, as for
-  `observations`.
+  could not run, a refused command), `[]` when it checked everything.
 - The reviewers' `observations` and `notChecked` are collected from their own answers (`LocalReviewer.reviewerAnswers`,
   de-duplicated, capped by `RunArgs.reviewMaxObservations` / `reviewMaxNotChecked`), and `LocalReviewModels.toModel`
   writes a Markdown `reasoning` digest (the coordinator's areas, the
@@ -1748,7 +1763,8 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   with `.env` reads denied instead of asked (an `ask`, and a call no rule matches, hangs a headless review) and one short
   addition, `DENIED_SHELL`: the git writes and builds (`mvn`, `gradle`) that would change the analysis clone while the
   commit's own build runs in it. OpenCode has no shell deny list of its own. Keep it to that: never add flags or reading forms
-  to it, since every addition refuses commands the reviewers need. The prompts state the rules
+  to it, since every addition refuses commands the reviewers need. Each agent may call only its own answer tools; the
+  coordinator's include the forks', since a fork runs with the coordinator's permissions. The prompts state the rules
   (`opencode/tools`). Convention
   files are fenced with `PromptFences`' markers, which `ConventionGuidance` strips from every file.
 - What the model writes is checked before it is sent: a bug without a title or description and a dimension score off

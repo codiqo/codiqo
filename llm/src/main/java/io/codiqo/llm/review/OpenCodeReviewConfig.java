@@ -1,6 +1,5 @@
 package io.codiqo.llm.review;
 
-import java.util.EnumSet;
 import java.util.List;
 
 import org.apache.commons.lang3.StringUtils;
@@ -15,6 +14,8 @@ import io.codiqo.llm.PromptTemplates;
 import io.codiqo.llm.StaticAnalysisLists;
 import io.codiqo.llm.client.LlmJson;
 import io.codiqo.llm.schema.LlmScoringResponse;
+import io.codiqo.util.RequestAuthorizer;
+import io.netty.handler.codec.http.HttpHeaderNames;
 import lombok.experimental.UtilityClass;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ArrayNode;
@@ -62,14 +63,13 @@ public class OpenCodeReviewConfig {
      * the coordinator, which had the three, reached its cap while still checking its reviewers' reports.
      */
     private static final int STEPS_RESERVED_FOR_ANSWER = 8;
-
-    private static final EnumSet<LlmScoringResponse.Confidence> REPORTED_CONFIDENCE = EnumSet.of(
-            LlmScoringResponse.Confidence.HIGH,
-            LlmScoringResponse.Confidence.MEDIUM);
     private static final String BUG_SHAPE = bugShape();
 
-    /** @param namingRules how a reviewer writes a unit's signature, one rule per language the commit changes */
-    public ObjectNode build(RunArgs args, ReviewEndpoint endpoint, String conventionGuidance, List<String> namingRules, ReviewTags tags) {
+    /**
+     * @param answers where the agents give their answers, each through its {@link AnswerTool}
+     * @param namingRules how a reviewer writes a unit's signature, one rule per language the commit changes
+     */
+    public ObjectNode build(RunArgs args, ReviewEndpoint endpoint, ReviewAnswers.Endpoint answers, String conventionGuidance, List<String> namingRules, ReviewTags tags) {
         JsonMapper mapper = JsonMapper.builder().build();
         ObjectNode toReturn = mapper.createObjectNode();
         toReturn.put("share", "disabled");
@@ -98,6 +98,18 @@ public class OpenCodeReviewConfig {
             limit.put("output", args.getReviewOutputLimit());
         }
 
+        /**
+         * OpenCode 2.1 offers an MCP server's tools through its Code Mode unless told otherwise: the model then writes
+         * JavaScript that calls them inside an "execute" tool, so an answer would be a script holding an object literal
+         * rather than a tool call whose arguments OpenCode checks against the tool's schema.
+         */
+        ObjectNode server = toReturn.putObject("mcp").putObject("servers").putObject(ReviewAnswers.SERVER);
+        server.put("type", "remote");
+        server.put("url", answers.getUrl());
+        server.putObject("headers").put(HttpHeaderNames.AUTHORIZATION.toString(), RequestAuthorizer.bearer(answers.getSecret()));
+        server.put("oauth", false);
+        server.put("codemode", false);
+
         ObjectNode agents = toReturn.putObject("agents");
 
         ObjectNode reviewer = agents.putObject(REVIEWER);
@@ -105,19 +117,26 @@ public class OpenCodeReviewConfig {
         reviewer.put("description", "Reviews part of a commit with shell and file tools that leave the checkout untouched and returns confirmed defects as JSON");
         reviewer.put("model", PROVIDER + "/" + args.getReviewReviewerModel());
         reviewer.put("steps", args.getReviewReviewerSteps());
-        reviewer.put("system", prompt("opencode/module-reviewer", args.getReviewReviewerSteps(), args, conventionGuidance, namingRules, tags));
-        addReviewPermissions(reviewer.putArray("permissions"));
+        reviewer.put("system", prompt("opencode/module-reviewer", AnswerTool.REVIEW, args.getReviewReviewerSteps(), args, conventionGuidance, namingRules, tags));
+        ArrayNode reviewerPermissions = reviewer.putArray("permissions");
+        addReviewPermissions(reviewerPermissions);
+        rule(reviewerPermissions, AnswerTool.REVIEW.getOpenCodeName(), "*", "allow");
 
         ObjectNode coordinator = agents.putObject(COORDINATOR);
         coordinator.put("mode", "primary");
         coordinator.put("description", "Plans a whole-commit review, runs reviewer sub-agents in parallel and merges their findings");
         coordinator.put("model", PROVIDER + "/" + args.getReviewCoordinatorModel());
         coordinator.put("steps", args.getReviewCoordinatorSteps());
-        coordinator.put("system", prompt("opencode/review-coordinator", args.getReviewCoordinatorSteps(), args, conventionGuidance, namingRules, tags));
+        coordinator.put("system", prompt("opencode/review-coordinator", AnswerTool.ANSWER, args.getReviewCoordinatorSteps(), args, conventionGuidance, namingRules, tags));
         ArrayNode coordinatorPermissions = coordinator.putArray("permissions");
         addReviewPermissions(coordinatorPermissions);
         rule(coordinatorPermissions, "subagent", "*", "deny");
         rule(coordinatorPermissions, "subagent", REVIEWER, "allow");
+        /** the labelling and triage turns run in forks of the coordinator's session, with its permissions */
+        rule(coordinatorPermissions, ReviewAnswers.openCodeName(ReviewAnswers.REVIEWS_TOOL), "*", "allow");
+        for (AnswerTool tool : List.of(AnswerTool.ANSWER, AnswerTool.LABELS, AnswerTool.TRIAGE)) {
+            rule(coordinatorPermissions, tool.getOpenCodeName(), "*", "allow");
+        }
 
         return toReturn;
     }
@@ -137,16 +156,16 @@ public class OpenCodeReviewConfig {
         rule.put("effect", effect);
     }
     /** @param findings the findings asked about, whose tools the prompt names */
-    public static String triagePrompt(List<StaticFinding> findings) {
-        Context ctx = new Context();
+    public static String triagePrompt(RunArgs args, List<StaticFinding> findings) {
+        Context ctx = answering(AnswerTool.TRIAGE, args);
         ctx.setVariable("reporters", reporters(findings));
         ctx.setVariable("bugTypes", List.of(LlmScoringResponse.BugType.values()));
         ctx.setVariable("findings", LlmJson.responseMapper().writeValueAsString(findings));
         return PromptTemplates.process("opencode/triage-findings", ctx).strip();
     }
     /** @param units the submission's added and changed units, each under the id the answer names it by */
-    public static String labelPrompt(String sha, List<ReviewUnit> units) {
-        Context ctx = new Context();
+    public static String labelPrompt(RunArgs args, String sha, List<ReviewUnit> units) {
+        Context ctx = answering(AnswerTool.LABELS, args);
         ctx.setVariable("sha", sha);
         ctx.setVariable("units", units);
         return PromptTemplates.process("opencode/label-units", ctx).strip();
@@ -187,7 +206,7 @@ public class OpenCodeReviewConfig {
         toReturn.put("description", "what is wrong, the input or path that triggers it, and the lines you checked as path:line");
         toReturn.put("file", "repository-relative path");
         toReturn.put("line", "new-file line number, as a JSON number");
-        toReturn.put("confidence", Joiner.on('|').join(REPORTED_CONFIDENCE));
+        toReturn.put("confidence", Joiner.on('|').join(AnswerTool.REPORTED_CONFIDENCE));
         toReturn.put("suggestedFix", "one line");
         toReturn.put("suggestedFileFix", "how to fix it");
         return toReturn.toString();
@@ -202,8 +221,8 @@ public class OpenCodeReviewConfig {
      * The fence is the scoring prompt's own, which {@code ConventionGuidance} strips from every file, so a file cannot
      * close it early; Thymeleaf inserts a value as it is, so a {@code [(...)]} inside one is not evaluated.
      */
-    private static String prompt(String template, int steps, RunArgs args, String conventionGuidance, List<String> namingRules, ReviewTags tags) {
-        Context ctx = new Context();
+    private static String prompt(String template, AnswerTool answer, int steps, RunArgs args, String conventionGuidance, List<String> namingRules, ReviewTags tags) {
+        Context ctx = answering(answer, args);
         ctx.setVariable("namingRules", namingRules);
         ctx.setVariable("technicalTags", tags.getTechnical());
         ctx.setVariable("functionalTags", tags.getFunctional());
@@ -216,5 +235,14 @@ public class OpenCodeReviewConfig {
         ctx.setVariable("begin", PromptFences.CONVENTIONS_BEGIN);
         ctx.setVariable("end", PromptFences.CONVENTIONS_END);
         return PromptTemplates.process(template, ctx);
+    }
+    /** a prompt that is answered through the tool, with the calls the agent gets before its answer counts as refused */
+    private static Context answering(AnswerTool answer, RunArgs args) {
+        Context toReturn = new Context();
+        toReturn.setVariable("answerTool", answer.getOpenCodeName());
+        toReturn.setVariable("coordinatorTool", AnswerTool.ANSWER.getOpenCodeName());
+        toReturn.setVariable("reportsTool", ReviewAnswers.openCodeName(ReviewAnswers.REVIEWS_TOOL));
+        toReturn.setVariable("attempts", Math.max(1, args.getReviewAnswerAttempts()));
+        return toReturn;
     }
 }
