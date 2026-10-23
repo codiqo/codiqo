@@ -30,6 +30,7 @@ import io.codiqo.client.model.SignatureChangesModel;
 import io.codiqo.client.model.StaticAnalysisFindingModel;
 import io.codiqo.client.model.StaticAnalysisReviewModel;
 import io.codiqo.client.model.TaskTypeModel;
+import io.codiqo.llm.client.LlmJson;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.node.ArrayNode;
@@ -236,7 +237,7 @@ class LocalReviewModelsTest {
     void aPlanWithoutAreasFails() {
         for (String answer : List.of("{}", "{\"tasks\":null}", "{\"tasks\":[]}", "{\"tasks\":[null]}", "{\"tasks\":[{\"findings\":2}]}",
                 "{\"tasks\":[{\"paths\":[],\"findings\":2}]}", "{\"tasks\":[{\"paths\":\"core/\",\"findings\":2}]}")) {
-            assertThrows(JacksonException.class, () -> LocalReviewModels.tasks(answer), answer);
+            assertThrows(JacksonException.class, () -> LocalReviewModels.tasks(LlmJson.responseMapper().readTree(answer)), answer);
         }
     }
     /** a label above MECHANICAL carries the reviewer's reason to the unit; a MECHANICAL one never does */

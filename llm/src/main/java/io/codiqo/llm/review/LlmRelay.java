@@ -6,14 +6,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
-import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
@@ -22,8 +20,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -34,7 +30,6 @@ import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.ObjectUtils;
-import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -54,7 +49,6 @@ import com.openai.core.ObjectMappers;
 import com.openai.models.ErrorObject;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
@@ -119,8 +113,7 @@ public final class LlmRelay implements AutoCloseable {
     private static final JsonMapper OPENAI = ObjectMappers.jsonMapper();
     private static final Joiner COMMA = Joiner.on(", ");
 
-    private final HttpServer server;
-    private final ExecutorService executor;
+    private final LoopbackServer loopback;
     private final HttpClient http;
     private final HttpUrl upstream;
     private final RequestAuthorizer authorizer;
@@ -146,7 +139,6 @@ public final class LlmRelay implements AutoCloseable {
     private final AtomicBoolean rateLimitExhausted = new AtomicBoolean();
     private final double temperature;
     private final double topP;
-    private final String secret;
     private final Multiset<Integer> providerErrors = ConcurrentHashMultiset.create();
     /**
      * What the provider's last 429 said, quoted by {@link #providerErrors()}: the status counts alone cannot tell a short
@@ -156,10 +148,9 @@ public final class LlmRelay implements AutoCloseable {
     private final AtomicReference<String> lastRateLimitText = new AtomicReference<>();
     private final Log log;
 
-    private LlmRelay(HttpServer server, ExecutorService executor, RunArgs args, ReviewEndpoint upstream, Log log) {
-        this.server = Objects.requireNonNull(server);
-        this.executor = Objects.requireNonNull(executor);
-        this.http = HttpClient.newBuilder().connectTimeout(args.getReviewRelayConnectTimeout()).executor(executor).build();
+    private LlmRelay(LoopbackServer loopback, RunArgs args, ReviewEndpoint upstream, Log log) {
+        this.loopback = Objects.requireNonNull(loopback);
+        this.http = HttpClient.newBuilder().connectTimeout(args.getReviewRelayConnectTimeout()).executor(loopback.getExecutor()).build();
         this.upstream = HttpUrl.get(upstream.getBaseUrl());
         this.authorizer = Optional.ofNullable(upstream.getAuthorizer()).orElseGet(() -> direct(upstream.getApiKey()));
         this.retries = Math.max(0, args.getReviewRelayRetries());
@@ -175,14 +166,12 @@ public final class LlmRelay implements AutoCloseable {
         this.temperature = args.getReviewTemperature();
         this.topP = args.getReviewTopP();
         this.log = Objects.requireNonNull(log);
-
-        this.secret = RandomStringUtils.secure().nextAlphanumeric(RunArgs.LOOPBACK_SECRET_LENGTH);
     }
     public String getUrl() {
-        return RunArgs.loopbackUrl(server.getAddress().getPort()).encodedPath(API_PREFIX).build().toString();
+        return RunArgs.loopbackUrl(loopback.getPort()).encodedPath(API_PREFIX).build().toString();
     }
     public String getSecret() {
-        return secret;
+        return loopback.getSecret();
     }
     /**
      * The end point's failed answers so far, retried ones included, for the error of a review that failed: a turn that
@@ -220,12 +209,11 @@ public final class LlmRelay implements AutoCloseable {
     }
     @Override
     public void close() {
-        server.stop(0);
-        executor.shutdownNow();
+        loopback.close();
     }
     private void relay(HttpExchange exchange) throws IOException {
         try (exchange) {
-            if (isAuthorized(exchange)) {
+            if (loopback.isAuthorized(exchange)) {
                 String path = Strings.CS.removeStart(exchange.getRequestURI().getRawPath(), API_PREFIX);
                 if (FORWARDED_CALLS.contains(exchange.getRequestMethod() + StringUtils.SPACE + path)) {
                     forward(exchange, path);
@@ -445,18 +433,10 @@ public final class LlmRelay implements AutoCloseable {
                 .filter(seconds -> seconds >= 0)
                 .map(Duration::ofSeconds);
     }
-    private boolean isAuthorized(HttpExchange exchange) {
-        String presented = StringUtils.defaultString(exchange.getRequestHeaders().getFirst(HttpHeaderNames.AUTHORIZATION.toString()));
-        return MessageDigest.isEqual(presented.getBytes(StandardCharsets.UTF_8), RequestAuthorizer.bearer(secret).getBytes(StandardCharsets.UTF_8));
-    }
     public static LlmRelay start(RunArgs args, ReviewEndpoint upstream, Log log) throws IOException {
-        HttpServer server = HttpServer.create(new InetSocketAddress(RunArgs.LOOPBACK_HOST, 0), 0);
-        ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
-        server.setExecutor(executor);
-
-        LlmRelay toReturn = new LlmRelay(server, executor, args, upstream, log);
-        server.createContext(API_PREFIX, toReturn::relay);
-        server.start();
+        LoopbackServer loopback = LoopbackServer.create();
+        LlmRelay toReturn = new LlmRelay(loopback, args, upstream, log);
+        loopback.serve(API_PREFIX, toReturn::relay);
         return toReturn;
     }
     private static RequestAuthorizer direct(String apiKey) {

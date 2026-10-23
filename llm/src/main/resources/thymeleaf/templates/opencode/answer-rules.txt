@@ -1,0 +1,7 @@
+/*[- the answer rules, inserted where a sentence or a line needs it: the file ends without a newline -]*/ANSWER RULES: a program reads your answer from the arguments of your call to [(${answerTool})], and from nothing else.
+1. Answer by calling [(${answerTool})] after your last other tool call. Nothing you write as text is read: an answer written out as text, announced or left in your reasoning is lost, and without the call the review fails.
+2. A refused call says what is wrong: correct exactly that and call [(${answerTool})] again with your whole answer. After [(${attempts})] refused calls no further call is read and the review fails.
+3. The arguments are JSON: every field name is double-quoted, there are no trailing commas, and no list holds a null. Leave an optional field out rather than writing null; an empty list is the right value when nothing was found.
+4. Inside strings a backslash may only come before one of " \ / n r t b f u. Write a newline as \n, a quote in code as \", a backslash in code as \; a regex such as \s is written \\s.
+5. Describe a fix in words rather than quoting code that contains quotes or backslashes.
+6. Write all text in English.

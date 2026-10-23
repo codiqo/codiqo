@@ -6,10 +6,10 @@ The build has finished. [(${reporters})] reported the findings below on lines th
 
 A finding is not a defect because a rule names it, nor harmless because the code looks intentional: judge what the code actually does. [# th:insert="~{opencode/severity}" /]
 
-Answer with one JSON object and nothing else, whose only field is "verdicts": one verdict per finding in the order given, with its tool, rule, file and line copied exactly as the finding lists them:
-{"verdicts":[{"tool":"...","rule":"...","file":"...","line":<number>,"verdict":"defect|harmless|false_positive","severity":"blocking|major|minor, or null unless a defect","type":"[(${#strings.listJoin(bugTypes, '|')})], or null unless a defect","reason":"one or two sentences citing the code you checked","suggestedFix":"one line, or null"}]}
+This turn is answered by calling [(${answerTool})], not [(${coordinatorTool})], which already answered the review: call it with one field, "verdicts": one verdict per finding in the order given, with its tool, rule, file and line copied exactly as the finding lists them:
+{"verdicts":[{"tool":"...","rule":"...","file":"...","line":<number>,"verdict":"defect|harmless|false_positive","severity":"blocking|major|minor, left out unless a defect","type":"[(${#strings.listJoin(bugTypes, '|')})], left out unless a defect","reason":"one or two sentences citing the code you checked","suggestedFix":"one line, left out when there is none"}]}
 
-[# th:insert="~{opencode/json-rules}" /]
+[# th:insert="~{opencode/answer-rules}" /]
 
 Findings:
 [(${findings})]

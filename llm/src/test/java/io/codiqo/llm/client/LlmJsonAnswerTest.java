@@ -4,9 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.util.List;
 
-import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.Strings;
 import org.junit.jupiter.api.Test;
 
@@ -103,22 +101,6 @@ class LlmJsonAnswerTest {
     }
     private static LlmScoringResponse.Bugs read(String answer) {
         return LlmJson.readAnswer(answer, LlmScoringResponse.Bugs.class);
-    }
-    /** a coordinator once collapsed every reviewer's labels into their category names; the rest must still read */
-    @Test
-    void aMalformedFieldTakenFromElsewhereDoesNotCostTheRestOfTheAnswer() {
-        ObjectNode merged = JSON.objectNode().put("summary", "Adds a cancel endpoint").put("taskComplexity", 6);
-        merged.putArray("blocking");
-        merged.putArray("taskTypes").add("feature").add("test");
-        merged.putArray("blockCategories").add("ROUTINE").add("MECHANICAL");
-        String answer = "Writing the merged result.\n" + merged;
-
-        LlmScoringResponse read = LlmJson.readAnswerIgnoring(answer, LlmJson.responseMapper(), LlmScoringResponse.class, "blockCategories");
-
-        assertEquals("Adds a cancel endpoint", read.getSummary());
-        assertEquals(6, read.getTaskComplexity());
-        assertEquals(List.of(LlmScoringResponse.TaskType.FEATURE, LlmScoringResponse.TaskType.TEST), read.getTaskTypes());
-        assertTrue(CollectionUtils.isEmpty(read.getBlockCategories()), "the malformed labels are dropped, not half-read");
     }
     private static String findings() {
         ObjectNode toReturn = JSON.objectNode();

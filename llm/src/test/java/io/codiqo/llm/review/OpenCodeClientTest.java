@@ -1,6 +1,7 @@
 package io.codiqo.llm.review;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -13,7 +14,9 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -25,6 +28,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -35,6 +39,7 @@ import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.JsonNodeFactory;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -47,6 +52,9 @@ class OpenCodeClientTest {
     private static final String EMPTY_FINDINGS = emptyFindings();
     private static final Pattern TRACED_MESSAGES = Pattern.compile("GET /api/session/(ses_\\w+)/message");
     private static final Pattern TRACED_SESSION = Pattern.compile("GET /api/session/(ses_\\w+)");
+    /** the MCP server's status as OpenCode lists it on each poll: not listed yet, pending, then the last one for good */
+    private static final List<ObjectNode> MCP_STATES = Lists.newCopyOnWriteArrayList();
+    private static final AtomicInteger MCP_POLLS = new AtomicInteger();
 
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final Map<String, String> requestBodies = Maps.newConcurrentMap();
@@ -83,12 +91,11 @@ class OpenCodeClientTest {
         }
     }
     @Test
-    void finalAnswerIsTheNewestAssistantTextInEitherShape() throws Exception {
+    void aPromptIsSentAsItsText() throws Exception {
         try (OpenCodeClient client = new OpenCodeClient(url, PASSWORD, TIMEOUT)) {
             client.prompt(SESSION, "Review commit abc of this repository.");
             client.awaitIdle(SESSION);
 
-            assertEquals(EMPTY_FINDINGS, client.finalAnswer(SESSION));
             assertEquals("Review commit abc of this repository.", mapper.readTree(requestBodies.get("POST /api/session/" + SESSION + "/prompt")).path("text").asString());
         }
     }
@@ -128,29 +135,48 @@ class OpenCodeClientTest {
     }
     /**
      * a reviewer whose answer the provider cut short, which OpenCode continued within the same turn, and which the
-     * coordinator then asked for a one-word confirmation: two turns, the review being the first one's answer
+     * coordinator then asked for a one-word confirmation: two turns, the synthetic "continue" inside the first
      */
     @Test
-    void aReviewerTheCoordinatorContinuedKeepsItsReviewInItsFirstTurn() throws Exception {
+    void aSessionTheCoordinatorContinuedHasATurnPerPrompt() throws Exception {
         try (OpenCodeClient client = new OpenCodeClient(url, PASSWORD, TIMEOUT)) {
             List<List<JsonNode>> turns = client.turns(CONTINUED);
 
             assertEquals(2, turns.size());
-            List<JsonNode> review = turns.iterator().next();
-            assertEquals(Optional.of(EMPTY_FINDINGS), OpenCodeClient.answerOf(review));
-            assertEquals(Optional.empty(), OpenCodeClient.errorOf(review), "OpenCode continued the cut answer, so the turn ended well");
-            assertEquals(Optional.of("no"), OpenCodeClient.answerOf(turns.getLast()));
+            assertEquals(Optional.empty(), OpenCodeClient.errorOf(turns.iterator().next()), "OpenCode continued the cut answer, so the turn ended well");
         }
     }
-    /** a turn that ended with an error reports it and has no answer, though an earlier step of it wrote text */
+    /** a turn that ended with an error reports it, though an earlier step of it wrote text */
     @Test
-    void aTurnThatEndedWithAnErrorReportsItAndNoAnswer() {
+    void aTurnThatEndedWithAnErrorReportsIt() {
         ObjectNode failed = assistant(200).put("finish", "error");
         failed.putObject("error").put("type", "provider.timeout").put("message", "no answer in time");
         List<JsonNode> turn = List.of(JSON.objectNode().put("type", "user").put("text", "Review part of commit abc."), assistant(100).put("finish", "tool-calls").put("text", "Step 1."), failed);
 
         assertEquals("provider.timeout", OpenCodeClient.errorOf(turn).orElseThrow().path("type").asString());
-        assertEquals(Optional.empty(), OpenCodeClient.answerOf(turn));
+        assertFalse(OpenCodeClient.stoppedOnItsOwn(turn), "a turn that ended with an error did not stop on its own");
+        assertFalse(OpenCodeClient.stoppedOnItsOwn(turn.subList(0, 2)), "nor did one cut off on a tool call");
+        assertTrue(OpenCodeClient.stoppedOnItsOwn(List.of(turn.getFirst(), assistant(300).put("finish", "stop").put("text", "All checks are done."))));
+    }
+    /** the answer server is waited for while OpenCode connects to it, which it lists as pending, before it is listed at all */
+    @Test
+    void theMcpServerIsWaitedForUntilItIsConnected() throws Exception {
+        mcpStates(null, "pending", "connected");
+
+        try (OpenCodeClient client = new OpenCodeClient(url, PASSWORD, TIMEOUT)) {
+            client.awaitMcpConnected(ReviewAnswers.SERVER, TIMEOUT);
+        }
+        assertEquals(3, MCP_POLLS.get());
+    }
+    /** an answer server OpenCode could not reach fails before the review pays for anything */
+    @Test
+    void anMcpServerOpenCodeCouldNotReachFailsAtOnce() {
+        mcpStates("pending", "failed");
+
+        try (OpenCodeClient client = new OpenCodeClient(url, PASSWORD, TIMEOUT)) {
+            IOException err = assertThrows(IOException.class, () -> client.awaitMcpConnected(ReviewAnswers.SERVER, TIMEOUT));
+            assertTrue(err.getMessage().contains("Unable to connect"), err.getMessage());
+        }
     }
     @Test
     void aRejectedCallReportsTheRouteAndStatus() {
@@ -169,6 +195,26 @@ class OpenCodeClientTest {
         }
         respond(exchange, HttpResponseStatus.UNAUTHORIZED.code(), JSON.objectNode().put("_tag", "UnauthorizedError").put("message", "Authentication required").toString());
     }
+    private static String mcp() {
+        ObjectNode state = MCP_STATES.get(Math.min(MCP_POLLS.getAndIncrement(), MCP_STATES.size() - 1));
+        ObjectNode toReturn = JSON.objectNode();
+        ArrayNode servers = toReturn.putArray("data");
+        if (Objects.nonNull(state)) {
+            servers.addObject().put("name", ReviewAnswers.SERVER).set("status", state);
+        }
+        return toReturn.toString();
+    }
+    private static void mcpStates(String... states) {
+        MCP_POLLS.set(0);
+        MCP_STATES.clear();
+        for (String state : states) {
+            ObjectNode status = Objects.isNull(state) ? null : JSON.objectNode().put("status", state);
+            if ("failed".equals(state)) {
+                status.put("error", "Unable to connect. Is the computer able to access the url? (ConnectionRefused)");
+            }
+            MCP_STATES.add(status);
+        }
+    }
     private static String body(String route, String query) {
         if (route.equals("GET /api/session/" + CONTINUED + "/message")) {
             return continuedReviewer(query);
@@ -182,6 +228,7 @@ class OpenCodeClientTest {
             return data(session(session.group(1), OpenCodeReviewConfig.REVIEWER, "reviewer-model", 1, 1, 0, 0));
         }
         return switch (route) {
+            case "GET /api/mcp" -> mcp();
             case "POST /api/session" -> data(JSON.objectNode().put("id", SESSION));
             case "POST /api/session/" + SESSION + "/prompt" -> data(JSON.objectNode().put("id", "msg_1"));
             case "POST /api/session/" + SESSION + "/fork" -> data(JSON.objectNode().put("id", "ses_fork"));

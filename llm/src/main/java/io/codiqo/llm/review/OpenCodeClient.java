@@ -47,6 +47,10 @@ public class OpenCodeClient implements Closeable {
     private static final String ASSISTANT = "assistant";
     private static final String USER_MESSAGE = "user";
     private static final String STOP = "stop";
+    private static final String MCP_CONNECTED = "connected";
+    /** what OpenCode lists an MCP server as while it connects; a server not listed at all has not been started yet */
+    private static final String MCP_PENDING = "pending";
+    private static final Duration MCP_POLL = Duration.ofMillis(250);
     private static final String ORDER_NEWEST_FIRST = "desc";
     private static final String ORDER_OLDEST_FIRST = "asc";
 
@@ -78,43 +82,29 @@ public class OpenCodeClient implements Closeable {
     public void awaitIdle(String sessionId) throws IOException {
         post(path("api", "experimental", "session", sessionId, "wait"), mapper.createObjectNode());
     }
-    public String finalAnswer(String sessionId) throws IOException {
-        Optional<String> toReturn = answer(sessionId);
-        if (toReturn.isPresent()) {
-            return toReturn.get();
-        }
-        throw new IOException("session " + sessionId + " finished without an answer");
-    }
     /**
-     * The text of the newest assistant message that has any, read from the assistant messages newest first and
-     * followed page by page: a single unordered page of 100 messages, with tool results counted in, could hold only the
-     * oldest messages of a long coordinator session and miss its actual answer. Empty when no assistant message of the
-     * session has text; a failed request to OpenCode is an {@link IOException}, never an empty answer.
+     * Waits until OpenCode has connected to the named MCP server. OpenCode 2.1.1 lists the server about a second after it
+     * starts, as pending while it connects, then as connected, or as failed with the reason ("Unable to connect...").
      */
-    public Optional<String> answer(String sessionId) throws IOException {
-        Optional<String> cursor = Optional.empty();
-        do {
-            JsonNode page = messagePage(sessionId, Optional.of(ASSISTANT), ORDER_NEWEST_FIRST, cursor);
-            for (JsonNode message : page.path("data")) {
-                String text = text(message);
-                if (StringUtils.isNotBlank(text)) {
-                    return Optional.of(text);
-                }
+    public void awaitMcpConnected(String server, Duration timeout) throws IOException {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        Optional<JsonNode> status = Optional.empty();
+        while (System.nanoTime() < deadline) {
+            status = get(path("api", "mcp")).path("data").valueStream()
+                    .filter(listed -> server.equals(listed.path("name").asString()))
+                    .map(listed -> listed.path("status"))
+                    .findFirst();
+            String state = status.map(listed -> listed.path("status").asString()).orElse(MCP_PENDING);
+            if (MCP_CONNECTED.equals(state)) {
+                return;
             }
-            cursor = nextPage(page);
-        } while (cursor.isPresent());
-        return Optional.empty();
-    }
-    /**
-     * The error the session's last turn ended with, when it failed: OpenCode records it on the newest assistant
-     * message ({@code finish} {@code error}, {@code error.type} such as {@code provider.invalid-output}) and goes idle.
-     */
-    public Optional<JsonNode> turnError(String sessionId) throws IOException {
-        JsonNode newest = messagePage(sessionId, Optional.of(ASSISTANT), ORDER_NEWEST_FIRST, Optional.empty()).path("data").path(0);
-        if (newest.path("error").isObject()) {
-            return Optional.of(newest.path("error"));
+            if (MCP_PENDING.equals(state)) {
+                sleep(MCP_POLL);
+            } else {
+                throw new IOException("OpenCode could not connect to the MCP server " + server + ": " + status.get());
+            }
         }
-        return Optional.empty();
+        throw new IOException("OpenCode did not connect to the MCP server " + server + " within " + timeout + ": " + status.map(JsonNode::toString).orElse("not listed"));
     }
     public SessionUsage usage(String sessionId) throws IOException {
         return toUsage(session(sessionId));
@@ -230,19 +220,13 @@ public class OpenCodeClient implements Closeable {
         }
         return toReturn.build();
     }
-    /**
-     * The answer a turn ended with: the text of its newest assistant message that has any, when its last assistant
-     * message stopped on its own ({@code finish} "stop"). A turn cut off on a tool call, at a step cap for one, or by an
-     * error ended with no answer, whatever its steps wrote: a reviewer writes "Step N of M" on every step, and a cut-off
-     * reviewer read by its newest text failed as an unreadable answer instead of an unanswered one. In 690 reviewer turns
-     * of production and local traces, every turn that stopped on its own carried its answer in that last message.
-     */
-    public static Optional<String> answerOf(List<JsonNode> turn) {
-        List<JsonNode> replies = Lists.reverse(turn).stream().filter(message -> ASSISTANT.equals(message.path("type").asString())).toList();
-        if (replies.stream().findFirst().filter(message -> STOP.equals(message.path("finish").asString())).isPresent()) {
-            return replies.stream().map(OpenCodeClient::text).filter(StringUtils::isNotBlank).findFirst();
-        }
-        return Optional.empty();
+    /** whether the turn's last assistant message ended on its own ({@code finish} "stop"), not on a tool call, an error or a cap */
+    public static boolean stoppedOnItsOwn(List<JsonNode> turn) {
+        return Lists.reverse(turn).stream()
+                .filter(message -> ASSISTANT.equals(message.path("type").asString()))
+                .findFirst()
+                .filter(message -> STOP.equals(message.path("finish").asString()))
+                .isPresent();
     }
     public static Optional<JsonNode> errorOf(List<JsonNode> turn) {
         return Lists.reverse(turn).stream()
@@ -278,17 +262,14 @@ public class OpenCodeClient implements Closeable {
                 tokens.path("output").asLong(),
                 tokens.path("reasoning").asLong());
     }
-    private static String text(JsonNode message) {
-        String text = message.path("text").asString();
-        if (StringUtils.isNotBlank(text)) {
-            return text;
+    private static void sleep(Duration duration) throws InterruptedIOException {
+        try {
+            Thread.sleep(duration);
+        } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
+            InterruptedIOException toThrow = new InterruptedIOException("interrupted while waiting for OpenCode");
+            toThrow.initCause(err);
+            throw toThrow;
         }
-        StringBuilder toReturn = new StringBuilder();
-        for (JsonNode part : message.path("content")) {
-            if ("text".equals(part.path("type").asString())) {
-                toReturn.append(part.path("text").asString());
-            }
-        }
-        return toReturn.toString();
     }
 }

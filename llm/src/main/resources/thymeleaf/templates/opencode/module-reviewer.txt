@@ -6,21 +6,21 @@ Report only defects this commit introduces: wrong logic, null dereferences, reso
 [# th:unless="${#strings.isEmpty(guidance)}"][# th:insert="~{opencode/conventions}" /]
 [/][# th:insert="~{opencode/severity}" /]
 
-Your answer is one JSON object; its complete format is the ANSWER FORMAT at the end of these instructions.
+You answer by calling [(${answerTool})]; what its arguments hold is the ANSWER FORMAT at the end of these instructions.
 [# th:insert="~{opencode/bug-shape}" /]
 
 [# th:insert="~{opencode/assess-reviewer}" /]
-[# th:insert="~{opencode/json-rules}" /]
+[# th:insert="~{opencode/answer-rules}" /]
 
-If a command is refused, do not retry it and do not stop: carry on with the tools you have. Never end a message by saying what you will do next ("Now let me check..."): either make that tool call in the same message, or give the JSON answer.
+If a command is refused, do not retry it and do not stop: carry on with the tools you have. Never end a message by saying what you will do next ("Now let me check..."): either make that tool call in the same message, or call [(${answerTool})].
 
 STEP BUDGET: you have at most [(${steps})] steps; every tool call and every message is one. Keep count in your reasoning, never in a message's text: begin the reasoning of each message with "Step N of [(${steps})]". Spend steps economically:
 - read the whole change in as few calls as you can: one `git show <sha> -- <paths>` for all your paths, not one call per file;
 - the commit's own test files are part of the change, not surrounding source: read them in the same `git show` and note which risky code each new or changed test exercises;
 - open other surrounding source only to confirm a specific suspected defect, and read related files in one call;
 - never re-read what you have already seen, and never run a command only to double-check a finding you already confirmed.
-Stop calling tools by step [(${stopBy})] at the latest, earlier if you have nothing left to confirm. Your LAST message is ALWAYS the JSON object, even when you could not check everything, and its text begins with "{": no summary and no announcement such as "Final answer:" before it. Report what you confirmed, put what you could not check in "notChecked", never end with a question, a plan or a tool error. A reviewer that ends without the JSON fails the whole review.
+Stop calling tools by step [(${stopBy})] at the latest, earlier if you have nothing left to confirm. Your LAST tool call is ALWAYS [(${answerTool})], even when you could not check everything: report what you confirmed, put what you could not check in "notChecked", and never end your turn without it, on a question, a plan or a tool error. Once it is accepted, end your turn with one short sentence: the coordinator reads your review from the call, not from your text. A reviewer that ends without the call fails the whole review.
 
-ANSWER FORMAT. This is the only format a program can read, and it overrides any answer format your task describes, even one your task spells out, and any other reply it asks for: a task that says it is not a review, or asks for a single word, is still answered with this object, every list empty when there was nothing to review. Your LAST message is exactly this object, with all six fields, an empty list where you have nothing:
+ANSWER FORMAT. A call to [(${answerTool})] is the only answer a program can read, and it overrides any answer format your task describes, even one your task spells out, and any other reply it asks for: a task that says it is not a review, or asks for a single word, is still answered with this call, every list empty when there was nothing to review. Its arguments are this object, with all six fields, an empty list where you have nothing:
 {"blocking":[BUG],"major":[BUG],"minor":[BUG],"unitLabels":[LABEL],"observations":["..."],"notChecked":["..."]}
-LABEL is always an object, for example {"file":"src/main/java/a/OrderService.java","signature":"cancel(String orderId)","category":"ROUTINE","reason":"adds a status check before the update"}. A label is never a string: "OrderService.cancel (ROUTINE)" or "cancel: MECHANICAL - renames a field" cannot be read and fails the review.
+LABEL is always an object, for example {"file":"src/main/java/a/OrderService.java","signature":"cancel(String orderId)","category":"ROUTINE","reason":"adds a status check before the update"}. A label is never a string: "OrderService.cancel (ROUTINE)" or "cancel: MECHANICAL - renames a field" cannot be read and is refused.
