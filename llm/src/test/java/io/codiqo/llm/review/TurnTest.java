@@ -1,6 +1,7 @@
 package io.codiqo.llm.review;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -112,6 +113,22 @@ class TurnTest {
         IOException err = assertThrows(IOException.class, this::answerOf);
 
         assertEquals("session ses_coordinator ended its turn without calling codiqo_submit_labels, so it gave no answer", err.getMessage());
+    }
+    /**
+     * An answer that could not be read on Codiqo's side is the commit's failure, never the provider's, even when the
+     * relay counted a provider error during the review: decided by that count, one retried 429 turned it into a halt.
+     */
+    @Test
+    void anAnswerCodiqoCouldNotReadIsTheCommitsFailureWhateverTheProviderDid() {
+        answers.expect(SESSION, AnswerTool.LABELS, arguments -> {
+            throw new IllegalArgumentException("index out of date");
+        });
+        answer("{\"labels\":[{\"id\":\"U1\"}]}");
+
+        IOException err = assertThrows(IOException.class, this::answerOf);
+
+        assertEquals("index out of date", err.getCause().getCause().getMessage());
+        assertFalse(LocalReviewer.isProviderFailure(err, true), "a provider error during the review does not make it the provider's");
     }
     private void answer(String arguments) {
         answers.answerCall(SESSION, AnswerTool.LABELS.getToolName(), mapper.readTree(arguments));

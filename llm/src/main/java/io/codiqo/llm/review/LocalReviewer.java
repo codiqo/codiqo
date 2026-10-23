@@ -133,7 +133,7 @@ public class LocalReviewer {
                  * provider is held responsible for any failure that is not the model's own answer.
                  */
                 Optional<String> providerErrors = relay.providerErrors();
-                if (isProviderFailure(err, relay)) {
+                if (isProviderFailure(err, relay.providerFailed())) {
                     throw new ReviewProviderException(err.getMessage(), providerErrors.orElse("OpenCode recorded the provider's failure; the relay counted none"), err);
                 }
                 if (providerErrors.isPresent()) {
@@ -446,7 +446,19 @@ public class LocalReviewer {
     @VisibleForTesting
     public static <T> Optional<ReviewAnswers.Accepted<T>> answerOf(OpenCodeClient client, ReviewAnswers answers, String sessionId, AnswerTool tool, Class<T> type)
             throws IOException {
-        Optional<ReviewAnswers.Accepted<T>> toReturn = answers.accepted(sessionId, type);
+        Optional<ReviewAnswers.Accepted<T>> toReturn;
+        try {
+            toReturn = answers.accepted(sessionId, type);
+        } catch (IllegalStateException err) {
+            /**
+             * The answer could not be read on Codiqo's side: a reader failed on its own, or OpenCode named no calling
+             * session, so no answer could be matched to its session. Neither is the provider's failure, and left as a
+             * RuntimeException it reached isProviderFailure's last case, which decides by whether the relay counted
+             * any provider error during the review: one retried 429 turned the same failure from an excluded commit
+             * into a project halt that repeated on every resume. It is the commit's failure, whatever the provider did.
+             */
+            throw new ReviewAnswerException(err.getMessage(), err);
+        }
         if (toReturn.isEmpty()) {
             List<List<JsonNode>> turns = client.turns(sessionId);
             if (CollectionUtils.isNotEmpty(turns)) {
@@ -477,14 +489,15 @@ public class LocalReviewer {
      * provider did: halting the project for it would halt it again on every resume. Any other failure, a reviewer that
      * ended without an answer or a turn that timed out, is the provider's when it failed during the review.
      */
-    private static boolean isProviderFailure(Throwable err, LlmRelay relay) {
+    @VisibleForTesting
+    public static boolean isProviderFailure(Throwable err, boolean providerFailed) {
         if (err instanceof TurnFailedException turn) {
             return PROVIDER_TURN_ERRORS.contains(turn.getType());
         }
         if (err instanceof ReviewAnswerException) {
             return false;
         }
-        return relay.providerFailed();
+        return providerFailed;
     }
     @Value
     public static class ReviewerAnswers {
