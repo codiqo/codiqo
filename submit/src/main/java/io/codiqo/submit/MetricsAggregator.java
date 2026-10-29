@@ -91,8 +91,8 @@ public class MetricsAggregator implements SubmissionPopulator {
             moduleFullCoverage.setTotalBranches(tracker.moduleTotalBranches().intValue());
             moduleFullCoverage.setCoveredBranches(tracker.moduleCoveredBranches().intValue());
             moduleFullCoverage.setMissedBranches(tracker.moduleMissedBranches().intValue());
-            moduleFullCoverage.setLinePercentage(tracker.moduleLineCoveragePercent());
-            moduleFullCoverage.setBranchPercentage(tracker.moduleBranchCoveragePercent());
+            tracker.moduleLineCoveragePercent().ifPresent(moduleFullCoverage::setLinePercentage);
+            tracker.moduleBranchCoveragePercent().ifPresent(moduleFullCoverage::setBranchPercentage);
 
             qualityModel.setFullCoverage(moduleFullCoverage);
             ctx.getModuleFullCoverages().put(moduleModel.getId(), moduleFullCoverage);
@@ -167,15 +167,19 @@ public class MetricsAggregator implements SubmissionPopulator {
         fullProjectCoverageModel.setCoveredBranches(fullCoveredBranches);
         fullProjectCoverageModel.setMissedBranches(fullMissedBranches);
 
+        /**
+         * A share is set only when it has a denominator. No executable line at all means coverage was not measured:
+         * the run had codiqo.ignoreCoverage on (the fork skips the tests and attaches no JaCoCo agent), or no module
+         * ran a test. Sent as 0.0, the server stored it and the commit page showed whole-project coverage as
+         * "0.0% · 0 of 0 lines · branches 0.0%", which reads as an untested project rather than an unmeasured one.
+         * Left unset, the server stores null and the page says "not measured". Branches are separate: code without a
+         * conditional has measured lines and no branch to cover.
+         */
         if (fullTotalExecutableLines > 0) {
             fullProjectCoverageModel.setLinePercentage(fullCoveredLines * 100.0 / fullTotalExecutableLines);
-        } else {
-            fullProjectCoverageModel.setLinePercentage(0.0);
         }
         if (fullTotalBranches > 0) {
             fullProjectCoverageModel.setBranchPercentage(fullCoveredBranches * 100.0 / fullTotalBranches);
-        } else {
-            fullProjectCoverageModel.setBranchPercentage(0.0);
         }
 
         fullProjectCoverageModel.setByModule(ctx.getModuleFullCoverages());

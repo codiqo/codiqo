@@ -1640,13 +1640,13 @@ components:
           format: double
           minimum: 0
           maximum: 100
-          description: Line coverage percentage
+          description: Line coverage percentage; absent when no executable line was measured
         branchPercentage:
           type: number
           format: double
           minimum: 0
           maximum: 100
-          description: Branch coverage percentage
+          description: Branch coverage percentage; absent when no branch was measured
         byModule:
           type: object
           description: Per-module coverage breakdown
@@ -1701,13 +1701,13 @@ components:
           format: double
           minimum: 0
           maximum: 100
-          description: Line coverage percentage for this module
+          description: Line coverage percentage for this module; absent when no executable line was measured
         branchPercentage:
           type: number
           format: double
           minimum: 0
           maximum: 100
-          description: Branch coverage percentage for this module
+          description: Branch coverage percentage for this module; absent when no branch was measured
 
     # ==========================================================================
     # Module Quality (Per-Module Level)

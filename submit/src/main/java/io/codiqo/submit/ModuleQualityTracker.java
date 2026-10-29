@@ -2,6 +2,7 @@ package io.codiqo.submit;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 import org.apache.commons.lang3.mutable.MutableDouble;
@@ -179,12 +180,12 @@ public class ModuleQualityTracker {
     public int moduleTotalClasses() {
         return moduleUniqueClasses.size();
     }
-    public double moduleLineCoveragePercent() {
+    public Optional<Double> moduleLineCoveragePercent() {
         int total = moduleTotalExecutableLines.intValue();
-        return total > 0 ? moduleCoveredLines.intValue() * 100.0 / total : 0.0;
+        return total > 0 ? Optional.of(moduleCoveredLines.intValue() * 100.0 / total) : Optional.empty();
     }
-    public double moduleBranchCoveragePercent() {
+    public Optional<Double> moduleBranchCoveragePercent() {
         int total = moduleTotalBranches.intValue();
-        return total > 0 ? moduleCoveredBranches.intValue() * 100.0 / total : 0.0;
+        return total > 0 ? Optional.of(moduleCoveredBranches.intValue() * 100.0 / total) : Optional.empty();
     }
 }
