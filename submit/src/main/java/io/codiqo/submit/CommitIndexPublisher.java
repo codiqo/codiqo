@@ -98,8 +98,16 @@ public class CommitIndexPublisher {
      * The missing analyses this clone can run, once the commits of missing merges' lines that no index run reached are
      * indexed ({@link #indexUnseenLines}). The list is read again when any were, so they are analysed in this run.
      */
-    public static MissingAnalysesSelection selectMissingAnalyses(Log log, CommitIndexApi client, String apiUrl, String projectId, String branch, int limit,
-            Repository repo, RunArgs filterArgs, int batchSize) throws Exception {
+    public static MissingAnalysesSelection selectMissingAnalyses(
+            Log log,
+            CommitIndexApi client,
+            String apiUrl,
+            String projectId,
+            String branch,
+            int limit,
+            Repository repo,
+            RunArgs filterArgs,
+            int batchSize) throws Exception {
         MissingAnalysesSelection toReturn = selectAnalyzable(repo, listMissingAnalyses(log, client, apiUrl, projectId, branch, limit));
         if (indexUnseenLines(log, client, apiUrl, projectId, repo, filterArgs, toReturn.getAnalyzableShas(), batchSize) > 0) {
             toReturn = selectAnalyzable(repo, listMissingAnalyses(log, client, apiUrl, projectId, branch, limit));
@@ -112,8 +120,15 @@ public class CommitIndexPublisher {
      * indexed commit, so had a later batch failed after the newest ones were indexed, the older ones would never be
      * looked at again.
      */
-    public static int indexUnseenLines(Log log, CommitIndexApi client, String apiUrl, String projectId, Repository repo, RunArgs filterArgs,
-            List<String> shas, int batchSize) throws Exception {
+    public static int indexUnseenLines(
+            Log log,
+            CommitIndexApi client,
+            String apiUrl,
+            String projectId,
+            Repository repo,
+            RunArgs filterArgs,
+            List<String> shas,
+            int batchSize) throws Exception {
         IndexedCommits indexed = IndexedCommits.of(log, client, apiUrl, projectId);
         List<RevCommit> unseen = Lists.newArrayList();
         for (String sha : shas) {

@@ -136,7 +136,14 @@ public class IndexCommitsMojo extends AbstractMojo {
 
             Log log = new MavenMessageReporter(getLog());
             int resolvedBatchSize = Optional.ofNullable(batchSize).orElse(RunArgs.INDEX_BATCH_SIZE);
-            CommitIndexPublisher.indexBatches(log, client, apiUrl, projectId, buildProjectMetadata(projectId, repo), commits, resolvedBatchSize);
+            CommitIndexPublisher.indexBatches(
+                    log,
+                    client,
+                    apiUrl,
+                    projectId,
+                    buildProjectMetadata(projectId, repo),
+                    commits,
+                    resolvedBatchSize);
             writeMissingAnalyses(log, client, repo, args, projectId, resolvedBranch, resolvedBatchSize);
             args.writeIndexMetadata(indexMetadataFile.toPath());
         } catch (MojoExecutionException | MojoFailureException err) {
@@ -175,10 +182,24 @@ public class IndexCommitsMojo extends AbstractMojo {
         }
         return toReturn;
     }
-    private void writeMissingAnalyses(Log log, CommitIndexApi client, Repository repo, RunArgs args, String projectId, String resolvedBranch, int resolvedBatchSize)
-            throws Exception {
-        MissingAnalysesSelection selection = CommitIndexPublisher.selectMissingAnalyses(log, client, apiUrl, projectId, resolvedBranch, missingAnalysesLimit,
-                repo, args, resolvedBatchSize);
+    private void writeMissingAnalyses(
+            Log log,
+            CommitIndexApi client,
+            Repository repo,
+            RunArgs args,
+            String projectId,
+            String resolvedBranch,
+            int resolvedBatchSize) throws Exception {
+        MissingAnalysesSelection selection = CommitIndexPublisher.selectMissingAnalyses(
+                log,
+                client,
+                apiUrl,
+                projectId,
+                resolvedBranch,
+                missingAnalysesLimit,
+                repo,
+                args,
+                resolvedBatchSize);
 
         FileUtils.forceMkdir(missingAnalysesOutputFile.getParentFile());
         FileUtils.writeLines(missingAnalysesOutputFile, StandardCharsets.UTF_8.name(), selection.getAnalyzableShas());

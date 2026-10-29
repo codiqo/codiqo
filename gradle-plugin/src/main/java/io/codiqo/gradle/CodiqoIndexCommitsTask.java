@@ -99,7 +99,13 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
      * the SHAs the caller should analyze. With a key that is the server's missing-analyses answer, narrowed to what
      * this clone can actually diff; without one there is nothing to ask, so the whole extracted window is written.
      */
-    private List<String> resolveShas(Project root, CodiqoExtension ext, Repository repo, RunArgs filter, String branch, List<CommitModel> commits) throws Exception {
+    private List<String> resolveShas(
+            Project root,
+            CodiqoExtension ext,
+            Repository repo,
+            RunArgs filter,
+            String branch,
+            List<CommitModel> commits) throws Exception {
         Optional<CodiqoCredential> credential = resolveCredential(ext);
         if (credential.isEmpty()) {
             getLogger().lifecycle("codiqo: no API key configured and no browser login stored — writing every extracted commit instead of the server's missing-analysis list");
@@ -126,8 +132,16 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
 
         CommitIndexPublisher.indexBatches(log, client, apiUrl, projectId, metadata, commits, RunArgs.INDEX_BATCH_SIZE);
 
-        MissingAnalysesSelection selection = CommitIndexPublisher.selectMissingAnalyses(log, client, apiUrl, projectId, branch, missingAnalysesLimit(),
-                repo, filter, RunArgs.INDEX_BATCH_SIZE);
+        MissingAnalysesSelection selection = CommitIndexPublisher.selectMissingAnalyses(
+                log,
+                client,
+                apiUrl,
+                projectId,
+                branch,
+                missingAnalysesLimit(),
+                repo,
+                filter,
+                RunArgs.INDEX_BATCH_SIZE);
         if (BooleanUtils.or(new boolean[]{
                 selection.getSkippedMissingCommitCount() > 0,
                 selection.getSkippedMissingParentCount() > 0})) {

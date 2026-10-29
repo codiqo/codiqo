@@ -117,7 +117,11 @@ public class CommitExclusions {
      * Why a merge is excluded before analysis. It only reads: the commits of a merged line that no index run reached
      * travel with the exclusion, and the index step indexes them ({@link CommitIndexPublisher#indexUnseenLines}).
      */
-    public static Optional<MergeExclusion> mergeExclusion(Repository repo, String commitId, boolean firstParentOnly, IndexedCommits indexed) throws Exception {
+    public static Optional<MergeExclusion> mergeExclusion(
+            Repository repo,
+            String commitId,
+            boolean firstParentOnly,
+            IndexedCommits indexed) throws Exception {
         if (firstParentOnly) {
             try (RevWalk walk = new RevWalk(repo)) {
                 RevCommit merge = walk.parseCommit(repo.resolve(commitId));

@@ -168,8 +168,14 @@ class CommitExclusionsLineMergeTest {
         server.start();
         try {
             String url = RunArgs.loopbackUrl(server.getAddress().getPort()).build().toString();
-            int added = CommitIndexPublisher.indexUnseenLines(new NoopLog(), CommitIndexPublisher.buildClient(url, new ApiKeyCredential("k"), 5, 5), url, PROJECT,
-                    repo, new RunArgs(), List.of(release1.getName(), release3.getName(), pullRequestAfterTheMoves.getName(), seenDevCommitOfRelease3.getName()),
+            int added = CommitIndexPublisher.indexUnseenLines(
+                    new NoopLog(),
+                    CommitIndexPublisher.buildClient(url, new ApiKeyCredential("k"), 5, 5),
+                    url,
+                    PROJECT,
+                    repo,
+                    new RunArgs(),
+                    List.of(release1.getName(), release3.getName(), pullRequestAfterTheMoves.getName(), seenDevCommitOfRelease3.getName()),
                     RunArgs.INDEX_BATCH_SIZE);
 
             assertEquals(2, added);

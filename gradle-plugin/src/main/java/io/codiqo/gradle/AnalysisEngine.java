@@ -147,7 +147,9 @@ public class AnalysisEngine {
             /** a hidden-source run without a usable key fails before anything is analysed, sent or paid for */
             hiding(request);
             CommitIndexApi client = CommitIndexPublisher.buildClient(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(), request.getReadTimeoutSeconds());
-            Optional<Exclusion> excluded = CommitExclusions.beforeAnalysis(args, IndexedCommits.of(log, client, request.getApiUrl(), request.getRootCode()));
+            Optional<Exclusion> excluded = CommitExclusions.beforeAnalysis(
+                    args,
+                    IndexedCommits.of(log, client, request.getApiUrl(), request.getRootCode()));
             if (excluded.isPresent()) {
                 reportExclusion(request, args, args.getCommitId(), excluded.get(), List.of(), log);
                 return;
