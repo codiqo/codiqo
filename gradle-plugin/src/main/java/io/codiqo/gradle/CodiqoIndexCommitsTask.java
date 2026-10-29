@@ -45,7 +45,6 @@ import io.codiqo.util.JGit;
  * local dump loop wants: there is no server to say which analyses already exist.
  */
 public class CodiqoIndexCommitsTask extends DefaultTask {
-    private static final int INDEX_BATCH_SIZE = 200;
     private static final int DEFAULT_MISSING_ANALYSES_LIMIT = 1024;
     private static final Set<String> BOOLEAN_VALUES = Set.of("true", "false");
     private static final String INDEX_OUTPUT_RELATIVE_PATH = "codiqo/indexed-commits.txt";
@@ -88,7 +87,7 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
 
             File outputFile = resolveOutputFile(root, ext);
             FileUtils.forceMkdir(outputFile.getParentFile());
-            FileUtils.writeLines(outputFile, StandardCharsets.UTF_8.name(), resolveShas(root, ext, repo, branch, commits));
+            FileUtils.writeLines(outputFile, StandardCharsets.UTF_8.name(), resolveShas(root, ext, repo, filter, branch, commits));
             getLogger().lifecycle("codiqo: wrote the commit list to " + outputFile.getAbsolutePath());
 
             filter.setJdtlsVersion(prop("codiqo.jdtlsVersion", ext.getJdtlsVersion()));
@@ -100,7 +99,7 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
      * the SHAs the caller should analyze. With a key that is the server's missing-analyses answer, narrowed to what
      * this clone can actually diff; without one there is nothing to ask, so the whole extracted window is written.
      */
-    private List<String> resolveShas(Project root, CodiqoExtension ext, Repository repo, String branch, List<CommitModel> commits) throws Exception {
+    private List<String> resolveShas(Project root, CodiqoExtension ext, Repository repo, RunArgs filter, String branch, List<CommitModel> commits) throws Exception {
         Optional<CodiqoCredential> credential = resolveCredential(ext);
         if (credential.isEmpty()) {
             getLogger().lifecycle("codiqo: no API key configured and no browser login stored — writing every extracted commit instead of the server's missing-analysis list");
@@ -125,10 +124,10 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
         }
         JGit.detectDefaultBranch(repo).ifPresent(metadata::setDefaultBranch);
 
-        CommitIndexPublisher.indexBatches(log, client, apiUrl, projectId, metadata, commits, INDEX_BATCH_SIZE);
+        CommitIndexPublisher.indexBatches(log, client, apiUrl, projectId, metadata, commits, RunArgs.INDEX_BATCH_SIZE);
 
-        MissingAnalysesSelection selection = CommitIndexPublisher.selectAnalyzable(repo,
-                CommitIndexPublisher.listMissingAnalyses(log, client, apiUrl, projectId, branch, missingAnalysesLimit()));
+        MissingAnalysesSelection selection = CommitIndexPublisher.selectMissingAnalyses(log, client, apiUrl, projectId, branch, missingAnalysesLimit(),
+                repo, filter, RunArgs.INDEX_BATCH_SIZE);
         if (BooleanUtils.or(new boolean[]{
                 selection.getSkippedMissingCommitCount() > 0,
                 selection.getSkippedMissingParentCount() > 0})) {

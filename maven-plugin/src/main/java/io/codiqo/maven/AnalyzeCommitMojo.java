@@ -65,6 +65,7 @@ import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.submit.CommitExclusions;
 import io.codiqo.submit.CommitExclusions.Exclusion;
+import io.codiqo.submit.IndexedCommits;
 import io.codiqo.maven.logging.MavenLogFactory;
 import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.util.Fetch;
@@ -133,6 +134,14 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     protected void doBeforeAnalysis(RunArgs args) throws Exception {
     }
     /**
+     * The project's indexed commits, which tell a pull request's merge from a merge of a line the project already
+     * analyses commit by commit ({@link CommitExclusions#mergeSkipReason}). An analysis that speaks to no server knows
+     * none.
+     */
+    protected IndexedCommits indexedCommits() throws Exception {
+        return IndexedCommits.NONE;
+    }
+    /**
      * Runs once the compile run has decided, before the test run. Work that costs money per commit (the local agent
      * review) starts here rather than at checkout: a commit whose build cannot resolve its dependencies or cannot be
      * measured is failed or excluded before any of it is paid for.
@@ -144,7 +153,7 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
     }
     @Override
     protected void doExecute(RunArgs args) throws Exception {
-        Optional<Exclusion> excluded = CommitExclusions.beforeAnalysis(args);
+        Optional<Exclusion> excluded = CommitExclusions.beforeAnalysis(args, indexedCommits());
         if (excluded.isPresent()) {
             getLog().warn(String.format("commit %s skipped: %s", commitId, excluded.get().getReason()));
             doExcludeAnalysis(commitId, excluded.get().getReason(), excluded.get().getCategory());

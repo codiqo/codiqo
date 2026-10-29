@@ -27,7 +27,6 @@ import org.eclipse.jgit.lib.Repository;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
-import io.codiqo.client.ApiException;
 import io.codiqo.client.api.CommitIndexApi;
 import io.codiqo.client.model.CommitModel;
 import io.codiqo.client.model.ProjectModel;
@@ -65,8 +64,8 @@ public class IndexCommitsMojo extends AbstractMojo {
     @Parameter(property = "codiqo.commitWindow", defaultValue = "P3M")
     private String commitWindow;
 
-    @Parameter(property = "codiqo.indexBatchSize", defaultValue = "200")
-    private int batchSize;
+    @Parameter(property = "codiqo.indexBatchSize")
+    private Integer batchSize;
 
     @Parameter(property = "codiqo.branch")
     private String branch;
@@ -136,8 +135,9 @@ public class IndexCommitsMojo extends AbstractMojo {
             getLog().info("connecting to " + apiUrl);
 
             Log log = new MavenMessageReporter(getLog());
-            CommitIndexPublisher.indexBatches(log, client, apiUrl, projectId, buildProjectMetadata(projectId, repo), commits, batchSize);
-            writeMissingAnalyses(log, client, repo, projectId, resolvedBranch);
+            int resolvedBatchSize = Optional.ofNullable(batchSize).orElse(RunArgs.INDEX_BATCH_SIZE);
+            CommitIndexPublisher.indexBatches(log, client, apiUrl, projectId, buildProjectMetadata(projectId, repo), commits, resolvedBatchSize);
+            writeMissingAnalyses(log, client, repo, args, projectId, resolvedBranch, resolvedBatchSize);
             args.writeIndexMetadata(indexMetadataFile.toPath());
         } catch (MojoExecutionException | MojoFailureException err) {
             throw err;
@@ -175,9 +175,10 @@ public class IndexCommitsMojo extends AbstractMojo {
         }
         return toReturn;
     }
-    private void writeMissingAnalyses(Log log, CommitIndexApi client, Repository repo, String projectId, String resolvedBranch) throws IOException, ApiException {
-        MissingAnalysesSelection selection = CommitIndexPublisher.selectAnalyzable(repo,
-                CommitIndexPublisher.listMissingAnalyses(log, client, apiUrl, projectId, resolvedBranch, missingAnalysesLimit));
+    private void writeMissingAnalyses(Log log, CommitIndexApi client, Repository repo, RunArgs args, String projectId, String resolvedBranch, int resolvedBatchSize)
+            throws Exception {
+        MissingAnalysesSelection selection = CommitIndexPublisher.selectMissingAnalyses(log, client, apiUrl, projectId, resolvedBranch, missingAnalysesLimit,
+                repo, args, resolvedBatchSize);
 
         FileUtils.forceMkdir(missingAnalysesOutputFile.getParentFile());
         FileUtils.writeLines(missingAnalysesOutputFile, StandardCharsets.UTF_8.name(), selection.getAnalyzableShas());

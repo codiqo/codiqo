@@ -233,6 +233,69 @@ class JGitMergeSideAuthorTest {
             assertEquals("bob@corp.com", JGit.creditedAuthor(shallow, merge).getEmailAddress());
         }
     }
+    @Test
+    void aPullRequestsLineIsItsBranchNewestFirst() throws Exception {
+        commitAs("base.txt", "0", "base", "Maintainer", "maintainer@corp.com");
+        git.branchCreate().setName("feature").call();
+        git.checkout().setName("feature").call();
+        RevCommit first = commitAs("f1.txt", "1", "PR commit 1", "Dev", "dev@corp.com");
+        RevCommit second = commitAs("f2.txt", "2", "PR commit 2", "Dev", "dev@corp.com");
+        git.checkout().setName("main").call();
+        commitAs("m.txt", "m", "mainline", "Maintainer", "maintainer@corp.com");
+        RevCommit merge = mergeAs("feature", "Merge pull request #12", "CI Bot", "bot@ci.com");
+
+        assertEquals(List.of(second, first), JGit.mergeSideLine(repository, merge));
+    }
+    /** a long-lived branch's line holds the pull requests merged into it, not their commits, as its own first-parent walk does */
+    @Test
+    void aLongLivedLineHoldsItsPullRequestMergesButNotTheirCommits() throws Exception {
+        commitAs("base.txt", "0", "base", "Maintainer", "maintainer@corp.com");
+        git.branchCreate().setName("dev").call();
+        git.checkout().setName("dev").call();
+        RevCommit direct = commitAs("d1.txt", "1", "pushed to dev", "Dev", "dev@corp.com");
+        git.branchCreate().setName("feature").call();
+        git.checkout().setName("feature").call();
+        RevCommit pullRequestWork = commitAs("f1.txt", "1", "PR commit", "Other", "other@corp.com");
+        git.checkout().setName("dev").call();
+        RevCommit pullRequest = mergeAs("feature", "Merge pull request #13", "CI Bot", "bot@ci.com");
+        git.checkout().setName("main").call();
+        RevCommit release = mergeAs("dev", "Merge pull request #14 from dev", "CI Bot", "bot@ci.com");
+
+        List<RevCommit> line = JGit.mergeSideLine(repository, release);
+
+        assertEquals(List.of(pullRequest, direct), line);
+        assertTrue(JGit.mergeSideCommits(repository, release).contains(pullRequestWork), "precondition: the merge brings the pull request's commit in");
+    }
+    @Test
+    void anImportedHistoryEndsAtItsRoot() throws Exception {
+        RevCommit base = commitAs("base.txt", "0", "base", "Maintainer", "maintainer@corp.com");
+        git.checkout().setOrphan(true).setName("imported").call();
+        git.rm().addFilepattern("base.txt").call();
+        RevCommit root = commitAs("imported.txt", "a", "import the library", "Alice", "alice@corp.com");
+        RevCommit tip = commitAs("alice.txt", "1", "one more line", "Alice", "alice@corp.com");
+
+        RevCommit merge = rawMerge(List.of(base, tip), "Merge the imported history");
+
+        assertEquals(List.of(tip, root), JGit.mergeSideLine(repository, merge));
+    }
+    /** a shallow boundary reads as parentless, so the line ends there instead of asking for a parent the clone lacks */
+    @Test
+    void aShallowBoundaryEndsTheLine() throws Exception {
+        commitAs("base.txt", "0", "base", "Maintainer", "maintainer@corp.com");
+        git.branchCreate().setName("feature").call();
+        git.checkout().setName("feature").call();
+        commitAs("f1.txt", "1", "before the boundary", "Dev", "dev@corp.com");
+        RevCommit boundary = commitAs("f2.txt", "2", "the boundary", "Dev", "dev@corp.com");
+        RevCommit tip = commitAs("f3.txt", "3", "after the boundary", "Dev", "dev@corp.com");
+        git.checkout().setName("main").call();
+        commitAs("m.txt", "m", "mainline", "Maintainer", "maintainer@corp.com");
+        RevCommit merge = mergeAs("feature", "Merge pull request #15", "CI Bot", "bot@ci.com");
+
+        Files.writeString(tempDir.resolve(".git").resolve("shallow"), boundary.getName() + StringUtils.LF, StandardCharsets.UTF_8);
+        try (Repository shallow = new FileRepositoryBuilder().setGitDir(new File(tempDir.toFile(), ".git")).build()) {
+            assertEquals(List.of(tip, boundary), JGit.mergeSideLine(shallow, merge));
+        }
+    }
     private RevCommit rawMerge(List<RevCommit> parents, String message) throws Exception {
         try (ObjectInserter inserter = repository.newObjectInserter()) {
             CommitBuilder builder = new CommitBuilder();
