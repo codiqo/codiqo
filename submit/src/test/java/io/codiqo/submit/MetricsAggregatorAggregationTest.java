@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 
 import java.io.File;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -33,12 +34,7 @@ class MetricsAggregatorAggregationTest {
 
     @BeforeEach
     void buildContext() {
-        RunArgs args = new RunArgs();
-        ctx = SubmissionContext.create(
-                args, index(), new StubAnalysis(), Path.of("."), StubAnalysis.LOGS,
-                "group:artifact", "test", new ClientInfoModel());
-
-        ctx.getProjectModel().setModules(Lists.newArrayList(List.of(module("a"), module("b"))));
+        ctx = context("a", "b");
 
         ModuleQualityTracker a = ctx.trackerFor("a");
         a.incrementFilesChanged();
@@ -113,6 +109,35 @@ class MetricsAggregatorAggregationTest {
         assertEquals(40.0, full.getBranchPercentage(), 0.001, "(6+2) of 20");
         assertEquals(2, full.getByModule().size(), "every tracked module appears in the breakdown");
     }
+    /** coverage off, or no test ran: there is no share to report, and a 0% would read as an untested project */
+    @Test
+    void unmeasuredCoverageSendsNoPercentage() {
+        SubmissionContext unmeasured = context("a");
+        unmeasured.trackerFor("a").addModuleMethod(false);
+        unmeasured.trackerFor("a").addModuleStatements(100);
+
+        new MetricsAggregator().accept(unmeasured);
+
+        var full = unmeasured.getSubmissionModel().getFullProjectCoverage();
+        assertEquals(0, full.getTotalExecutableLines());
+        assertNull(full.getLinePercentage(), "not measured, not 0%");
+        assertNull(full.getBranchPercentage());
+        assertNull(full.getByModule().get("a").getLinePercentage(), "the module's share is not measured either");
+        assertNull(full.getByModule().get("a").getBranchPercentage());
+    }
+    @Test
+    void measuredLinesWithoutABranchHaveNoBranchShare() {
+        SubmissionContext straightLine = context("a");
+        straightLine.trackerFor("a").addModuleCoverageLines(3, 1);
+
+        new MetricsAggregator().accept(straightLine);
+
+        var full = straightLine.getSubmissionModel().getFullProjectCoverage();
+        assertEquals(75.0, full.getLinePercentage(), 0.001);
+        assertNull(full.getBranchPercentage(), "no branch to cover is not 0% of branches covered");
+        assertEquals(75.0, full.getByModule().get("a").getLinePercentage(), 0.001);
+        assertNull(full.getByModule().get("a").getBranchPercentage());
+    }
     /** a module in the project model with no tracker contributes nothing and must not break the walk */
     @Test
     void aModuleWithoutATrackerIsSkipped() {
@@ -164,6 +189,13 @@ class MetricsAggregatorAggregationTest {
         assertEquals(first.population(), ctx.getMethodScalerProd().population());
         assertEquals(firstQuantile, ctx.getMethodCapQuantileProd());
         assertSame(ctx.getProjectModel().getModules().get(0), ctx.getProjectModel().getModules().get(0));
+    }
+    private static SubmissionContext context(String... moduleIds) {
+        SubmissionContext toReturn = SubmissionContext.create(
+                new RunArgs(), index(), new StubAnalysis(), Path.of("."), StubAnalysis.LOGS,
+                "group:artifact", "test", new ClientInfoModel());
+        toReturn.getProjectModel().setModules(Lists.newArrayList(Arrays.stream(moduleIds).map(MetricsAggregatorAggregationTest::module).toList()));
+        return toReturn;
     }
     private static ModuleModel module(String id) {
         ModuleModel toReturn = new ModuleModel();
