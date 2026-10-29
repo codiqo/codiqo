@@ -34,6 +34,7 @@ import io.codiqo.core.diff.GitCommitAnalysis;
 import io.codiqo.core.logging.SlfLogFactory;
 import io.codiqo.submit.CommitExclusions;
 import io.codiqo.submit.CommitIndexer;
+import io.codiqo.submit.IndexedCommits;
 
 /**
  * end-to-end mimic of the production history shape that produced the merge-commit PR scoring gap
@@ -187,7 +188,7 @@ class MergeCommitPrHistoryMimicTest {
     @Test
     void analyzeGateAdmitsEverySoleAuthorPrMerge() throws Exception {
         for (String mergeSha : List.of(pr1MergeSha, pr7MergeSha, syncMergeSha, pr18MergeSha)) {
-            assertTrue(CommitExclusions.mergeSkipReason(runArgs(mergeSha, true)).isEmpty(),
+            assertTrue(CommitExclusions.mergeSkipReason(runArgs(mergeSha, true), IndexedCommits.NONE).isEmpty(),
                     "sole-author merge must be analyzable, was excluded in production: " + mergeSha);
         }
     }

@@ -57,6 +57,7 @@ import io.codiqo.submit.CommitBuildFailedException;
 import io.codiqo.submit.CommitExclusions;
 import io.codiqo.submit.CommitIndexPublisher;
 import io.codiqo.submit.CommitExclusions.Exclusion;
+import io.codiqo.submit.IndexedCommits;
 import io.codiqo.submit.OutputSerializer;
 import io.codiqo.submit.SubmissionAssembly;
 import io.codiqo.submit.SubmissionContext;
@@ -145,14 +146,16 @@ public class AnalysisEngine {
              */
             /** a hidden-source run without a usable key fails before anything is analysed, sent or paid for */
             hiding(request);
-            Optional<Exclusion> excluded = CommitExclusions.beforeAnalysis(args);
+            CommitIndexApi client = CommitIndexPublisher.buildClient(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(), request.getReadTimeoutSeconds());
+            Optional<Exclusion> excluded = CommitExclusions.beforeAnalysis(
+                    args,
+                    IndexedCommits.of(log, client, request.getApiUrl(), request.getRootCode()));
             if (excluded.isPresent()) {
                 reportExclusion(request, args, args.getCommitId(), excluded.get(), List.of(), log);
                 return;
             }
 
             /** before the review starts: a halted project must not pay for another review the same failure would waste */
-            CommitIndexApi client = CommitIndexPublisher.buildClient(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(), request.getReadTimeoutSeconds());
             ProjectHalts.requireRunning(log, client, request.getApiUrl(), request.getRootCode());
             try {
                 analyse(request, args, logFactory, log);

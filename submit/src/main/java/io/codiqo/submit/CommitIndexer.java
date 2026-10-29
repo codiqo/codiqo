@@ -84,8 +84,7 @@ public class CommitIndexer {
                  */
                 if (BooleanUtils.or(new boolean[] {
                         BooleanUtils.negate(branches.contains(branch)),
-                        BooleanUtils.negate(filterArgs.matchesByBranch(branches)),
-                        BooleanUtils.negate(filterArgs.isAuthorAllowed(author.getEmailAddress()))
+                        BooleanUtils.negate(admits(filterArgs, branches, author))
                 })) {
                     continue;
                 }
@@ -102,6 +101,27 @@ public class CommitIndexer {
             }
         }
         return toReturn;
+    }
+    /**
+     * Index models of commits the walk never reached, under the walk's own branch and author rules: the end of a line a
+     * merge brought onto the analysed branch after no index run saw it there ({@link CommitIndexPublisher#indexUnseenLines}).
+     * They are reachable from that merge, so the analysed branch holds them.
+     */
+    public List<CommitModel> toCommitModels(Repository repo, RunArgs filterArgs, List<RevCommit> commits) throws Exception {
+        List<CommitModel> toReturn = Lists.newArrayList();
+        Map<String, List<String>> branchIndex = JGit.buildBranchIndex(repo);
+
+        for (RevCommit commit : commits) {
+            List<String> branches = branchIndex.getOrDefault(commit.getName(), Collections.emptyList());
+            PersonIdent author = JGit.creditedAuthor(repo, commit);
+            if (admits(filterArgs, branches, author)) {
+                toReturn.add(toCommitModel(repo, commit, branches, author));
+            }
+        }
+        return toReturn;
+    }
+    private static boolean admits(RunArgs filterArgs, List<String> branches, PersonIdent author) {
+        return BooleanUtils.and(new boolean[] { filterArgs.matchesByBranch(branches), filterArgs.isAuthorAllowed(author.getEmailAddress()) });
     }
     private static ObjectId patchId(Repository repo, RevCommit commit) throws IOException {
         try (RevWalk walk = new RevWalk(repo); PatchIdDiffFormatter formatter = new PatchIdDiffFormatter()) {

@@ -5,6 +5,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -24,6 +25,7 @@ import com.google.common.base.Joiner;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
+import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.client.ApiException;
 import io.codiqo.client.api.CommitIndexApi;
@@ -32,6 +34,7 @@ import io.codiqo.client.model.CommitIndexBatchResultModel;
 import io.codiqo.client.model.CommitModel;
 import io.codiqo.client.model.MissingAnalysesModel;
 import io.codiqo.client.model.ProjectModel;
+import io.codiqo.submit.CommitExclusions.MergeExclusion;
 import io.codiqo.submit.auth.CodiqoApiClients;
 import io.codiqo.submit.auth.CodiqoCredential;
 import io.codiqo.util.JGit;
@@ -90,6 +93,62 @@ public class CommitIndexPublisher {
             throw new ProjectHaltedException(projectId, response.getHalt());
         }
         return Optional.ofNullable(response.getCommitShas()).orElse(Collections.emptyList());
+    }
+    /**
+     * The missing analyses this clone can run, once the commits of missing merges' lines that no index run reached are
+     * indexed ({@link #indexUnseenLines}). The list is read again when any were, so they are analysed in this run.
+     */
+    public static MissingAnalysesSelection selectMissingAnalyses(
+            Log log,
+            CommitIndexApi client,
+            String apiUrl,
+            String projectId,
+            String branch,
+            int limit,
+            Repository repo,
+            RunArgs filterArgs,
+            int batchSize) throws Exception {
+        MissingAnalysesSelection toReturn = selectAnalyzable(repo, listMissingAnalyses(log, client, apiUrl, projectId, branch, limit));
+        if (indexUnseenLines(log, client, apiUrl, projectId, repo, filterArgs, toReturn.getAnalyzableShas(), batchSize) > 0) {
+            toReturn = selectAnalyzable(repo, listMissingAnalyses(log, client, apiUrl, projectId, branch, limit));
+        }
+        return toReturn;
+    }
+    /**
+     * Indexes the commits of each merge's merged-in line that no index run reached ({@link CommitExclusions#mergeExclusion})
+     * under the walk's rules, and says how many it indexed. They go oldest first: the gate stops at a line's newest
+     * indexed commit, so had a later batch failed after the newest ones were indexed, the older ones would never be
+     * looked at again.
+     */
+    public static int indexUnseenLines(
+            Log log,
+            CommitIndexApi client,
+            String apiUrl,
+            String projectId,
+            Repository repo,
+            RunArgs filterArgs,
+            List<String> shas,
+            int batchSize) throws Exception {
+        IndexedCommits indexed = IndexedCommits.of(log, client, apiUrl, projectId);
+        List<RevCommit> unseen = Lists.newArrayList();
+        for (String sha : shas) {
+            if (JGit.isMerge(repo, sha)) {
+                Optional<MergeExclusion> exclusion = CommitExclusions.mergeExclusion(repo, sha, filterArgs.isFirstParentOnly(), indexed);
+                if (exclusion.isPresent()) {
+                    unseen.addAll(Lists.reverse(exclusion.get().getUnseen()));
+                }
+            }
+        }
+
+        int toReturn = 0;
+        if (CollectionUtils.isNotEmpty(unseen)) {
+            List<CommitModel> commits = CommitIndexer.toCommitModels(repo, filterArgs, unseen);
+            log.info(String.format(Locale.ROOT, "%d commits of lines merged onto the branch were never indexed; indexing the %d the index rules admit",
+                    unseen.size(), commits.size()));
+            indexBatches(log, client, apiUrl, projectId, null, commits, batchSize);
+            toReturn = commits.size();
+        }
+        return toReturn;
     }
     /**
      * Repository URLs taken from the git remotes. A build tool's own SCM metadata is a separate, tool-specific

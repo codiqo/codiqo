@@ -31,6 +31,7 @@ import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.submit.AnalysisSubmitter;
 import io.codiqo.submit.CommitExclusions;
 import io.codiqo.submit.CommitIndexPublisher;
+import io.codiqo.submit.IndexedCommits;
 import io.codiqo.submit.ProjectHalts;
 import io.codiqo.submit.ProjectTags;
 import io.codiqo.submit.SubmissionAssembly;
@@ -83,6 +84,10 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
         /** before the review starts: a halted project must not pay for another review the same failure would waste */
         ProjectHalts.requireRunning(new MavenMessageReporter(getLog()), commitIndexClient(), apiUrl, projectId());
         haltableCommitId = args.getCommitId();
+    }
+    @Override
+    protected IndexedCommits indexedCommits() throws Exception {
+        return IndexedCommits.of(new MavenMessageReporter(getLog()), commitIndexClient(), apiUrl, projectId());
     }
     /**
      * A run that fails here submits nothing, so the next scheduled run would analyse the same commit and pay for its

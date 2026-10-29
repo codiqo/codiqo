@@ -23,6 +23,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.submit.CommitExclusions;
+import io.codiqo.submit.IndexedCommits;
 
 class AnalyzeCommitMojoMergeGateTest {
     @TempDir
@@ -49,7 +50,7 @@ class AnalyzeCommitMojoMergeGateTest {
     void soleAuthorPrMergeIsAnalyzableInFirstParentMode() throws Exception {
         String mergeSha = prMerge("Dev", "dev@corp.com", "Dev", "dev@corp.com");
 
-        assertTrue(CommitExclusions.mergeSkipReason(runArgs(mergeSha, true)).isEmpty(),
+        assertTrue(CommitExclusions.mergeSkipReason(runArgs(mergeSha, true), IndexedCommits.NONE).isEmpty(),
                 "a two-parent PR merge with a sole side-branch author proceeds to analysis");
     }
     /**
@@ -61,7 +62,7 @@ class AnalyzeCommitMojoMergeGateTest {
     void mixedAuthorPrMergeIsAnalyzedRatherThanExcluded() throws Exception {
         String mergeSha = prMerge("Dev", "dev@corp.com", "Other", "other@corp.com");
 
-        assertTrue(CommitExclusions.mergeSkipReason(runArgs(mergeSha, true)).isEmpty(),
+        assertTrue(CommitExclusions.mergeSkipReason(runArgs(mergeSha, true), IndexedCommits.NONE).isEmpty(),
                 "losing a two-author PR entirely is worse than crediting it imperfectly");
     }
     @Test
@@ -76,7 +77,7 @@ class AnalyzeCommitMojoMergeGateTest {
                 .setStrategy(MergeStrategy.OURS)
                 .setCommit(true).setMessage("Merge branch 'feature' (discarded)").call().getNewHead();
 
-        Optional<String> reason = CommitExclusions.mergeSkipReason(runArgs(newHead.getName(), true));
+        Optional<String> reason = CommitExclusions.mergeSkipReason(runArgs(newHead.getName(), true), IndexedCommits.NONE);
         assertEquals("merge introduces no mainline changes", reason.orElseThrow(),
                 "an ours-strategy merge keeps parent[0]'s tree — nothing landed, guaranteed zero score");
     }
@@ -84,7 +85,7 @@ class AnalyzeCommitMojoMergeGateTest {
     void allCommitsModeKeepsUnconditionalMergeExclusion() throws Exception {
         String mergeSha = prMerge("Dev", "dev@corp.com", "Dev", "dev@corp.com");
 
-        Optional<String> reason = CommitExclusions.mergeSkipReason(runArgs(mergeSha, false));
+        Optional<String> reason = CommitExclusions.mergeSkipReason(runArgs(mergeSha, false), IndexedCommits.NONE);
         assertEquals("merge commit (multiple parents)", reason.orElseThrow(),
                 "in all-commits mode the side-branch commits are indexed individually — analyzing the merge would double-count");
     }
