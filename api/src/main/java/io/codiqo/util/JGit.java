@@ -187,6 +187,30 @@ public class JGit {
         return toReturn;
     }
     /**
+     * the merged-in line as its own branch recorded it: the second parent, then its first parents, newest first, for as
+     * long as they are side-branch commits ({@link #mergeSideCommits}). For a pull request this is the branch's own
+     * history; for a merge of a long-lived branch it is that branch's main line since the two last met. It ends where the
+     * line joins the merge's first-parent history, at a root commit, and at a shallow-clone boundary, which JGit reports
+     * without parents
+     */
+    public static List<RevCommit> mergeSideLine(Repository repo, RevCommit merge) throws IOException {
+        Set<ObjectId> side = Sets.newHashSet(mergeSideCommits(repo, merge));
+        List<RevCommit> toReturn = Lists.newArrayList();
+
+        try (RevWalk walk = new RevWalk(repo)) {
+            ObjectId next = merge.getParent(1);
+            while (side.contains(next)) {
+                RevCommit commit = walk.parseCommit(next);
+                toReturn.add(commit);
+                if (commit.getParentCount() == 0) {
+                    break;
+                }
+                next = commit.getParent(0);
+            }
+        }
+        return toReturn;
+    }
+    /**
      * derives who to credit for a merge node's parent[0] delta: the single author of every side-branch
      * commit. empty for octopus merges (ambiguous main line delta), empty side sets (nothing new merged
      * in) and mixed-author side branches (no sole owner of the net change)

@@ -14,6 +14,9 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
+
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.client.model.AnalysisExcludeCategory;
@@ -33,9 +36,9 @@ public class CommitExclusions {
     /**
      * Gates that need only the commit and the run configuration, so they run before the clone/build/analysis pipeline.
      */
-    public static Optional<Exclusion> beforeAnalysis(RunArgs args) throws IOException {
+    public static Optional<Exclusion> beforeAnalysis(RunArgs args, IndexedCommits indexed) throws Exception {
         if (JGit.isMerge(args.getGit(), args.getCommitId())) {
-            Optional<Exclusion> merge = mergeSkipReason(args).map(reason -> new Exclusion(reason, AnalysisExcludeCategory.MERGE_COMMIT));
+            Optional<Exclusion> merge = mergeSkipReason(args, indexed).map(reason -> new Exclusion(reason, AnalysisExcludeCategory.MERGE_COMMIT));
             if (merge.isPresent()) {
                 return merge;
             }
@@ -107,11 +110,21 @@ public class CommitExclusions {
      * analyzable. In all-commits mode the side-branch commits are indexed individually and analyzing the merge would
      * double-count.
      */
-    public static Optional<String> mergeSkipReason(RunArgs args) throws IOException {
-        if (args.isFirstParentOnly()) {
-            ObjectId objectId = args.getGit().resolve(args.getCommitId());
-            try (RevWalk walk = new RevWalk(args.getGit())) {
-                RevCommit merge = walk.parseCommit(objectId);
+    public static Optional<String> mergeSkipReason(RunArgs args, IndexedCommits indexed) throws Exception {
+        return mergeExclusion(args.getGit(), args.getCommitId(), args.isFirstParentOnly(), indexed).map(MergeExclusion::getReason);
+    }
+    /**
+     * Why a merge is excluded before analysis. It only reads: the commits of a merged line that no index run reached
+     * travel with the exclusion, and the index step indexes them ({@link CommitIndexPublisher#indexUnseenLines}).
+     */
+    public static Optional<MergeExclusion> mergeExclusion(
+            Repository repo,
+            String commitId,
+            boolean firstParentOnly,
+            IndexedCommits indexed) throws Exception {
+        if (firstParentOnly) {
+            try (RevWalk walk = new RevWalk(repo)) {
+                RevCommit merge = walk.parseCommit(repo.resolve(commitId));
 
                 /**
                  * identical trees mean the merge landed nothing on the mainline (already integrated, or an
@@ -119,29 +132,66 @@ public class CommitExclusions {
                  */
                 RevCommit parent0 = walk.parseCommit(merge.getParent(0));
                 if (merge.getTree().getId().equals(parent0.getTree().getId())) {
-                    return Optional.of("merge introduces no mainline changes");
+                    return Optional.of(new MergeExclusion("merge introduces no mainline changes"));
                 }
 
                 if (merge.getParentCount() > 2) {
-                    return Optional.of(String.format(Locale.ROOT, "octopus merge (%d parents)", merge.getParentCount()));
+                    return Optional.of(new MergeExclusion(String.format(Locale.ROOT, "octopus merge (%d parents)", merge.getParentCount())));
                 }
-                if (JGit.mergeSideCommits(args.getGit(), merge).isEmpty()) {
-                    return Optional.of("merge introduces no side-branch commits");
+                List<RevCommit> line = JGit.mergeSideLine(repo, merge);
+                if (line.isEmpty()) {
+                    return Optional.of(new MergeExclusion("merge introduces no side-branch commits"));
                 }
                 /**
                  * A multi-author side branch is not skipped: it is analysed and credited to whoever dominates it
                  * ({@link JGit#creditedAuthor}).
                  */
-                return Optional.empty();
+                return lineMergeExclusion(line, indexed);
             }
         }
-        return Optional.of("merge commit (multiple parents)");
+        return Optional.of(new MergeExclusion("merge commit (multiple parents)"));
     }
     public static String creditedAuthorEmail(RunArgs args) throws IOException {
         ObjectId objectId = args.getGit().resolve(args.getCommitId());
         try (RevWalk walk = new RevWalk(args.getGit())) {
             return JGit.creditedAuthor(args.getGit(), walk.parseCommit(objectId)).getEmailAddress();
         }
+    }
+    /**
+     * A merge whose merged-in line holds a commit the project indexed brings in a line codiqo already analyses commit by
+     * commit, so its parent[0] delta would score that work a second time. The analysed branch takes such a merge when it
+     * is moved onto another branch's history: in one repository a release job fast-forwarded {@code dev} onto each
+     * {@code dev -> main} merge after it landed, and the first of those merges, measured against a {@code main} that held
+     * only its initial commits, carried 802 files and 83,000 added lines, 135 of whose 186 commits were already scored.
+     * Its review failed on the provider every time and halted the project five times. A line with no indexed commit is
+     * a pull request's branch, analysed through the merge as before.
+     *
+     * <p>The line is read newest first. The commits ahead of the newest indexed one are returned as unseen: an index run
+     * walks only first parents, so once the analysed branch moved onto the merge, no later run reaches them, and without
+     * indexing them their work would be scored nowhere. That happens when the branch moves before a run indexed its
+     * newest commits, which a run queued behind a long review makes likely. Older commits of the line were walked by the
+     * run that indexed the newer one, so one the index lacks was left out by its rules (window, author, branch, a
+     * duplicate patch).
+     *
+     * <p>At most {@link RunArgs#MERGE_LINE_LOOKUP_LIMIT} commits are looked up, one request each, since a pull request's
+     * line, which has no indexed commit, is read to its end. A line whose first commits are all unknown is taken for a
+     * pull request's branch.
+     *
+     * <p>In a shallow clone the merged-in line can come out too long or too short, since a boundary hides how far the
+     * first parent reaches. A pull request is then analysed commit by commit, or a merged line through the merge as
+     * before; codiqo-action fails a shallow clone by default ({@code require-full-history}).
+     */
+    private static Optional<MergeExclusion> lineMergeExclusion(List<RevCommit> line, IndexedCommits indexed) throws Exception {
+        List<RevCommit> unseen = Lists.newArrayList();
+        for (RevCommit commit : Iterables.limit(line, RunArgs.MERGE_LINE_LOOKUP_LIMIT)) {
+            if (indexed.contains(commit.getName())) {
+                return Optional.of(new MergeExclusion(
+                        String.format(Locale.ROOT, "merges a line this project analyses commit by commit (its commit %s is indexed)", JGit.shortSha(commit.getName())),
+                        unseen));
+            }
+            unseen.add(commit);
+        }
+        return Optional.empty();
     }
     public static final class Exclusion extends ImmutablePair<String, AnalysisExcludeCategory> {
         public Exclusion(String reason, AnalysisExcludeCategory category) {
@@ -151,6 +201,21 @@ public class CommitExclusions {
             return getLeft();
         }
         public AnalysisExcludeCategory getCategory() {
+            return getRight();
+        }
+    }
+    /** a merge's exclusion reason, with the commits of its merged line that no index run reached, newest first */
+    public static final class MergeExclusion extends ImmutablePair<String, List<RevCommit>> {
+        public MergeExclusion(String reason) {
+            this(reason, List.of());
+        }
+        public MergeExclusion(String reason, List<RevCommit> unseen) {
+            super(reason, unseen);
+        }
+        public String getReason() {
+            return getLeft();
+        }
+        public List<RevCommit> getUnseen() {
             return getRight();
         }
     }

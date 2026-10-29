@@ -115,6 +115,15 @@ public class RunArgs {
      */
     public static final Duration OAUTH_ASSUMED_ACCESS_TOKEN_LIFETIME = Duration.ofMinutes(5);
     public static final long UPLOAD_BATCH_BYTES = 4L * 1024 * 1024;
+    /** commits per index request: the server refuses a batch of more than 500 (CommitIndexBatchModel's maxItems) */
+    public static final int INDEX_BATCH_SIZE = 256;
+    /**
+     * How many commits of a merge's merged-in line the merge gate looks up in the project's index, one request each
+     * (CommitExclusions#lineMergeExclusion). A line codiqo already analyses has an indexed commit right after the few
+     * pushed between two index runs (two in the case that introduced the gate), while a pull request's line has none and
+     * would otherwise be read to its end: an imported history of thousands of commits, one request per commit.
+     */
+    public static final int MERGE_LINE_LOOKUP_LIMIT = 128;
     /** the server keeps a review trace up to this size (its submission.review-trace.max-bytes); a larger one is not sent */
     public static final long REVIEW_TRACE_MAX_BYTES = 16L * 1024 * 1024;
     /** how much of a rejected review answer an error or a warning quotes: enough to tell prose from broken JSON */
