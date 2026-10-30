@@ -73,7 +73,29 @@ class LanguageServerJdkTest {
         IOException err = assertThrows(IOException.class, () -> LanguageServerJdk.require(args(home("21"))));
 
         assertTrue(Strings.CS.contains(err.getMessage(), "needs Java 25"), err.getMessage());
-        assertTrue(Strings.CS.contains(err.getMessage(), "codiqo.javaHome"), err.getMessage());
+        assertTrue(Strings.CS.contains(err.getMessage(), "point codiqo.jdtlsJavaHome at a Java 25+ JDK"), err.getMessage());
+    }
+    /** a Maven project that only builds on an older JDK keeps building on codiqo.javaHome, and the server runs on its own */
+    @Test
+    void theLanguageServerRunsOnItsOwnJdkWhileTheBuildKeepsJavaHome() throws Exception {
+        Path server = home("25");
+        RunArgs args = args(home("21"));
+        args.setJdtlsJavaHome(server.toFile());
+
+        LanguageServerJdk.ServerJdk serverJdk = LanguageServerJdk.require(args);
+
+        assertEquals(25, serverJdk.getFeature());
+        assertEquals(server.toFile(), serverJdk.getHome());
+    }
+    /** the refusal names the setting the JDK came from, so it is clear which one to change */
+    @Test
+    void aRefusedLanguageServerJdkIsNamedByItsSetting() throws Exception {
+        RunArgs args = args(home("25"));
+        args.setJdtlsJavaHome(home("21").toFile());
+
+        IOException err = assertThrows(IOException.class, () -> LanguageServerJdk.require(args));
+
+        assertTrue(Strings.CS.contains(err.getMessage(), "(codiqo.jdtlsJavaHome " + tempDir.resolve("jdk-21")), err.getMessage());
     }
     @Test
     void aJava25HomeIsAccepted() throws Exception {

@@ -24,6 +24,7 @@ import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.SystemUtils;
 import org.apache.commons.lang3.math.NumberUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.apache.commons.lang3.tuple.Pair;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Splitter;
@@ -35,7 +36,8 @@ import io.codiqo.api.RunArgs;
 import lombok.experimental.UtilityClass;
 
 /**
- * The JDK the Eclipse JDT language server runs on: codiqo.javaHome, else the one running codiqo. Checked twice: once
+ * The JDK the Eclipse JDT language server runs on: codiqo.jdtlsJavaHome, else codiqo.javaHome, else the one running
+ * codiqo. Checked twice: once
  * before a commit's full analysis is paid for (DefaultLanguageProcessors.requireRuntime, which makes a refusal a
  * RuntimeRequirementException that halts nothing), and again by JdtLspProcess as the server starts, where a refusal is
  * an ordinary failure. A JDK the server cannot start on then ends the run with a message that says what to change,
@@ -59,6 +61,8 @@ public class LanguageServerJdk {
 
     private static final String JAVA_HOME = "java.home";
     private static final String JAVA_SPECIFICATION_VERSION = "java.specification.version";
+    private static final String JDTLS_JAVA_HOME_SETTING = "codiqo.jdtlsJavaHome";
+    private static final String JAVA_HOME_SETTING = "codiqo.javaHome";
 
     /** one "    name = value" line of -XshowSettings:properties, for the two settings the check reads */
     private static final Pattern SETTING = Pattern.compile("^\\s+(java\\.home|java\\.specification\\.version) = (.+)$");
@@ -82,7 +86,11 @@ public class LanguageServerJdk {
      * run that may start no server.
      */
     public ServerJdk require(RunArgs args) throws IOException {
-        ServerJdk toReturn = detect(args.getJavaHome());
+        Optional<Pair<String, File>> configured = configuredHome(args);
+        ServerJdk toReturn = new ServerJdk(SystemUtils.getJavaHome(), Runtime.version().feature());
+        if (configured.isPresent()) {
+            toReturn = detect(configured.get().getLeft(), configured.get().getRight());
+        }
 
         int minimum;
         String server;
@@ -99,11 +107,12 @@ public class LanguageServerJdk {
         }
         throw new IOException(String.format(Locale.ROOT,
                 "the Eclipse JDT language server %s needs Java %d or newer, but it would run on Java %d (%s)"
-                        + " — point codiqo.javaHome at a Java %d+ JDK; the analysed project keeps its own release level",
+                        + " — point %s at a Java %d+ JDK; it runs only the language server, and the analysed project keeps its own JDK and release level",
                 server,
                 minimum,
                 toReturn.getFeature(),
-                Optional.ofNullable(args.getJavaHome()).map(File::getAbsolutePath).orElse("the JDK running codiqo"),
+                configured.map(home -> home.getLeft() + StringUtils.SPACE + home.getRight().getAbsolutePath()).orElse("the JDK running codiqo"),
+                JDTLS_JAVA_HOME_SETTING,
                 minimum));
     }
     /**
@@ -129,18 +138,22 @@ public class LanguageServerJdk {
         }
         return MIN_JDK;
     }
+    /** the setting that names the language server's JDK and that JDK's home, or empty for the JDK running codiqo */
+    private static Optional<Pair<String, File>> configuredHome(RunArgs args) {
+        if (Objects.nonNull(args.getJdtlsJavaHome())) {
+            return Optional.of(Pair.of(JDTLS_JAVA_HOME_SETTING, args.getJdtlsJavaHome()));
+        }
+        return Optional.ofNullable(args.getJavaHome()).map(home -> Pair.of(JAVA_HOME_SETTING, home));
+    }
     /**
-     * A configured codiqo.javaHome is asked for its own java.home and java.specification.version, by running its
-     * bin/java with -XshowSettings:properties, and never replaced by the JVM running codiqo: the server is started with
-     * that bin/java, so a home that is no JDK would otherwise pass this check and fail only when the server starts. The
+     * A configured home is asked for its own java.home and java.specification.version, by running its bin/java with
+     * -XshowSettings:properties, and never replaced by the JVM running codiqo: the server is started with that
+     * bin/java, so a home that is no JDK would otherwise pass this check and fail only when the server starts. The
      * reported java.home is the JDK's real home, which is also the runtime the server must register
      * (JdtLspProcess.runtimeWithoutSources): Homebrew's opt/openjdk@25 only links bin/java into
      * libexec/openjdk.jdk/Contents/Home, and holds no lib directory of its own.
      */
-    private static ServerJdk detect(File javaHome) throws IOException {
-        if (Objects.isNull(javaHome)) {
-            return new ServerJdk(SystemUtils.getJavaHome(), Runtime.version().feature());
-        }
+    private static ServerJdk detect(String setting, File javaHome) throws IOException {
         Path java = javaHome.toPath().resolve("bin").resolve(SystemUtils.IS_OS_WINDOWS ? "java.exe" : "java");
         if (Files.isExecutable(java)) {
             Map<String, String> settings = settings(java);
@@ -150,10 +163,10 @@ public class LanguageServerJdk {
                 return new ServerJdk(new File(home), Integer.parseInt(release));
             }
             throw new IOException(String.format(Locale.ROOT,
-                    "codiqo.javaHome %s is not a JDK: %s reported java.home '%s' and java.specification.version '%s'",
-                    javaHome.getAbsolutePath(), java, home, settings.get(JAVA_SPECIFICATION_VERSION)));
+                    "%s %s is not a JDK: %s reported java.home '%s' and java.specification.version '%s'",
+                    setting, javaHome.getAbsolutePath(), java, home, settings.get(JAVA_SPECIFICATION_VERSION)));
         }
-        throw new IOException(String.format(Locale.ROOT, "codiqo.javaHome %s is not a JDK: it has no executable %s", javaHome.getAbsolutePath(), java));
+        throw new IOException(String.format(Locale.ROOT, "%s %s is not a JDK: it has no executable %s", setting, javaHome.getAbsolutePath(), java));
     }
     /**
      * The settings -XshowSettings:properties prints to the error stream. The child JVM writes them in the platform's

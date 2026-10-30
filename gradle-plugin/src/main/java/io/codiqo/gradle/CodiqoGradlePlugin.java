@@ -13,6 +13,7 @@ import java.util.regex.Pattern;
 import javax.inject.Inject;
 
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.gradle.api.GradleException;
 import org.gradle.api.Plugin;
@@ -142,6 +143,7 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
     private static void requireRuntime(AnalysisRequest request) {
         RunArgs args = new RunArgs();
         args.setJavaHome(new File(request.getJavaHome()));
+        Optional.ofNullable(request.getJdtlsJavaHome()).filter(StringUtils::isNotBlank).map(File::new).ifPresent(args::setJdtlsJavaHome);
         args.setJdtlsVersion(request.getJdtlsVersion());
         args.setJdtlsUseSnapshot(request.isJdtlsUseSnapshot());
         try {

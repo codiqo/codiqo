@@ -11,11 +11,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up JDK 25
+      # The build runs on JDK 21, the floor the plugins declare. JDK 25 is installed beside it only for the tests
+      # that start the default Eclipse JDT language server, which needs Java 25 from 1.62.0 on; they find it through
+      # -Dcodiqo.jdtlsJavaHome. setup-java makes the last version listed the default.
+      - name: Set up JDK 25 for the language server and JDK 21 for the build
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 25
+          java-version: |
+            25
+            21
           cache: maven
           server-id: central
           server-username: MAVEN_CENTRAL_USERNAME
@@ -42,7 +47,7 @@ jobs:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
-        run: mvn -B -Prelease clean deploy -Dmaven.repository.credentialScope=id
+        run: mvn -B -Prelease clean deploy -Dmaven.repository.credentialScope=id -Dcodiqo.jdtlsJavaHome="$JAVA_HOME_25_X64"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

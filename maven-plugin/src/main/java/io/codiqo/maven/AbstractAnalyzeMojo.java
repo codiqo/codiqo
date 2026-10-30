@@ -242,6 +242,9 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     @Parameter(property = "codiqo.javaHome")
     protected File javaHome;
 
+    @Parameter(property = "codiqo.jdtlsJavaHome")
+    protected File jdtlsJavaHome;
+
     @Parameter(property = "codiqo.mavenHome")
     protected File mavenHome;
 
@@ -529,6 +532,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     public final void execute() throws MojoExecutionException, MojoFailureException {
         RunArgs args = new RunArgs();
         Optional.ofNullable(javaHome).ifPresent(args::setJavaHome);
+        Optional.ofNullable(jdtlsJavaHome).ifPresent(args::setJdtlsJavaHome);
         Optional.ofNullable(mavenHome).ifPresent(args::setMavenHome);
         args.setBuildTimeout(Duration.ofMinutes(buildTimeoutMinutes));
         args.setBuildProgressFile(buildProgressFile);

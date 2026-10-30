@@ -16,6 +16,7 @@ public class CodiqoExtension {
     private long readTimeoutSeconds = 60;
 
     private String javaHome;
+    private String jdtlsJavaHome;
     private String outputDirectory;
 
     /**

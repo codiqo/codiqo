@@ -26,6 +26,7 @@ public class AnalysisRequest implements Serializable {
     private String commitId;
     private String outputDirectory;
     private String javaHome;
+    private String jdtlsJavaHome;
     private String analysisMaxHeap;
     private String buildProgressFile;
 

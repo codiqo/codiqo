@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
@@ -88,6 +89,11 @@ class ExternalSourceRootImportTest {
         RunArgs args = new RunArgs();
         args.setBuildTool(buildTool);
         args.setJavaHome(new File(System.getProperty("java.home")));
+        /**
+         * The default language server needs Java 25. A build that runs this test on an older JDK names one for the server
+         * alone with -Dcodiqo.jdtlsJavaHome, as the release workflow does; without it the server runs on this JVM.
+         */
+        Optional.ofNullable(System.getProperty("codiqo.jdtlsJavaHome")).map(File::new).ifPresent(args::setJdtlsJavaHome);
         args.getProjects().add(module(root.resolve("main"), root.resolve("src"), classes));
 
         try (Git git = Git.init().setDirectory(root.toFile()).call();

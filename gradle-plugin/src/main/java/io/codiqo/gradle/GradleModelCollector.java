@@ -58,6 +58,7 @@ public class GradleModelCollector {
         request.setCommitId(stringProp(root, "codiqo.commitId", null));
         request.setOutputDirectory(resolveOutputDirectory(root, ext));
         request.setJavaHome(resolveJavaHome(root, ext));
+        request.setJdtlsJavaHome(stringProp(root, "codiqo.jdtlsJavaHome", ext.getJdtlsJavaHome()));
         request.setAnalysisMaxHeap(stringProp(root, "codiqo.analysisMaxHeap", ext.getAnalysisMaxHeap()));
         request.setBuildProgressFile(stringProp(root, "codiqo.buildProgressFile", null));
 
