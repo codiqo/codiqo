@@ -11,7 +11,7 @@
   <img alt="AI review: 10 aspects" src="https://img.shields.io/badge/AI%20review-10%20aspects-c2ef4e?style=flat-square&labelColor=422082">
   <img alt="Changed-line coverage" src="https://img.shields.io/badge/coverage-changed%20lines%20gated-c2ef4e?style=flat-square&labelColor=422082">
   <a href="DRIVER_SCORE.md"><img alt="Open scoring model" src="https://img.shields.io/badge/scoring-open%20model-c2ef4e?style=flat-square&labelColor=422082"></a>
-  <img alt="Java 21+, Maven and Gradle" src="https://img.shields.io/badge/Java%2021%2B-Maven%20%7C%20Gradle-c2ef4e?style=flat-square&labelColor=422082">
+  <img alt="Java 25+, Maven and Gradle" src="https://img.shields.io/badge/Java%2025%2B-Maven%20%7C%20Gradle-c2ef4e?style=flat-square&labelColor=422082">
 </p>
 
 <p align="center">
@@ -61,7 +61,7 @@ whether the "new" code was moved from elsewhere. Codiqo builds the commit first,
 
 > [!IMPORTANT]
 > Codiqo is pre-release and published as `1.0-SNAPSHOT` to the
-> [Maven Central snapshot repository](https://central.sonatype.com/repository/maven-snapshots/). You need JDK 21 or
+> [Maven Central snapshot repository](https://central.sonatype.com/repository/maven-snapshots/). You need JDK 25 or
 > newer and an account at [codiqo.io](https://codiqo.io).
 
 <details open>
@@ -384,7 +384,9 @@ measured.
 <details>
 <summary><b>Requirements</b></summary>
 
-- JDK 21 or newer to run the plugins.
+- JDK 25 or newer for the analysis. The plugins themselves start on JDK 21, but the Eclipse JDT language server they
+  run (1.62.0 and later, the default) needs Java 25; `codiqo.javaHome` names that JDK when Maven or Gradle runs on
+  an older one. On Maven it is also the JDK the analysed commit is built with; on Gradle it runs only the analysis.
 - Maven 3.10 or newer, or Gradle.
 - The `opencode` executable on the `PATH` for the AI review (`npm install -g @opencode/cli`; the GitHub Action
   installs it for you).
