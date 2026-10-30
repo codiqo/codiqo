@@ -160,11 +160,11 @@ public class CommitExclusions {
     /**
      * A merge whose merged-in line holds a commit the project indexed brings in a line codiqo already analyses commit by
      * commit, so its parent[0] delta would score that work a second time. The analysed branch takes such a merge when it
-     * is moved onto another branch's history: in one repository a release job fast-forwarded {@code dev} onto each
-     * {@code dev -> main} merge after it landed, and the first of those merges, measured against a {@code main} that held
-     * only its initial commits, carried 802 files and 83,000 added lines, 135 of whose 186 commits were already scored.
-     * Its review failed on the provider every time and halted the project five times. A line with no indexed commit is
-     * a pull request's branch, analysed through the merge as before.
+     * is moved onto another branch's history, as when a release job fast-forwards {@code dev} onto each
+     * {@code dev -> main} merge after it lands: the first of those merges, measured against a {@code main} that held only
+     * its initial commits, carries the whole history of {@code dev}, every commit of which is already scored, and a
+     * review of a diff that size can fail on the provider on every attempt, halting the project each time. A line with no
+     * indexed commit is a pull request's branch, analysed through the merge as before.
      *
      * <p>The line is read newest first. The commits ahead of the newest indexed one are returned as unseen: an index run
      * walks only first parents, so once the analysed branch moved onto the merge, no later run reaches them, and without
