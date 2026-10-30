@@ -59,22 +59,17 @@ public class LocalReviewer {
     /** the follow-up turns after the build, the labelling and the triage, each in a fork of the coordinator */
     private static final int FOLLOW_UPS = 2;
     /**
-     * The turn errors OpenCode records when a request that was fine got an answer that broke on the way, or was refused
-     * because the provider's account had run out of quota ({@code provider.quota}, which OpenCode records for a
-     * QuotaExceeded answer such as Ollama's "you have reached your session usage limit"). OpenCode has already retried the
-     * provider when it records one, so a review that fails on it is the provider's failure; any other turn error, a
-     * refused request among them, follows from what the commit asks and is the commit's. Taken for the commit's, an
-     * exhausted quota excluded 28 commits of one project within 14 minutes, each one unscored until its analysis is
-     * deleted, where halting the project would have reviewed them once the quota was back.
+     * The turn errors that follow from what the commit asks, so a review that fails on one is the commit's failure and
+     * excludes it: a request the provider refused as invalid (a prompt larger than the model takes) and content its filter
+     * refused. Every other turn error is taken for the provider's or Codiqo's and halts the project, a type a later
+     * OpenCode version adds included. The two outcomes are not equally costly: a halt is reported and an administrator
+     * resumes it, with the commit excluded if it fails again, while an exclusion is silent and leaves the commit unscored
+     * until someone deletes its analysis. When the provider failures were the listed ones instead, provider.quota was
+     * missing from the list, and an exhausted provider quota excluded 28 commits of one project within 14 minutes.
      */
-    private static final Set<String> PROVIDER_TURN_ERRORS = Set.of(
-            "provider.transport",
-            "provider.internal",
-            "provider.invalid-output",
-            "provider.rate-limit",
-            "provider.quota",
-            "provider.timeout",
-            "provider.unknown");
+    private static final Set<String> COMMIT_TURN_ERRORS = Set.of(
+            "provider.invalid-request",
+            "provider.content-filter");
     /**
      * Reads the coordinator's answer, whose blastRadiusAnalysis carries the signature changes flat ({@link FlatBlastRadius}):
      * the changed signatures as "signatureChanges", with hasBreakingChanges and breakingChangeType beside them, where
@@ -489,15 +484,15 @@ public class LocalReviewer {
         }
     }
     /**
-     * A turn OpenCode ended with an error is the provider's failure exactly when the error is one of the provider's own
-     * ({@link #PROVIDER_TURN_ERRORS}). An answer in the wrong shape is the model's, so the commit's failure whatever the
+     * A turn OpenCode ended with an error is the provider's failure unless the error follows from what the commit asks
+     * ({@link #COMMIT_TURN_ERRORS}). An answer in the wrong shape is the model's, so the commit's failure whatever the
      * provider did: halting the project for it would halt it again on every resume. Any other failure, a reviewer that
      * ended without an answer or a turn that timed out, is the provider's when it failed during the review.
      */
     @VisibleForTesting
     public static boolean isProviderFailure(Throwable err, boolean providerFailed) {
         if (err instanceof TurnFailedException turn) {
-            return PROVIDER_TURN_ERRORS.contains(turn.getType());
+            return BooleanUtils.negate(COMMIT_TURN_ERRORS.contains(turn.getType()));
         }
         if (err instanceof ReviewAnswerException) {
             return false;

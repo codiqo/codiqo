@@ -16,6 +16,8 @@ import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import com.google.common.collect.Lists;
 import com.sun.net.httpserver.HttpExchange;
@@ -99,14 +101,35 @@ class TurnTest {
 
         assertEquals("session ses_coordinator ended its turn with provider.rate-limit: stream cut", err.getMessage());
     }
-    /** a provider account out of quota is no judgement of the commit: the project halts, and the commit is reviewed on resume */
-    @Test
-    void aTurnTheProviderRefusedForQuotaIsTheProvidersFailure() {
-        error = Optional.of("provider.quota");
+    /**
+     * Every type OpenCode 2.2.2 ends a turn with other than the two the commit causes (its to-session-error.ts, and the
+     * provider.unknown, compaction.failed and compaction.interrupted its runner records), plus one no version has yet:
+     * each halts the project, so the commit is reviewed again on resume rather than silently excluded. An exhausted quota
+     * (provider.quota) excluded 28 commits of one project when only the listed types halted.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "provider.auth", "provider.budget-limit", "provider.chatgpt-limit", "provider.free-limit", "provider.go-limit",
+            "provider.internal", "provider.invalid-output", "provider.model-budget-limit", "provider.no-route",
+            "provider.quota", "provider.rate-limit", "provider.timeout", "provider.transport", "provider.unknown",
+            "provider.unsupported-operation", "permission.rejected", "tool.execution", "compaction.failed",
+            "compaction.interrupted", "unknown", "provider.added-in-a-later-version" })
+    void aTurnThatFailedOnAnythingButTheCommitIsTheProvidersFailure(String type) {
+        error = Optional.of(type);
 
         IOException err = assertThrows(IOException.class, this::answerOf);
 
         assertTrue(LocalReviewer.isProviderFailure(err, false), err.getMessage());
+    }
+    /** a request too large for the model, or content its filter refuses, fails again on every resume: the commit is excluded */
+    @ParameterizedTest
+    @ValueSource(strings = { "provider.invalid-request", "provider.content-filter" })
+    void aTurnThatFailedOnWhatTheCommitAsksIsTheCommitsFailure(String type) {
+        error = Optional.of(type);
+
+        IOException err = assertThrows(IOException.class, this::answerOf);
+
+        assertFalse(LocalReviewer.isProviderFailure(err, true), err.getMessage());
     }
     @Test
     void aRefusedAnswerFailsOnItsAnswer() {

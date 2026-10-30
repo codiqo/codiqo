@@ -1642,7 +1642,9 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
 - **A review the provider failed halts the project instead** (`ReviewProviderException`,
   `LocalReviewException.isProviderFailure`): it is no judgement of the commit, and an excluded commit would stay unscored
   for good. "Resume and retry" reviews it again. What failed decides (`LocalReviewer.isProviderFailure`): a turn OpenCode
-  ended with an error is the provider's exactly when the error is one of its own (`PROVIDER_TURN_ERRORS`); an answer in
+  ended with an error is the provider's unless the error follows from what the commit asks (`COMMIT_TURN_ERRORS`: an
+  invalid request, a content filter), so an error type a new OpenCode version adds halts rather than silently excludes
+  (`TurnTest` pins every type OpenCode 2.2.2 ends a turn with; diff `to-session-error.ts` on every bump); an answer in
   the wrong shape (`ReviewAnswerException`) is always the commit's; anything else, an unanswered reviewer or a turn that
   timed out, is the provider's when the relay counted a provider failure during the review (`LlmRelay.providerFailed`: a
   429, a 5xx, an end point it could not reach or an answer cut short after it started, never a request the provider
