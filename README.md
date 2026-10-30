@@ -298,6 +298,7 @@ submitted value, then organisation override, then project override.
 | `codiqo.ignoreCoverage`, `codiqo.ignoreCpd` | `false`, `false` | Skip a measurement for projects that cannot run it |
 | `codiqo.pmdRules`, `codiqo.pmdMinPriority` | PMD's best practices, design, error-prone, performance and multithreading rules plus Codiqo's code style; `HIGH` | The PMD rules applied and the lowest priority reported |
 | `codiqo.jdtlsVersion` | `1.63.0` | The Eclipse JDT LS milestone that resolves callers; a new version rebuilds the shared dependency index once. The default build is downloaded from Codiqo's own GitHub release and checked against its SHA-256; any other version comes from download.eclipse.org |
+| `codiqo.jdtlsJavaHome` | `codiqo.javaHome` | The JDK the Eclipse JDT LS runs on, Java 25 or newer for 1.62.0 and later. Set it when the analysed commit must build on an older JDK: the build keeps `codiqo.javaHome`, and only the language server moves |
 
 **The scoring settings that move the number most:**
 
@@ -387,6 +388,8 @@ measured.
 - JDK 25 or newer for the analysis. The plugins themselves start on JDK 21, but the Eclipse JDT language server they
   run (1.62.0 and later, the default) needs Java 25; `codiqo.javaHome` names that JDK when Maven or Gradle runs on
   an older one. On Maven it is also the JDK the analysed commit is built with; on Gradle it runs only the analysis.
+  A Maven project that must build on an older JDK keeps that JDK in `codiqo.javaHome` and names a Java 25 JDK for
+  the language server alone in `codiqo.jdtlsJavaHome`.
 - Maven 3.10 or newer, or Gradle.
 - The `opencode` executable on the `PATH` for the AI review (`npm install -g @opencode/cli`; the GitHub Action
   installs it for you).
