@@ -8,12 +8,16 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.stream.Stream;
 
+import org.apache.commons.lang3.Strings;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.event.Level;
+
+import com.google.common.collect.Lists;
 
 import io.codiqo.api.logging.Log;
 
@@ -43,7 +47,7 @@ class SeedReleaseArtifactsTest {
     void releasesAreSeededAndEverythingMutableIsLeftBehind() throws Exception {
         Path target = Files.createDirectories(tempDir.resolve("private"));
 
-        AbstractAnalyzeMojo.seedReleaseArtifacts(repository.toFile(), target.toFile(), new QuietLog());
+        AbstractAnalyzeMojo.seedReleaseArtifacts(repository.toFile(), target.toFile(), new RecordingLog());
 
         assertTrue(Files.isRegularFile(target.resolve(RELEASE)));
         assertFalse(Files.exists(target.resolve(RELEASE_SOURCES)), "a source JAR the language server must not see");
@@ -61,7 +65,7 @@ class SeedReleaseArtifactsTest {
         Path link = Files.createSymbolicLink(Files.createDirectories(tempDir.resolve("home/.m2")).resolve("repository"), repository);
         Path target = Files.createDirectories(tempDir.resolve("private"));
 
-        AbstractAnalyzeMojo.seedReleaseArtifacts(link.toFile(), target.toFile(), new QuietLog());
+        AbstractAnalyzeMojo.seedReleaseArtifacts(link.toFile(), target.toFile(), new RecordingLog());
 
         assertTrue(Files.isRegularFile(target.resolve(RELEASE)), "the release behind the link is seeded");
         assertFalse(Files.exists(target.resolve(SNAPSHOT)));
@@ -76,7 +80,7 @@ class SeedReleaseArtifactsTest {
         Files.createSymbolicLink(host.resolve("org"), repository.resolve("org"));
         Path target = Files.createDirectories(tempDir.resolve("private"));
 
-        AbstractAnalyzeMojo.seedReleaseArtifacts(host.toFile(), target.toFile(), new QuietLog());
+        AbstractAnalyzeMojo.seedReleaseArtifacts(host.toFile(), target.toFile(), new RecordingLog());
 
         assertFalse(Files.isSymbolicLink(target.resolve("org")), "the private repository holds no link back into the host's");
         assertTrue(Files.isRegularFile(target.resolve(RELEASE)));
@@ -89,29 +93,41 @@ class SeedReleaseArtifactsTest {
         Path link = Files.createSymbolicLink(Files.createDirectories(tempDir.resolve("home/.m2")).resolve("repository"), tempDir.resolve("not-restored"));
         Path target = Files.createDirectories(tempDir.resolve("private"));
 
-        AbstractAnalyzeMojo.seedReleaseArtifacts(link.toFile(), target.toFile(), new QuietLog());
+        RecordingLog log = new RecordingLog();
+        AbstractAnalyzeMojo.seedReleaseArtifacts(link.toFile(), target.toFile(), log);
 
         try (Stream<Path> seeded = Files.list(target)) {
             assertEquals(0, seeded.count());
         }
+        assertTrue(log.warned(link.toString()), log.warnings.toString());
     }
     @Test
     void aDanglingArtifactLinkIsSkipped() throws Exception {
         Files.createSymbolicLink(repository.resolve("org/example/lib/1.0/lib-1.0.pom"), tempDir.resolve("gone.pom"));
         Path target = Files.createDirectories(tempDir.resolve("private"));
 
-        AbstractAnalyzeMojo.seedReleaseArtifacts(repository.toFile(), target.toFile(), new QuietLog());
+        RecordingLog log = new RecordingLog();
+        AbstractAnalyzeMojo.seedReleaseArtifacts(repository.toFile(), target.toFile(), log);
 
         assertTrue(Files.isRegularFile(target.resolve(RELEASE)), "the rest of the repository is still seeded");
         assertFalse(Files.exists(target.resolve("org/example/lib/1.0/lib-1.0.pom"), LinkOption.NOFOLLOW_LINKS));
+        assertTrue(log.warned("lib-1.0.pom"), log.warnings.toString());
     }
-    private static final class QuietLog implements Log {
+    private static final class RecordingLog implements Log {
+        private final List<String> warnings = Lists.newArrayList();
+
         @Override
         public boolean isLoggable(Level level) {
-            return false;
+            return true;
         }
         @Override
         public void logEx(Level level, String message, Object[] formatArgs, Throwable error) {
+            if (level == Level.WARN) {
+                warnings.add(message);
+            }
+        }
+        private boolean warned(String text) {
+            return warnings.stream().anyMatch(warning -> Strings.CS.contains(warning, text));
         }
         @Override
         public int numErrors() {

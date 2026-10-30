@@ -9,7 +9,7 @@ import java.io.IOException;
  * machine is fixed and then simply proceeds.
  */
 public final class RuntimeRequirementException extends IOException {
-    public RuntimeRequirementException(String message) {
-        super(message);
+    public RuntimeRequirementException(String message, Throwable cause) {
+        super(message, cause);
     }
 }

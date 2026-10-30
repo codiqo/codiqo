@@ -164,7 +164,7 @@ public class AnalysisEngine {
                  * A run that fails here submits nothing, so the next scheduled run would analyse the same commit and pay
                  * for its review again, every hour; the project is halted until an administrator resumes it, unless the
                  * failure halts nothing ({@link ProjectHalts#haltsNothing}: a stopped run, the author's broken build, a
-                 * failed download, a JDK the language server cannot start on), the same rule as on Maven. A run that fails after its submission was accepted has
+                 * failed download), the same rule as on Maven. A run that fails after its submission was accepted has
                  * scored its commit, so it halts nothing either.
                  */
                 if (BooleanUtils.negate(BooleanUtils.or(new boolean[] { ProjectHalts.haltsNothing(err), args.isSubmissionAccepted() }))) {
@@ -227,13 +227,6 @@ public class AnalysisEngine {
                 requireCoverage(request.getModules(), log);
             }
         }
-
-        /**
-         * A JDK the language server cannot start on ends the run before the server is downloaded and the review is paid
-         * for, and halts nothing (RuntimeRequirementException). Gradle builds the commit before this worker starts, and a
-         * commit the gates above excluded needs no language server, so this is where the check costs least.
-         */
-        DefaultLanguageProcessors.requireRuntime(args);
 
         /**
          * As on Maven, the language server the full analysis needs is downloaded before the review is paid for, and a

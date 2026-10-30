@@ -1,6 +1,7 @@
 package io.codiqo.jdtls;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -47,15 +48,18 @@ class LanguageServerJdkTest {
         assertEquals(21, LanguageServerJdk.minimum("1.61.0-SNAPSHOT"));
         assertEquals(25, LanguageServerJdk.minimum("latest"));
     }
-    /** an empty jdtlsVersion property is no version, so the default server's minimum applies */
+    /**
+     * an empty jdtlsVersion property is checked as RunArgs downloads it, as a milestone that names no release, and
+     * never as the mirrored default the run would not start
+     */
     @Test
-    void aBlankVersionIsTheDefaultServer() throws Exception {
+    void aBlankVersionIsCheckedAsTheRunWouldResolveIt() throws Exception {
         RunArgs args = args(home("21.0.5"));
         args.setJdtlsVersion(StringUtils.SPACE);
 
         IOException err = assertThrows(IOException.class, () -> LanguageServerJdk.require(args));
 
-        assertTrue(Strings.CS.contains(err.getMessage(), RunArgs.JDTLS_MIRRORED_VERSION), err.getMessage());
+        assertTrue(Strings.CS.contains(err.getMessage(), "version ' ' needs Java 25"), err.getMessage());
     }
     @Test
     void theDefaultLanguageServerNeedsJava25() {
@@ -70,7 +74,7 @@ class LanguageServerJdkTest {
     }
     @Test
     void aJava25HomeIsAccepted() throws Exception {
-        assertEquals(25, LanguageServerJdk.require(args(home("25.0.1"))).getVersion().feature());
+        assertEquals(25, LanguageServerJdk.require(args(home("25.0.1"))).getFeature());
     }
     /** a pinned build missing from the cache would be looked up on download.eclipse.org if the version were resolved */
     @Test
@@ -78,7 +82,7 @@ class LanguageServerJdkTest {
         RunArgs args = args(home("21.0.5"));
         args.setJdtlsVersion("1.61.0");
 
-        assertEquals(21, LanguageServerJdk.require(args).getVersion().feature());
+        assertEquals(21, LanguageServerJdk.require(args).getFeature());
     }
     /** the snapshots channel builds from the newest line, so its version is not looked up to know it needs Java 25 */
     @Test
@@ -108,13 +112,24 @@ class LanguageServerJdkTest {
 
         LanguageServerJdk.ServerJdk serverJdk = LanguageServerJdk.require(args(linked.getParent()));
 
-        assertEquals(25, serverJdk.getVersion().feature());
+        assertEquals(25, serverJdk.getFeature());
         assertEquals(jdk.toRealPath(), serverJdk.getHome().toPath().toRealPath());
     }
-    /** a refused JDK is the machine's to fix, and halting the project would add an administrator's resume to it */
+    /**
+     * the server checks its JDK again as it starts, after the review was paid for, where a refusal must halt the
+     * project like any other failure; only the check before the build (DefaultLanguageProcessors.requireRuntime) halts
+     * nothing
+     */
     @Test
-    void aRefusedJdkIsARuntimeRequirement() throws Exception {
-        assertThrows(RuntimeRequirementException.class, () -> LanguageServerJdk.require(args(home("21.0.5"))));
+    void theServersOwnRefusalIsAnOrdinaryFailure() throws Exception {
+        IOException err = assertThrows(IOException.class, () -> LanguageServerJdk.require(args(home("21.0.5"))));
+
+        assertFalse(err instanceof RuntimeRequirementException, err.toString());
+    }
+    /** Runtime.Version refuses trailing zero parts, so only the feature release is read */
+    @Test
+    void aReleaseFileWithTrailingZerosIsReadByItsFeatureRelease() throws Exception {
+        assertEquals(25, LanguageServerJdk.require(args(home("25.0.0"))).getFeature());
     }
     /** a mistyped path, or a home that is no JDK, is not replaced by the JVM running codiqo, which may pass the check */
     @Test

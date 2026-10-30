@@ -50,7 +50,8 @@ class ProjectHaltsTest {
     /** the Maven plugin wraps what a goal throws, so the requirement is found however deep it sits */
     @Test
     void aJdkTheLanguageServerCannotStartOnHaltsNothing() {
-        RuntimeRequirementException jdk = new RuntimeRequirementException("the Eclipse JDT language server 1.63.0 needs Java 25 or newer, but it would run on Java 21.0.5");
+        String refusal = "the Eclipse JDT language server version '1.63.0' needs Java 25 or newer, but it would run on Java 21";
+        RuntimeRequirementException jdk = new RuntimeRequirementException(refusal, new IOException(refusal));
 
         assertTrue(ProjectHalts.haltsNothing(new IllegalStateException(jdk)));
     }

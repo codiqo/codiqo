@@ -97,7 +97,7 @@ public class JdtLspProcess implements Closeable {
          * already knows about (see runtimeWithoutSources). A Homebrew keg root such as opt/openjdk@25 holds no lib
          * directory of its own, so registering it would leave every project without a usable JRE container.
          */
-        this.runtime = runtimeWithoutSources(serverJdk.getHome(), serverJdk.getVersion(), data);
+        this.runtime = runtimeWithoutSources(serverJdk.getHome(), serverJdk.getFeature(), data);
         this.extensionBundle = extractExtensionBundle(data);
 
         try (Stream<Path> files = Files.list(tempDir.resolve("plugins"))) {
@@ -205,7 +205,7 @@ public class JdtLspProcess implements Closeable {
 
         cmd.add("-XX:+UseZGC");
 
-        if (serverJdk.getVersion().feature() >= MIN_JDK_SUN_MISC_UNSAFE_FLAG) {
+        if (serverJdk.getFeature() >= MIN_JDK_SUN_MISC_UNSAFE_FLAG) {
             cmd.add("--sun-misc-unsafe-memory-access=allow");
         }
 
@@ -306,13 +306,13 @@ public class JdtLspProcess implements Closeable {
      * runner's tool-cache symlink) registers a second runtime and leaves the first, sources and all, in place.
      */
     @VisibleForTesting
-    public static Map<String, Object> runtimeWithoutSources(File jdkHome, Runtime.Version version, Path dir) throws IOException {
+    public static Map<String, Object> runtimeWithoutSources(File jdkHome, int feature, Path dir) throws IOException {
         Path emptySources = dir.resolve(EMPTY_SOURCES_ARCHIVE);
         try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(emptySources))) {
             zip.finish();
         }
         return Map.of(
-                "name", RUNTIME_NAME_PREFIX + version.feature(),
+                "name", RUNTIME_NAME_PREFIX + feature,
                 "path", jdkHome.toPath().toRealPath().toString(),
                 "sources", emptySources.toString(),
                 "default", true);

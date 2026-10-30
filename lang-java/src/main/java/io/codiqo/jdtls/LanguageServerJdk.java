@@ -14,6 +14,7 @@ import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.SystemUtils;
@@ -25,16 +26,14 @@ import com.google.common.collect.Comparators;
 import com.google.common.collect.Lists;
 
 import io.codiqo.api.RunArgs;
-import io.codiqo.util.RuntimeRequirementException;
 import lombok.experimental.UtilityClass;
 
 /**
- * The JDK the Eclipse JDT language server runs on: codiqo.javaHome, else the one running codiqo. Checked before a
- * commit's full analysis is paid for (DefaultLanguageProcessors.requireRuntime): on Maven before the commit is built,
- * on Gradle, which builds before its worker starts, before the language server is downloaded and the review starts. A
- * JDK the server cannot start on then ends the run with a message that says what to change, instead of failing later
- * with "JDT LSP process exited with code: 13", and halts nothing (RuntimeRequirementException), since only a change to
- * the machine fixes it and no review was paid for.
+ * The JDK the Eclipse JDT language server runs on: codiqo.javaHome, else the one running codiqo. Checked twice: once
+ * before a commit's full analysis is paid for (DefaultLanguageProcessors.requireRuntime, which makes a refusal a
+ * RuntimeRequirementException that halts nothing), and again by JdtLspProcess as the server starts, where a refusal is
+ * an ordinary failure. A JDK the server cannot start on then ends the run with a message that says what to change,
+ * instead of failing later with "JDT LSP process exited with code: 13".
  */
 @UtilityClass
 public class LanguageServerJdk {
@@ -56,42 +55,47 @@ public class LanguageServerJdk {
     private static final String LEGACY_VERSION_PREFIX = "1.";
 
     /**
-     * The JDK the language server will run on, once it is one the server starts on. The server's version is the
-     * configured one, never resolved here: resolving it downloads latest.txt for the snapshots channel or a pinned
-     * build missing from the cache, and an outage of download.eclipse.org must not fail a run that may start no server.
-     * A JDK that meets the highest minimum needs no version at all.
+     * The JDK the language server will run on, once it is one the server starts on. The server's version is read as
+     * configured, exactly as RunArgs downloads it, and never resolved here: resolving it downloads latest.txt for the
+     * snapshots channel or a pinned build missing from the cache, and an outage of download.eclipse.org must not fail a
+     * run that may start no server.
      */
     public ServerJdk require(RunArgs args) throws IOException {
         ServerJdk toReturn = detect(args.getJavaHome());
-        if (toReturn.getVersion().feature() < MIN_JDK_FROM_1_62) {
-            String server = args.isJdtlsUseSnapshot()
-                    ? "from the snapshots channel"
-                    : StringUtils.defaultIfBlank(args.getJdtlsVersion(), RunArgs.JDTLS_MIRRORED_VERSION);
-            int minimum = args.isJdtlsUseSnapshot() ? MIN_JDK_FROM_1_62 : minimum(server);
-            if (toReturn.getVersion().feature() < minimum) {
-                throw new RuntimeRequirementException(String.format(Locale.ROOT,
-                        "the Eclipse JDT language server %s needs Java %d or newer, but it would run on Java %s (%s)"
-                                + " — point codiqo.javaHome at a Java %d+ JDK; the analysed project keeps its own release level",
-                        server,
-                        minimum,
-                        toReturn.getVersion(),
-                        Optional.ofNullable(args.getJavaHome()).map(File::getAbsolutePath).orElse("the JDK running codiqo"),
-                        minimum));
-            }
+
+        int minimum;
+        String server;
+        if (args.isJdtlsUseSnapshot()) {
+            minimum = MIN_JDK_FROM_1_62;
+            server = "from the snapshots channel";
+        } else {
+            minimum = minimum(args.getJdtlsVersion());
+            server = "version '" + args.getJdtlsVersion() + "'";
         }
-        return toReturn;
+
+        if (toReturn.getFeature() >= minimum) {
+            return toReturn;
+        }
+        throw new IOException(String.format(Locale.ROOT,
+                "the Eclipse JDT language server %s needs Java %d or newer, but it would run on Java %d (%s)"
+                        + " — point codiqo.javaHome at a Java %d+ JDK; the analysed project keeps its own release level",
+                server,
+                minimum,
+                toReturn.getFeature(),
+                Optional.ofNullable(args.getJavaHome()).map(File::getAbsolutePath).orElse("the JDK running codiqo"),
+                minimum));
     }
     /**
      * The least Java feature release a language server release starts on. The leading number of each dot-separated part
      * is read up to the first part without one, so "1.63.0-SNAPSHOT" reads as 1.63.0 and "1.61.0.v2026" as 1.61.0; a
-     * version with no number at all is taken for a new release. A part's number is read from at most its first nine
-     * digits, which always fit an int: a build stamp such as 202610300819 would overflow one, and a number that long is
-     * past every release this check knows anyway.
+     * version with no number at all, a blank one included, is taken for a new release. A part's number is read from at
+     * most its first nine digits, which always fit an int: a build stamp such as 202610300819 would overflow one, and a
+     * number that long is past every release this check knows anyway.
      */
     @VisibleForTesting
     public int minimum(String jdtlsVersion) {
         List<Integer> parts = Lists.newArrayList();
-        for (String part : Splitter.on('.').trimResults().split(jdtlsVersion)) {
+        for (String part : Splitter.on('.').trimResults().split(StringUtils.defaultString(jdtlsVersion))) {
             Matcher number = LEADING_NUMBER.matcher(part);
             if (number.find()) {
                 parts.add(Integer.valueOf(number.group()));
@@ -99,7 +103,7 @@ public class LanguageServerJdk {
                 break;
             }
         }
-        if (BooleanUtils.or(new boolean[] { parts.isEmpty(), VERSION_ORDER.compare(parts, FIRST_NEEDING_JDK_25) >= 0 })) {
+        if (BooleanUtils.or(new boolean[] { CollectionUtils.isEmpty(parts), VERSION_ORDER.compare(parts, FIRST_NEEDING_JDK_25) >= 0 })) {
             return MIN_JDK_FROM_1_62;
         }
         return MIN_JDK;
@@ -113,7 +117,7 @@ public class LanguageServerJdk {
      */
     private static ServerJdk detect(File javaHome) throws IOException {
         if (Objects.isNull(javaHome)) {
-            return new ServerJdk(SystemUtils.getJavaHome(), Runtime.version());
+            return new ServerJdk(SystemUtils.getJavaHome(), Runtime.version().feature());
         }
         Optional<Path> home = jdkHome(javaHome.toPath());
         if (home.isPresent()) {
@@ -121,9 +125,9 @@ public class LanguageServerJdk {
             try (InputStream in = Files.newInputStream(home.get().resolve("release"))) {
                 props.load(in);
             }
-            return new ServerJdk(home.get().toFile(), parse(javaHome, StringUtils.strip(props.getProperty("JAVA_VERSION"), "\"")));
+            return new ServerJdk(home.get().toFile(), feature(javaHome, StringUtils.strip(props.getProperty("JAVA_VERSION"), "\"")));
         }
-        throw new RuntimeRequirementException(String.format(Locale.ROOT,
+        throw new IOException(String.format(Locale.ROOT,
                 "codiqo.javaHome %s is not a JDK: neither it nor the JDK its bin/java belongs to has a release file naming its Java version",
                 javaHome.getAbsolutePath()));
     }
@@ -140,31 +144,35 @@ public class LanguageServerJdk {
         }
         return Optional.empty();
     }
-    private static Runtime.Version parse(File javaHome, String javaVersion) throws IOException {
+    /**
+     * Only the feature release is read, since it is all the check compares: Runtime.Version refuses a version with
+     * trailing zero parts ("25.0.0"), and a release file written that way would refuse a JDK the server starts on.
+     */
+    private static int feature(File javaHome, String javaVersion) throws IOException {
         if (StringUtils.isBlank(javaVersion)) {
-            throw new RuntimeRequirementException(String.format(Locale.ROOT,
+            throw new IOException(String.format(Locale.ROOT,
                     "codiqo.javaHome %s is not a JDK: its release file names no JAVA_VERSION", javaHome.getAbsolutePath()));
         }
         String version = javaVersion;
         if (version.startsWith(LEGACY_VERSION_PREFIX)) {
-            version = StringUtils.substringBefore(version.substring(LEGACY_VERSION_PREFIX.length()), ".");
+            version = version.substring(LEGACY_VERSION_PREFIX.length());
         }
-        try {
-            return Runtime.Version.parse(version);
-        } catch (IllegalArgumentException err) {
-            throw new RuntimeRequirementException(String.format(Locale.ROOT,
-                    "codiqo.javaHome %s names Java version '%s' in its release file, which is not a Java version", javaHome.getAbsolutePath(), javaVersion));
+        Matcher number = LEADING_NUMBER.matcher(version);
+        if (number.find()) {
+            return Integer.parseInt(number.group());
         }
+        throw new IOException(String.format(Locale.ROOT,
+                "codiqo.javaHome %s names Java version '%s' in its release file, which is not a Java version", javaHome.getAbsolutePath(), javaVersion));
     }
-    /** the JDK home the language server runs on, resolved past any link to the JDK itself, and its Java version */
-    public static final class ServerJdk extends ImmutablePair<File, Runtime.Version> {
-        public ServerJdk(File home, Runtime.Version version) {
-            super(home, version);
+    /** the JDK home the language server runs on, resolved past any link to the JDK itself, and its Java feature release */
+    public static final class ServerJdk extends ImmutablePair<File, Integer> {
+        public ServerJdk(File home, int feature) {
+            super(home, feature);
         }
         public File getHome() {
             return getLeft();
         }
-        public Runtime.Version getVersion() {
+        public int getFeature() {
             return getRight();
         }
     }

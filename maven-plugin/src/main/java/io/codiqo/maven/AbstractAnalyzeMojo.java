@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitOption;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
@@ -1949,12 +1950,21 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             }
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                /** a dangling link reaches here with the link's own attributes, and there is nothing behind it to seed */
-                if (BooleanUtils.and(new boolean[] { attrs.isRegularFile(), isSeedable(file.getFileName().toString()) })) {
-                    try {
-                        seed(file, targetRoot.resolve(sourceRoot.relativize(file)));
-                    } catch (IOException err) {
-                        return visitFileFailed(file, err);
+                if (isSeedable(file.getFileName().toString())) {
+                    /**
+                     * Following links, the walk hands over a link's own attributes only when nothing is behind it: a
+                     * cache link whose target was not restored yet, or an artifact link whose target was removed.
+                     * Nothing can be seeded from it, so it is counted and logged as every other entry left out is.
+                     */
+                    if (attrs.isSymbolicLink()) {
+                        return visitFileFailed(file, new NoSuchFileException(file.toString(), null, "a symbolic link to nothing"));
+                    }
+                    if (attrs.isRegularFile()) {
+                        try {
+                            seed(file, targetRoot.resolve(sourceRoot.relativize(file)));
+                        } catch (IOException err) {
+                            return visitFileFailed(file, err);
+                        }
                     }
                 }
                 return FileVisitResult.CONTINUE;

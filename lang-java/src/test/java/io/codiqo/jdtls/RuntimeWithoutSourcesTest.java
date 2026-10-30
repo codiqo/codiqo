@@ -21,7 +21,7 @@ class RuntimeWithoutSourcesTest {
         Path jdk = Files.createDirectory(dir.resolve("temurin-25"));
         Path toolCache = Files.createSymbolicLink(dir.resolve("tool-cache-25"), jdk);
 
-        Map<String, Object> runtime = JdtLspProcess.runtimeWithoutSources(toolCache.toFile(), Runtime.Version.parse("25.0.4.1"), dir);
+        Map<String, Object> runtime = JdtLspProcess.runtimeWithoutSources(toolCache.toFile(), 25, dir);
 
         assertEquals("JavaSE-25", runtime.get("name"));
         assertEquals(jdk.toRealPath().toString(), runtime.get("path"));
@@ -29,7 +29,7 @@ class RuntimeWithoutSourcesTest {
     }
     @Test
     void sourcesIsAnArchiveWithNoEntries() throws IOException {
-        Map<String, Object> runtime = JdtLspProcess.runtimeWithoutSources(dir.toFile(), Runtime.version(), dir);
+        Map<String, Object> runtime = JdtLspProcess.runtimeWithoutSources(dir.toFile(), Runtime.version().feature(), dir);
 
         try (ZipFile zip = new ZipFile(new File((String) runtime.get("sources")))) {
             assertEquals(0, zip.size());
