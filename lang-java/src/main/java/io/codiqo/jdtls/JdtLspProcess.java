@@ -4,8 +4,10 @@ import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -16,9 +18,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import java.util.zip.ZipOutputStream;
 
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.SystemUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.rauschig.jarchivelib.Archiver;
@@ -29,6 +33,7 @@ import org.zeroturnaround.process.JavaProcess;
 import org.zeroturnaround.process.Processes;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Joiner;
 import com.google.common.collect.Lists;
 
 import io.codiqo.api.RunArgs;
@@ -44,6 +49,10 @@ public class JdtLspProcess implements Closeable {
     private static final String RUNTIME_NAME_PREFIX = "JavaSE-";
     private static final String EMPTY_SOURCES_ARCHIVE = "jdk-without-sources.zip";
     private static final String EXTENSION_BUNDLE_RESOURCE = "jdtls/codiqo-jdtls-extension.jar";
+    private static final String LOG_EXTENSION = "log";
+    /** the lines of an OSGi resolution failure that name the bundle and what it lacked */
+    private static final String[] LAUNCH_FAILURE_LINES = { "org.osgi.framework.BundleException: Could not resolve module", "Unresolved requirement" };
+    private static final int LAUNCH_FAILURE_LINE_LIMIT = 2;
     private static final long GRACEFUL_SHUTDOWN_MINUTES = 1L;
     private static final long FORCED_SHUTDOWN_SECONDS = 30L;
 
@@ -51,6 +60,7 @@ public class JdtLspProcess implements Closeable {
     private final Log log;
     private final JavaProcess process;
     private final File dataDir;
+    private final Path configDir;
     private final Map<String, Object> runtime;
     private final Path extensionBundle;
 
@@ -73,6 +83,7 @@ public class JdtLspProcess implements Closeable {
 
         Path launcherJar;
         Path config = tempDir.resolve(os);
+        this.configDir = config;
         Path data = Files.createTempDirectory("data-" + args.effectiveJdtlsVersion());
         this.dataDir = data.toFile();
         this.dataDir.deleteOnExit();
@@ -218,6 +229,19 @@ public class JdtLspProcess implements Closeable {
     public Path getExtensionBundle() {
         return extensionBundle;
     }
+    /**
+     * Why the Eclipse launcher refused to start, as the OSGi framework wrote it to the configuration directory's log:
+     * on exit code 13 the process prints only "An error has occurred. See the log file", and the log names the bundle
+     * that could not be resolved and the requirement it missed, such as a newer Java than the one the server runs on.
+     */
+    public Optional<String> launchFailure() {
+        try {
+            return launchFailure(configDir);
+        } catch (IOException err) {
+            log.warn("could not read the language server's configuration log: " + err.getMessage());
+            return Optional.empty();
+        }
+    }
     @Override
     public void close() throws IOException {
         try {
@@ -289,6 +313,27 @@ public class JdtLspProcess implements Closeable {
                 "path", jdkHome.toPath().toRealPath().toString(),
                 "sources", emptySources.toString(),
                 "default", true);
+    }
+    @VisibleForTesting
+    public static Optional<String> launchFailure(Path configDir) throws IOException {
+        Optional<Path> newest;
+        try (Stream<Path> logs = Files.list(configDir)) {
+            newest = logs
+                    .filter(file -> LOG_EXTENSION.equals(FilenameUtils.getExtension(file.toString())))
+                    .max(Comparator.comparing(file -> file.toFile().lastModified()));
+        }
+        if (newest.isPresent()) {
+            List<String> causes = Files.readAllLines(newest.get(), StandardCharsets.UTF_8).stream()
+                    .map(String::strip)
+                    .filter(line -> Strings.CS.startsWithAny(line, LAUNCH_FAILURE_LINES))
+                    .distinct()
+                    .limit(LAUNCH_FAILURE_LINE_LIMIT)
+                    .toList();
+            if (CollectionUtils.isNotEmpty(causes)) {
+                return Optional.of(Joiner.on("; ").join(causes));
+            }
+        }
+        return Optional.empty();
     }
     private static class OSDetector extends kr.motd.maven.os.Detector {
         private final Log log;

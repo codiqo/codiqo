@@ -22,6 +22,7 @@ import java.util.stream.Stream;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.time.StopWatch;
@@ -60,6 +61,12 @@ import io.codiqo.util.Fetch;
 public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectImporter, Closeable {
     public static final int EXIT_OK = 0;
     public static final int EXIT_SIGTERM = 143;
+    /**
+     * The Eclipse launcher's exit code when the OSGi framework cannot start the application, most often because a bundle
+     * cannot be resolved: jdt.ls 1.62.0 on Java 21 exits with it because its platform bundles require JavaSE 25. The
+     * process itself prints only "An error has occurred. See the log file", so the reason is read from that log.
+     */
+    public static final int EXIT_LAUNCH_FAILED = 13;
     private static final long DETACH_TIMEOUT_SECONDS = 60;
     private static final long DETACH_POLL_MILLIS = 250;
     private static final String JAVA_EXTENSION = "java";
@@ -236,8 +243,12 @@ public class JdtLspProjectImporter implements Lsp4jQuery, LanguageServerProjectI
                 case EXIT_SIGTERM:
                     break;
                 default:
-                    log.error("JDT LSP process exited with code: " + exitCode);
-                    clientFuture.completeExceptionally(new IllegalStateException("JDT LSP process exited with code: " + exitCode));
+                    String message = "JDT LSP process exited with code: " + exitCode;
+                    if (exitCode == EXIT_LAUNCH_FAILED) {
+                        message += jdt.launchFailure().map(cause -> ", the Eclipse launcher could not start it: " + cause).orElse(StringUtils.EMPTY);
+                    }
+                    log.error(message);
+                    clientFuture.completeExceptionally(new IllegalStateException(message));
                     break;
             }
         });

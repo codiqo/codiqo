@@ -146,11 +146,6 @@ public class AnalysisEngine {
              */
             /** a hidden-source run without a usable key fails before anything is analysed, sent or paid for */
             hiding(request);
-            /**
-             * a JDK the analysis cannot run on ends the run before the review is paid for; Gradle has built the commit by
-             * now, as it has for every other gate of the worker
-             */
-            DefaultLanguageProcessors.requireRuntime(args);
             CommitIndexApi client = CommitIndexPublisher.buildClient(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(), request.getReadTimeoutSeconds());
             Optional<Exclusion> excluded = CommitExclusions.beforeAnalysis(
                     args,
@@ -237,6 +232,11 @@ public class AnalysisEngine {
          * As on Maven, the language server the full analysis needs is downloaded before the review is paid for, and a
          * failed download ends the run with nothing stored (DownloadFailedException).
          */
+        /**
+         * a JDK the language server cannot start on ends the run before the server is downloaded and the review paid for;
+         * Gradle has built the commit by now, as it has for every gate of the worker
+         */
+        DefaultLanguageProcessors.requireRuntime(args);
         try (Fetch fetch = new Fetch(args)) {
             fetch.downloadJdtls(logFactory, args);
         }

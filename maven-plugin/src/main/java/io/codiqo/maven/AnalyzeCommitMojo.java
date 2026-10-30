@@ -242,6 +242,12 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
              * nothing to measure needs no agent, and before anything is built or reviewed.
              */
             requireCoverageAgent(args);
+            /**
+             * Here for the same reason: a JDK the language server cannot start on fails the full analysis, and found
+             * after the compile run it would have cost a build. A merge or a filtered commit starts no language server,
+             * so it is excluded above whatever the JDK.
+             */
+            DefaultLanguageProcessors.requireRuntime(args);
 
             /**
              * host-side ProjectBuilder calls (pre-flight, root and module model building) resolve snapshot parents

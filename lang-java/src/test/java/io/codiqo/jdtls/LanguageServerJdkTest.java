@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -17,7 +18,8 @@ import io.codiqo.api.RunArgs;
 
 /**
  * Which Java a language server release starts on, measured by launching each archive on JDK 21: 1.61.0 started, while
- * 1.62.0 and 1.63.0 exited with code 13 because org.eclipse.core.resources requires JavaSE 25.
+ * 1.62.0 and 1.63.0 exited with code 13 because org.eclipse.core.resources requires JavaSE 25. Every check here reads
+ * the configured version only, so none of them reaches download.eclipse.org or the download cache.
  */
 class LanguageServerJdkTest {
     @TempDir
@@ -42,28 +44,50 @@ class LanguageServerJdkTest {
     }
     @Test
     void aJava21HomeIsRefusedForTheDefaultServerWithWhatToChange() throws Exception {
-        IOException err = assertThrows(IOException.class, () -> LanguageServerJdk.require(args(home("\"21.0.5\""))));
+        IOException err = assertThrows(IOException.class, () -> LanguageServerJdk.require(args(home("21.0.5"))));
 
         assertTrue(Strings.CS.contains(err.getMessage(), "needs Java 25"), err.getMessage());
         assertTrue(Strings.CS.contains(err.getMessage(), "codiqo.javaHome"), err.getMessage());
     }
     @Test
     void aJava25HomeIsAccepted() throws Exception {
-        assertEquals(25, LanguageServerJdk.require(args(home("\"25.0.1\""))).feature());
+        assertEquals(25, LanguageServerJdk.require(args(home("25.0.1"))).feature());
     }
+    /** a pinned build missing from the cache would be looked up on download.eclipse.org if the version were resolved */
     @Test
     void aJava21HomeIsAcceptedForAServerBefore162() throws Exception {
-        RunArgs args = args(home("\"21.0.5\""));
+        RunArgs args = args(home("21.0.5"));
         args.setJdtlsVersion("1.61.0");
 
         assertEquals(21, LanguageServerJdk.require(args).feature());
     }
+    /** the snapshots channel builds from the newest line, so its version is not looked up to know it needs Java 25 */
+    @Test
+    void theSnapshotsChannelNeedsJava25WithoutLookingItsVersionUp() throws Exception {
+        RunArgs args = args(home("21.0.5"));
+        args.setJdtlsUseSnapshot(true);
+
+        IOException err = assertThrows(IOException.class, () -> LanguageServerJdk.require(args));
+
+        assertTrue(Strings.CS.contains(err.getMessage(), "snapshots channel"), err.getMessage());
+    }
     /** written before Java 9 as "1.8.0_392", which Runtime.Version cannot parse: it must still be refused with the reason */
     @Test
     void aJava8HomeIsRefusedWithTheVersionNotAParseError() throws Exception {
-        IOException err = assertThrows(IOException.class, () -> LanguageServerJdk.require(args(home("\"1.8.0_392\""))));
+        IOException err = assertThrows(IOException.class, () -> LanguageServerJdk.require(args(home("1.8.0_392"))));
 
         assertTrue(Strings.CS.contains(err.getMessage(), "would run on Java 8"), err.getMessage());
+    }
+    /** Homebrew's opt/openjdk@25 has no release file of its own; its bin/java links into the JDK that has one */
+    @Test
+    void aHomeWhoseJavaLinksIntoAJdkIsReadFromThatJdk() throws Exception {
+        Path jdk = home("25.0.1");
+        Path java = Files.createDirectories(jdk.resolve("bin")).resolve("java");
+        Files.writeString(java, StringUtils.EMPTY, StandardCharsets.UTF_8);
+        Path linked = Files.createDirectories(tempDir.resolve("opt/openjdk@25/bin"));
+        Files.createSymbolicLink(linked.resolve("java"), java);
+
+        assertEquals(25, LanguageServerJdk.require(args(linked.getParent())).feature());
     }
     /** a mistyped path, or a home that is no JDK, is not replaced by the JVM running codiqo, which may pass the check */
     @Test
@@ -77,15 +101,16 @@ class LanguageServerJdkTest {
     @Test
     void aReleaseFileWithoutAJavaVersionIsRefused() throws Exception {
         Path home = Files.createDirectories(tempDir.resolve("no-version"));
-        Files.writeString(home.resolve("release"), "IMPLEMENTOR=\"Example\"\n", StandardCharsets.UTF_8);
+        Files.writeString(home.resolve("release"), "IMPLEMENTOR=\"Example\"" + StringUtils.LF, StandardCharsets.UTF_8);
 
         IOException err = assertThrows(IOException.class, () -> LanguageServerJdk.require(args(home)));
 
         assertTrue(Strings.CS.contains(err.getMessage(), "names no JAVA_VERSION"), err.getMessage());
     }
+    /** a JDK home whose release file names the version, quoted as JDKs write it */
     private Path home(String javaVersion) throws IOException {
-        Path toReturn = Files.createDirectories(tempDir.resolve("jdk-" + javaVersion.replaceAll("[^0-9.]", "")));
-        Files.writeString(toReturn.resolve("release"), "JAVA_VERSION=" + javaVersion + "\n", StandardCharsets.UTF_8);
+        Path toReturn = Files.createDirectories(tempDir.resolve("jdk-" + javaVersion));
+        Files.writeString(toReturn.resolve("release"), "JAVA_VERSION=\"" + javaVersion + "\"" + StringUtils.LF, StandardCharsets.UTF_8);
         return toReturn;
     }
     private static RunArgs args(Path javaHome) {

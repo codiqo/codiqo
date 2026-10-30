@@ -456,9 +456,10 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         return List.of(new JavaReviewLanguage());
     }
     /**
-     * Fails when this machine cannot run what the registered languages' analysis starts, known before anything is built:
-     * the Java analysis's language server and the JDK it needs (LanguageServerJdk). Both plugins call it when an
-     * analysis starts, so a misconfigured JDK ends the run before it builds the commit or pays for a review.
+     * Fails when this machine cannot run what the registered languages' full analysis starts: the Java analysis's
+     * language server and the JDK it needs (LanguageServerJdk). Both plugins call it before a commit's full analysis is
+     * paid for: Maven before it builds the commit, Gradle, whose worker starts after the build, before the language
+     * server is downloaded and the review starts.
      */
     public static void requireRuntime(RunArgs args) throws IOException {
         LanguageServerJdk.require(args);
