@@ -7,7 +7,6 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -20,7 +19,6 @@ import java.util.zip.ZipOutputStream;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.SystemUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.rauschig.jarchivelib.Archiver;
@@ -37,11 +35,10 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.util.Fetch;
+import io.codiqo.util.LanguageServerJdk;
 
 public class JdtLspProcess implements Closeable {
-    private static final int MIN_JDK_LANGUAGE_SERVER = 21;
-
-    /** the one threshold the fork can still miss: requireLanguageServerJdk admits 21 and 22 */
+    /** the one threshold the fork can still miss: a language server before 1.62.0 admits 21 and 22 (LanguageServerJdk) */
     private static final int MIN_JDK_SUN_MISC_UNSAFE_FLAG = 23;
 
     private static final String JAR_EXTENSION = "jar";
@@ -61,7 +58,7 @@ public class JdtLspProcess implements Closeable {
     public JdtLspProcess(LogFactory logFactory, RunArgs args, Fetch fetch, int port) throws IOException {
         this.log = logFactory.getLogger(getClass());
 
-        Runtime.Version spawnedJavaVersion = requireLanguageServerJdk(args);
+        Runtime.Version spawnedJavaVersion = LanguageServerJdk.require(args);
 
         Properties lookup = new Properties();
         OSDetector detector = new OSDetector(logFactory);
@@ -294,36 +291,6 @@ public class JdtLspProcess implements Closeable {
                 "sources", emptySources.toString(),
                 "default", true);
     }
-    public static Runtime.Version requireLanguageServerJdk(RunArgs args) throws IOException {
-        Runtime.Version toReturn = detectSpawnedJavaVersion(args.getJavaHome());
-        if (toReturn.feature() < MIN_JDK_LANGUAGE_SERVER) {
-            throw new IOException(String.format(Locale.ROOT,
-                    "the Eclipse JDT language server needs Java %d or newer, but the analysis fork would run on Java %s (%s)"
-                            + " — point codiqo.javaHome at a Java %d+ JDK; the analysed project keeps its own release level",
-                    MIN_JDK_LANGUAGE_SERVER,
-                    toReturn,
-                    Objects.nonNull(args.getJavaHome()) ? args.getJavaHome().getAbsolutePath() : "the JDK running codiqo",
-                    MIN_JDK_LANGUAGE_SERVER));
-        }
-        return toReturn;
-    }
-    public static Runtime.Version detectSpawnedJavaVersion(File javaHome) throws IOException {
-        if (Objects.nonNull(javaHome)) {
-            File releaseFile = new File(javaHome, "release");
-            if (releaseFile.isFile()) {
-                Properties props = new Properties();
-                try (InputStream in = Files.newInputStream(releaseFile.toPath())) {
-                    props.load(in);
-                }
-                String version = StringUtils.strip(props.getProperty("JAVA_VERSION"), "\"");
-                if (StringUtils.isNotBlank(version)) {
-                    return Runtime.Version.parse(version);
-                }
-            }
-        }
-        return Runtime.version();
-    }
-
     private static class OSDetector extends kr.motd.maven.os.Detector {
         private final Log log;
         private final Properties properties = new Properties();
