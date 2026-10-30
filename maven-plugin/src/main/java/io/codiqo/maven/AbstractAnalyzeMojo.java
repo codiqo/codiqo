@@ -6,15 +6,19 @@ import java.io.InputStream;
 import java.io.Writer;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileVisitOption;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -237,6 +241,9 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
 
     @Parameter(property = "codiqo.javaHome")
     protected File javaHome;
+
+    @Parameter(property = "codiqo.jdtlsJavaHome")
+    protected File jdtlsJavaHome;
 
     @Parameter(property = "codiqo.mavenHome")
     protected File mavenHome;
@@ -525,6 +532,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     public final void execute() throws MojoExecutionException, MojoFailureException {
         RunArgs args = new RunArgs();
         Optional.ofNullable(javaHome).ifPresent(args::setJavaHome);
+        Optional.ofNullable(jdtlsJavaHome).ifPresent(args::setJdtlsJavaHome);
         Optional.ofNullable(mavenHome).ifPresent(args::setMavenHome);
         args.setBuildTimeout(Duration.ofMinutes(buildTimeoutMinutes));
         args.setBuildProgressFile(buildProgressFile);
@@ -920,7 +928,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                 }
             } else {
                 FileUtils.forceMkdir(localRepository);
-                seedReleaseArtifacts(new File(mavenSession.getRepositorySession().getLocalRepositoryManager().getRepository().getBasedir().getAbsolutePath()), localRepository);
+                seedReleaseArtifacts(new File(mavenSession.getRepositorySession().getLocalRepositoryManager().getRepository().getBasedir().getAbsolutePath()), localRepository, new MavenLogFactory(getLog()).getLogger(AbstractAnalyzeMojo.class));
             }
             args.setLocalRepositoryDir(localRepository);
 
@@ -1029,70 +1037,6 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             }
         });
         getLog().info(String.format(Locale.ROOT, "cleared %d snapshot versions from %s", cleared.get(), localRepository.getAbsolutePath()));
-    }
-    /**
-     * Hard-link every release artifact from the host's local repository into this attempt's private one. A release
-     * is immutable, so sharing the inode costs no disk and spares re-downloading the bulk of a reactor's
-     * dependencies into an otherwise cold repository. Everything mutable is deliberately left behind: -SNAPSHOT
-     * directories, so the time-machine resolves the commit's own pins onto a clean slate rather than finding a
-     * newer timestamp already cached, and all resolution metadata, since it records what today's registry offered.
-     * _remote.repositories goes too — without it Maven treats a cached artifact as locally installed and always
-     * serves it, instead of refusing one whose recording repository id is out of scope.
-     */
-    private void seedReleaseArtifacts(File source, File target) throws IOException {
-        Path sourceRoot = source.toPath();
-        Path targetRoot = target.toPath();
-        AtomicBoolean copyFallback = new AtomicBoolean();
-
-        Files.walkFileTree(sourceRoot, new SimpleFileVisitor<Path>() {
-            /**
-             * a local repository under concurrent use holds transient download fragments, lock files and entries
-             * that vanish between the directory listing and the visit. The default implementation rethrows, which
-             * would turn a seeding optimisation into a hard failure for the whole commit — seeding is best-effort
-             * by nature, since anything missing is simply downloaded again.
-             */
-            @Override
-            public FileVisitResult visitFileFailed(Path file, IOException err) {
-                getLog().warn(String.format("could not seed %s into the private local repository: %s", file, err.getMessage()));
-                return FileVisitResult.CONTINUE;
-            }
-            @Override
-            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                /**
-                 * ArtifactUtils rather than a "-SNAPSHOT" suffix test: it is Maven's own definition, and it also
-                 * recognises an already-timestamped version, so a repository that happens to hold one is skipped
-                 * too instead of being seeded as if it were a release
-                 */
-                if (ArtifactUtils.isSnapshot(dir.getFileName().toString())) {
-                    return FileVisitResult.SKIP_SUBTREE;
-                }
-                return FileVisitResult.CONTINUE;
-            }
-            @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                if (isSeedable(file.getFileName().toString())) {
-                    Path link = targetRoot.resolve(sourceRoot.relativize(file));
-                    Files.createDirectories(link.getParent());
-                    /**
-                     * a hard link fails across filesystems (the temp dir and the local repository need not share
-                     * one), and on filesystems that do not support them at all — copy is correct either way, just
-                     * slower, so it stays the fallback rather than the default
-                     */
-                    try {
-                        Files.createLink(link, file);
-                    } catch (IOException | UnsupportedOperationException err) {
-                        if (copyFallback.compareAndSet(false, true)) {
-                            getLog().warn(String.format(
-                                    "cannot hard-link into %s (%s) — seeding falls back to copying, which duplicates the release set on disk. Point java.io.tmpdir at the same filesystem as the local repository to avoid it.",
-                                    targetRoot,
-                                    err.getMessage()));
-                        }
-                        Files.copy(file, link);
-                    }
-                }
-                return FileVisitResult.CONTINUE;
-            }
-        });
     }
     /**
      * Aether parses the protocol with a regex that also understands compound schemes such as dav:http, so the
@@ -1947,6 +1891,113 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         buildFailure.setDetail(detail);
 
         ctx.getSubmissionModel().setBuildFailure(buildFailure);
+    }
+    /**
+     * Hard-link every release artifact from the host's local repository into this attempt's private one. A release
+     * is immutable, so sharing the inode costs no disk and spares re-downloading the bulk of a reactor's
+     * dependencies into an otherwise cold repository. Everything mutable is deliberately left behind: -SNAPSHOT
+     * directories, so the time-machine resolves the commit's own pins onto a clean slate rather than finding a
+     * newer timestamp already cached, and all resolution metadata, since it records what today's registry offered.
+     * _remote.repositories goes too — without it Maven treats a cached artifact as locally installed and always
+     * serves it, instead of refusing one whose recording repository id is out of scope.
+     *
+     * <p>The walk follows symbolic links. A CI cache usually puts the repository, or part of it, in place as a link (a
+     * GitLab job cannot cache the home directory, so ~/.m2/repository points into the project directory), and a walk
+     * that does not follow them visits such a link as one file: the root link was "seeded" as the private repository's
+     * own root, the copy fallback failed with FileAlreadyExistsException, and every commit of the run failed and halted
+     * the project; a link further down linked the host's own directory, snapshots and metadata included, into the
+     * private repository. A file that is itself a symbolic link is hard-linked by its real path, since a hard link to
+     * a symbolic link would be a second symbolic link on Linux; a link among its directories is resolved by the
+     * filesystem anyway.
+     *
+     * <p>Seeding is best-effort throughout, since whatever it leaves out is downloaded again: a repository, directory or
+     * file that cannot be read or seeded (a dangling link, a loop, an entry another build removed mid-walk) is logged
+     * and skipped, and never fails the commit.
+     */
+    @VisibleForTesting
+    public static void seedReleaseArtifacts(File source, File target, Log log) throws IOException {
+        Path sourceRoot = source.toPath();
+        Path targetRoot = target.toPath();
+        AtomicBoolean copyFallback = new AtomicBoolean();
+        AtomicInteger skipped = new AtomicInteger();
+
+        Files.walkFileTree(sourceRoot, EnumSet.of(FileVisitOption.FOLLOW_LINKS), Integer.MAX_VALUE, new SimpleFileVisitor<Path>() {
+            @Override
+            public FileVisitResult visitFileFailed(Path file, IOException err) {
+                if (skipped.getAndIncrement() == 0) {
+                    log.warn(String.format("could not seed %s into the private local repository: %s", file, err));
+                }
+                return FileVisitResult.CONTINUE;
+            }
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                /**
+                 * ArtifactUtils rather than a "-SNAPSHOT" suffix test: it is Maven's own definition, and it also
+                 * recognises an already-timestamped version, so a repository that happens to hold one is skipped
+                 * too instead of being seeded as if it were a release
+                 */
+                if (ArtifactUtils.isSnapshot(dir.getFileName().toString())) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                return FileVisitResult.CONTINUE;
+            }
+            /**
+             * a directory whose listing breaks off midway (another build removing entries while it is read) arrives
+             * here with the error, which SimpleFileVisitor rethrows and which would fail the commit over a cache
+             */
+            @Override
+            public FileVisitResult postVisitDirectory(Path dir, IOException err) {
+                if (Objects.nonNull(err)) {
+                    visitFileFailed(dir, err);
+                }
+                return FileVisitResult.CONTINUE;
+            }
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                if (isSeedable(file.getFileName().toString())) {
+                    /**
+                     * Following links, the walk hands over a link's own attributes only when nothing is behind it: a
+                     * cache link whose target was not restored yet, or an artifact link whose target was removed.
+                     * Nothing can be seeded from it, so it is counted and logged as every other entry left out is.
+                     */
+                    if (attrs.isSymbolicLink()) {
+                        return visitFileFailed(file, new NoSuchFileException(file.toString(), null, "a symbolic link to nothing"));
+                    }
+                    if (attrs.isRegularFile()) {
+                        try {
+                            seed(file, targetRoot.resolve(sourceRoot.relativize(file)));
+                        } catch (IOException err) {
+                            return visitFileFailed(file, err);
+                        }
+                    }
+                }
+                return FileVisitResult.CONTINUE;
+            }
+            /**
+             * a hard link fails across filesystems (the temp dir and the local repository need not share one), on
+             * filesystems that do not support them, and where the kernel refuses to link another user's file
+             * (protected_hardlinks) — copy is correct in every case, just slower, so it stays the fallback
+             */
+            private void seed(Path file, Path link) throws IOException {
+                Files.createDirectories(link.getParent());
+                try {
+                    Files.createLink(link, Files.isSymbolicLink(file) ? file.toRealPath() : file);
+                } catch (IOException | UnsupportedOperationException err) {
+                    if (copyFallback.compareAndSet(false, true)) {
+                        log.warn(String.format(
+                                "cannot hard-link %s into %s (%s), so seeding copies the release set instead, which duplicates it on disk;"
+                                        + " across filesystems, point java.io.tmpdir at the local repository's",
+                                file,
+                                targetRoot,
+                                err));
+                    }
+                    Files.copy(file, link, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        });
+        if (skipped.get() > 0) {
+            log.warn(String.format(Locale.ROOT, "%d entries of %s were not seeded; the build downloads what it needs of them again", skipped.get(), sourceRoot));
+        }
     }
     /**
      * The forked build runs twice. The compile run proves the commit compiles and lets the coverage injector check its

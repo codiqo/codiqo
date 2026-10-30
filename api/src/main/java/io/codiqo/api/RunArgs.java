@@ -339,9 +339,20 @@ public class RunArgs {
      */
     private int buildErrorCaptureLimit = 8 * 1024;
 
-    /** JDK used for the forked build and for the language-server JVM. Unset means the JDK running codiqo. */
+    /**
+     * JDK used for the forked build and, unless {@link #jdtlsJavaHome} names another, for the language-server JVM. Unset
+     * means the JDK running codiqo.
+     */
     @Nullable
     private transient File javaHome;
+
+    /**
+     * JDK the Eclipse JDT language server runs on, when it must differ from {@link #javaHome}. From 1.62.0 the server
+     * needs Java 25, while a Maven project whose build only works on an older JDK has to keep building on javaHome:
+     * without this setting such a project could not be analysed at all. Unset means javaHome.
+     */
+    @Nullable
+    private transient File jdtlsJavaHome;
 
     /** Maven installation used to invoke the forked build. Unset lets the invoker resolve one from the environment. */
     @Nullable

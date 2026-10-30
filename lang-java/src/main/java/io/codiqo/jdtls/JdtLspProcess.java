@@ -4,10 +4,11 @@ import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -17,10 +18,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import java.util.zip.ZipOutputStream;
 
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
-import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.SystemUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.rauschig.jarchivelib.Archiver;
@@ -31,6 +33,7 @@ import org.zeroturnaround.process.JavaProcess;
 import org.zeroturnaround.process.Processes;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Joiner;
 import com.google.common.collect.Lists;
 
 import io.codiqo.api.RunArgs;
@@ -39,15 +42,20 @@ import io.codiqo.api.logging.LogFactory;
 import io.codiqo.util.Fetch;
 
 public class JdtLspProcess implements Closeable {
-    private static final int MIN_JDK_LANGUAGE_SERVER = 21;
-
-    /** the one threshold the fork can still miss: requireLanguageServerJdk admits 21 and 22 */
+    /** the one threshold the fork can still miss: a language server before 1.62.0 starts on 21 and 22 (LanguageServerJdk) */
     private static final int MIN_JDK_SUN_MISC_UNSAFE_FLAG = 23;
 
     private static final String JAR_EXTENSION = "jar";
     private static final String RUNTIME_NAME_PREFIX = "JavaSE-";
     private static final String EMPTY_SOURCES_ARCHIVE = "jdk-without-sources.zip";
     private static final String EXTENSION_BUNDLE_RESOURCE = "jdtls/codiqo-jdtls-extension.jar";
+    private static final String LOG_EXTENSION = "log";
+    /** the lines of an OSGi resolution failure that name the bundle and what it lacked */
+    private static final String UNRESOLVED_MODULE = "org.osgi.framework.BundleException: Could not resolve module";
+    private static final String UNRESOLVED_REQUIREMENT = "Unresolved requirement";
+    private static final String EXECUTION_ENVIRONMENT = "osgi.ee";
+    private static final int LAUNCH_FAILURE_LINE_LIMIT = 2;
+    private static final Joiner LAUNCH_FAILURE_CAUSES = Joiner.on("; ");
     private static final long GRACEFUL_SHUTDOWN_MINUTES = 1L;
     private static final long FORCED_SHUTDOWN_SECONDS = 30L;
 
@@ -55,13 +63,14 @@ public class JdtLspProcess implements Closeable {
     private final Log log;
     private final JavaProcess process;
     private final File dataDir;
+    private final Path configDir;
     private final Map<String, Object> runtime;
     private final Path extensionBundle;
 
     public JdtLspProcess(LogFactory logFactory, RunArgs args, Fetch fetch, int port) throws IOException {
         this.log = logFactory.getLogger(getClass());
 
-        Runtime.Version spawnedJavaVersion = requireLanguageServerJdk(args);
+        LanguageServerJdk.ServerJdk serverJdk = LanguageServerJdk.require(args);
 
         Properties lookup = new Properties();
         OSDetector detector = new OSDetector(logFactory);
@@ -77,17 +86,18 @@ public class JdtLspProcess implements Closeable {
 
         Path launcherJar;
         Path config = tempDir.resolve(os);
+        this.configDir = config;
         Path data = Files.createTempDirectory("data-" + args.effectiveJdtlsVersion());
         this.dataDir = data.toFile();
         this.dataDir.deleteOnExit();
 
         /**
-         * the JDK the version check above read: codiqo.javaHome, else the one running codiqo. The server runs on exactly
-         * this JDK so that the runtime registered in its settings names the JDK it already knows about (see
-         * runtimeWithoutSources).
+         * The server runs on exactly the JDK home the version check above read (codiqo.javaHome, else the one running
+         * codiqo, as that JDK reports its own java.home), so that the runtime registered in its settings names the JDK it
+         * already knows about (see runtimeWithoutSources). A Homebrew keg root such as opt/openjdk@25 holds no lib
+         * directory of its own, so registering it would leave every project without a usable JRE container.
          */
-        File languageServerJdk = Optional.ofNullable(args.getJavaHome()).orElseGet(SystemUtils::getJavaHome);
-        this.runtime = runtimeWithoutSources(languageServerJdk, spawnedJavaVersion, data);
+        this.runtime = runtimeWithoutSources(serverJdk.getHome(), serverJdk.getFeature(), data);
         this.extensionBundle = extractExtensionBundle(data);
 
         try (Stream<Path> files = Files.list(tempDir.resolve("plugins"))) {
@@ -98,7 +108,7 @@ public class JdtLspProcess implements Closeable {
                     .orElseThrow(() -> new IllegalStateException("could not find 'equinox' launcher jar"));
         }
 
-        String java = languageServerJdk.toPath().normalize().resolve("bin").resolve(SystemUtils.IS_OS_WINDOWS ? "java.exe" : "java").toFile().getAbsolutePath();
+        String java = serverJdk.getHome().toPath().normalize().resolve("bin").resolve(SystemUtils.IS_OS_WINDOWS ? "java.exe" : "java").toFile().getAbsolutePath();
 
         List<String> cmd = Lists.newArrayList();
         cmd.add(java);
@@ -195,7 +205,7 @@ public class JdtLspProcess implements Closeable {
 
         cmd.add("-XX:+UseZGC");
 
-        if (spawnedJavaVersion.feature() >= MIN_JDK_SUN_MISC_UNSAFE_FLAG) {
+        if (serverJdk.getFeature() >= MIN_JDK_SUN_MISC_UNSAFE_FLAG) {
             cmd.add("--sun-misc-unsafe-memory-access=allow");
         }
 
@@ -221,6 +231,19 @@ public class JdtLspProcess implements Closeable {
     }
     public Path getExtensionBundle() {
         return extensionBundle;
+    }
+    /**
+     * Why the Eclipse launcher refused to start, as the OSGi framework wrote it to the configuration directory's log:
+     * on exit code 13 the process prints only "An error has occurred. See the log file", and the log names the bundle
+     * that could not be resolved and the requirement it missed, such as a newer Java than the one the server runs on.
+     */
+    public Optional<String> launchFailure() {
+        try {
+            return launchFailure(configDir);
+        } catch (IOException err) {
+            log.warn("could not read the language server's configuration log: " + err.getMessage());
+            return Optional.empty();
+        }
     }
     @Override
     public void close() throws IOException {
@@ -283,47 +306,54 @@ public class JdtLspProcess implements Closeable {
      * runner's tool-cache symlink) registers a second runtime and leaves the first, sources and all, in place.
      */
     @VisibleForTesting
-    public static Map<String, Object> runtimeWithoutSources(File jdkHome, Runtime.Version version, Path dir) throws IOException {
+    public static Map<String, Object> runtimeWithoutSources(File jdkHome, int feature, Path dir) throws IOException {
         Path emptySources = dir.resolve(EMPTY_SOURCES_ARCHIVE);
         try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(emptySources))) {
             zip.finish();
         }
         return Map.of(
-                "name", RUNTIME_NAME_PREFIX + version.feature(),
+                "name", RUNTIME_NAME_PREFIX + feature,
                 "path", jdkHome.toPath().toRealPath().toString(),
                 "sources", emptySources.toString(),
                 "default", true);
     }
-    public static Runtime.Version requireLanguageServerJdk(RunArgs args) throws IOException {
-        Runtime.Version toReturn = detectSpawnedJavaVersion(args.getJavaHome());
-        if (toReturn.feature() < MIN_JDK_LANGUAGE_SERVER) {
-            throw new IOException(String.format(Locale.ROOT,
-                    "the Eclipse JDT language server needs Java %d or newer, but the analysis fork would run on Java %s (%s)"
-                            + " — point codiqo.javaHome at a Java %d+ JDK; the analysed project keeps its own release level",
-                    MIN_JDK_LANGUAGE_SERVER,
-                    toReturn,
-                    Objects.nonNull(args.getJavaHome()) ? args.getJavaHome().getAbsolutePath() : "the JDK running codiqo",
-                    MIN_JDK_LANGUAGE_SERVER));
+    /**
+     * The newest log's requirement on a Java version (osgi.ee), with the bundle that missed it, else its first two
+     * resolution lines. One bundle the platform cannot resolve leaves every bundle that requires it unresolved as well,
+     * and the framework may log one of those first: its "Require-Bundle" line names a consequence, while the Java
+     * version is the cause, and the one thing the message needs to say.
+     */
+    @VisibleForTesting
+    public static Optional<String> launchFailure(Path configDir) throws IOException {
+        Optional<Path> newest;
+        try (Stream<Path> logs = Files.list(configDir)) {
+            newest = logs
+                    .filter(file -> LOG_EXTENSION.equals(FilenameUtils.getExtension(file.toString())))
+                    .max(Comparator.comparing(file -> file.toFile().lastModified()));
         }
-        return toReturn;
-    }
-    public static Runtime.Version detectSpawnedJavaVersion(File javaHome) throws IOException {
-        if (Objects.nonNull(javaHome)) {
-            File releaseFile = new File(javaHome, "release");
-            if (releaseFile.isFile()) {
-                Properties props = new Properties();
-                try (InputStream in = Files.newInputStream(releaseFile.toPath())) {
-                    props.load(in);
-                }
-                String version = StringUtils.strip(props.getProperty("JAVA_VERSION"), "\"");
-                if (StringUtils.isNotBlank(version)) {
-                    return Runtime.Version.parse(version);
+        if (newest.isPresent()) {
+            List<String> lines = Files.readAllLines(newest.get(), StandardCharsets.UTF_8).stream().map(String::strip).toList();
+
+            Optional<String> module = Optional.empty();
+            for (String line : lines) {
+                if (Strings.CS.startsWith(line, UNRESOLVED_MODULE)) {
+                    module = Optional.of(line);
+                } else if (BooleanUtils.and(new boolean[] { Strings.CS.startsWith(line, UNRESOLVED_REQUIREMENT), Strings.CS.contains(line, EXECUTION_ENVIRONMENT) })) {
+                    return Optional.of(module.map(bundle -> LAUNCH_FAILURE_CAUSES.join(bundle, line)).orElse(line));
                 }
             }
-        }
-        return Runtime.version();
-    }
 
+            List<String> causes = lines.stream()
+                    .filter(line -> Strings.CS.startsWithAny(line, UNRESOLVED_MODULE, UNRESOLVED_REQUIREMENT))
+                    .distinct()
+                    .limit(LAUNCH_FAILURE_LINE_LIMIT)
+                    .toList();
+            if (CollectionUtils.isNotEmpty(causes)) {
+                return Optional.of(LAUNCH_FAILURE_CAUSES.join(causes));
+            }
+        }
+        return Optional.empty();
+    }
     private static class OSDetector extends kr.motd.maven.os.Detector {
         private final Log log;
         private final Properties properties = new Properties();

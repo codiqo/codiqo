@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jgit.api.Git;
@@ -92,6 +93,11 @@ class LibraryClassFileCallersTest {
         RunArgs args = new RunArgs();
         args.setBuildTool(BuildTool.MAVEN);
         args.setJavaHome(new File(System.getProperty("java.home")));
+        /**
+         * The default language server needs Java 25. A build that runs this test on an older JDK names one for the server
+         * alone with -Dcodiqo.jdtlsJavaHome, as the release workflow does; without it the server runs on this JVM.
+         */
+        Optional.ofNullable(System.getProperty("codiqo.jdtlsJavaHome")).map(File::new).ifPresent(args::setJdtlsJavaHome);
         args.getProjects().add(module(root, root.resolve("src/main/java"), root.resolve("target/classes")));
 
         try (Git git = Git.init().setDirectory(root.toFile()).call();

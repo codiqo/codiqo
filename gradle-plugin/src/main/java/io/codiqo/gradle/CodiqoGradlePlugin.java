@@ -1,6 +1,7 @@
 package io.codiqo.gradle;
 
 import java.io.File;
+import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -13,6 +14,8 @@ import java.util.regex.Pattern;
 import javax.inject.Inject;
 
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.gradle.api.GradleException;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
@@ -29,6 +32,8 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.core.DefaultLanguageProcessors;
+import io.codiqo.gradle.model.AnalysisRequest;
 
 public abstract class CodiqoGradlePlugin implements Plugin<Project> {
     private static final String EXTENSION_NAME = "codiqo";
@@ -71,7 +76,9 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
         project.getGradle().getTaskGraph().whenReady(graph -> {
             CodiqoSubmitAnalysisTask task = (CodiqoSubmitAnalysisTask) project.getTasks().getByName(SUBMIT_TASK);
             if (graph.hasTask(task)) {
-                task.setRequest(GradleModelCollector.collect(project.getRootProject(), ext));
+                AnalysisRequest request = GradleModelCollector.collect(project.getRootProject(), ext);
+                requireRuntime(request);
+                task.setRequest(request);
                 task.setScheduledTasks(List.copyOf(graph.getAllTasks()));
             }
         });
@@ -126,6 +133,30 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
                     });
             service.get().expect(tasksByProject, ids);
         });
+    }
+    /**
+     * The full analysis's JDK check (DefaultLanguageProcessors.requireRuntime), run while no task has started: Gradle
+     * builds and tests the commit before the analysis worker starts, so a check in the worker let every scheduled run
+     * on a machine with the wrong JDK pay for the whole build again before it failed. Here, in the daemon, a refusal
+     * also halts nothing, since only the worker halts the project. It reads the request the worker receives, so it
+     * checks the JDK and language server the worker would start.
+     */
+    private static void requireRuntime(AnalysisRequest request) {
+        RunArgs args = new RunArgs();
+        args.setJavaHome(new File(request.getJavaHome()));
+        Optional.ofNullable(request.getJdtlsJavaHome()).filter(StringUtils::isNotBlank).map(File::new).ifPresent(args::setJdtlsJavaHome);
+        args.setJdtlsVersion(request.getJdtlsVersion());
+        args.setJdtlsUseSnapshot(request.isJdtlsUseSnapshot());
+        try {
+            DefaultLanguageProcessors.requireRuntime(args);
+        } catch (IOException err) {
+            /**
+             * Rethrown as it is, not wrapped: Gradle heads its failure report with the thrown exception, and the wrapper
+             * ExceptionUtils.wrapAndThrow makes headed it with "UndeclaredThrowableException (no error message)",
+             * leaving the line that says what to change as a cause below it.
+             */
+            ExceptionUtils.rethrow(err);
+        }
     }
     private static void registerAnalysisTask(Project project) {
         project.getTasks().register(SUBMIT_TASK, CodiqoSubmitAnalysisTask.class, task -> {

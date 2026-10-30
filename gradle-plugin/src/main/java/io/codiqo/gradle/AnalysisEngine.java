@@ -118,6 +118,7 @@ public class AnalysisEngine {
         Optional.ofNullable(request.getTestFailureHoldShare()).filter(StringUtils::isNotBlank).map(String::trim).map(Double::parseDouble).ifPresent(args::setTestFailureHoldShare);
         Optional.ofNullable(request.getTestFailureHoldMinTests()).filter(StringUtils::isNotBlank).map(String::trim).map(Integer::parseInt).ifPresent(args::setTestFailureHoldMinTests);
         args.setJavaHome(new File(request.getJavaHome()));
+        Optional.ofNullable(request.getJdtlsJavaHome()).filter(StringUtils::isNotBlank).map(File::new).ifPresent(args::setJdtlsJavaHome);
         args.setOutputDirectory(new File(request.getOutputDirectory()));
         Optional.ofNullable(request.getBuildProgressFile()).map(File::new).ifPresent(args::setBuildProgressFile);
 

@@ -163,6 +163,14 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             getLog().info(String.format("merge commit %s analyzed via first-parent delta, credited to side-branch author %s",
                     commitId, CommitExclusions.creditedAuthorEmail(args)));
         }
+        /**
+         * Before doBeforeAnalysis, where submit-commit-analysis records the commit as one whose failure halts the
+         * project: a JDK the language server cannot start on is the machine's to fix, so its refusal fails the run before
+         * anything is built and halts nothing. A halt would add an administrator's resume to the fix of the machine,
+         * while the next scheduled run fails the same cheap way until the machine is fixed. A commit excluded above
+         * needs no language server, so it is excluded whatever the JDK.
+         */
+        DefaultLanguageProcessors.requireRuntime(args);
         doBeforeAnalysis(args);
 
         File temp = Files.createTempDirectory("codiqo").toFile();

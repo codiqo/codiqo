@@ -75,6 +75,7 @@ import io.codiqo.core.diff.GitDiffHunk;
 import io.codiqo.core.diff.GitFileAnalysis;
 import io.codiqo.core.java.JavaLanguageSpec;
 import io.codiqo.core.java.JavaReviewLanguage;
+import io.codiqo.jdtls.LanguageServerJdk;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.lang.spec.PmdAffectedSymbolInfo;
 import io.codiqo.util.Fetch;
@@ -453,6 +454,18 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     /** what the local review needs to know about each registered language, known before a registry is built */
     public static List<ReviewLanguage> reviewLanguages() {
         return List.of(new JavaReviewLanguage());
+    }
+    /**
+     * Fails when this machine cannot run what the registered languages' full analysis starts: the Java analysis's
+     * language server and the JDK it needs (LanguageServerJdk). Both plugins call it before the commit is built and
+     * before a failed run can halt the project: Maven before it records the commit as one that may halt, Gradle when its
+     * task graph is ready, in the daemon, while only the analysis worker halts. A JDK the server cannot start on is the
+     * machine's to fix, so its refusal fails the run and halts nothing. The language server checks its JDK again as it
+     * starts, after the review, and there a refusal halts the project like any other failure, since the next scheduled
+     * run would pay for the review again.
+     */
+    public static void requireRuntime(RunArgs args) throws IOException {
+        LanguageServerJdk.require(args);
     }
     private static int identifyRemoved(LanguageSpec processor, ProjectSpec owner, Map<GitFileAnalysis, Set<Integer>> removedLinesByFile) throws IOException {
         List<PreviousRevision> revisions = removedLinesByFile.keySet().stream()
