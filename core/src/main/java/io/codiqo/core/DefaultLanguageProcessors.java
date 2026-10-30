@@ -459,7 +459,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
      * Fails when this machine cannot run what the registered languages' full analysis starts: the Java analysis's
      * language server and the JDK it needs (LanguageServerJdk). Both plugins call it before a commit's full analysis is
      * paid for: Maven before it builds the commit, Gradle, whose worker starts after the build, before the language
-     * server is downloaded and the review starts.
+     * server is downloaded and the review starts. What it refuses halts nothing (RuntimeRequirementException).
      */
     public static void requireRuntime(RunArgs args) throws IOException {
         LanguageServerJdk.require(args);

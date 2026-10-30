@@ -51,8 +51,11 @@ public class JdtLspProcess implements Closeable {
     private static final String EXTENSION_BUNDLE_RESOURCE = "jdtls/codiqo-jdtls-extension.jar";
     private static final String LOG_EXTENSION = "log";
     /** the lines of an OSGi resolution failure that name the bundle and what it lacked */
-    private static final String[] LAUNCH_FAILURE_LINES = { "org.osgi.framework.BundleException: Could not resolve module", "Unresolved requirement" };
+    private static final String UNRESOLVED_MODULE = "org.osgi.framework.BundleException: Could not resolve module";
+    private static final String UNRESOLVED_REQUIREMENT = "Unresolved requirement";
+    private static final String EXECUTION_ENVIRONMENT = "osgi.ee";
     private static final int LAUNCH_FAILURE_LINE_LIMIT = 2;
+    private static final Joiner LAUNCH_FAILURE_CAUSES = Joiner.on("; ");
     private static final long GRACEFUL_SHUTDOWN_MINUTES = 1L;
     private static final long FORCED_SHUTDOWN_SECONDS = 30L;
 
@@ -67,7 +70,7 @@ public class JdtLspProcess implements Closeable {
     public JdtLspProcess(LogFactory logFactory, RunArgs args, Fetch fetch, int port) throws IOException {
         this.log = logFactory.getLogger(getClass());
 
-        Runtime.Version spawnedJavaVersion = LanguageServerJdk.require(args);
+        LanguageServerJdk.ServerJdk serverJdk = LanguageServerJdk.require(args);
 
         Properties lookup = new Properties();
         OSDetector detector = new OSDetector(logFactory);
@@ -89,12 +92,12 @@ public class JdtLspProcess implements Closeable {
         this.dataDir.deleteOnExit();
 
         /**
-         * the JDK the version check above read: codiqo.javaHome, else the one running codiqo. The server runs on exactly
-         * this JDK so that the runtime registered in its settings names the JDK it already knows about (see
-         * runtimeWithoutSources).
+         * The server runs on exactly the JDK home the version check above read (codiqo.javaHome, else the one running
+         * codiqo, resolved past a link to the JDK itself), so that the runtime registered in its settings names the JDK it
+         * already knows about (see runtimeWithoutSources). A Homebrew keg root such as opt/openjdk@25 holds no lib
+         * directory of its own, so registering it would leave every project without a usable JRE container.
          */
-        File languageServerJdk = Optional.ofNullable(args.getJavaHome()).orElseGet(SystemUtils::getJavaHome);
-        this.runtime = runtimeWithoutSources(languageServerJdk, spawnedJavaVersion, data);
+        this.runtime = runtimeWithoutSources(serverJdk.getHome(), serverJdk.getVersion(), data);
         this.extensionBundle = extractExtensionBundle(data);
 
         try (Stream<Path> files = Files.list(tempDir.resolve("plugins"))) {
@@ -105,7 +108,7 @@ public class JdtLspProcess implements Closeable {
                     .orElseThrow(() -> new IllegalStateException("could not find 'equinox' launcher jar"));
         }
 
-        String java = languageServerJdk.toPath().normalize().resolve("bin").resolve(SystemUtils.IS_OS_WINDOWS ? "java.exe" : "java").toFile().getAbsolutePath();
+        String java = serverJdk.getHome().toPath().normalize().resolve("bin").resolve(SystemUtils.IS_OS_WINDOWS ? "java.exe" : "java").toFile().getAbsolutePath();
 
         List<String> cmd = Lists.newArrayList();
         cmd.add(java);
@@ -202,7 +205,7 @@ public class JdtLspProcess implements Closeable {
 
         cmd.add("-XX:+UseZGC");
 
-        if (spawnedJavaVersion.feature() >= MIN_JDK_SUN_MISC_UNSAFE_FLAG) {
+        if (serverJdk.getVersion().feature() >= MIN_JDK_SUN_MISC_UNSAFE_FLAG) {
             cmd.add("--sun-misc-unsafe-memory-access=allow");
         }
 
@@ -314,6 +317,12 @@ public class JdtLspProcess implements Closeable {
                 "sources", emptySources.toString(),
                 "default", true);
     }
+    /**
+     * The newest log's requirement on a Java version (osgi.ee), with the bundle that missed it, else its first two
+     * resolution lines. One bundle the platform cannot resolve leaves every bundle that requires it unresolved as well,
+     * and the framework may log one of those first: its "Require-Bundle" line names a consequence, while the Java
+     * version is the cause, and the one thing the message needs to say.
+     */
     @VisibleForTesting
     public static Optional<String> launchFailure(Path configDir) throws IOException {
         Optional<Path> newest;
@@ -323,14 +332,24 @@ public class JdtLspProcess implements Closeable {
                     .max(Comparator.comparing(file -> file.toFile().lastModified()));
         }
         if (newest.isPresent()) {
-            List<String> causes = Files.readAllLines(newest.get(), StandardCharsets.UTF_8).stream()
-                    .map(String::strip)
-                    .filter(line -> Strings.CS.startsWithAny(line, LAUNCH_FAILURE_LINES))
+            List<String> lines = Files.readAllLines(newest.get(), StandardCharsets.UTF_8).stream().map(String::strip).toList();
+
+            Optional<String> module = Optional.empty();
+            for (String line : lines) {
+                if (Strings.CS.startsWith(line, UNRESOLVED_MODULE)) {
+                    module = Optional.of(line);
+                } else if (BooleanUtils.and(new boolean[] { Strings.CS.startsWith(line, UNRESOLVED_REQUIREMENT), Strings.CS.contains(line, EXECUTION_ENVIRONMENT) })) {
+                    return Optional.of(module.map(bundle -> LAUNCH_FAILURE_CAUSES.join(bundle, line)).orElse(line));
+                }
+            }
+
+            List<String> causes = lines.stream()
+                    .filter(line -> Strings.CS.startsWithAny(line, UNRESOLVED_MODULE, UNRESOLVED_REQUIREMENT))
                     .distinct()
                     .limit(LAUNCH_FAILURE_LINE_LIMIT)
                     .toList();
             if (CollectionUtils.isNotEmpty(causes)) {
-                return Optional.of(Joiner.on("; ").join(causes));
+                return Optional.of(LAUNCH_FAILURE_CAUSES.join(causes));
             }
         }
         return Optional.empty();

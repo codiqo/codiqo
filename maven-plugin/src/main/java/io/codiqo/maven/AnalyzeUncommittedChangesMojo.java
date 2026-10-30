@@ -89,7 +89,10 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
     }
     @Override
     protected void doExecute(RunArgs args) throws Exception {
-        /** before the review is paid for: a JDK the language server cannot start on would fail the analysis after it */
+        /**
+         * Before the review is paid for: the analysis that follows it starts the language server, so a JDK the server
+         * cannot start on would fail the goal only after the review had been paid for.
+         */
         DefaultLanguageProcessors.requireRuntime(args);
         try (ClassGraphSpec scan = scanProjects(args, reactors)) {
             startReview(args);

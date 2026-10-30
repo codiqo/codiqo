@@ -26,6 +26,7 @@ import io.codiqo.llm.review.ReviewProviderException;
 import io.codiqo.submit.auth.ApiKeyCredential;
 import io.codiqo.submit.review.LocalReviewException;
 import io.codiqo.util.DownloadFailedException;
+import io.codiqo.util.RuntimeRequirementException;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaderValues;
 import io.netty.handler.codec.http.HttpResponseStatus;
@@ -45,6 +46,13 @@ class ProjectHaltsTest {
                 new IOException("stream was reset: CANCEL"));
 
         assertTrue(ProjectHalts.haltsNothing(new IllegalStateException(new UndeclaredThrowableException(download))));
+    }
+    /** the Maven plugin wraps what a goal throws, so the requirement is found however deep it sits */
+    @Test
+    void aJdkTheLanguageServerCannotStartOnHaltsNothing() {
+        RuntimeRequirementException jdk = new RuntimeRequirementException("the Eclipse JDT language server 1.63.0 needs Java 25 or newer, but it would run on Java 21.0.5");
+
+        assertTrue(ProjectHalts.haltsNothing(new IllegalStateException(jdk)));
     }
     @Test
     void anAuthorsBrokenBuildHaltsNothing() {

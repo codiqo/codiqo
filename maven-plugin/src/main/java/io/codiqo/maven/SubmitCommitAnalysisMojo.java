@@ -93,7 +93,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
      * A run that fails here submits nothing, so the next scheduled run would analyse the same commit and pay for its
      * review again, every hour. The project is halted instead, and stays halted until an administrator resumes it,
      * unless the failure halts nothing ({@link ProjectHalts#haltsNothing}: a stopped run, the author's broken build, a
-     * failed download); a halted project is already halted.
+     * failed download, a JDK the language server cannot start on); a halted project is already halted.
      */
     @Override
     protected void doOnFailure(RunArgs args, Exception err) {

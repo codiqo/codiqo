@@ -1901,8 +1901,9 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
      * that does not follow them visits such a link as one file: the root link was "seeded" as the private repository's
      * own root, the copy fallback failed with FileAlreadyExistsException, and every commit of the run failed and halted
      * the project; a link further down linked the host's own directory, snapshots and metadata included, into the
-     * private repository. Each file is hard-linked by its real path, since a hard link to a symbolic link would be a
-     * second symbolic link.
+     * private repository. A file that is itself a symbolic link is hard-linked by its real path, since a hard link to
+     * a symbolic link would be a second symbolic link on Linux; a link among its directories is resolved by the
+     * filesystem anyway.
      *
      * <p>Seeding is best-effort throughout, since whatever it leaves out is downloaded again: a repository, directory or
      * file that cannot be read or seeded (a dangling link, a loop, an entry another build removed mid-walk) is logged
@@ -1935,6 +1936,17 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                 }
                 return FileVisitResult.CONTINUE;
             }
+            /**
+             * a directory whose listing breaks off midway (another build removing entries while it is read) arrives
+             * here with the error, which SimpleFileVisitor rethrows and which would fail the commit over a cache
+             */
+            @Override
+            public FileVisitResult postVisitDirectory(Path dir, IOException err) {
+                if (Objects.nonNull(err)) {
+                    visitFileFailed(dir, err);
+                }
+                return FileVisitResult.CONTINUE;
+            }
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
                 /** a dangling link reaches here with the link's own attributes, and there is nothing behind it to seed */
@@ -1955,7 +1967,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             private void seed(Path file, Path link) throws IOException {
                 Files.createDirectories(link.getParent());
                 try {
-                    Files.createLink(link, file.toRealPath());
+                    Files.createLink(link, Files.isSymbolicLink(file) ? file.toRealPath() : file);
                 } catch (IOException | UnsupportedOperationException err) {
                     if (copyFallback.compareAndSet(false, true)) {
                         log.warn(String.format(

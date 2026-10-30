@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.util.RuntimeRequirementException;
 
 /**
  * Which Java a language server release starts on, measured by launching each archive on JDK 21: 1.61.0 started, while
@@ -38,6 +39,24 @@ class LanguageServerJdkTest {
         assertEquals(25, LanguageServerJdk.minimum("1.100.0"));
         assertEquals(25, LanguageServerJdk.minimum("2.0.0"));
     }
+    /** a build's qualifier is no release number: "1.63.0-SNAPSHOT" is 1.63.0, and a name without one is a new release */
+    @Test
+    void qualifiedAndUnnumberedVersionsAreReadByTheirReleaseNumber() {
+        assertEquals(25, LanguageServerJdk.minimum("1.63.0-SNAPSHOT"));
+        assertEquals(25, LanguageServerJdk.minimum("1.62.0.202610300819"));
+        assertEquals(21, LanguageServerJdk.minimum("1.61.0-SNAPSHOT"));
+        assertEquals(25, LanguageServerJdk.minimum("latest"));
+    }
+    /** an empty jdtlsVersion property is no version, so the default server's minimum applies */
+    @Test
+    void aBlankVersionIsTheDefaultServer() throws Exception {
+        RunArgs args = args(home("21.0.5"));
+        args.setJdtlsVersion(StringUtils.SPACE);
+
+        IOException err = assertThrows(IOException.class, () -> LanguageServerJdk.require(args));
+
+        assertTrue(Strings.CS.contains(err.getMessage(), RunArgs.JDTLS_MIRRORED_VERSION), err.getMessage());
+    }
     @Test
     void theDefaultLanguageServerNeedsJava25() {
         assertEquals(25, LanguageServerJdk.minimum(RunArgs.JDTLS_MIRRORED_VERSION));
@@ -51,7 +70,7 @@ class LanguageServerJdkTest {
     }
     @Test
     void aJava25HomeIsAccepted() throws Exception {
-        assertEquals(25, LanguageServerJdk.require(args(home("25.0.1"))).feature());
+        assertEquals(25, LanguageServerJdk.require(args(home("25.0.1"))).getVersion().feature());
     }
     /** a pinned build missing from the cache would be looked up on download.eclipse.org if the version were resolved */
     @Test
@@ -59,7 +78,7 @@ class LanguageServerJdkTest {
         RunArgs args = args(home("21.0.5"));
         args.setJdtlsVersion("1.61.0");
 
-        assertEquals(21, LanguageServerJdk.require(args).feature());
+        assertEquals(21, LanguageServerJdk.require(args).getVersion().feature());
     }
     /** the snapshots channel builds from the newest line, so its version is not looked up to know it needs Java 25 */
     @Test
@@ -87,7 +106,15 @@ class LanguageServerJdkTest {
         Path linked = Files.createDirectories(tempDir.resolve("opt/openjdk@25/bin"));
         Files.createSymbolicLink(linked.resolve("java"), java);
 
-        assertEquals(25, LanguageServerJdk.require(args(linked.getParent())).feature());
+        LanguageServerJdk.ServerJdk serverJdk = LanguageServerJdk.require(args(linked.getParent()));
+
+        assertEquals(25, serverJdk.getVersion().feature());
+        assertEquals(jdk.toRealPath(), serverJdk.getHome().toPath().toRealPath());
+    }
+    /** a refused JDK is the machine's to fix, and halting the project would add an administrator's resume to it */
+    @Test
+    void aRefusedJdkIsARuntimeRequirement() throws Exception {
+        assertThrows(RuntimeRequirementException.class, () -> LanguageServerJdk.require(args(home("21.0.5"))));
     }
     /** a mistyped path, or a home that is no JDK, is not replaced by the JVM running codiqo, which may pass the check */
     @Test

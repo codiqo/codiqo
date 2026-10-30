@@ -43,6 +43,24 @@ class LaunchFailureTest {
         assertTrue(Strings.CS.contains(cause, "Could not resolve module: org.eclipse.core.resources"), cause);
         assertTrue(Strings.CS.contains(cause, "version=25"), cause);
     }
+    /** a bundle that requires an unresolved one is logged first, while the Java version is what the server lacks */
+    @Test
+    void theJavaVersionRequirementIsReportedBeforeABundleThatOnlyFollowsFromIt() throws Exception {
+        Files.writeString(tempDir.resolve("1793347194162.log"), """
+                !ENTRY org.eclipse.osgi 4 0 2026-10-30 08:19:54.598
+                org.osgi.framework.BundleException: Could not resolve module: org.eclipse.jdt.ls.core [52]
+                  Unresolved requirement: Require-Bundle: org.eclipse.core.resources
+                !ENTRY org.eclipse.osgi 4 0 2026-10-30 08:19:54.601
+                org.osgi.framework.BundleException: Could not resolve module: org.eclipse.core.resources [31]
+                  Unresolved requirement: Require-Bundle: org.eclipse.core.expressions
+                  Unresolved requirement: Require-Capability: osgi.ee; filter:="(&(osgi.ee=JavaSE)(version=25))"
+                """, StandardCharsets.UTF_8);
+
+        assertEquals(
+                "org.osgi.framework.BundleException: Could not resolve module: org.eclipse.core.resources [31]; "
+                        + "Unresolved requirement: Require-Capability: osgi.ee; filter:=\"(&(osgi.ee=JavaSE)(version=25))\"",
+                JdtLspProcess.launchFailure(tempDir).orElseThrow());
+    }
     @Test
     void noLogMeansNoReason() throws Exception {
         assertEquals(Optional.empty(), JdtLspProcess.launchFailure(tempDir));

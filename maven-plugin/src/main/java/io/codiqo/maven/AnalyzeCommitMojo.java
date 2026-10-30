@@ -244,8 +244,9 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
             requireCoverageAgent(args);
             /**
              * Here for the same reason: a JDK the language server cannot start on fails the full analysis, and found
-             * after the compile run it would have cost a build. A merge or a filtered commit starts no language server,
-             * so it is excluded above whatever the JDK.
+             * after the compile run it would have cost a build. It halts nothing (RuntimeRequirementException), since
+             * the machine is what needs fixing. A commit excluded above needs no language server, so it is excluded
+             * whatever the JDK.
              */
             DefaultLanguageProcessors.requireRuntime(args);
 
