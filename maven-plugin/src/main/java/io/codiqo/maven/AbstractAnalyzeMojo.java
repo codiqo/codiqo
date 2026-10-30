@@ -920,7 +920,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                 }
             } else {
                 FileUtils.forceMkdir(localRepository);
-                seedReleaseArtifacts(new File(mavenSession.getRepositorySession().getLocalRepositoryManager().getRepository().getBasedir().getAbsolutePath()), localRepository);
+                seedReleaseArtifacts(new File(mavenSession.getRepositorySession().getLocalRepositoryManager().getRepository().getBasedir().getAbsolutePath()), localRepository, new MavenLogFactory(getLog()).getLogger(AbstractAnalyzeMojo.class));
             }
             args.setLocalRepositoryDir(localRepository);
 
@@ -1038,9 +1038,16 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
      * newer timestamp already cached, and all resolution metadata, since it records what today's registry offered.
      * _remote.repositories goes too — without it Maven treats a cached artifact as locally installed and always
      * serves it, instead of refusing one whose recording repository id is out of scope.
+     *
+     * <p>The host repository is walked from its real path. A CI cache usually puts the repository in place as a
+     * symbolic link (a GitLab job cannot cache the home directory, so ~/.m2/repository points into the project
+     * directory), and a walk that does not follow links visits such a root as one file: it was then "seeded" as the
+     * private repository's own root, the copy fallback failed with FileAlreadyExistsException, and every commit of
+     * the run failed and halted the project.
      */
-    private void seedReleaseArtifacts(File source, File target) throws IOException {
-        Path sourceRoot = source.toPath();
+    @VisibleForTesting
+    public static void seedReleaseArtifacts(File source, File target, Log log) throws IOException {
+        Path sourceRoot = source.toPath().toRealPath();
         Path targetRoot = target.toPath();
         AtomicBoolean copyFallback = new AtomicBoolean();
 
@@ -1053,7 +1060,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
              */
             @Override
             public FileVisitResult visitFileFailed(Path file, IOException err) {
-                getLog().warn(String.format("could not seed %s into the private local repository: %s", file, err.getMessage()));
+                log.warn(String.format("could not seed %s into the private local repository: %s", file, err.getMessage()));
                 return FileVisitResult.CONTINUE;
             }
             @Override
@@ -1082,7 +1089,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                         Files.createLink(link, file);
                     } catch (IOException | UnsupportedOperationException err) {
                         if (copyFallback.compareAndSet(false, true)) {
-                            getLog().warn(String.format(
+                            log.warn(String.format(
                                     "cannot hard-link into %s (%s) — seeding falls back to copying, which duplicates the release set on disk. Point java.io.tmpdir at the same filesystem as the local repository to avoid it.",
                                     targetRoot,
                                     err.getMessage()));
