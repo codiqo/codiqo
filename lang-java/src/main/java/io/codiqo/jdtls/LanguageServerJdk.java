@@ -37,11 +37,10 @@ import lombok.experimental.UtilityClass;
 
 /**
  * The JDK the Eclipse JDT language server runs on: codiqo.jdtlsJavaHome, else codiqo.javaHome, else the one running
- * codiqo. Checked twice: once
- * before a commit's full analysis is paid for (DefaultLanguageProcessors.requireRuntime, which makes a refusal a
- * RuntimeRequirementException that halts nothing), and again by JdtLspProcess as the server starts, where a refusal is
- * an ordinary failure. A JDK the server cannot start on then ends the run with a message that says what to change,
- * instead of failing later with "JDT LSP process exited with code: 13".
+ * codiqo. Checked twice: once before the commit is built, where a refusal cannot halt the project yet
+ * (DefaultLanguageProcessors.requireRuntime), and again by JdtLspProcess as the server starts, where it halts the
+ * project like any other failure. A JDK the server cannot start on then ends the run with a message that says what to
+ * change, instead of failing later with "JDT LSP process exited with code: 13".
  */
 @UtilityClass
 public class LanguageServerJdk {

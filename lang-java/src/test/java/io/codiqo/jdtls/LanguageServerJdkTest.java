@@ -1,7 +1,6 @@
 package io.codiqo.jdtls;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -18,7 +17,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.codiqo.api.RunArgs;
-import io.codiqo.util.RuntimeRequirementException;
 
 /**
  * Which Java a language server release starts on, measured by launching each archive on JDK 21: 1.61.0 started, while
@@ -151,17 +149,6 @@ class LanguageServerJdkTest {
 
         assertEquals(Runtime.version().feature(), serverJdk.getFeature());
         assertEquals(SystemUtils.getJavaHome().toPath().toRealPath(), serverJdk.getHome().toPath().toRealPath());
-    }
-    /**
-     * the server checks its JDK again as it starts, after the review was paid for, where a refusal must halt the
-     * project like any other failure; only the check before the build (DefaultLanguageProcessors.requireRuntime) halts
-     * nothing
-     */
-    @Test
-    void theServersOwnRefusalIsAnOrdinaryFailure() throws Exception {
-        IOException err = assertThrows(IOException.class, () -> LanguageServerJdk.require(args(home("21"))));
-
-        assertFalse(err instanceof RuntimeRequirementException, err.toString());
     }
     /** a mistyped path, or a home that is no JDK, is not replaced by the JVM running codiqo, which may pass the check */
     @Test

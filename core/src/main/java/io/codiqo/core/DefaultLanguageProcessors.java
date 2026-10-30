@@ -82,7 +82,6 @@ import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
 import io.codiqo.util.MemoryReport;
 import io.codiqo.util.ProgressStage;
-import io.codiqo.util.RuntimeRequirementException;
 import net.sourceforge.pmd.cpd.CPDConfiguration;
 import net.sourceforge.pmd.cpd.CpdAnalysis;
 import net.sourceforge.pmd.cpd.Mark;
@@ -458,21 +457,15 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     }
     /**
      * Fails when this machine cannot run what the registered languages' full analysis starts: the Java analysis's
-     * language server and the JDK it needs (LanguageServerJdk). Both plugins call it before the commit is built: Maven
-     * after its exclusion gates, Gradle when its task graph is ready, before any task runs, since its own gates run in
-     * the worker after the build.
-     *
-     * <p>What it refuses is a RuntimeRequirementException, which halts nothing: only a change to the machine fixes it,
-     * and nothing was reviewed yet. The language server checks its JDK again as it starts, after the review, and there
-     * the same refusal stays an ordinary failure that halts the project, since the next scheduled run would pay for
-     * the review again.
+     * language server and the JDK it needs (LanguageServerJdk). Both plugins call it before the commit is built and
+     * before a failed run can halt the project: Maven before it records the commit as one that may halt, Gradle when its
+     * task graph is ready, in the daemon, while only the analysis worker halts. A JDK the server cannot start on is the
+     * machine's to fix, so its refusal fails the run and halts nothing. The language server checks its JDK again as it
+     * starts, after the review, and there a refusal halts the project like any other failure, since the next scheduled
+     * run would pay for the review again.
      */
-    public static void requireRuntime(RunArgs args) throws RuntimeRequirementException {
-        try {
-            LanguageServerJdk.require(args);
-        } catch (IOException err) {
-            throw new RuntimeRequirementException(err.getMessage(), err);
-        }
+    public static void requireRuntime(RunArgs args) throws IOException {
+        LanguageServerJdk.require(args);
     }
     private static int identifyRemoved(LanguageSpec processor, ProjectSpec owner, Map<GitFileAnalysis, Set<Integer>> removedLinesByFile) throws IOException {
         List<PreviousRevision> revisions = removedLinesByFile.keySet().stream()

@@ -15,7 +15,6 @@ import io.codiqo.client.model.ProjectHaltRequestModel;
 import io.codiqo.llm.review.ReviewProviderException;
 import io.codiqo.llm.review.ReviewTrace;
 import io.codiqo.util.DownloadFailedException;
-import io.codiqo.util.RuntimeRequirementException;
 import lombok.experimental.UtilityClass;
 
 /**
@@ -44,18 +43,14 @@ public class ProjectHalts {
      * InterruptedIOException) whose root cause is not an InterruptedException. A build the author broke with
      * skipOnBuildFailure off is the author's failure ({@link CommitBuildFailedException}). A tool that could not be
      * downloaded is the download host's ({@link DownloadFailedException}): it heals on its own, and halting on it held
-     * thirteen projects until an administrator resumed each one after download.eclipse.org went down. A machine that
-     * cannot run the analysis ({@link RuntimeRequirementException}, a JDK the language server cannot start on) is found
-     * before the review is paid for, and only a change to the machine fixes it: a halt would add an administrator's
-     * resume to that change.
+     * thirteen projects until an administrator resumed each one after download.eclipse.org went down.
      */
     public boolean haltsNothing(Throwable err) {
         return BooleanUtils.or(new boolean[] {
                 Thread.currentThread().isInterrupted(),
                 ExceptionUtils.getRootCause(err) instanceof InterruptedException,
                 ExceptionUtils.indexOfThrowable(err, CommitBuildFailedException.class) >= 0,
-                ExceptionUtils.indexOfThrowable(err, DownloadFailedException.class) >= 0,
-                ExceptionUtils.indexOfThrowable(err, RuntimeRequirementException.class) >= 0 });
+                ExceptionUtils.indexOfThrowable(err, DownloadFailedException.class) >= 0 });
     }
     /** throws {@link ProjectHaltedException} when the server holds the project's runs */
     public void requireRunning(Log log, CommitIndexApi client, String apiUrl, String projectId) throws ApiException {

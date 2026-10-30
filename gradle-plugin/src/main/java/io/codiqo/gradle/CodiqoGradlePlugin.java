@@ -1,6 +1,7 @@
 package io.codiqo.gradle;
 
 import java.io.File;
+import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -33,7 +34,6 @@ import com.google.common.collect.Maps;
 import io.codiqo.api.RunArgs;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.gradle.model.AnalysisRequest;
-import io.codiqo.util.RuntimeRequirementException;
 
 public abstract class CodiqoGradlePlugin implements Plugin<Project> {
     private static final String EXTENSION_NAME = "codiqo";
@@ -136,9 +136,10 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
     }
     /**
      * The full analysis's JDK check (DefaultLanguageProcessors.requireRuntime), run while no task has started: Gradle
-     * builds and tests the commit before the analysis worker starts, and a refused JDK halts nothing, so a check in the
-     * worker let every scheduled run on such a machine pay for the whole build again before it failed. It reads the
-     * request the worker receives, so it checks the JDK and language server the worker would start.
+     * builds and tests the commit before the analysis worker starts, so a check in the worker let every scheduled run
+     * on a machine with the wrong JDK pay for the whole build again before it failed. Here, in the daemon, a refusal
+     * also halts nothing, since only the worker halts the project. It reads the request the worker receives, so it
+     * checks the JDK and language server the worker would start.
      */
     private static void requireRuntime(AnalysisRequest request) {
         RunArgs args = new RunArgs();
@@ -148,7 +149,7 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
         args.setJdtlsUseSnapshot(request.isJdtlsUseSnapshot());
         try {
             DefaultLanguageProcessors.requireRuntime(args);
-        } catch (RuntimeRequirementException err) {
+        } catch (IOException err) {
             /**
              * Rethrown as it is, not wrapped: Gradle heads its failure report with the thrown exception, and the wrapper
              * ExceptionUtils.wrapAndThrow makes headed it with "UndeclaredThrowableException (no error message)",
