@@ -6,8 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -25,10 +25,15 @@ class DefaultLanguageProcessorsRuntimeTest {
      */
     @Test
     void aJdkTheLanguageServerCannotStartOnIsARuntimeRequirement() throws Exception {
-        Path home = Files.createDirectories(tempDir.resolve("jdk-21"));
-        Files.writeString(home.resolve("release"), "JAVA_VERSION=\"21.0.5\"" + StringUtils.LF, StandardCharsets.UTF_8);
+        Path java = Files.createDirectories(tempDir.resolve("jdk-21/bin")).resolve("java");
+        Files.writeString(java, """
+                #!/bin/sh
+                echo '    java.home = %s' >&2
+                echo '    java.specification.version = 21' >&2
+                """.formatted(java.getParent().getParent()), StandardCharsets.UTF_8);
+        Files.setPosixFilePermissions(java, PosixFilePermissions.fromString("rwxr-xr-x"));
         RunArgs args = new RunArgs();
-        args.setJavaHome(home.toFile());
+        args.setJavaHome(java.getParent().getParent().toFile());
 
         RuntimeRequirementException err = assertThrows(RuntimeRequirementException.class, () -> DefaultLanguageProcessors.requireRuntime(args));
 

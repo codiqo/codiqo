@@ -93,7 +93,7 @@ public class JdtLspProcess implements Closeable {
 
         /**
          * The server runs on exactly the JDK home the version check above read (codiqo.javaHome, else the one running
-         * codiqo, resolved past a link to the JDK itself), so that the runtime registered in its settings names the JDK it
+         * codiqo, as that JDK reports its own java.home), so that the runtime registered in its settings names the JDK it
          * already knows about (see runtimeWithoutSources). A Homebrew keg root such as opt/openjdk@25 holds no lib
          * directory of its own, so registering it would leave every project without a usable JRE container.
          */

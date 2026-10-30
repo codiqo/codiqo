@@ -2,28 +2,34 @@ package io.codiqo.jdtls;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
+import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.SystemUtils;
+import org.apache.commons.lang3.math.NumberUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Splitter;
 import com.google.common.collect.Comparators;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import io.codiqo.api.RunArgs;
 import lombok.experimental.UtilityClass;
@@ -51,8 +57,23 @@ public class LanguageServerJdk {
     private static final Comparator<Iterable<Integer>> VERSION_ORDER = Comparators.lexicographical(Comparator.<Integer> naturalOrder());
     private static final Pattern LEADING_NUMBER = Pattern.compile("^\\d{1,9}");
 
-    /** the feature number of a JAVA_VERSION written before Java 9, which put a "1." in front of it ("1.8.0_392") */
+    private static final String JAVA_HOME = "java.home";
+    private static final String JAVA_SPECIFICATION_VERSION = "java.specification.version";
+
+    /** one "    name = value" line of -XshowSettings:properties, for the two settings the check reads */
+    private static final Pattern SETTING = Pattern.compile("^\\s+(java\\.home|java\\.specification\\.version) = (.+)$");
+
+    /** the specification version a JDK before 9 reports, which puts "1." in front of its feature release ("1.8") */
     private static final String LEGACY_VERSION_PREFIX = "1.";
+
+    /**
+     * A JVM that only prints its settings exits in about a tenth of a second; the limit is there for a JDK that hangs
+     * as it starts (a broken install, a blocked file system), which would otherwise hold the run with nothing logged.
+     */
+    private static final Duration SETTINGS_TIMEOUT = Duration.ofSeconds(30);
+
+    /** how much of a JVM's output a failure quotes: its own error comes first, and the rest is its usage text */
+    private static final int SETTINGS_FAILURE_PREVIEW = 500;
 
     /**
      * The JDK the language server will run on, once it is one the server starts on. The server's version is read as
@@ -109,62 +130,59 @@ public class LanguageServerJdk {
         return MIN_JDK;
     }
     /**
-     * A configured codiqo.javaHome is read from its release file and never replaced by the JVM running codiqo: the
-     * server is started with that home's bin/java, so a home that is no JDK would otherwise pass this check and fail
-     * only when the server starts. A home without a release file of its own is resolved through bin/java's real path:
-     * Homebrew's opt/openjdk@25 links bin/java into libexec/openjdk.jdk/Contents/Home, which is the JDK home the server
-     * must also register as its runtime (JdtLspProcess.runtimeWithoutSources), since the keg root is none.
+     * A configured codiqo.javaHome is asked for its own java.home and java.specification.version, by running its
+     * bin/java with -XshowSettings:properties, and never replaced by the JVM running codiqo: the server is started with
+     * that bin/java, so a home that is no JDK would otherwise pass this check and fail only when the server starts. The
+     * reported java.home is the JDK's real home, which is also the runtime the server must register
+     * (JdtLspProcess.runtimeWithoutSources): Homebrew's opt/openjdk@25 only links bin/java into
+     * libexec/openjdk.jdk/Contents/Home, and holds no lib directory of its own.
      */
     private static ServerJdk detect(File javaHome) throws IOException {
         if (Objects.isNull(javaHome)) {
             return new ServerJdk(SystemUtils.getJavaHome(), Runtime.version().feature());
         }
-        Optional<Path> home = jdkHome(javaHome.toPath());
-        if (home.isPresent()) {
-            Properties props = new Properties();
-            try (InputStream in = Files.newInputStream(home.get().resolve("release"))) {
-                props.load(in);
+        Path java = javaHome.toPath().resolve("bin").resolve(SystemUtils.IS_OS_WINDOWS ? "java.exe" : "java");
+        if (Files.isExecutable(java)) {
+            Map<String, String> settings = settings(java);
+            String home = settings.get(JAVA_HOME);
+            String release = Strings.CS.removeStart(settings.get(JAVA_SPECIFICATION_VERSION), LEGACY_VERSION_PREFIX);
+            if (BooleanUtils.and(new boolean[] { StringUtils.isNotBlank(home), NumberUtils.isDigits(release) })) {
+                return new ServerJdk(new File(home), Integer.parseInt(release));
             }
-            return new ServerJdk(home.get().toFile(), feature(javaHome, StringUtils.strip(props.getProperty("JAVA_VERSION"), "\"")));
+            throw new IOException(String.format(Locale.ROOT,
+                    "codiqo.javaHome %s is not a JDK: %s reported java.home '%s' and java.specification.version '%s'",
+                    javaHome.getAbsolutePath(), java, home, settings.get(JAVA_SPECIFICATION_VERSION)));
         }
-        throw new IOException(String.format(Locale.ROOT,
-                "codiqo.javaHome %s is not a JDK: neither it nor the JDK its bin/java belongs to has a release file naming its Java version",
-                javaHome.getAbsolutePath()));
-    }
-    private static Optional<Path> jdkHome(Path javaHome) throws IOException {
-        if (Files.isRegularFile(javaHome.resolve("release"))) {
-            return Optional.of(javaHome);
-        }
-        Path java = javaHome.resolve("bin").resolve("java");
-        if (Files.isRegularFile(java)) {
-            Path linked = java.toRealPath().getParent().getParent();
-            if (Files.isRegularFile(linked.resolve("release"))) {
-                return Optional.of(linked);
-            }
-        }
-        return Optional.empty();
+        throw new IOException(String.format(Locale.ROOT, "codiqo.javaHome %s is not a JDK: it has no executable %s", javaHome.getAbsolutePath(), java));
     }
     /**
-     * Only the feature release is read, since it is all the check compares: Runtime.Version refuses a version with
-     * trailing zero parts ("25.0.0"), and a release file written that way would refuse a JDK the server starts on.
+     * The settings -XshowSettings:properties prints to the error stream. The child JVM writes them in the platform's
+     * native encoding, which this JVM shares, so a home path outside ASCII reads back as it was written.
      */
-    private static int feature(File javaHome, String javaVersion) throws IOException {
-        if (StringUtils.isBlank(javaVersion)) {
-            throw new IOException(String.format(Locale.ROOT,
-                    "codiqo.javaHome %s is not a JDK: its release file names no JAVA_VERSION", javaHome.getAbsolutePath()));
+    private static Map<String, String> settings(Path java) throws IOException {
+        File output = Files.createTempFile("codiqo-java-settings", ".txt").toFile();
+        try {
+            Process process = new ProcessBuilder(java.toString(), "-XshowSettings:properties", "-version").redirectErrorStream(true).redirectOutput(output).start();
+            if (process.waitFor(SETTINGS_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
+                String printed = FileUtils.readFileToString(output, Charset.forName(System.getProperty("native.encoding")));
+                if (process.exitValue() == 0) {
+                    Map<String, String> toReturn = Maps.newHashMap();
+                    printed.lines().map(SETTING::matcher).filter(Matcher::matches).forEach(setting -> toReturn.putIfAbsent(setting.group(1), setting.group(2).strip()));
+                    return toReturn;
+                }
+                throw new IOException(String.format(Locale.ROOT, "%s -XshowSettings:properties -version failed (exit %d): %s",
+                        java, process.exitValue(), StringUtils.abbreviate(StringUtils.normalizeSpace(printed), SETTINGS_FAILURE_PREVIEW)));
+            }
+            process.destroyForcibly();
+            throw new IOException(String.format(Locale.ROOT, "%s -XshowSettings:properties -version did not finish within %s", java, SETTINGS_TIMEOUT));
+        } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
+            throw new IOException(err.getMessage(), err);
+        } finally {
+            FileUtils.deleteQuietly(output);
         }
-        String version = javaVersion;
-        if (version.startsWith(LEGACY_VERSION_PREFIX)) {
-            version = version.substring(LEGACY_VERSION_PREFIX.length());
-        }
-        Matcher number = LEADING_NUMBER.matcher(version);
-        if (number.find()) {
-            return Integer.parseInt(number.group());
-        }
-        throw new IOException(String.format(Locale.ROOT,
-                "codiqo.javaHome %s names Java version '%s' in its release file, which is not a Java version", javaHome.getAbsolutePath(), javaVersion));
     }
-    /** the JDK home the language server runs on, resolved past any link to the JDK itself, and its Java feature release */
+    /** the JDK home the language server runs on, as that JDK reports its java.home, and its Java feature release */
     public static final class ServerJdk extends ImmutablePair<File, Integer> {
         public ServerJdk(File home, int feature) {
             super(home, feature);
