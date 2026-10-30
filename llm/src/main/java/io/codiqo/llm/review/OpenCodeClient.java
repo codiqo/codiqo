@@ -41,7 +41,7 @@ import tools.jackson.databind.node.ObjectNode;
  * which for a coordinator includes every foreground sub-agent it started; a pinned OpenCode version keeps it stable.
  */
 public class OpenCodeClient implements Closeable {
-    private static final String USER = "opencode";
+    public static final String USER = "opencode";
     private static final MediaType JSON = MediaType.get(HttpHeaderValues.APPLICATION_JSON.toString());
     private static final int PAGE = 100;
     private static final String ASSISTANT = "assistant";

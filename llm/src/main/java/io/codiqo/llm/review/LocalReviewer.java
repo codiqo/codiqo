@@ -59,15 +59,20 @@ public class LocalReviewer {
     /** the follow-up turns after the build, the labelling and the triage, each in a fork of the coordinator */
     private static final int FOLLOW_UPS = 2;
     /**
-     * The turn errors OpenCode records when a request that was fine got an answer that broke on the way. OpenCode has
-     * already retried the provider when it records one, so a review that fails on it is the provider's failure; any other
-     * turn error, a refused request among them, follows from what the commit asks and is the commit's.
+     * The turn errors OpenCode records when a request that was fine got an answer that broke on the way, or was refused
+     * because the provider's account had run out of quota ({@code provider.quota}, which OpenCode records for a
+     * QuotaExceeded answer such as Ollama's "you have reached your session usage limit"). OpenCode has already retried the
+     * provider when it records one, so a review that fails on it is the provider's failure; any other turn error, a
+     * refused request among them, follows from what the commit asks and is the commit's. Taken for the commit's, an
+     * exhausted quota excluded 28 commits of one project within 14 minutes, each one unscored until its analysis is
+     * deleted, where halting the project would have reviewed them once the quota was back.
      */
     private static final Set<String> PROVIDER_TURN_ERRORS = Set.of(
             "provider.transport",
             "provider.internal",
             "provider.invalid-output",
             "provider.rate-limit",
+            "provider.quota",
             "provider.timeout",
             "provider.unknown");
     /**

@@ -99,6 +99,15 @@ class TurnTest {
 
         assertEquals("session ses_coordinator ended its turn with provider.rate-limit: stream cut", err.getMessage());
     }
+    /** a provider account out of quota is no judgement of the commit: the project halts, and the commit is reviewed on resume */
+    @Test
+    void aTurnTheProviderRefusedForQuotaIsTheProvidersFailure() {
+        error = Optional.of("provider.quota");
+
+        IOException err = assertThrows(IOException.class, this::answerOf);
+
+        assertTrue(LocalReviewer.isProviderFailure(err, false), err.getMessage());
+    }
     @Test
     void aRefusedAnswerFailsOnItsAnswer() {
         answer("{\"labels\":[]}");

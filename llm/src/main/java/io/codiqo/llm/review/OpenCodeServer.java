@@ -27,8 +27,10 @@ import org.zeroturnaround.process.SystemProcess;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
+import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import lombok.Getter;
+import okhttp3.Credentials;
 import okhttp3.HttpUrl;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
@@ -167,12 +169,20 @@ public final class OpenCodeServer implements Closeable {
         return builder.start();
     }
     /**
-     * {@code /doc} answers without credentials once the server listens, so readiness is checked there rather than on an
-     * API route that would turn every early poll into an authentication failure.
+     * Readiness is OpenCode's own health route, the one its client waits on: {@code GET /api/info} answers 503
+     * {@code service_starting} while the server boots and 200 once its routes are up. Every path outside {@code /api/} is
+     * the web interface, which {@code opencode serve} answers before authentication and before that boot has finished
+     * (its Web UI handler, in 2.0.32, 2.1.4 and 2.2.2 alike), so a 200 there proves only that the socket listens. A review
+     * that waited on {@code /doc} got 503 service_starting from its first {@code /api/mcp} call on a CI runner whose build
+     * kept every core busy, and the commit was excluded as a failed review.
      */
     private static void awaitReady(OpenCodeServer server, Duration timeout, File logFile) throws IOException {
         HttpClient http = HttpClient.newHttpClient();
-        HttpRequest request = HttpRequest.newBuilder(HttpUrl.get(server.getUrl()).newBuilder().addPathSegment("doc").build().uri()).timeout(READY_REQUEST_TIMEOUT).GET().build();
+        HttpRequest request = HttpRequest.newBuilder(HttpUrl.get(server.getUrl()).newBuilder().addPathSegments("api/info").build().uri())
+                .header(HttpHeaderNames.AUTHORIZATION.toString(), Credentials.basic(OpenCodeClient.USER, server.getPassword()))
+                .timeout(READY_REQUEST_TIMEOUT)
+                .GET()
+                .build();
         long deadline = System.nanoTime() + timeout.toNanos();
         while (System.nanoTime() < deadline) {
             if (server.process.isAlive()) {
