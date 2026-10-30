@@ -75,6 +75,7 @@ import io.codiqo.core.diff.GitDiffHunk;
 import io.codiqo.core.diff.GitFileAnalysis;
 import io.codiqo.core.java.JavaLanguageSpec;
 import io.codiqo.core.java.JavaReviewLanguage;
+import io.codiqo.jdtls.LanguageServerJdk;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.lang.spec.PmdAffectedSymbolInfo;
 import io.codiqo.util.Fetch;
@@ -453,6 +454,14 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     /** what the local review needs to know about each registered language, known before a registry is built */
     public static List<ReviewLanguage> reviewLanguages() {
         return List.of(new JavaReviewLanguage());
+    }
+    /**
+     * Fails when this machine cannot run what the registered languages' analysis starts, known before anything is built:
+     * the Java analysis's language server and the JDK it needs (LanguageServerJdk). Both plugins call it when an
+     * analysis starts, so a misconfigured JDK ends the run before it builds the commit or pays for a review.
+     */
+    public static void requireRuntime(RunArgs args) throws IOException {
+        LanguageServerJdk.require(args);
     }
     private static int identifyRemoved(LanguageSpec processor, ProjectSpec owner, Map<GitFileAnalysis, Set<Integer>> removedLinesByFile) throws IOException {
         List<PreviousRevision> revisions = removedLinesByFile.keySet().stream()

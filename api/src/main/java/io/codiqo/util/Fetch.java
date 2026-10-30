@@ -63,9 +63,6 @@ public class Fetch implements Closeable {
      * enters the cache: codiqo serves it from a release of its own, and a damaged or replaced file there must never run.
      */
     public Path downloadJdtls(LogFactory logFactory, RunArgs args) throws IOException {
-        /** before the download: a server that cannot start on this JDK is not worth fetching (see LanguageServerJdk) */
-        LanguageServerJdk.require(args);
-
         Optional<String> sha256 = args.jdtlsArchiveSha256();
         if (sha256.isPresent()) {
             return download(logFactory, args.jdtlsArchiveUrl(), sha256.get());

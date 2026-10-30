@@ -35,10 +35,9 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.util.Fetch;
-import io.codiqo.util.LanguageServerJdk;
 
 public class JdtLspProcess implements Closeable {
-    /** the one threshold the fork can still miss: a language server before 1.62.0 admits 21 and 22 (LanguageServerJdk) */
+    /** the one threshold the fork can still miss: a language server before 1.62.0 starts on 21 and 22 (LanguageServerJdk) */
     private static final int MIN_JDK_SUN_MISC_UNSAFE_FLAG = 23;
 
     private static final String JAR_EXTENSION = "jar";

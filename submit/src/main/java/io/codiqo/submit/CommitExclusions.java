@@ -162,9 +162,10 @@ public class CommitExclusions {
      * commit, so its parent[0] delta would score that work a second time. The analysed branch takes such a merge when it
      * is moved onto another branch's history, as when a release job fast-forwards {@code dev} onto each
      * {@code dev -> main} merge after it lands: the first of those merges, measured against a {@code main} that held only
-     * its initial commits, carries the whole history of {@code dev}, every commit of which is already scored, and a
-     * review of a diff that size can fail on the provider on every attempt, halting the project each time. A line with no
-     * indexed commit is a pull request's branch, analysed through the merge as before.
+     * its initial commits, carries the whole history of {@code dev}, most of which is already scored commit by commit
+     * (the commits that are not are handled below), and a review of a diff that size can fail on the provider on every
+     * attempt, halting the project each time. A line with no indexed commit is a pull request's branch, analysed
+     * through the merge as before.
      *
      * <p>The line is read newest first. The commits ahead of the newest indexed one are returned as unseen: an index run
      * walks only first parents, so once the analysed branch moved onto the merge, no later run reaches them, and without

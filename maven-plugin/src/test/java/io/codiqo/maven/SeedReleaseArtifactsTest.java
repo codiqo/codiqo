@@ -1,11 +1,14 @@
 package io.codiqo.maven;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -62,6 +65,45 @@ class SeedReleaseArtifactsTest {
 
         assertTrue(Files.isRegularFile(target.resolve(RELEASE)), "the release behind the link is seeded");
         assertFalse(Files.exists(target.resolve(SNAPSHOT)));
+    }
+    /**
+     * A link further down the repository: walked without following it, the link itself was linked into the private
+     * repository, which then reached the host's snapshots and metadata through it.
+     */
+    @Test
+    void aDirectoryLinkInsideTheRepositoryIsSeededFileByFile() throws Exception {
+        Path host = Files.createDirectories(tempDir.resolve("home/.m2/repository"));
+        Files.createSymbolicLink(host.resolve("org"), repository.resolve("org"));
+        Path target = Files.createDirectories(tempDir.resolve("private"));
+
+        AbstractAnalyzeMojo.seedReleaseArtifacts(host.toFile(), target.toFile(), new QuietLog());
+
+        assertFalse(Files.isSymbolicLink(target.resolve("org")), "the private repository holds no link back into the host's");
+        assertTrue(Files.isRegularFile(target.resolve(RELEASE)));
+        assertFalse(Files.exists(target.resolve(SNAPSHOT)));
+        assertFalse(Files.exists(target.resolve(METADATA)));
+    }
+    /** seeding is best-effort: a cache link whose target was not restored seeds nothing, and does not fail the commit */
+    @Test
+    void aDanglingRepositoryLinkSeedsNothingWithoutFailing() throws Exception {
+        Path link = Files.createSymbolicLink(Files.createDirectories(tempDir.resolve("home/.m2")).resolve("repository"), tempDir.resolve("not-restored"));
+        Path target = Files.createDirectories(tempDir.resolve("private"));
+
+        AbstractAnalyzeMojo.seedReleaseArtifacts(link.toFile(), target.toFile(), new QuietLog());
+
+        try (Stream<Path> seeded = Files.list(target)) {
+            assertEquals(0, seeded.count());
+        }
+    }
+    @Test
+    void aDanglingArtifactLinkIsSkipped() throws Exception {
+        Files.createSymbolicLink(repository.resolve("org/example/lib/1.0/lib-1.0.pom"), tempDir.resolve("gone.pom"));
+        Path target = Files.createDirectories(tempDir.resolve("private"));
+
+        AbstractAnalyzeMojo.seedReleaseArtifacts(repository.toFile(), target.toFile(), new QuietLog());
+
+        assertTrue(Files.isRegularFile(target.resolve(RELEASE)), "the rest of the repository is still seeded");
+        assertFalse(Files.exists(target.resolve("org/example/lib/1.0/lib-1.0.pom"), LinkOption.NOFOLLOW_LINKS));
     }
     private static final class QuietLog implements Log {
         @Override
