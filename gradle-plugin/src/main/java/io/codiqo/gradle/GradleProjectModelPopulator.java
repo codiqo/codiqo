@@ -11,6 +11,7 @@ import io.codiqo.api.logging.Log;
 import io.codiqo.client.model.DependencyModel;
 import io.codiqo.client.model.MavenDependencyModel;
 import io.codiqo.client.model.MavenModuleModel;
+import io.codiqo.client.model.ModuleDependencyUsageModel;
 import io.codiqo.client.model.ModuleModel;
 import io.codiqo.gradle.model.DependencyData;
 import io.codiqo.submit.SubmissionContext;
@@ -92,6 +93,12 @@ public class GradleProjectModelPopulator implements SubmissionPopulator {
                 if (spec instanceof GradleProjectWrapper wrapper) {
                     for (DependencyData dependency : wrapper.getDependencies()) {
                         moduleModel.getDependencies().add(dependency.getCoordinate());
+
+                        ModuleDependencyUsageModel usage = new ModuleDependencyUsageModel();
+                        usage.setId(dependency.getCoordinate());
+                        usage.setScope(dependency.getScope());
+                        usage.setTransitive(dependency.getTransitive());
+                        moduleModel.getDependencyUsages().add(usage);
                     }
                 }
 

@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
 
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -26,6 +27,7 @@ import io.codiqo.api.MavenProjectSpec;
 import io.codiqo.client.model.DependencyModel;
 import io.codiqo.client.model.MavenDependencyModel;
 import io.codiqo.client.model.MavenModuleModel;
+import io.codiqo.client.model.ModuleDependencyUsageModel;
 import io.codiqo.client.model.ModuleModel;
 import io.codiqo.client.model.SnapshotMetadataModel;
 import io.codiqo.maven.MavenProjectWrapper;
@@ -37,6 +39,9 @@ import lombok.RequiredArgsConstructor;
 
 @RequiredArgsConstructor
 public class ProjectModelPopulator implements SubmissionPopulator {
+    /** the module's own artifact, then the dependency it declares */
+    private static final int DIRECT_TRAIL_LENGTH = 2;
+
     private final Log log;
 
     @Override
@@ -158,11 +163,29 @@ public class ProjectModelPopulator implements SubmissionPopulator {
                 }
                 for (org.apache.maven.artifact.Artifact artifact : mavenSpec.getArtifacts().keySet()) {
                     moduleModel.getDependencies().add(artifact.getId());
+                    moduleModel.getDependencyUsages().add(usage(artifact));
                 }
 
                 ctx.getProjectModel().getModules().add(moduleModel);
             }
         });
+    }
+    /**
+     * How the module uses one resolved artifact. Maven records the path it resolved the artifact through as its
+     * dependency trail, the module's own artifact first: a trail of two (the module, then the artifact) is a dependency
+     * the module declares, a longer one came in through another dependency. An artifact without a trail did not come
+     * from Maven's resolution, so whether it is direct is left unsaid rather than guessed.
+     */
+    @VisibleForTesting
+    public static ModuleDependencyUsageModel usage(org.apache.maven.artifact.Artifact artifact) {
+        ModuleDependencyUsageModel toReturn = new ModuleDependencyUsageModel();
+        toReturn.setId(artifact.getId());
+        toReturn.setScope(StringUtils.trimToNull(artifact.getScope()));
+        toReturn.setOptional(artifact.isOptional());
+        if (CollectionUtils.isNotEmpty(artifact.getDependencyTrail())) {
+            toReturn.setTransitive(artifact.getDependencyTrail().size() > DIRECT_TRAIL_LENGTH);
+        }
+        return toReturn;
     }
     private static SnapshotMetadataModel toSnapshotMetadataModel(Properties props) {
         SnapshotMetadataModel toReturn = new SnapshotMetadataModel();

@@ -29,6 +29,9 @@ class AnalysisRequestSerializationTest {
         assertEquals("8g", restored.getAnalysisMaxHeap());
         assertEquals(1, restored.getModules().size());
         assertEquals(List.of("/p/src/main/java"), restored.getModules().iterator().next().getCompileSourceRoots());
+        DependencyData dependency = restored.getModules().iterator().next().getDependencies().iterator().next();
+        assertEquals("compileClasspath", dependency.getScope());
+        assertEquals(Boolean.TRUE, dependency.getTransitive(), "how the module uses a dependency reaches the worker");
     }
     private static AnalysisRequest populatedRequest() {
         DependencyData dependency = new DependencyData();
@@ -39,6 +42,8 @@ class AnalysisRequestSerializationTest {
         dependency.setClassifier("sources");
         dependency.setFilePath("/repo/commons-lang3-3.20.0.jar");
         dependency.setCoordinate("org.apache.commons:commons-lang3:jar:3.20.0");
+        dependency.setScope("compileClasspath");
+        dependency.setTransitive(true);
 
         ModuleData module = new ModuleData();
         module.setId(":app");

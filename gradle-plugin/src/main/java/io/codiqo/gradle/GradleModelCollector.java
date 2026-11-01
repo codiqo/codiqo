@@ -1,5 +1,7 @@
 package io.codiqo.gradle;
 
+import static java.util.function.Predicate.not;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -10,14 +12,19 @@ import java.util.Properties;
 import java.util.Set;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.gradle.api.GradleException;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.ResolveException;
+import org.gradle.api.artifacts.component.ComponentIdentifier;
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier;
+import org.gradle.api.artifacts.result.DependencyResult;
 import org.gradle.api.artifacts.result.ResolvedArtifactResult;
+import org.gradle.api.artifacts.result.ResolvedDependencyResult;
+import org.gradle.api.artifacts.result.ResolvedVariantResult;
 import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.SourceSetContainer;
@@ -185,18 +192,35 @@ public class GradleModelCollector {
     /**
      * The ClassGraph scan uses compile and test classpaths alike, so coordinates are resolved for all of them —
      * runtimeClasspath alone drops compileOnly/provided and test-only dependencies whose classes are scanned, losing
-     * their artifact attribution.
+     * their artifact attribution. An artifact belongs to the first configuration that resolves it, which is also its
+     * scope; it is direct there when it is one of that configuration's first-level dependencies. A constraint edge
+     * (a {@code constraints} block, a platform, the Kotlin plugin's stdlib alignment) declares nothing, so it is
+     * skipped. A dependency whose Gradle module metadata redirects its variant ({@code available-at}, as
+     * kotlinx-coroutines-core does to kotlinx-coroutines-core-jvm) gets its artifact from the component the variant
+     * points to, so that component counts as direct too; otherwise every such declared dependency reads as transitive.
      */
     private static void collectDependencies(Project project, ModuleData module) {
         Set<String> seenFiles = Sets.newHashSet();
         for (String configName : DEPENDENCY_CONFIGURATIONS) {
             Configuration config = project.getConfigurations().findByName(configName);
             if (Objects.nonNull(config) && config.isCanBeResolved()) {
+                Set<ComponentIdentifier> direct = Sets.newHashSet();
+                config.getIncoming().getResolutionResult().getRoot().getDependencies().stream()
+                        .filter(not(DependencyResult::isConstraint))
+                        .filter(ResolvedDependencyResult.class::isInstance)
+                        .map(ResolvedDependencyResult.class::cast)
+                        .forEach(resolved -> {
+                            direct.add(resolved.getSelected().getId());
+                            resolved.getResolvedVariant().getExternalVariant().map(ResolvedVariantResult::getOwner).ifPresent(direct::add);
+                        });
                 for (ResolvedArtifactResult artifact : config.getIncoming().getArtifacts()) {
                     if (artifact.getId().getComponentIdentifier() instanceof ModuleComponentIdentifier component) {
                         String filePath = artifact.getFile().getAbsolutePath();
                         if (seenFiles.add(filePath)) {
-                            module.getDependencies().add(dependency(component, filePath));
+                            DependencyData dependency = dependency(component, filePath);
+                            dependency.setScope(configName);
+                            dependency.setTransitive(BooleanUtils.negate(direct.contains(component)));
+                            module.getDependencies().add(dependency);
                         }
                     }
                 }

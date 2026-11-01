@@ -2193,6 +2193,16 @@ components:
           type: array
           items:
             type: string
+        dependencyUsages:
+          type: array
+          description: |
+            How this module uses each dependency in `dependencies`, one entry per registry key: the scope it resolved
+            in and whether the module declares it or receives it through another dependency. The registry entry holds
+            what is true of the artifact everywhere; these are true of this module only, since one artifact can be a
+            declared test dependency of one module and a transitive compile dependency of another. Plugins that
+            predate the field send none.
+          items:
+            $ref: '#/components/schemas/ModuleDependencyUsageModel'
         quality:
           $ref: '#/components/schemas/ModuleQualityModel'
         mavenInfo:
@@ -2201,6 +2211,27 @@ components:
           $ref: '#/components/schemas/NpmModuleModel'
         pythonInfo:
           $ref: '#/components/schemas/PythonModuleModel'
+
+    ModuleDependencyUsageModel:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+          description: The dependency's key in the dependency registry, as listed in the module's `dependencies`.
+        scope:
+          type: string
+          description: |
+            The scope the dependency resolved in, as the build tool names it: a Maven scope (compile, provided,
+            runtime, test, system) or the Gradle configuration it was resolved from (compileClasspath,
+            runtimeClasspath, testCompileClasspath, testRuntimeClasspath). Absent when the build tool reported none.
+        transitive:
+          type: boolean
+          description: |
+            True when the module receives the dependency through another one, false when the module declares it.
+            Absent when the build tool did not say.
+        optional:
+          type: boolean
 
     MavenModuleModel:
       type: object
