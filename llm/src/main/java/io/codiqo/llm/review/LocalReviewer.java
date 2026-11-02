@@ -88,14 +88,23 @@ public class LocalReviewer {
     private final ReviewEndpoint endpoint;
     private final String conventionGuidance;
     private final ReviewTags tags;
+    private final List<PreviousFinding> previousFindings;
     private final List<ReviewLanguage> languages;
     private final Log log;
 
-    public LocalReviewer(RunArgs args, ReviewEndpoint endpoint, String conventionGuidance, ReviewTags tags, List<ReviewLanguage> languages, Log log) {
+    public LocalReviewer(
+            RunArgs args,
+            ReviewEndpoint endpoint,
+            String conventionGuidance,
+            ReviewTags tags,
+            List<PreviousFinding> previousFindings,
+            List<ReviewLanguage> languages,
+            Log log) {
         this.args = Objects.requireNonNull(args);
         this.endpoint = Objects.requireNonNull(endpoint);
         this.conventionGuidance = Objects.requireNonNull(conventionGuidance);
         this.tags = Objects.requireNonNull(tags);
+        this.previousFindings = List.copyOf(previousFindings);
         this.languages = List.copyOf(languages);
         this.log = Objects.requireNonNull(log);
     }
@@ -283,7 +292,7 @@ public class LocalReviewer {
                 }
                 return triage;
             });
-            ForkAnswer<FindingTriage> answer = ask(client, answers, forkId, OpenCodeReviewConfig.triagePrompt(args, findings), AnswerTool.TRIAGE, FindingTriage.class);
+            ForkAnswer<FindingTriage> answer = ask(client, answers, forkId, OpenCodeReviewConfig.triagePrompt(args, findings, previousFindings), AnswerTool.TRIAGE, FindingTriage.class);
 
             toReturn = answer.getParsed();
             toReturn.setAnswer(answer.getAnswer());

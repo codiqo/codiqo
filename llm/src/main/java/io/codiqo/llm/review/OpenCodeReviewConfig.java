@@ -1,7 +1,10 @@
 package io.codiqo.llm.review;
 
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.thymeleaf.context.Context;
@@ -155,12 +158,22 @@ public class OpenCodeReviewConfig {
         rule.put("resource", resource);
         rule.put("effect", effect);
     }
-    /** @param findings the findings asked about, whose tools the prompt names */
-    public static String triagePrompt(RunArgs args, List<StaticFinding> findings) {
+    /**
+     * @param findings the findings asked about, whose tools the prompt names
+     * @param previous the bugs earlier runs of the commit reported; only those in a file a finding names are shown, since
+     *        the turn answers for the findings alone
+     */
+    public static String triagePrompt(RunArgs args, List<StaticFinding> findings, List<PreviousFinding> previous) {
         Context ctx = answering(AnswerTool.TRIAGE, args);
         ctx.setVariable("reporters", reporters(findings));
         ctx.setVariable("bugTypes", List.of(LlmScoringResponse.BugType.values()));
         ctx.setVariable("findings", LlmJson.responseMapper().writeValueAsString(findings));
+
+        Set<String> files = findings.stream().map(StaticFinding::getFile).collect(Collectors.toSet());
+        List<PreviousFinding> nearby = previous.stream().filter(finding -> files.contains(finding.getFile())).toList();
+        if (CollectionUtils.isNotEmpty(nearby)) {
+            ctx.setVariable("previousFindings", LlmJson.responseMapper().writeValueAsString(nearby));
+        }
         return PromptTemplates.process("opencode/triage-findings", ctx).strip();
     }
     /** @param units the submission's added and changed units, each under the id the answer names it by */

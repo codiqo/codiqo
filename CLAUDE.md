@@ -1773,11 +1773,16 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   the 0-10 scale are left out, since the server would reject the whole submission over them.
 - **Every default lives in `RunArgs`.** The review's settings are `transient` `review*` fields (local to the run, never
   in the submission), and `LocalReviewer` reads them from `RunArgs` itself. Only what the run supplies is passed
-  beside it: the convention guidance, the project's `ReviewTags` and a `ReviewEndpoint` (base URL, key, credential),
-  which the relay swaps for its own loopback URL and secret. `ReviewTags` are the tags the project's scored commits
+  beside it: the convention guidance, the project's `ReviewTags`, the commit's `PreviousFinding`s and a
+  `ReviewEndpoint` (base URL, key, credential), which the relay swaps for its own loopback URL and secret. `ReviewTags` are the tags the project's scored commits
   carry most (`GET /api/v1/projects/{projectId}/tags`, read on the review's thread so the build never waits; 404 or
   405 means none, anything else is retried like a submission and then fails the review), which the coordinator reuses before it coins one. They are model output going into a system
-  prompt, so `ReviewTags.of` keeps only lowercase hyphenated labels. A mojo parameter has no `defaultValue`: it is a nullable wrapper that overrides the `RunArgs`
+  prompt, so `ReviewTags.of` keeps only lowercase hyphenated labels. `PreviousFindings` are the bugs earlier runs of
+  the commit reported (`GET /api/v1/projects/{projectId}/commits/{commitSha}/findings`, fetched and failing like the
+  tags; a hidden-source project fetches none, since the server keeps their paths hashed): the triage turn shows those
+  in a file it asks about as a hint of where to look again, never as evidence, and they take no verdict. The server
+  leaves out every finding a reviewer ruled a false positive and every reason a member wrote, which would steer the
+  turn. The uncommitted-changes review and the `review` goal pass none. A mojo parameter has no `defaultValue`: it is a nullable wrapper that overrides the `RunArgs`
   field only when set. Settings with no `RunArgs` instance at hand (the login, the loopback host, the upload batch,
   the 0-10 score scale and the rounding precision) are `RunArgs` constants. Protocol names (headers, paths, rule ids)
   stay beside the code that speaks the protocol.

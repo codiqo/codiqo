@@ -23,6 +23,7 @@ import io.codiqo.llm.review.FindingVerdict;
 import io.codiqo.llm.review.LocalReview;
 import io.codiqo.llm.review.LocalReviewModels;
 import io.codiqo.llm.review.LocalReviewer;
+import io.codiqo.llm.review.PreviousFinding;
 import io.codiqo.llm.review.ReviewEndpoint;
 import io.codiqo.llm.review.ReviewTags;
 import io.codiqo.llm.review.ReviewUnit;
@@ -129,8 +130,8 @@ public final class LocalReviewRun implements AutoCloseable {
                 verdicts.count(FindingVerdict.Verdict.HARMLESS));
     }
     /**
-     * Starts the review of {@code sha} in {@code workTree}, next to the analysis. The tag vocabulary is fetched on the
-     * review's own thread, so the build does not wait for it.
+     * Starts the review of {@code sha} in {@code workTree}, next to the analysis. The tag vocabulary and the commit's
+     * previous findings are fetched on the review's own thread, so the build does not wait for them.
      */
     public static LocalReviewRun start(
             RunArgs args,
@@ -139,12 +140,13 @@ public final class LocalReviewRun implements AutoCloseable {
             ReviewEndpoint endpoint,
             String guidance,
             Callable<ReviewTags> tags,
+            Callable<List<PreviousFinding>> previousFindings,
             List<ReviewLanguage> languages,
             LogFactory logFactory) {
         CompletableFuture<List<StaticFinding>> findings = new CompletableFuture<>();
         CompletableFuture<List<ReviewUnit>> units = new CompletableFuture<>();
         BackgroundReview<LocalReviewer.ReviewOutcome> review = BackgroundReview.start(() -> {
-            LocalReviewer reviewer = new LocalReviewer(args, endpoint, guidance, tags.call(), languages, logFactory.getLogger(LocalReviewer.class));
+            LocalReviewer reviewer = new LocalReviewer(args, endpoint, guidance, tags.call(), previousFindings.call(), languages, logFactory.getLogger(LocalReviewer.class));
             return reviewer.reviewThenFollowUp(workTree, sha, Optional.of(units::get), Optional.of(findings::get));
         });
         return new LocalReviewRun(review, findings, units, languages, logFactory);

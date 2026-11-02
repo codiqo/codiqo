@@ -75,6 +75,7 @@ import io.codiqo.submit.review.LocalReviewException;
 import io.codiqo.submit.review.LocalReviewRun;
 import io.codiqo.llm.ConventionGuidance;
 import io.codiqo.llm.review.ReviewTrace;
+import io.codiqo.submit.PreviousFindings;
 import io.codiqo.submit.ProjectHalts;
 import io.codiqo.submit.SourceHiding;
 import io.codiqo.submit.ProjectTags;
@@ -642,6 +643,8 @@ public class AnalysisEngine {
                     LocalReviewRun.endpoint(args, request.getResourceUrl(), request.getRootCode(), () -> credential),
                     ConventionGuidance.read(args, logFactory.getLogger(ConventionGuidance.class)),
                     () -> ProjectTags.fetch(request.getApiUrl(), credential, request.getConnectTimeoutSeconds(), request.getReadTimeoutSeconds(), request.getRootCode(), log),
+                    () -> PreviousFindings.fetch(request.getApiUrl(), credential, request.getConnectTimeoutSeconds(), request.getReadTimeoutSeconds(), request.getRootCode(),
+                            args.getCommitId(), request.isSourceHidden(), log),
                     DefaultLanguageProcessors.reviewLanguages(),
                     logFactory);
             log.info("local review of %s started next to the analysis", args.getCommitId());
