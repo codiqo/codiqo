@@ -1,7 +1,6 @@
 package io.codiqo.submit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -17,7 +16,6 @@ import com.sun.net.httpserver.HttpServer;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
-import io.codiqo.client.ApiException;
 import io.codiqo.llm.review.PreviousFinding;
 import io.codiqo.submit.auth.ApiKeyCredential;
 import io.netty.handler.codec.http.HttpHeaderNames;
@@ -61,14 +59,19 @@ class PreviousFindingsTest {
             server.stop(0);
         }
     }
+    /** the hint only helps the review, so a failing endpoint is asked once and the review runs without it */
     @Test
-    void aBadRequestIsAnError() throws Exception {
+    void aFailingServerIsAskedOnceAndGivesNoFindings() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/api/v1/projects", exchange -> respond(exchange, 400, JSON.objectNode().put("message", "bad").toString()));
+        server.createContext("/api/v1/projects", exchange -> {
+            requests.incrementAndGet();
+            respond(exchange, 503, JSON.objectNode().put("message", "unavailable").toString());
+        });
         server.start();
         try {
-            assertEquals(400, assertThrows(ApiException.class,
-                    () -> PreviousFindings.fetch(url(server), new ApiKeyCredential("k"), 5, 5, "p1", SHA, false, new NoopLog())).getCode());
+            assertEquals(List.of(), PreviousFindings.fetch(url(server), new ApiKeyCredential("k"), 5, 5, "p1", SHA, false, new NoopLog()));
+            assertEquals(1, requests.get());
         } finally {
             server.stop(0);
         }
