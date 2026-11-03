@@ -1781,6 +1781,14 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   field only when set. Settings with no `RunArgs` instance at hand (the login, the loopback host, the upload batch,
   the 0-10 score scale and the rounding precision) are `RunArgs` constants. Protocol names (headers, paths, rule ids)
   stay beside the code that speaks the protocol.
+- **The commit's earlier bugs are passed beside `RunArgs` too.** `PreviousFindings` fetches the bugs earlier runs of
+  the commit reported (`GET /api/v1/projects/{projectId}/commits/{commitSha}/findings`) on the review's thread, and
+  `LocalReviewer` takes them as `PreviousFinding`s. The fetch is best-effort: one attempt, and a failed call or credential
+  leaves the review without the hint, since the review is worth running without it. A hidden-source project fetches none: the
+  server keeps its paths hashed and stores no title. The triage turn shows those in a file it asks about as a hint of
+  where to look again, never as evidence, and they take no verdict. The server leaves out every finding ruled a false
+  positive and every reason a member wrote, which would steer the turn. The uncommitted-changes review and the
+  `review` goal pass none.
 - **The agents' prompts are Thymeleaf TEXT templates** (`thymeleaf/templates/opencode/*.txt`, rendered by
   `PromptTemplates`): values go in with `[(${...})]`, the assessment and convention parts are `th:if` blocks. Thymeleaf
   does not re-read an inserted value, so a convention file holding `[(...)]` stays text. The OpenCode configuration

@@ -121,7 +121,7 @@ class OpenCodeReviewConfigTest {
     @Test
     void theTriagePromptCarriesTheFindingsTheVerdictsAndTheSeverityRules() throws Exception {
         List<StaticFinding> findings = List.of(new StaticFinding("spotbugs", "NP_NONNULL_PARAM_VIOLATION", "warning", "a/Service.java", 2, "flagged"));
-        String prompt = OpenCodeReviewConfig.triagePrompt(new RunArgs(), findings);
+        String prompt = OpenCodeReviewConfig.triagePrompt(new RunArgs(), findings, List.of());
 
         assertTrue(prompt.endsWith(LlmJson.responseMapper().writeValueAsString(findings)), prompt);
         assertTrue(prompt.contains("SpotBugs reported the findings below"), "the prompt names the tools of the findings it asks about");
@@ -133,12 +133,33 @@ class OpenCodeReviewConfigTest {
             assertFalse(prompt.contains(placeholder), "unfilled placeholder " + placeholder);
         }
     }
+    /** the earlier bugs are a hint about the findings' files only: the turn answers for nothing else */
+    @Test
+    void theTriagePromptShowsTheEarlierBugsInTheFindingsFilesAsAHint() throws Exception {
+        List<StaticFinding> findings = List.of(new StaticFinding("spotbugs", "IS2_INCONSISTENT_SYNC", "warning", "a/Ledger.java", 14, "inconsistent synchronization"));
+        PreviousFinding sameFile = new PreviousFinding("a/Ledger.java", 12, "concurrency", "major", "loses an update");
+        PreviousFinding sameFileNoLine = new PreviousFinding("a/Ledger.java", null, "logic", "minor", null);
+        PreviousFinding otherFile = new PreviousFinding("b/Report.java", 3, "logic", "minor", "rounds twice");
+
+        String prompt = OpenCodeReviewConfig.triagePrompt(new RunArgs(), findings, List.of(sameFile, sameFileNoLine, otherFile));
+
+        assertTrue(prompt.endsWith("Reported earlier:\n" + LlmJson.responseMapper().writeValueAsString(List.of(sameFile, sameFileNoLine))), prompt);
+        assertFalse(prompt.contains(":null"), "the answer rules forbid null, so the hint shows none");
+        assertTrue(prompt.contains("never as evidence"), prompt);
+        assertTrue(prompt.contains("take no verdict"), prompt);
+        assertFalse(prompt.contains("b/Report.java"), prompt);
+        assertEquals(OpenCodeReviewConfig.triagePrompt(new RunArgs(), findings, List.of()), OpenCodeReviewConfig.triagePrompt(new RunArgs(), findings, List.of(otherFile)),
+                "no earlier bug in the findings' files, no hint");
+        for (String placeholder : List.of("[(", "[#", "[/]", "${")) {
+            assertFalse(prompt.contains(placeholder), "unfilled placeholder " + placeholder);
+        }
+    }
     /** a findings file given to the review goal may name any tool, or none */
     @Test
     void theTriagePromptNamesEveryToolReadably() {
-        assertTrue(OpenCodeReviewConfig.triagePrompt(new RunArgs(), List.of(finding("pmd"), finding("spotbugs"), finding("checkstyle"), finding("pmd")))
+        assertTrue(OpenCodeReviewConfig.triagePrompt(new RunArgs(), List.of(finding("pmd"), finding("spotbugs"), finding("checkstyle"), finding("pmd")), List.of())
                 .startsWith("The build has finished. PMD, SpotBugs and checkstyle reported the findings below"));
-        assertTrue(OpenCodeReviewConfig.triagePrompt(new RunArgs(), List.of(finding(null)))
+        assertTrue(OpenCodeReviewConfig.triagePrompt(new RunArgs(), List.of(finding(null)), List.of())
                 .startsWith("The build has finished. Static analysis reported the findings below"));
     }
     /** local mode judges the commit with the review alone, so every review asks both agents for their pieces of it */
@@ -248,7 +269,7 @@ class OpenCodeReviewConfigTest {
         assertTrue(coordinator.contains("call codiqo_reviewer_reports once") && coordinator.contains("Then call codiqo_submit_answer with"), coordinator);
         for (String prompt : List.of(coordinator, agents.path(OpenCodeReviewConfig.REVIEWER).path("system").asString(),
                 OpenCodeReviewConfig.labelPrompt(args, "1a2b3c", List.of(new ReviewUnit("U1", "a/Service.java", "handle(Request)", "MODIFY", "12-30"))),
-                OpenCodeReviewConfig.triagePrompt(args, List.of(finding("pmd"))))) {
+                OpenCodeReviewConfig.triagePrompt(args, List.of(finding("pmd")), List.of()))) {
             assertTrue(prompt.contains("After 4 refused calls no further call is read"), prompt);
         }
     }
@@ -297,7 +318,7 @@ class OpenCodeReviewConfigTest {
         GoldenText.assertMatches("opencode-reviewer", bare.path(OpenCodeReviewConfig.REVIEWER).path("system").asString());
         GoldenText.assertMatches("opencode-coordinator-guided", guided.path(OpenCodeReviewConfig.COORDINATOR).path("system").asString());
         GoldenText.assertMatches("opencode-reviewer-guided", guided.path(OpenCodeReviewConfig.REVIEWER).path("system").asString());
-        GoldenText.assertMatches("opencode-triage", OpenCodeReviewConfig.triagePrompt(new RunArgs(), List.of(new StaticFinding("pmd", "GodClass", "warning", "a/Service.java", 3, "possible God Class"))));
+        GoldenText.assertMatches("opencode-triage", OpenCodeReviewConfig.triagePrompt(new RunArgs(), List.of(new StaticFinding("pmd", "GodClass", "warning", "a/Service.java", 3, "possible God Class")), List.of()));
         GoldenText.assertMatches("opencode-labels", OpenCodeReviewConfig.labelPrompt(new RunArgs(), "1a2b3c", List.of(
                 new ReviewUnit("U1", "a/Service.java", "handle(Request)", "MODIFY", "12-30"),
                 new ReviewUnit("U2", "a/Service.java", "Builder(String)", "NEW", "41-44"))));

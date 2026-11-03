@@ -122,6 +122,7 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
                         LocalReviewRun.endpoint(args, resourceUrl, projectCode, () -> creds),
                         LocalReviewGuidance.read(args, getLog()),
                         () -> ProjectTags.fetch(apiUrl, creds, connectTimeoutSeconds, readTimeoutSeconds, projectCode, new MavenMessageReporter(getLog())),
+                        List::of,
                         DefaultLanguageProcessors.reviewLanguages(),
                         new MavenLogFactory(getLog()));
                 getLog().info("local review of the uncommitted changes started next to the analysis");

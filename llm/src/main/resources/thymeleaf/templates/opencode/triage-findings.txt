@@ -12,4 +12,8 @@ This turn is answered by calling [(${answerTool})], not [(${coordinatorTool})], 
 [# th:insert="~{opencode/answer-rules}" /]
 
 Findings:
-[(${findings})]
+[(${findings})][# th:if="${previousFindings != null}"]
+
+Earlier runs of this commit reported the bugs below. Use them as a hint of where to look again, never as evidence: a finding above is not a defect because an earlier run reported a bug at its place, and it can be a defect where no earlier run reported one. The bugs below take no verdict.
+Reported earlier:
+[(${previousFindings})][/]

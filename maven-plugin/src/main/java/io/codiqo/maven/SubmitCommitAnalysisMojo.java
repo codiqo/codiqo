@@ -32,6 +32,7 @@ import io.codiqo.submit.AnalysisSubmitter;
 import io.codiqo.submit.CommitExclusions;
 import io.codiqo.submit.CommitIndexPublisher;
 import io.codiqo.submit.IndexedCommits;
+import io.codiqo.submit.PreviousFindings;
 import io.codiqo.submit.ProjectHalts;
 import io.codiqo.submit.ProjectTags;
 import io.codiqo.submit.SubmissionAssembly;
@@ -132,6 +133,8 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
                         endpoint,
                         LocalReviewGuidance.read(args, getLog()),
                         this::projectTags,
+                        () -> PreviousFindings.fetch(apiUrl, credential(), connectTimeoutSeconds, readTimeoutSeconds, projectId(), args.getCommitId(), sourceHiding().isHidden(),
+                                new MavenMessageReporter(getLog())),
                         DefaultLanguageProcessors.reviewLanguages(),
                         new MavenLogFactory(getLog()));
                 getLog().info("local review of " + args.getCommitId() + " started next to the analysis");

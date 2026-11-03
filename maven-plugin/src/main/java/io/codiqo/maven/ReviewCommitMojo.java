@@ -149,7 +149,7 @@ public class ReviewCommitMojo extends AbstractMojo {
                 warnUnlisted(given);
                 source = Optional.of(() -> given);
             }
-            LocalReviewer reviewer = new LocalReviewer(args, endpoint, LocalReviewGuidance.read(directory, getLog()), ReviewTags.NONE, DefaultLanguageProcessors.reviewLanguages(),
+            LocalReviewer reviewer = new LocalReviewer(args, endpoint, LocalReviewGuidance.read(directory, getLog()), ReviewTags.NONE, List.of(), DefaultLanguageProcessors.reviewLanguages(),
                     new MavenLogFactory(getLog()).getLogger(LocalReviewer.class));
             Optional<AnalysisSubmissionModel> analysed = Optional.empty();
             if (Objects.nonNull(submission)) {

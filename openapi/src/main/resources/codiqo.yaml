@@ -666,6 +666,41 @@ paths:
         - apiKey: []
         - bearerAuth: []
 
+  /api/v1/projects/{projectId}/commits/{commitSha}/findings:
+    get:
+      operationId: listPreviousFindings
+      x-spring-provide-args: *credentialArgs
+      tags: [Analysis]
+      summary: The bugs earlier runs of this commit reported
+      description: |
+        Every bug a stored or deleted analysis of the commit reported, one per place, so a local review can look at them
+        again. A finding a reviewer ruled a false positive is left out, and so is every reason people gave: the list
+        goes into a prompt, and a member's words would steer it. Empty when the commit was never analysed.
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commitSha
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-f0-9]{40}$'
+      responses:
+        '200':
+          description: The earlier findings, newest run first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviousFindingsModel'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - apiKey: []
+        - bearerAuth: []
+
   /api/v1/projects/{projectId}/hotspots:
     post:
       operationId: submitHotspots
@@ -4277,6 +4312,30 @@ components:
           type: array
           items:
             type: string
+
+    PreviousFindingsModel:
+      type: object
+      properties:
+        findings:
+          type: array
+          items:
+            $ref: '#/components/schemas/PreviousFindingModel'
+
+    PreviousFindingModel:
+      type: object
+      properties:
+        file:
+          type: string
+        line:
+          type: integer
+        type:
+          type: string
+          description: A BugModel type, as a string so that a type the server adds later still reads
+        severity:
+          type: string
+          description: blocking, major or minor, as a string for the same reason
+        title:
+          type: string
 
     ExistingTagsModel:
       type: object
