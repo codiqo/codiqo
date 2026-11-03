@@ -138,12 +138,15 @@ class OpenCodeReviewConfigTest {
     void theTriagePromptShowsTheEarlierBugsInTheFindingsFilesAsAHint() throws Exception {
         List<StaticFinding> findings = List.of(new StaticFinding("spotbugs", "IS2_INCONSISTENT_SYNC", "warning", "a/Ledger.java", 14, "inconsistent synchronization"));
         PreviousFinding sameFile = new PreviousFinding("a/Ledger.java", 12, "concurrency", "major", "loses an update");
+        PreviousFinding sameFileNoLine = new PreviousFinding("a/Ledger.java", null, "logic", "minor", null);
         PreviousFinding otherFile = new PreviousFinding("b/Report.java", 3, "logic", "minor", "rounds twice");
 
-        String prompt = OpenCodeReviewConfig.triagePrompt(new RunArgs(), findings, List.of(sameFile, otherFile));
+        String prompt = OpenCodeReviewConfig.triagePrompt(new RunArgs(), findings, List.of(sameFile, sameFileNoLine, otherFile));
 
-        assertTrue(prompt.endsWith("Reported earlier:\n" + LlmJson.responseMapper().writeValueAsString(List.of(sameFile))), prompt);
-        assertTrue(prompt.contains("never as evidence") && prompt.contains("take no verdict"), prompt);
+        assertTrue(prompt.endsWith("Reported earlier:\n" + LlmJson.responseMapper().writeValueAsString(List.of(sameFile, sameFileNoLine))), prompt);
+        assertFalse(prompt.contains(":null"), "the answer rules forbid null, so the hint shows none");
+        assertTrue(prompt.contains("never as evidence"), prompt);
+        assertTrue(prompt.contains("take no verdict"), prompt);
         assertFalse(prompt.contains("b/Report.java"), prompt);
         assertEquals(OpenCodeReviewConfig.triagePrompt(new RunArgs(), findings, List.of()), OpenCodeReviewConfig.triagePrompt(new RunArgs(), findings, List.of(otherFile)),
                 "no earlier bug in the findings' files, no hint");

@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 
+import org.apache.commons.lang3.ArrayUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 import org.slf4j.event.Level;
 
@@ -22,6 +24,7 @@ import io.codiqo.submit.auth.ApiKeyCredential;
 import io.codiqo.submit.auth.CodiqoCredential;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaderValues;
+import io.netty.handler.codec.http.HttpResponseStatus;
 import tools.jackson.databind.node.JsonNodeFactory;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -38,7 +41,7 @@ class PreviousFindingsTest {
             answer.putArray("findings")
                     .add(JSON.objectNode().put("file", "a/Ledger.java").put("line", 12).put("type", "concurrency").put("severity", "major").put("title", "loses an update"))
                     .add(JSON.objectNode().put("file", "a/Ledger.java").put("type", "logic").put("severity", "minor"));
-            respond(exchange, 200, answer.toString());
+            respond(exchange, HttpResponseStatus.OK, answer.toString());
         });
         server.start();
         try {
@@ -52,13 +55,29 @@ class PreviousFindingsTest {
     /** a commit or project the server does not know, or a server without the endpoint, gives the triage no hint and no failure */
     @Test
     void anUnknownCommitOrAnOlderServerGivesNoFindings() throws Exception {
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/api/v1/projects", exchange -> respond(exchange, 405, JSON.objectNode().put("message", "method not allowed").toString()));
-        server.start();
-        try {
-            assertEquals(List.of(), PreviousFindings.fetch(url(server), new ApiKeyCredential("k"), 5, 5, "p1", SHA, false, new NoopLog()));
-        } finally {
-            server.stop(0);
+        for (HttpResponseStatus status : List.of(HttpResponseStatus.NOT_FOUND, HttpResponseStatus.METHOD_NOT_ALLOWED)) {
+            HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/api/v1/projects", exchange -> respond(exchange, status, JSON.objectNode().put("message", status.reasonPhrase()).toString()));
+            server.start();
+            try {
+                assertEquals(List.of(), PreviousFindings.fetch(url(server), new ApiKeyCredential("k"), 5, 5, "p1", SHA, false, new NoopLog()), status.toString());
+            } finally {
+                server.stop(0);
+            }
+        }
+    }
+    /** the generated client reads a success without a body as null, which is no hint, never a failed review */
+    @Test
+    void aSuccessWithoutABodyGivesNoFindings() throws Exception {
+        for (HttpResponseStatus status : List.of(HttpResponseStatus.OK, HttpResponseStatus.NO_CONTENT)) {
+            HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext(PATH, exchange -> respond(exchange, status, StringUtils.EMPTY));
+            server.start();
+            try {
+                assertEquals(List.of(), PreviousFindings.fetch(url(server), new ApiKeyCredential("k"), 5, 5, "p1", SHA, false, new NoopLog()), status.toString());
+            } finally {
+                server.stop(0);
+            }
         }
     }
     /** the hint only helps the review, so a failing endpoint is asked once and the review runs without it */
@@ -68,7 +87,7 @@ class PreviousFindingsTest {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/api/v1/projects", exchange -> {
             requests.incrementAndGet();
-            respond(exchange, 503, JSON.objectNode().put("message", "unavailable").toString());
+            respond(exchange, HttpResponseStatus.SERVICE_UNAVAILABLE, JSON.objectNode().put("message", "unavailable").toString());
         });
         server.start();
         try {
@@ -84,7 +103,7 @@ class PreviousFindingsTest {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/api/v1/projects", exchange -> {
             requests.incrementAndGet();
-            respond(exchange, 200, JSON.objectNode().toString());
+            respond(exchange, HttpResponseStatus.OK, JSON.objectNode().toString());
         });
         server.start();
         try {
@@ -110,7 +129,7 @@ class PreviousFindingsTest {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/api/v1/projects", exchange -> {
             requests.incrementAndGet();
-            respond(exchange, 200, JSON.objectNode().toString());
+            respond(exchange, HttpResponseStatus.OK, JSON.objectNode().toString());
         });
         server.start();
         try {
@@ -123,10 +142,11 @@ class PreviousFindingsTest {
     private static String url(HttpServer server) {
         return RunArgs.loopbackUrl(server.getAddress().getPort()).build().toString();
     }
-    private static void respond(HttpExchange exchange, int status, String body) throws IOException {
+    /** an empty body is sent with no length at all ({@code -1}), since a length of 0 makes the JDK server stream it chunked */
+    private static void respond(HttpExchange exchange, HttpResponseStatus status, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().add(HttpHeaderNames.CONTENT_TYPE.toString(), HttpHeaderValues.APPLICATION_JSON.toString());
-        exchange.sendResponseHeaders(status, bytes.length);
+        exchange.sendResponseHeaders(status.code(), ArrayUtils.isEmpty(bytes) ? -1 : bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();
     }

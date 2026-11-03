@@ -2,13 +2,13 @@ package io.codiqo.submit;
 
 import java.io.UncheckedIOException;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
-
-import org.apache.commons.collections4.CollectionUtils;
 
 import io.codiqo.api.logging.Log;
 import io.codiqo.client.ApiException;
 import io.codiqo.client.api.AnalysisApi;
+import io.codiqo.client.model.PreviousFindingModel;
 import io.codiqo.client.model.PreviousFindingsModel;
 import io.codiqo.llm.review.PreviousFinding;
 import io.codiqo.submit.auth.CodiqoApiClients;
@@ -49,8 +49,15 @@ public class PreviousFindings {
         } else {
             AnalysisApi client = new AnalysisApi(CodiqoApiClients.newApiClient(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds));
             try {
-                PreviousFindingsModel known = client.listPreviousFindings(projectId, commitSha);
-                toReturn = CollectionUtils.emptyIfNull(known.getFindings()).stream()
+                /**
+                 * The generated client reads a 2xx without a body (a 204, or an empty answer from a proxy in front of the
+                 * server) as null. That is no hint either: dereferencing it threw past both handlers below and failed the
+                 * whole review, which the hint only helps.
+                 */
+                List<PreviousFindingModel> known = Optional.ofNullable(client.listPreviousFindings(projectId, commitSha))
+                        .map(PreviousFindingsModel::getFindings)
+                        .orElse(List.of());
+                toReturn = known.stream()
                         .map(finding -> new PreviousFinding(finding.getFile(), finding.getLine(), finding.getType(), finding.getSeverity(), finding.getTitle()))
                         .toList();
                 log.info("previous findings: %d bugs earlier runs of %s reported, for the triage to look at again", toReturn.size(), commitSha);
