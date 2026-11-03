@@ -7,6 +7,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiConsumer;
 
 import org.junit.jupiter.api.Test;
 import org.slf4j.event.Level;
@@ -18,6 +19,7 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.llm.review.PreviousFinding;
 import io.codiqo.submit.auth.ApiKeyCredential;
+import io.codiqo.submit.auth.CodiqoCredential;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaderValues;
 import tools.jackson.databind.node.JsonNodeFactory;
@@ -72,6 +74,32 @@ class PreviousFindingsTest {
         try {
             assertEquals(List.of(), PreviousFindings.fetch(url(server), new ApiKeyCredential("k"), 5, 5, "p1", SHA, false, new NoopLog()));
             assertEquals(1, requests.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+    @Test
+    void aCredentialThatCannotBeRefreshedGivesNoFindings() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/v1/projects", exchange -> {
+            requests.incrementAndGet();
+            respond(exchange, 200, JSON.objectNode().toString());
+        });
+        server.start();
+        try {
+            CodiqoCredential expired = new CodiqoCredential() {
+                @Override
+                public void accept(BiConsumer<String, String> header) throws IOException {
+                    throw new IOException("the auth server is down");
+                }
+                @Override
+                public String describe() {
+                    return "expired login";
+                }
+            };
+            assertEquals(List.of(), PreviousFindings.fetch(url(server), expired, 5, 5, "p1", SHA, false, new NoopLog()));
+            assertEquals(0, requests.get());
         } finally {
             server.stop(0);
         }

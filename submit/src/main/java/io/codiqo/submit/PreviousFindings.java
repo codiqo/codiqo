@@ -1,5 +1,6 @@
 package io.codiqo.submit;
 
+import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Set;
 
@@ -18,7 +19,7 @@ import lombok.experimental.UtilityClass;
 /**
  * The bugs earlier runs of a commit reported, which the triage turn of its local review is shown as a hint of where to
  * look again. A commit never analysed before has none, and the review runs as it always did. The hint is best-effort:
- * one attempt, and any failure leaves the review without it, since a review is worth running without a hint and an
+ * one attempt, and a failed call or credential leaves the review without it, since a review is worth running without a hint and an
  * {@link ApiRetry} wait (up to 15 minutes on a failing endpoint) would hold up the review it only helps.
  */
 @UtilityClass
@@ -57,8 +58,11 @@ public class PreviousFindings {
                 if (NONE_KNOWN.contains(err.getCode())) {
                     log.info("previous findings: the server has none for %s in project %s (HTTP %d)", commitSha, projectId, err.getCode());
                 } else {
-                    log.warn("previous findings: none, the review runs without the hint (%s, HTTP %d): %s", apiUrl, err.getCode(), err.getMessage());
+                    log.warn("previous findings: none, the review runs without the hint (%s): %s", apiUrl, ApiRetry.summarize(err));
                 }
+            } catch (UncheckedIOException err) {
+                /** a credential the request interceptor could not refresh ({@link CodiqoApiClients}) */
+                log.warn("previous findings: none, the review runs without the hint (%s): %s", apiUrl, ApiRetry.summarize(err));
             }
         }
         return toReturn;

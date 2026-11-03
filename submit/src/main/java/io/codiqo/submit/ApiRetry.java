@@ -77,7 +77,7 @@ public class ApiRetry {
         }
         return false;
     }
-    private static String summarize(Throwable err) {
+    public static String summarize(Throwable err) {
         if (err instanceof ApiException apiErr && apiErr.getCode() > NO_HTTP_STATUS) {
             return "HTTP " + apiErr.getCode();
         }
