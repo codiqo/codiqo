@@ -136,11 +136,15 @@ public class RunArgs {
 
     public static final int DEFAULT_NUM_CTX = 256 * 1024;
     /**
-     * Default ceiling on the assembled agent-instruction text, sized above a single large instruction file (observed
-     * 40-75 KB). Exceeding {@link #llmConventionFilesMaxChars} fails the analysis rather than trimming, so a default
-     * below one such file would make merely enabling the feature fail every run on that repository.
+     * Default ceiling on the assembled agent-instruction text, sized above a single large instruction file. Exceeding
+     * {@link #llmConventionFilesMaxChars} fails the analysis rather than trimming, and a failure on codiqo's side halts
+     * the project, so a default below one such file stops every scheduled run on that repository until someone changes
+     * its CI configuration: under a 64 KiB ceiling, a CLAUDE.md of 67,070 bytes did exactly that.
+     * Instruction files of 80 and 180 KB exist too. The text goes into the system prompt of every review agent, about
+     * a quarter of a token per character, so the ceiling also bounds what each agent's context spends on it: 128 KiB
+     * is about 33,000 tokens, which leaves the review room, while 180 KB would take about 46,000.
      */
-    public static final int DEFAULT_CONVENTION_FILES_MAX_CHARS = 64 * 1024;
+    public static final int DEFAULT_CONVENTION_FILES_MAX_CHARS = 128 * 1024;
     public static final int DEFAULT_SEED = 42;
     public static final Duration PER_TEST_TIMEOUT_MAX = Duration.ofMinutes(15);
     public static final Map<String, String> JDTLS_CONFIG = Map.of(
