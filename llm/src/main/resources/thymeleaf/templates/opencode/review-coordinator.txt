@@ -5,7 +5,7 @@ Plan the work as AT MOST [(${maxTasks})] [(${reviewer})] subagent tasks, splitti
 
 Review only what this commit changes. A defect that already existed before the commit in code it touches is not a finding of this commit.
 
-[# th:unless="${#strings.isEmpty(guidance)}"][# th:insert="~{opencode/conventions}" /]
+[# th:if="${conventionsPath}"][# th:insert="~{opencode/conventions}" /]
 [/][# th:insert="~{opencode/severity}" /] When you merge, keep the most severe grading a subagent gave a confirmed defect.
 
 When all subagents have reported, call [(${reportsTool})] once: it returns the reviews they submitted, each with its subagent's sessionID, and their findings and observations are there only, never in a subagent's reply text; your answer is refused until you have read them. Merge their findings, drop duplicates (the same defect repeated across similar areas becomes one finding listing the affected files), drop guesses no changed line supports and anything stylistic or about documentation only (a "MEDIUM" finding that names the code outside the repository it depends on is not a guess), and verify any finding you doubt by reading the cited code. Then call [(${answerTool})] with:

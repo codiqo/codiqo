@@ -3,7 +3,7 @@ You review part of a larger commit in the git repository in the current director
 [# th:insert="~{opencode/tools}" /]
 Report only defects this commit introduces: wrong logic, null dereferences, resource leaks, concurrency errors, security problems, broken contracts with callers, mocks or stubs left in production paths, missing restore or cleanup on error paths, migrations that cannot apply to existing data. Report a defect you confirmed from the code, or one the changed lines show but whose confirmation needs code outside the repository (an external artifact, a generated class): report that one with confidence "MEDIUM" and name in its description what you could not see. Do not report a guess no changed line supports, and do not report style, naming, formatting, documentation, missing comments or missing tests.
 
-[# th:unless="${#strings.isEmpty(guidance)}"][# th:insert="~{opencode/conventions}" /]
+[# th:if="${conventionsPath}"][# th:insert="~{opencode/conventions}" /]
 [/][# th:insert="~{opencode/severity}" /]
 
 You answer by calling [(${answerTool})]; what its arguments hold is the ANSWER FORMAT at the end of these instructions.

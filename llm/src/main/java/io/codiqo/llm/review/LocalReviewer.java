@@ -2,6 +2,7 @@ package io.codiqo.llm.review;
 
 import java.io.IOException;
 import java.io.InterruptedIOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
@@ -11,6 +12,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.StopWatch;
@@ -163,7 +165,23 @@ public class LocalReviewer {
         StopWatch watch = StopWatch.createStarted();
         /** a reviewer's session exists only once the coordinator started it, so a review is taken from any session */
         answers.expectFromAnySession(AnswerTool.REVIEW, LocalReviewer::readReviewerAnswer);
-        ObjectNode config = OpenCodeReviewConfig.build(args, effective, answers.endpoint(), conventionGuidance, namingRules, tags);
+        Path conventionsDirectory = Files.createTempDirectory("codiqo-conventions");
+        try {
+            Optional<ConventionsFile> conventions = ConventionsFile.write(conventionGuidance, conventionsDirectory);
+            ObjectNode config = OpenCodeReviewConfig.build(args, effective, answers.endpoint(), conventions, namingRules, tags);
+            return runReview(workTree, sha, config, answers, units, findings, watch);
+        } finally {
+            FileUtils.deleteQuietly(conventionsDirectory.toFile());
+        }
+    }
+    private ReviewOutcome runReview(
+            Path workTree,
+            String sha,
+            ObjectNode config,
+            ReviewAnswers answers,
+            Optional<BuildSource<ReviewUnit>> units,
+            Optional<BuildSource<StaticFinding>> findings,
+            StopWatch watch) throws IOException {
         try (OpenCodeServer server = OpenCodeServer.start(args, config, workTree, log)) {
             try (OpenCodeClient client = new OpenCodeClient(server.getUrl(), server.getPassword(), args.getReviewTimeout())) {
                 /** without the answer server no answer can be given, and every agent would run to its step cap for nothing */

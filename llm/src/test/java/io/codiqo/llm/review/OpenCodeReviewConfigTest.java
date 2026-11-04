@@ -4,7 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 import org.apache.commons.lang3.BooleanUtils;
@@ -24,6 +26,7 @@ import tools.jackson.databind.node.ObjectNode;
 class OpenCodeReviewConfigTest {
     private static final List<String> NAMING_RULES = List.of("For a file of the test language, the signature is Container.member(params).");
     private static final ReviewAnswers.Endpoint ANSWERS = new ReviewAnswers.Endpoint("http://127.0.0.1:9/mcp", "answers-secret");
+    private static final Path CONVENTIONS = Path.of("/tmp/codiqo-conventions-1/" + ConventionsFile.FILE_NAME);
 
     @Test
     void agentsUseTheConfiguredModelsAndProvider() throws Exception {
@@ -31,7 +34,7 @@ class OpenCodeReviewConfigTest {
         args.setReviewCoordinatorModel("coordinator-model");
         args.setReviewReviewerModel("reviewer-model");
 
-        ObjectNode config = OpenCodeReviewConfig.build(args, endpoint("http://127.0.0.1:9/v1", null), ANSWERS, StringUtils.EMPTY, NAMING_RULES, ReviewTags.NONE);
+        ObjectNode config = OpenCodeReviewConfig.build(args, endpoint("http://127.0.0.1:9/v1", null), ANSWERS, Optional.empty(), NAMING_RULES, ReviewTags.NONE);
 
         JsonNode provider = config.path("providers").path(OpenCodeReviewConfig.PROVIDER);
         assertEquals("http://127.0.0.1:9/v1", provider.path("settings").path("baseURL").asString());
@@ -47,7 +50,7 @@ class OpenCodeReviewConfigTest {
     /** every review goes through the relay, so the provider always gets the relay's secret as its key */
     @Test
     void theProviderIsGivenTheRelaysSecret() throws Exception {
-        JsonNode settings = OpenCodeReviewConfig.build(new RunArgs(), endpoint(RunArgs.DEFAULT_LLM_PROXY_URL, "relay-secret"), ANSWERS, StringUtils.EMPTY, NAMING_RULES, ReviewTags.NONE)
+        JsonNode settings = OpenCodeReviewConfig.build(new RunArgs(), endpoint(RunArgs.DEFAULT_LLM_PROXY_URL, "relay-secret"), ANSWERS, Optional.empty(), NAMING_RULES, ReviewTags.NONE)
                 .path("providers").path(OpenCodeReviewConfig.PROVIDER).path("settings");
 
         assertEquals("relay-secret", settings.path("apiKey").asString());
@@ -74,7 +77,7 @@ class OpenCodeReviewConfigTest {
         args.setReviewReviewerSteps(12);
         args.setReviewMaxTasks(5);
 
-        JsonNode agents = build(args, StringUtils.EMPTY);
+        JsonNode agents = build(args, Optional.empty());
         String coordinator = agents.path(OpenCodeReviewConfig.COORDINATOR).path("system").asString();
         String reviewer = agents.path(OpenCodeReviewConfig.REVIEWER).path("system").asString();
 
@@ -98,23 +101,28 @@ class OpenCodeReviewConfigTest {
      */
     @Test
     void everySubagentIsAReviewerThatAnswersInItsFormat() throws Exception {
-        JsonNode agents = build(new RunArgs(), StringUtils.EMPTY);
+        JsonNode agents = build(new RunArgs(), Optional.empty());
         String coordinator = agents.path(OpenCodeReviewConfig.COORDINATOR).path("system").asString();
         String reviewer = agents.path(OpenCodeReviewConfig.REVIEWER).path("system").asString();
 
         assertTrue(coordinator.contains("Start a subagent only to review an area of the commit, never for anything else"), coordinator);
         assertTrue(reviewer.contains("a task that says it is not a review, or asks for a single word, is still answered with this call"), reviewer);
     }
-    /** the project's conventions reach every agent as evidence, wrapped so they cannot pass for instructions */
+    /**
+     * Every agent is sent to the conventions file, told how long it is and which line ends it, so a read in parts goes
+     * on to the end; the text itself stays out of the system prompt, and an agent without conventions hears of none.
+     */
     @Test
-    void bothAgentsReadTheProjectConventionsAndNoneWithoutThem() throws Exception {
-        JsonNode guided = build(new RunArgs(), "Every entity class ends in Entity.");
-        JsonNode unguided = build(new RunArgs(), StringUtils.EMPTY);
+    void bothAgentsReadTheProjectConventionsFromTheirFileAndNoneWithoutThem() throws Exception {
+        JsonNode guided = build(new RunArgs(), Optional.of(new ConventionsFile(CONVENTIONS, 7)));
+        JsonNode unguided = build(new RunArgs(), Optional.empty());
 
         for (String agent : List.of(OpenCodeReviewConfig.COORDINATOR, OpenCodeReviewConfig.REVIEWER)) {
             String system = guided.path(agent).path("system").asString();
-            assertTrue(system.contains(PromptFences.CONVENTIONS_BEGIN + "\nEvery entity class ends in Entity.\n" + PromptFences.CONVENTIONS_END), system);
+            assertTrue(system.contains("are in " + CONVENTIONS + " (7 lines)"), system);
+            assertTrue(system.contains("until you have read its last line, " + PromptFences.CONVENTIONS_END), system);
             assertTrue(system.contains("never lowers a finding's severity"), "the conventions are advisory");
+            assertFalse(system.contains(PromptFences.CONVENTIONS_BEGIN), "the conventions themselves stay in the file");
             assertFalse(unguided.path(agent).path("system").asString().contains("PROJECT CONVENTIONS"));
         }
     }
@@ -165,7 +173,7 @@ class OpenCodeReviewConfigTest {
     /** local mode judges the commit with the review alone, so every review asks both agents for their pieces of it */
     @Test
     void everyReviewAsksBothAgentsForTheirPiecesOfTheAssessment() throws Exception {
-        JsonNode agents = build(new RunArgs(), StringUtils.EMPTY);
+        JsonNode agents = build(new RunArgs(), Optional.empty());
 
         String reviewer = agents.path(OpenCodeReviewConfig.REVIEWER).path("system").asString();
         String coordinator = agents.path(OpenCodeReviewConfig.COORDINATOR).path("system").asString();
@@ -188,7 +196,7 @@ class OpenCodeReviewConfigTest {
     }
     @Test
     void agentsMayNeitherEditNorStartWithoutADenyAll() throws Exception {
-        JsonNode agents = build(new RunArgs(), StringUtils.EMPTY);
+        JsonNode agents = build(new RunArgs(), Optional.empty());
 
         for (String agent : List.of(OpenCodeReviewConfig.COORDINATOR, OpenCodeReviewConfig.REVIEWER)) {
             List<JsonNode> rules = Lists.newArrayList();
@@ -209,7 +217,7 @@ class OpenCodeReviewConfigTest {
      */
     @Test
     void agentsMayRunAnyCommandButGitWritesAndBuilds() throws Exception {
-        JsonNode agents = build(new RunArgs(), StringUtils.EMPTY);
+        JsonNode agents = build(new RunArgs(), Optional.empty());
         for (String agent : List.of(OpenCodeReviewConfig.COORDINATOR, OpenCodeReviewConfig.REVIEWER)) {
             List<JsonNode> rules = Lists.newArrayList();
             agents.path(agent).path("permissions").forEach(rules::add);
@@ -240,7 +248,7 @@ class OpenCodeReviewConfigTest {
      */
     @Test
     void theAgentsReachTheAnswersServerWithItsSecret() {
-        JsonNode server = OpenCodeReviewConfig.build(new RunArgs(), endpoint(RunArgs.DEFAULT_LOCAL_LLM_URL, null), ANSWERS, StringUtils.EMPTY, NAMING_RULES, ReviewTags.NONE)
+        JsonNode server = OpenCodeReviewConfig.build(new RunArgs(), endpoint(RunArgs.DEFAULT_LOCAL_LLM_URL, null), ANSWERS, Optional.empty(), NAMING_RULES, ReviewTags.NONE)
                 .path("mcp").path("servers").path(ReviewAnswers.SERVER);
 
         assertEquals("remote", server.path("type").asString());
@@ -252,7 +260,7 @@ class OpenCodeReviewConfigTest {
     /** a reviewer may only submit its review; the coordinator, whose session the labelling and triage forks copy, the rest */
     @Test
     void eachAgentMayCallOnlyItsOwnAnswerTools() {
-        JsonNode agents = build(new RunArgs(), StringUtils.EMPTY);
+        JsonNode agents = build(new RunArgs(), Optional.empty());
 
         assertEquals(List.of("codiqo_submit_review"), allowedAnswerTools(agents.path(OpenCodeReviewConfig.REVIEWER)));
         assertEquals(List.of("codiqo_reviewer_reports", "codiqo_submit_answer", "codiqo_submit_labels", "codiqo_submit_triage"),
@@ -263,7 +271,7 @@ class OpenCodeReviewConfigTest {
     void everyAnsweredPromptNamesItsToolAndItsAttempts() {
         RunArgs args = new RunArgs();
         args.setReviewAnswerAttempts(4);
-        JsonNode agents = build(args, StringUtils.EMPTY);
+        JsonNode agents = build(args, Optional.empty());
 
         String coordinator = agents.path(OpenCodeReviewConfig.COORDINATOR).path("system").asString();
         assertTrue(coordinator.contains("call codiqo_reviewer_reports once") && coordinator.contains("Then call codiqo_submit_answer with"), coordinator);
@@ -275,7 +283,7 @@ class OpenCodeReviewConfigTest {
     }
     @Test
     void onlyTheCoordinatorMayStartReviewers() throws Exception {
-        JsonNode agents = build(new RunArgs(), StringUtils.EMPTY);
+        JsonNode agents = build(new RunArgs(), Optional.empty());
 
         List<String> coordinatorSubagentRules = Lists.newArrayList();
         agents.path(OpenCodeReviewConfig.COORDINATOR).path("permissions").forEach(rule -> {
@@ -301,17 +309,17 @@ class OpenCodeReviewConfigTest {
         assertEquals(List.of(), tags.getFunctional());
     }
     private static String coordinator(RunArgs args, ReviewTags tags) {
-        return OpenCodeReviewConfig.build(args, endpoint(args.getReviewBaseUrl(), null), ANSWERS, StringUtils.EMPTY, NAMING_RULES, tags)
+        return OpenCodeReviewConfig.build(args, endpoint(args.getReviewBaseUrl(), null), ANSWERS, Optional.empty(), NAMING_RULES, tags)
                 .path("agents").path(OpenCodeReviewConfig.COORDINATOR).path("system").asString();
     }
-    private static JsonNode build(RunArgs args, String conventionGuidance) {
-        return OpenCodeReviewConfig.build(args, endpoint(args.getReviewBaseUrl(), null), ANSWERS, conventionGuidance, NAMING_RULES, ReviewTags.NONE).path("agents");
+    private static JsonNode build(RunArgs args, Optional<ConventionsFile> conventions) {
+        return OpenCodeReviewConfig.build(args, endpoint(args.getReviewBaseUrl(), null), ANSWERS, conventions, NAMING_RULES, ReviewTags.NONE).path("agents");
     }
     /** the agents' prompts decide what a review finds, so each shape of them is pinned whole */
     @Test
     void theAgentPromptsAreRenderedExactly() throws Exception {
-        JsonNode bare = OpenCodeReviewConfig.build(new RunArgs(), endpoint(RunArgs.DEFAULT_LOCAL_LLM_URL, null), ANSWERS, StringUtils.EMPTY, NAMING_RULES, ReviewTags.NONE).path("agents");
-        JsonNode guided = OpenCodeReviewConfig.build(new RunArgs(), endpoint(RunArgs.DEFAULT_LOCAL_LLM_URL, null), ANSWERS, "\n### AGENTS.md\n\nPrefer Optional over null returns.\n", NAMING_RULES, ReviewTags.NONE)
+        JsonNode bare = OpenCodeReviewConfig.build(new RunArgs(), endpoint(RunArgs.DEFAULT_LOCAL_LLM_URL, null), ANSWERS, Optional.empty(), NAMING_RULES, ReviewTags.NONE).path("agents");
+        JsonNode guided = OpenCodeReviewConfig.build(new RunArgs(), endpoint(RunArgs.DEFAULT_LOCAL_LLM_URL, null), ANSWERS, Optional.of(new ConventionsFile(CONVENTIONS, 6)), NAMING_RULES, ReviewTags.NONE)
                 .path("agents");
 
         GoldenText.assertMatches("opencode-coordinator", bare.path(OpenCodeReviewConfig.COORDINATOR).path("system").asString());

@@ -140,9 +140,10 @@ public class RunArgs {
      * {@link #llmConventionFilesMaxChars} fails the analysis rather than trimming, and a failure on codiqo's side halts
      * the project, so a default below one such file stops every scheduled run on that repository until someone changes
      * its CI configuration: under a 64 KiB ceiling, a CLAUDE.md of 67,070 bytes did exactly that.
-     * Instruction files of 80 and 180 KB exist too. The text goes into the system prompt of every review agent, about
-     * a quarter of a token per character, so the ceiling also bounds what each agent's context spends on it: 128 KiB
-     * is about 33,000 tokens, which leaves the review room, while 180 KB would take about 46,000.
+     * Instruction files of 80 and 180 KB exist too. Every review agent reads the whole text from its file into its
+     * context ({@code ConventionsFile}), about a quarter of a token per character, so the ceiling also bounds what each
+     * agent's context spends on it: 128 KiB is about 33,000 tokens, which leaves the review room, while 180 KB would
+     * take about 46,000.
      */
     public static final int DEFAULT_CONVENTION_FILES_MAX_CHARS = 128 * 1024;
     public static final int DEFAULT_SEED = 42;

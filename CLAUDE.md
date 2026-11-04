@@ -1769,6 +1769,12 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   coordinator's include the forks', since a fork runs with the coordinator's permissions. The prompts state the rules
   (`opencode/tools`). Convention
   files are fenced with `PromptFences`' markers, which `ConventionGuidance` strips from every file.
+- **The agents read the project's conventions from a file, never from their prompts** (`ConventionsFile`): the review
+  writes the fenced text to `project-conventions.md` in a temporary directory outside the analysis clone, which it
+  deletes when the review ends, and both prompts (`opencode/conventions`) name the file, its line count and its last
+  line, the closing fence. OpenCode's read tool returns a long file in parts, so that line is how an agent knows it
+  has read everything. Inline, the text took a share of every agent's context whether it needed it or not, which is
+  why `llmConventionFilesMaxChars` capped it hard; a repository whose CLAUDE.md outgrew the cap halted its project.
 - What the model writes is checked before it is sent: a bug without a title or description and a dimension score off
   the 0-10 scale are left out, since the server would reject the whole submission over them.
 - **Every default lives in `RunArgs`.** The review's settings are `transient` `review*` fields (local to the run, never

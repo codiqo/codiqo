@@ -1,6 +1,7 @@
 package io.codiqo.llm.review;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -71,8 +72,10 @@ public class OpenCodeReviewConfig {
     /**
      * @param answers where the agents give their answers, each through its {@link AnswerTool}
      * @param namingRules how a reviewer writes a unit's signature, one rule per language the commit changes
+     * @param conventions the project's conventions, which both agents read from that file before they review
      */
-    public ObjectNode build(RunArgs args, ReviewEndpoint endpoint, ReviewAnswers.Endpoint answers, String conventionGuidance, List<String> namingRules, ReviewTags tags) {
+    public ObjectNode build(RunArgs args, ReviewEndpoint endpoint, ReviewAnswers.Endpoint answers, Optional<ConventionsFile> conventions, List<String> namingRules,
+            ReviewTags tags) {
         JsonMapper mapper = JsonMapper.builder().build();
         ObjectNode toReturn = mapper.createObjectNode();
         toReturn.put("share", "disabled");
@@ -120,7 +123,7 @@ public class OpenCodeReviewConfig {
         reviewer.put("description", "Reviews part of a commit with shell and file tools that leave the checkout untouched and returns confirmed defects as JSON");
         reviewer.put("model", PROVIDER + "/" + args.getReviewReviewerModel());
         reviewer.put("steps", args.getReviewReviewerSteps());
-        reviewer.put("system", prompt("opencode/module-reviewer", AnswerTool.REVIEW, args.getReviewReviewerSteps(), args, conventionGuidance, namingRules, tags));
+        reviewer.put("system", prompt("opencode/module-reviewer", AnswerTool.REVIEW, args.getReviewReviewerSteps(), args, conventions, namingRules, tags));
         ArrayNode reviewerPermissions = reviewer.putArray("permissions");
         addReviewPermissions(reviewerPermissions);
         rule(reviewerPermissions, AnswerTool.REVIEW.getOpenCodeName(), "*", "allow");
@@ -130,7 +133,7 @@ public class OpenCodeReviewConfig {
         coordinator.put("description", "Plans a whole-commit review, runs reviewer sub-agents in parallel and merges their findings");
         coordinator.put("model", PROVIDER + "/" + args.getReviewCoordinatorModel());
         coordinator.put("steps", args.getReviewCoordinatorSteps());
-        coordinator.put("system", prompt("opencode/review-coordinator", AnswerTool.ANSWER, args.getReviewCoordinatorSteps(), args, conventionGuidance, namingRules, tags));
+        coordinator.put("system", prompt("opencode/review-coordinator", AnswerTool.ANSWER, args.getReviewCoordinatorSteps(), args, conventions, namingRules, tags));
         ArrayNode coordinatorPermissions = coordinator.putArray("permissions");
         addReviewPermissions(coordinatorPermissions);
         rule(coordinatorPermissions, "subagent", "*", "deny");
@@ -229,12 +232,14 @@ public class OpenCodeReviewConfig {
      * from code quoted in a description (a regex {@code \s}, a Windows path) are what most often breaks a model's JSON.
      *
      * <p>
-     * The project's conventions are fenced so the agent reads them as evidence about intended behaviour rather than
-     * as instructions: the developers under review wrote them, and a rule there must never hide or downgrade a defect.
-     * The fence is the scoring prompt's own, which {@code ConventionGuidance} strips from every file, so a file cannot
-     * close it early; Thymeleaf inserts a value as it is, so a {@code [(...)]} inside one is not evaluated.
+     * The project's conventions are fenced in their file ({@link ConventionsFile}) so the agent reads them as evidence
+     * about intended behaviour rather than as instructions: the developers under review wrote them, and a rule there
+     * must never hide or downgrade a defect. The fence is the scoring prompt's own, which {@code ConventionGuidance}
+     * strips from every file, so a file cannot close it early, and the prompt names the closing fence as the line that
+     * ends the file, so an agent knows when a read in parts has reached the end.
      */
-    private static String prompt(String template, AnswerTool answer, int steps, RunArgs args, String conventionGuidance, List<String> namingRules, ReviewTags tags) {
+    private static String prompt(String template, AnswerTool answer, int steps, RunArgs args, Optional<ConventionsFile> conventions, List<String> namingRules,
+            ReviewTags tags) {
         Context ctx = answering(answer, args);
         ctx.setVariable("namingRules", namingRules);
         ctx.setVariable("technicalTags", tags.getTechnical());
@@ -244,9 +249,11 @@ public class OpenCodeReviewConfig {
         ctx.setVariable("steps", steps);
         ctx.setVariable("stopBy", steps - STEPS_RESERVED_FOR_ANSWER);
         ctx.setVariable("bugShape", BUG_SHAPE);
-        ctx.setVariable("guidance", conventionGuidance.strip());
-        ctx.setVariable("begin", PromptFences.CONVENTIONS_BEGIN);
         ctx.setVariable("end", PromptFences.CONVENTIONS_END);
+        conventions.ifPresent(file -> {
+            ctx.setVariable("conventionsPath", file.getPath().toString());
+            ctx.setVariable("conventionsLines", file.getLines());
+        });
         return PromptTemplates.process(template, ctx);
     }
     /** a prompt that is answered through the tool, with the calls the agent gets before its answer counts as refused */
