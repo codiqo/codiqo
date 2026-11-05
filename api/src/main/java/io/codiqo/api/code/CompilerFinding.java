@@ -5,7 +5,7 @@ import lombok.Value;
 /**
  * A finding a compiler plugin reported while the analysed commit was built, such as an Error Prone check. The build
  * tool's integration reads it from the build's own output, since such a plugin writes no report file, and the
- * submission attaches the ones on the commit's added lines to their code units as diagnostics of {@link #getTool()}.
+ * submission attaches the ones on the commit's added lines to their code units as diagnostics of its {@code tool}.
  */
 @Value
 public class CompilerFinding {

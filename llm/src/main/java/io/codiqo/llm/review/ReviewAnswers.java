@@ -11,6 +11,7 @@ import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 
@@ -289,7 +290,7 @@ public final class ReviewAnswers implements AutoCloseable {
         if (StringUtils.isEmpty(path)) {
             return err.getOriginalMessage();
         }
-        return StringUtils.removeStart(path, ".") + ": " + err.getOriginalMessage();
+        return Strings.CS.removeStart(path, ".") + ": " + err.getOriginalMessage();
     }
 
     /** reads a call's arguments into an answer, or names what keeps them from being one */
