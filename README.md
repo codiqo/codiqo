@@ -21,6 +21,7 @@
   <a href="#built-on-proven-jvm-tooling">Tooling</a> ·
   <a href="#a-score-you-can-audit">Scoring model</a> ·
   <a href="#tune-it-to-your-team">Settings</a> ·
+  <a href="#ai-spend-against-delivered-value">AI spend</a> ·
   <a href="#screenshots">Screenshots</a>
 </p>
 
@@ -212,6 +213,21 @@ marked verified and explained, with a suggested fix:
 
 Team dashboards, per-project trends and per-developer scorecards build on these numbers at
 [codiqo.io](https://codiqo.io).
+
+## AI spend against delivered value
+
+**Tokens are not output.** This engine measures what each commit delivered. In early access, codiqo.io sets that
+value against what your teams' Claude Code usage cost, per person and per team, so spend that grows faster than the
+value it delivers shows up within weeks.
+
+- **No pipeline to run.** Claude Code reports its own usage over OpenTelemetry. An admin adds one block to Claude
+  Code's managed settings, with Codiqo's endpoint and the organization's key; nothing runs in your build.
+- **Usage metrics only.** Tokens, estimated cost, model and repository, per person. Prompts, responses and code are
+  never sent.
+- **Fair while it rolls out.** Spend counts from each person's first reported day, so someone not reporting yet never
+  reads as $0, and usage is matched to the repositories this engine analyses.
+
+Setup guide for your IT team: [codiqo.io/claude-code-usage](https://codiqo.io/claude-code-usage).
 
 ## How a commit becomes a score
 
