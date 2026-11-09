@@ -62,13 +62,13 @@
         <jspecify.version>1.0.1</jspecify.version>
         <lombok.version>1.18.48</lombok.version>
         <gson.version>2.15.0</gson.version>
-        <google-auth.version>1.55.0</google-auth.version>
+        <google-auth.version>1.57.0</google-auth.version>
         <google-api-client.version>2.9.2</google-api-client.version>
         <google-http-client.version>2.2.0</google-http-client.version>
-        <google-api-services-artifactregistry.version>v1-rev20260925-2.9.2</google-api-services-artifactregistry.version>
+        <google-api-services-artifactregistry.version>v1-rev20261031-2.9.2</google-api-services-artifactregistry.version>
         <artifactregistry-auth-common.version>2.2.5</artifactregistry-auth-common.version>
-        <jackson.version>3.2.4</jackson.version>
-        <jackson2.version>2.22.4</jackson2.version>
+        <jackson.version>3.3.0</jackson.version>
+        <jackson2.version>2.23.0</jackson2.version>
         <snakeyaml.engine.version>3.2</snakeyaml.engine.version>
         <snakeyaml.version>2.7</snakeyaml.version>
         <okio.version>3.18.2</okio.version>
@@ -95,13 +95,13 @@
         <findbugs.sec.version>1.14.0</findbugs.sec.version>
         <findbugs.contrib.version>7.7.4</findbugs.contrib.version>
         <jacoco.version>0.8.16</jacoco.version>
-        <classgraph.version>4.8.199</classgraph.version>
+        <classgraph.version>4.8.200</classgraph.version>
         <oshi.version>7.7.3</oshi.version>
         <jol.version>0.17</jol.version>
-        <openai.version>4.100.0</openai.version>
+        <openai.version>4.101.0</openai.version>
         <gradle.api.version>8.11.1</gradle.api.version>
         <micrometer.version>1.17.2</micrometer.version>
-        <thymeleaf.version>3.1.5.RELEASE</thymeleaf.version>
+        <thymeleaf.version>3.1.6.RELEASE</thymeleaf.version>
         <commons-lang3.version>3.21.0</commons-lang3.version>
         <commons-collections4.version>4.6.0</commons-collections4.version>
         <eclipse-collections.version>13.0.0</eclipse-collections.version>
@@ -114,7 +114,7 @@
         <failsafe.version>3.3.2</failsafe.version>
         <ascii-table.version>1.13.0</ascii-table.version>
         <antlr4.version>4.13.2</antlr4.version>
-        <aether.version>2.0.24</aether.version>
+        <aether.version>2.0.25</aether.version>
         <maven.plugin-annotations.version>3.16.0</maven.plugin-annotations.version>
         <maven.version>3.10.0</maven.version>
         <maven.invoker.version>3.3.0</maven.invoker.version>
@@ -138,7 +138,7 @@
         <version.surefire.plugin>3.6.1</version.surefire.plugin>
         <version.jar.plugin>3.5.1</version.jar.plugin>
         <version.dependency.plugin>3.11.0</version.dependency.plugin>
-        <version.versions.plugin>2.23.0</version.versions.plugin>
+        <version.versions.plugin>2.24.0</version.versions.plugin>
         <version.install.plugin>3.2.0</version.install.plugin>
         <version.javadoc.plugin>3.12.0</version.javadoc.plugin>
         <version.lombok.plugin>1.18.20.0</version.lombok.plugin>
@@ -146,10 +146,10 @@
         <version.deploy.plugin>3.2.0</version.deploy.plugin>
         <version.site.plugin>3.22.0</version.site.plugin>
         <version.gpg.plugin>3.2.8</version.gpg.plugin>
-        <version.license.plugin>2.7.1</version.license.plugin>
+        <version.license.plugin>2.8.0</version.license.plugin>
         <version.pmd.plugin>3.28.0</version.pmd.plugin>
         <version.openapi.plugin>7.27.0</version.openapi.plugin>
-        <version.buildhelper.plugin>3.6.2</version.buildhelper.plugin>
+        <version.buildhelper.plugin>3.7.0</version.buildhelper.plugin>
         <version.os.plugin>1.7.1</version.os.plugin>
         <version.plugin.plugin>3.16.0</version.plugin.plugin>
         <version.central-publishing.plugin>0.12.0</version.central-publishing.plugin>
