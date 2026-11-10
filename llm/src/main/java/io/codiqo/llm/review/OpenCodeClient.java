@@ -41,18 +41,19 @@ import tools.jackson.databind.node.ObjectNode;
  * which for a coordinator includes every foreground sub-agent it started; a pinned OpenCode version keeps it stable.
  */
 public class OpenCodeClient implements Closeable {
+    public static final String ORDER_NEWEST_FIRST = "desc";
+    public static final String ORDER_OLDEST_FIRST = "asc";
     public static final String USER = "opencode";
-    private static final MediaType JSON = MediaType.get(HttpHeaderValues.APPLICATION_JSON.toString());
-    private static final int PAGE = 100;
-    private static final String ASSISTANT = "assistant";
-    private static final String USER_MESSAGE = "user";
-    private static final String STOP = "stop";
-    private static final String MCP_CONNECTED = "connected";
+    public static final MediaType JSON = MediaType.get(HttpHeaderValues.APPLICATION_JSON.toString());
+    public static final int PAGE = 100;
+    public static final String ASSISTANT = "assistant";
+    public static final String USER_MESSAGE = "user";
+    public static final String STOP = "stop";
+    public static final String MCP_CONNECTED = "connected";
+
     /** what OpenCode lists an MCP server as while it connects; a server not listed at all has not been started yet */
-    private static final String MCP_PENDING = "pending";
-    private static final Duration MCP_POLL = Duration.ofMillis(250);
-    private static final String ORDER_NEWEST_FIRST = "desc";
-    private static final String ORDER_OLDEST_FIRST = "asc";
+    public static final String MCP_PENDING = "pending";
+    public static final Duration MCP_POLL = Duration.ofMillis(250);
 
     private final OkHttpClient http;
     private final HttpUrl base;
