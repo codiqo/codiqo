@@ -138,7 +138,7 @@
         <version.surefire.plugin>3.6.1</version.surefire.plugin>
         <version.jar.plugin>3.5.1</version.jar.plugin>
         <version.dependency.plugin>3.11.0</version.dependency.plugin>
-        <version.versions.plugin>2.24.0</version.versions.plugin>
+        <version.versions.plugin>2.25.1</version.versions.plugin>
         <version.install.plugin>3.2.0</version.install.plugin>
         <version.javadoc.plugin>3.12.0</version.javadoc.plugin>
         <version.lombok.plugin>1.18.20.0</version.lombok.plugin>
@@ -146,10 +146,10 @@
         <version.deploy.plugin>3.2.0</version.deploy.plugin>
         <version.site.plugin>3.22.0</version.site.plugin>
         <version.gpg.plugin>3.2.8</version.gpg.plugin>
-        <version.license.plugin>2.8.0</version.license.plugin>
+        <version.license.plugin>2.9.0</version.license.plugin>
         <version.pmd.plugin>3.28.0</version.pmd.plugin>
         <version.openapi.plugin>7.27.0</version.openapi.plugin>
-        <version.buildhelper.plugin>3.7.0</version.buildhelper.plugin>
+        <version.buildhelper.plugin>3.8.0</version.buildhelper.plugin>
         <version.os.plugin>1.7.1</version.os.plugin>
         <version.plugin.plugin>3.16.0</version.plugin.plugin>
         <version.central-publishing.plugin>0.12.0</version.central-publishing.plugin>
