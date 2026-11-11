@@ -352,13 +352,7 @@ public class AnalysisEngine {
         }
 
         args.getProjects().add(GradleSourceOnlyProjectSpec.forWorkTree(args.getGit().getWorkTree(), request));
-        SubmissionContext ctx = degradedSubmission(request, args, logFactory, log);
-
-        AnalysisBuildFailureModel buildFailure = new AnalysisBuildFailureModel();
-        buildFailure.setReason(reason);
-        buildFailure.setCategory(AnalysisExcludeCategory.BUILD_FAILURE);
-        buildFailure.setDetail(request.getBuildFailureDetail());
-        ctx.getSubmissionModel().setBuildFailure(buildFailure);
+        SubmissionContext ctx = degradedSubmission(request, args, reason, logFactory, log);
 
         List<FileChangeModel> files = ctx.getSubmissionModel().getFiles();
         /**
@@ -390,39 +384,46 @@ public class AnalysisEngine {
      * degrades the same way rather than losing the commit: without the fallback the exception escapes the worker, no
      * exclusion is ever submitted, and the sha is re-offered as missing on every subsequent run.
      */
-    private static SubmissionContext degradedSubmission(AnalysisRequest request, RunArgs args, LogFactory logFactory, Log log) throws Exception {
+    private static SubmissionContext degradedSubmission(AnalysisRequest request, RunArgs args, String reason, LogFactory logFactory, Log log) throws Exception {
         try {
-            return sourceOnlySubmission(request, args, logFactory);
+            return sourceOnlySubmission(request, args, reason, logFactory);
         } catch (IOException err) {
             log.warn("commit %s: source-only degraded index failed (%s) — falling back to diff-only scoring",
-                    args.getCommitId(), err.getMessage());
-            return diffOnlySubmission(request, args, logFactory);
+                    args.getCommitId(), ExceptionUtils.getRootCauseMessage(err));
+            return diffOnlySubmission(request, args, reason, err, logFactory);
         }
     }
-    private static SubmissionContext sourceOnlySubmission(AnalysisRequest request, RunArgs args, LogFactory logFactory) throws Exception {
+    private static SubmissionContext sourceOnlySubmission(AnalysisRequest request, RunArgs args, String reason, LogFactory logFactory) throws Exception {
         Path workTree = args.getGit().getWorkTree().toPath().normalize();
         CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
 
-        return DefaultLanguageProcessors.sourceOnlyIndex(args, analysis, logFactory, index -> {
-            SubmissionContext toReturn = SubmissionContext.create(
+        SubmissionContext toReturn = DefaultLanguageProcessors.sourceOnlyIndex(args, analysis, logFactory, index -> {
+            SubmissionContext ctx = SubmissionContext.create(
                     args, index, analysis, workTree, logFactory, request.getRootCode(), request.getRootName(), clientInfo(request));
 
-            new GradleProjectModelPopulator(logFactory.getLogger(GradleProjectModelPopulator.class)).accept(toReturn);
-            SubmissionAssembly.degraded(toReturn);
-            return toReturn;
+            new GradleProjectModelPopulator(logFactory.getLogger(GradleProjectModelPopulator.class)).accept(ctx);
+            SubmissionAssembly.degraded(ctx);
+            return ctx;
         });
+        toReturn.getSubmissionModel().setBuildFailure(buildFailure(reason, request.getBuildFailureDetail()));
+        return toReturn;
     }
     /**
-     * Git diff and commit metadata only: no code units, no metrics. The degraded score is derived from the diff alone.
+     * Git diff and commit metadata only: no code units, no metrics. The degraded score is derived from the diff alone,
+     * and the build-failure detail records why the source-only index was given up, as on Maven.
      */
-    private static SubmissionContext diffOnlySubmission(AnalysisRequest request, RunArgs args, LogFactory logFactory) throws Exception {
+    @VisibleForTesting
+    public static SubmissionContext diffOnlySubmission(AnalysisRequest request, RunArgs args, String reason, IOException fallbackCause, LogFactory logFactory)
+            throws Exception {
         Path workTree = args.getGit().getWorkTree().toPath().normalize();
         CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
 
         SubmissionContext toReturn = SubmissionContext.create(
                 args, null, analysis, workTree, logFactory, request.getRootCode(), request.getRootName(), clientInfo(request));
 
+        new GradleProjectModelPopulator(logFactory.getLogger(GradleProjectModelPopulator.class)).accept(toReturn);
         SubmissionAssembly.diffOnly(toReturn);
+        toReturn.getSubmissionModel().setBuildFailure(buildFailure(reason, SubmissionAssembly.diffOnlyFallbackDetail(request.getBuildFailureDetail(), fallbackCause)));
         return toReturn;
     }
     private static ClientInfoModel clientInfo(AnalysisRequest request) {
@@ -430,6 +431,13 @@ public class AnalysisEngine {
         toReturn.setBuildTool(BuildToolEnum.GRADLE);
         toReturn.setVersion(request.getGradleVersion());
         toReturn.setName("codiqo-gradle-plugin");
+        return toReturn;
+    }
+    private static AnalysisBuildFailureModel buildFailure(String reason, String detail) {
+        AnalysisBuildFailureModel toReturn = new AnalysisBuildFailureModel();
+        toReturn.setReason(reason);
+        toReturn.setCategory(AnalysisExcludeCategory.BUILD_FAILURE);
+        toReturn.setDetail(detail);
         return toReturn;
     }
     /**

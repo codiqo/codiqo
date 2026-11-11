@@ -1,5 +1,6 @@
 package io.codiqo.submit;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
@@ -7,6 +8,9 @@ import java.util.Optional;
 import java.util.function.Consumer;
 
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.CharUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.testing.TestRun;
@@ -19,6 +23,13 @@ import lombok.experimental.UtilityClass;
  */
 @UtilityClass
 public class SubmissionAssembly {
+    /**
+     * Grep marker for the one transition that silently changes the scoring regime. It is written into the persisted
+     * build-failure detail as well as the log, because a log line outlives nothing: retention is finite, and the
+     * question of why an analysis scored the way it did outlives it.
+     */
+    public static final String DIFF_ONLY_FALLBACK_MARKER = "[codiqo] source-only degraded index failed";
+
     /** a fully indexed submission: coverage, static analysis and duplication were all captured. */
     public void full(SubmissionContext ctx) {
         full(ctx, unused -> { });
@@ -58,6 +69,21 @@ public class SubmissionAssembly {
         new FileAnalysisPopulator().accept(ctx);
 
         finish(ctx);
+    }
+    /**
+     * Records why a degraded analysis fell back to {@link #diffOnly}, in the build-failure detail every degraded row
+     * already persists. A diff-only submission carries no project metrics, so blocks are priced on raw line counts
+     * instead of the project's own distribution, and with a zero baseline the global cap cannot bind either: a
+     * materially different scoring regime from a source-only degraded run, which both build tools must record alike.
+     */
+    public String diffOnlyFallbackDetail(String detail, IOException err) {
+        String note = String.format("%s (%s) — scored diff-only: no project metrics, so driver scores are raw line counts and the global cap does not bind",
+                DIFF_ONLY_FALLBACK_MARKER,
+                ExceptionUtils.getRootCauseMessage(err));
+        if (StringUtils.isBlank(detail)) {
+            return note;
+        }
+        return detail + StringUtils.repeat(CharUtils.LF, 2) + note;
     }
     /**
      * an excluded commit, submitted as an exclusion rather than scored. Deliberately does not call {@link #finish}:
