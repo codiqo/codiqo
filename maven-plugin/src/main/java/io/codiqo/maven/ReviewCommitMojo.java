@@ -38,6 +38,7 @@ import io.codiqo.llm.review.LocalReviewer;
 import io.codiqo.llm.review.ReviewEndpoint;
 import io.codiqo.llm.review.ReviewTags;
 import io.codiqo.llm.review.ReviewUnit;
+import io.codiqo.llm.review.ReviewVerdict;
 import io.codiqo.llm.review.SessionUsage;
 import io.codiqo.llm.review.StaticFinding;
 import io.codiqo.llm.review.UnitLabelling;
@@ -165,7 +166,10 @@ public class ReviewCommitMojo extends AbstractMojo {
             Optional<UnitLabelling.Checklist> checklist = analysed.map(UnitLabelling::checklist);
             Optional<LocalReviewer.BuildSource<ReviewUnit>> units = checklist.map(listed -> listed::getListed);
 
-            LocalReviewer.ReviewOutcome result = reviewer.reviewThenFollowUp(directory.toPath(), commit, units, source);
+            LocalReviewer.ReviewOutcome result = switch (reviewer.reviewThenFollowUp(directory.toPath(), commit, units, source)) {
+                case ReviewVerdict.Succeeded succeeded -> succeeded.getOutcome();
+                case ReviewVerdict.Failed failed -> throw failed.getError();
+            };
             logFindings(result.getReview());
             result.getTriage().ifPresent(this::logTriage);
 

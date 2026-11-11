@@ -37,7 +37,7 @@ import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.ProjectMetricsModel;
-import io.codiqo.llm.review.LocalReviewer;
+import io.codiqo.llm.review.ReviewVerdict;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.util.JGit;
 import io.codiqo.submit.review.LocalReviewRun;
@@ -204,7 +204,7 @@ class DegradedAnalysisMojoTest {
         SubmitCommitAnalysisMojo submit = new SubmitCommitAnalysisMojo();
         assertFalse(submit.scoresFailedBuild(AnalysisExcludeCategory.BUILD_FAILURE, false), "no review started: nothing judges the commit");
 
-        try (BackgroundReview<LocalReviewer.ReviewOutcome> review = BackgroundReview.start(() -> null)) {
+        try (BackgroundReview<ReviewVerdict> review = BackgroundReview.start(() -> null)) {
             FieldUtils.writeField(submit, "reviewRun", LocalReviewRun.of(review, DefaultLanguageProcessors.reviewLanguages(), new MavenLogFactory(new SystemStreamLog())), true);
             assertTrue(submit.scoresFailedBuild(AnalysisExcludeCategory.BUILD_FAILURE, false));
             assertFalse(submit.scoresFailedBuild(AnalysisExcludeCategory.BUILD_FAILURE, true), "a build that ran out of time is not the author's");
@@ -219,9 +219,7 @@ class DegradedAnalysisMojoTest {
         submit.project = mojo.project;
         FieldUtils.writeField(submit, "runtimeInformation", FieldUtils.readField(mojo, "runtimeInformation", true), true);
 
-        try (BackgroundReview<LocalReviewer.ReviewOutcome> review = BackgroundReview.start(() -> {
-            throw new IOException("the coordinator answered nothing");
-        })) {
+        try (BackgroundReview<ReviewVerdict> review = BackgroundReview.start(() -> new ReviewVerdict.CommitFailure(new IOException("the coordinator answered nothing")))) {
             FieldUtils.writeField(submit, "reviewRun", LocalReviewRun.of(review, DefaultLanguageProcessors.reviewLanguages(), new MavenLogFactory(new SystemStreamLog())), true);
             submit.doDegradedAnalysis(argsFor(second), "[ERROR] COMPILATION ERROR", AnalysisExcludeCategory.BUILD_FAILURE, "cannot find symbol");
         }

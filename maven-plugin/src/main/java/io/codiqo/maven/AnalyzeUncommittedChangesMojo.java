@@ -18,6 +18,7 @@ import io.codiqo.api.logging.Log;
 import io.codiqo.client.model.AnalysisAcceptedModel;
 import io.codiqo.client.model.AnalysisResultModel;
 import io.codiqo.core.DefaultLanguageProcessors;
+import io.codiqo.llm.review.ReviewVerdict;
 import io.codiqo.maven.auth.MavenCredentials;
 import io.codiqo.maven.logging.MavenMessageReporter;
 import io.codiqo.submit.AnalysisSubmitter;
@@ -26,7 +27,6 @@ import io.codiqo.submit.ProjectTags;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.submit.auth.CodiqoCredential;
 import io.codiqo.util.JGit;
-import io.codiqo.submit.review.LocalReviewException;
 import io.codiqo.submit.review.LocalReviewRun;
 import io.codiqo.maven.logging.MavenLogFactory;
 
@@ -141,12 +141,8 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
     protected void doSubmit(SubmissionContext ctx) throws Exception {
         if (submit) {
             /** a review that failed leaves the changes unjudged: the developer is told, and nothing is sent */
-            if (Objects.nonNull(reviewRun)) {
-                try {
-                    reviewRun.attachTo(ctx);
-                } catch (LocalReviewException err) {
-                    throw new MojoFailureException("the uncommitted changes were not reviewed, so nothing was submitted: " + err.getMessage(), err);
-                }
+            if (Objects.nonNull(reviewRun) && reviewRun.attachTo(ctx) instanceof ReviewVerdict.Failed failed) {
+                throw new MojoFailureException("the uncommitted changes were not reviewed, so nothing was submitted: " + failed.getError().getMessage(), failed.getError());
             }
             CodiqoCredential creds = credential();
             Log reporter = new MavenMessageReporter(getLog());

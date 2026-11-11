@@ -11,11 +11,10 @@ import java.util.concurrent.TimeoutException;
  * A local review running next to the analysis of the same commit. It needs only git and the agents, so it is started
  * before the build and joined just before the submission: a review that takes as long as the build adds no time.
  *
- * <p>A review that was asked for and failed or ran out of time is reported to the caller, never dropped: submitting the
- * commit without it would hand the review's judgment to the server's prompt and hide an LLM call that keeps failing.
- * Closing cancels a review that is
- * still running; the interrupt makes the reviewer stop its OpenCode server and delete the server's home, which a
- * review abandoned without the interrupt would leave running after the build exits.
+ * <p>Its outcome is the caller's to read: a review that failed, ran out of time or was waited for by a run being stopped
+ * comes back as the future's own failure, which the caller settles into the review's verdict. Closing cancels a review
+ * that is still running; the interrupt makes the reviewer stop its OpenCode server and delete the server's home, which
+ * a review abandoned without the interrupt would leave running after the build exits.
  */
 public final class BackgroundReview<T> implements AutoCloseable {
     private static final Duration JOIN_ON_CLOSE = Duration.ofSeconds(30);
@@ -27,17 +26,8 @@ public final class BackgroundReview<T> implements AutoCloseable {
         this.task = task;
         this.thread = thread;
     }
-    public T await(Duration timeout) throws LocalReviewException {
-        try {
-            return task.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (ExecutionException err) {
-            throw new LocalReviewException("local review failed: " + err.getCause().getMessage(), err.getCause());
-        } catch (TimeoutException err) {
-            throw new LocalReviewException("local review did not finish within " + timeout, err);
-        } catch (InterruptedException err) {
-            Thread.currentThread().interrupt();
-            throw new LocalReviewException("interrupted while waiting for the local review", err);
-        }
+    public T await(Duration timeout) throws ExecutionException, TimeoutException, InterruptedException {
+        return task.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
     }
     @Override
     public void close() throws InterruptedException {
