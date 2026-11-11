@@ -339,7 +339,7 @@ public class RunArgs {
     /**
      * Character ceiling on captured build diagnostics — forked build stdout/stderr, the build-failure report file,
      * and abbreviated stack traces. Bounds what a runaway build log can push into the failure detail that gets
-     * persisted and, in degraded mode, prompted.
+     * persisted.
      */
     private int buildErrorCaptureLimit = 8 * 1024;
 

@@ -22,7 +22,7 @@ class LocalAssessmentScorerTest {
 
     @Test
     void scoresTheLocalAssessmentByRules() {
-        ScoringClient.ScoringResult result = scorer.score(request(85.0), PromptContext.builder().args(args).build(), assessment(4), LlmScoringResponse.Bugs.builder().build());
+        LocalAssessmentScorer.Result result = scorer.score(request(85.0), PromptContext.builder().args(args).build(), assessment(4), LlmScoringResponse.Bugs.builder().build());
 
         LlmScoringResponse response = result.getResponse();
         assertEquals("moves the retry policy into the client", response.getSummary());
@@ -32,14 +32,13 @@ class LocalAssessmentScorerTest {
         assertEquals(1.0 + clean + args.getCoverageGoodBonus(), response.getQualityMultiplier().getFinalMultiplier(), 1e-9);
         assertNotNull(response.getRiskAssessment());
         assertNull(response.getBugs(), "the review's bugs are stored with the submission, never again from the response");
-        assertEquals(0, result.getTotalTokens());
     }
     @Test
     void aBlockingReviewBugCutsTheBonus() {
         LlmScoringResponse.Bugs bugs = LlmScoringResponse.Bugs.builder()
                 .blocking(Lists.newArrayList(List.of(LlmScoringResponse.Bug.builder().title("lost update").build())))
                 .build();
-        ScoringClient.ScoringResult result = scorer.score(request(85.0), PromptContext.builder().args(args).build(), assessment(6), bugs);
+        LocalAssessmentScorer.Result result = scorer.score(request(85.0), PromptContext.builder().args(args).build(), assessment(6), bugs);
 
         assertEquals(0.4 * 5.5 / 6, result.getResponse().getArchitectureEffortBonus().getQualityFactor(), 1e-3);
     }

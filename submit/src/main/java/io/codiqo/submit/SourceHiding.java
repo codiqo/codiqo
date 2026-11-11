@@ -174,7 +174,6 @@ public final class SourceHiding {
     public void hide(AnalysisSubmissionModel submission) {
         if (isHidden()) {
             submission.setSourceHidden(true);
-            submission.setAgentInstructions(null);
 
             if (Objects.nonNull(submission.getProject())) {
                 CollectionUtils.emptyIfNull(submission.getProject().getModules()).forEach(this::hideModule);

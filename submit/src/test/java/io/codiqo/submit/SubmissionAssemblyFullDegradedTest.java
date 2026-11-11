@@ -1,15 +1,10 @@
 package io.codiqo.submit;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
@@ -38,7 +33,7 @@ import io.codiqo.client.model.ModuleModel;
 /**
  * The two indexed assembly paths. {@code full} is what a scored commit runs on either build tool; {@code degraded}
  * runs after a failed build, and must leave the quality and coverage aggregates absent rather than fabricate them
- * as zeros while surviving a convention-file failure that {@code full} is required to surface.
+ * as zeros.
  */
 class SubmissionAssemblyFullDegradedTest {
     @TempDir
@@ -57,8 +52,6 @@ class SubmissionAssemblyFullDegradedTest {
 
         args = new RunArgs();
         args.setGit(repository);
-        args.setAutoDiscoveryAgentInstructions(true);
-        Files.writeString(workTree.resolve("CLAUDE.md"), "Fail fast. No defensive programming.\n", StandardCharsets.UTF_8);
 
         analysis = new StubAnalysis();
         ctx = SubmissionContext.create(args, index(), analysis, workTree, StubAnalysis.LOGS,
@@ -82,7 +75,7 @@ class SubmissionAssemblyFullDegradedTest {
         }
     }
     @Test
-    void fullPopulatesTheWholeSubmissionIncludingTheConfigAndTheConventions() throws Exception {
+    void fullPopulatesTheWholeSubmissionIncludingTheConfig() throws Exception {
         SubmissionAssembly.full(ctx);
 
         assertNotNull(ctx.getSubmissionModel().getCommit(), "commit metadata");
@@ -91,7 +84,6 @@ class SubmissionAssemblyFullDegradedTest {
         assertNotNull(ctx.getSubmissionModel().getFullProjectCoverage(), "coverage aggregates");
         assertNotNull(ctx.getSubmissionModel().getProjectMetrics(), "driver metrics");
         assertNotNull(ctx.getSubmissionModel().getScoringConfig(), "the effective scoring config");
-        assertTrue(ctx.getSubmissionModel().getAgentInstructions().contains("Fail fast"), "the repository's conventions");
     }
     /** the parity gap: this block used to reach a Maven submission and never a Gradle one */
     @Test
@@ -105,26 +97,14 @@ class SubmissionAssemblyFullDegradedTest {
         assertEquals("io.codiqo.Duplicated",
                 ctx.getSubmissionModel().getExcludedCoverageClasses().get(0).getClassName());
     }
-    /**
-     * the hook runs between the populators and the instruction read, so a diagnostic that needs the driver metrics
-     * still reaches the operator when reading the conventions then fails
-     */
+    /** the hook runs after the populators, so a diagnostic that needs the driver metrics sees them */
     @Test
-    void theHookSeesTheDriverMetricsAndRunsEvenWhenTheInstructionReadThenFails() throws Exception {
-        args.setLlmConventionFilesMaxChars(1);
+    void theHookSeesTheDriverMetrics() throws Exception {
         AtomicReference<Object> seen = new AtomicReference<>();
 
-        assertThrows(IllegalStateException.class,
-                () -> SubmissionAssembly.full(ctx, c -> seen.set(c.getSubmissionModel().getProjectMetrics())));
+        SubmissionAssembly.full(ctx, c -> seen.set(c.getSubmissionModel().getProjectMetrics()));
 
         assertNotNull(seen.get(), "the hook must run, and must run after the metrics exist");
-    }
-    /** a scored submission has to surface a misconfigured instruction budget: the prompt would not be the configured one */
-    @Test
-    void fullSurfacesAnOverBudgetInstructionSet() throws Exception {
-        args.setLlmConventionFilesMaxChars(1);
-
-        assertThrows(IllegalStateException.class, () -> SubmissionAssembly.full(ctx));
     }
     /** the language server did run here, so the version it ran at is already known and travels with the submission */
     @Test
@@ -157,16 +137,6 @@ class SubmissionAssemblyFullDegradedTest {
         assertNull(ctx.getSubmissionModel().getFullProjectCoverage(),
                 "and no coverage block either");
         assertNotNull(ctx.getSubmissionModel().getScoringConfig());
-    }
-    /** losing the hint is acceptable on a path nothing scores; losing the commit is not */
-    @Test
-    void degradedSurvivesAnOverBudgetInstructionSet() throws Exception {
-        args.setLlmConventionFilesMaxChars(1);
-
-        assertDoesNotThrow(() -> SubmissionAssembly.degraded(ctx));
-
-        assertNull(ctx.getSubmissionModel().getAgentInstructions(), "the instructions are dropped, not truncated");
-        assertNotNull(ctx.getSubmissionModel().getProjectMetrics(), "everything else still stands");
     }
     private static ModuleModel module(String id) {
         ModuleModel toReturn = new ModuleModel();
