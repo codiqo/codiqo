@@ -1,8 +1,8 @@
 package io.codiqo.llm.client;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -16,6 +16,7 @@ import io.codiqo.llm.VolumeScoreCalculator.PreComputedScores;
 import io.codiqo.llm.schema.LlmScoringRequest;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 import com.google.common.annotations.VisibleForTesting;
 
 /**
@@ -41,7 +42,7 @@ public class LocalAssessmentScorer {
      * @param reviewBugs the local review's bugs, stored with the submission and therefore left off the response; they
      *                   decide the architecture quality factor
      */
-    public ScoringClient.ScoringResult score(LlmScoringRequest request, PromptContext context, LlmScoringResponse localAssessment, LlmScoringResponse.Bugs reviewBugs) {
+    public Result score(LlmScoringRequest request, PromptContext context, LlmScoringResponse localAssessment, LlmScoringResponse.Bugs reviewBugs) {
         PreComputedScores preComputedScores = volumeCalculator.calculate(
                 request,
                 context.getProjectTotalStatements(),
@@ -57,11 +58,7 @@ public class LocalAssessmentScorer {
         removeTestCodeEstimates(response, request);
         log.info(String.format(Locale.ROOT, "scored from the local assessment by rules: %.2f, no prompt sent", response.getScore()));
 
-        return ScoringClient.ScoringResult.builder()
-                .response(response)
-                .localAssessmentScore(response.getScore())
-                .preComputedScores(preComputedScores)
-                .build();
+        return new Result(response, preComputedScores);
     }
     /** an estimate of how much a test unit's change matters is the production code's business; the review gives none for tests */
     @VisibleForTesting
@@ -74,6 +71,19 @@ public class LocalAssessmentScorer {
                     .collect(Collectors.toSet());
 
             estimates.removeIf(estimate -> testCodeSignatures.contains(estimate.getSignature()));
+        }
+    }
+
+    /** the scored response, and the volume and impact figures the rules computed it from */
+    public static final class Result extends ImmutablePair<LlmScoringResponse, PreComputedScores> {
+        public Result(LlmScoringResponse response, PreComputedScores preComputedScores) {
+            super(response, preComputedScores);
+        }
+        public LlmScoringResponse getResponse() {
+            return getLeft();
+        }
+        public PreComputedScores getPreComputedScores() {
+            return getRight();
         }
     }
 }

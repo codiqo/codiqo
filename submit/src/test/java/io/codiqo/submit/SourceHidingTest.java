@@ -67,7 +67,6 @@ import io.codiqo.llm.MovedLineDetector;
 import io.codiqo.llm.PromptBuilder.PromptContext;
 import io.codiqo.llm.SubmissionToRequestMapper;
 import io.codiqo.llm.client.LocalAssessmentScorer;
-import io.codiqo.llm.client.ScoringClient;
 import io.codiqo.llm.schema.LlmScoringResponse;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -170,14 +169,14 @@ class SourceHidingTest {
 
     @Test
     void theHiddenSubmissionScoresAsThePlainOne() throws Exception {
-        ScoringClient.ScoringResult plain = score(submission());
+        LocalAssessmentScorer.Result plain = score(submission());
         AnalysisSubmissionModel hidden = submission();
         SourceHiding.of(true, Optional.of(KEY)).hide(hidden);
-        ScoringClient.ScoringResult scored = score(hidden);
+        LocalAssessmentScorer.Result scored = score(hidden);
 
         assertTrue(CollectionUtils.isNotEmpty(plain.getResponse().getEffortBreakdown().getDiffClassification().getMovedPairs()),
                 "the commit moves a line between files, so the comparison covers moved-line matching");
-        assertEquals(plain.getLocalAssessmentScore(), scored.getLocalAssessmentScore());
+        assertEquals(plain.getResponse().getScore(), scored.getResponse().getScore());
         assertEquals(numbers(plain), numbers(scored));
     }
     @Test
@@ -335,17 +334,17 @@ class SourceHidingTest {
         File[] files = new File(System.getProperty("codiqo.hiddenSource.submissions")).listFiles((dir, name) -> name.startsWith("codiqo-submission-"));
         assertTrue(Objects.nonNull(files) && files.length > 0, "no codiqo-submission-* file found");
         for (File file : files) {
-            ScoringClient.ScoringResult plain = score(read(file));
+            LocalAssessmentScorer.Result plain = score(read(file));
             AnalysisSubmissionModel hidden = read(file);
             SourceHiding.of(true, Optional.of(KEY)).hide(hidden);
-            ScoringClient.ScoringResult scored = score(hidden);
+            LocalAssessmentScorer.Result scored = score(hidden);
 
-            assertEquals(plain.getLocalAssessmentScore(), scored.getLocalAssessmentScore(), file.getName());
+            assertEquals(plain.getResponse().getScore(), scored.getResponse().getScore(), file.getName());
             assertEquals(numbers(plain), numbers(scored), file.getName());
         }
     }
     /** the review's judgment as the server reads it back: the units' labels, the dimensions, the findings and the bugs */
-    private ScoringClient.ScoringResult score(AnalysisSubmissionModel submission) {
+    private LocalAssessmentScorer.Result score(AnalysisSubmissionModel submission) {
         LlmScoringResponse assessment = new LlmScoringResponse();
         List<LlmScoringResponse.CodeBlockCategoryView> labels = Lists.newArrayList();
         for (FileChangeModel file : submission.getFiles()) {
@@ -393,7 +392,7 @@ class SourceHidingTest {
      * Every number and flag of the result, without where it sits: a list sorted by a hashed path comes in another order,
      * and a key or a text is expected to differ, but no count, line, score or multiplier may.
      */
-    private static Multiset<String> numbers(ScoringClient.ScoringResult result) {
+    private static Multiset<String> numbers(LocalAssessmentScorer.Result result) {
         Multiset<String> toReturn = HashMultiset.create();
         ObjectMapper mapper = JsonMapper.builder().build();
         collect(mapper.valueToTree(result.getResponse()), "response", toReturn);
@@ -471,7 +470,6 @@ class SourceHidingTest {
         toReturn.setFiles(Lists.newArrayList(List.of(retry, client, pom, test)));
         toReturn.setDuplication(new DuplicationReportModel().clones(Lists.newArrayList(List.of(clone))));
         toReturn.setFullProjectCoverage(new FullProjectCoverageModel().linePercentage(61.0).branchPercentage(48.0));
-        toReturn.setAgentInstructions("### AGENTS.md\nuse the acme retry helpers");
         toReturn.setLocalReview(review);
         return toReturn;
     }

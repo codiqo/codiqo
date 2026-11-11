@@ -1805,7 +1805,7 @@ review or submission; Gradle in `GradleModelCollector`. A halt only needs the fl
 so a halt is recorded even when the key cannot be read.
 
 - **Dropped:** file contents, unit bodies and diffs, clone slices, annotation arguments, diagnostic and finding
-  messages, build, exclusion and halt detail, agent instructions, the review trace (never uploaded), and every text the
+  messages, build, exclusion and halt detail, the review trace (never uploaded), and every text the
   review wrote (summary, rationales, reasoning, observations, bug texts and fixes, label reasons, senior-review
   reasons). The SOLID violations and architecture issues stay as hashes, since rules price them by count.
 - **Reasons** (exclusion, build failure, halt) keep their general description, every file name and path masked by

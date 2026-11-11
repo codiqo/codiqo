@@ -226,5 +226,3 @@ half-written class directory and missed the failure entirely.
 - **Dependency-resolution failures and timeouts** are not told apart from other build failures, so
   `DEPENDENCY_RESOLUTION_FAILURE` is never reported — a resolution failure lands as `BUILD_FAILURE`,
   and in local mode it is scored as a build the author broke, where Maven excludes it.
-- **Agent instructions** (`AGENTS.md` / `CLAUDE.md`) reach the local review, which reads them, but are
-  not collected into the submission.
