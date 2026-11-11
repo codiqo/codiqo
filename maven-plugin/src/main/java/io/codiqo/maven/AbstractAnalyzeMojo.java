@@ -54,7 +54,6 @@ import org.apache.commons.lang3.CharUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
-import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.maven.artifact.ArtifactUtils;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
@@ -106,7 +105,6 @@ import com.google.common.collect.Sets;
 
 import io.codiqo.api.BuildTool;
 import io.codiqo.api.ClassGraphSpec;
-import io.codiqo.api.DeltaAnalyzer;
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.LanguageProcessors;
 import io.codiqo.api.MavenProjectSpec;
@@ -117,7 +115,6 @@ import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.client.ApiException;
-import io.codiqo.client.model.AnalysisBuildFailureModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.ClientInfoModel;
 import io.codiqo.client.model.FileChangeModel;
@@ -126,7 +123,6 @@ import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.core.ClassGraphWrapper;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
-import io.codiqo.lang.config.ConfigFiles;
 import io.codiqo.maven.coverage.CoverageInjectorConfig;
 import io.codiqo.maven.eventspy.BuildFailureConfig;
 import io.codiqo.maven.eventspy.BuildProgressConfig;
@@ -136,6 +132,8 @@ import io.codiqo.maven.populator.SubmissionSummaryPrinter;
 import io.codiqo.maven.surefire.SurefireInjectorConfig;
 import io.codiqo.maven.timemachine.TimeMachineConfig;
 import io.codiqo.submit.CommitBuildFailedException;
+import io.codiqo.submit.CommitExclusions;
+import io.codiqo.submit.CommitExclusions.Exclusion;
 import io.codiqo.submit.OutputSerializer;
 import io.codiqo.submit.SourceHiding;
 import io.codiqo.util.Env;
@@ -158,12 +156,6 @@ import lombok.Value;
 
 public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Function<Artifact, Collection<File>> {
     private static final Set<String> NON_CODE_PACKAGINGS = Set.of("pom", "bom");
-    /**
-     * Grep marker for the one transition that silently changes the scoring regime. It is written into the
-     * persisted build-failure detail as well as the log, because a log line outlives nothing: retention is
-     * finite, and the question of why an analysis scored the way it did outlives it.
-     */
-    private static final String DIFF_ONLY_FALLBACK_MARKER = "[codiqo] source-only degraded index failed";
     private static final String JAR_EXTENSION = "jar";
 
     private static final String LOMBOK_GROUP_ID = "org.projectlombok";
@@ -1470,66 +1462,15 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                 getLog().info(MemoryReport.snapshot("before language server load"));
                 registry.load();
                 getLog().info(MemoryReport.snapshot("after language server load"));
-                MutableBoolean toApply = new MutableBoolean();
-                DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, args);
-                CommitAnalysis analysis = analyzer.analyze();
-                List<String> changedFiles = Lists.newArrayList();
-                analysis.forEach(diff -> {
-                    String name = diff.getFile().getName();
-                    changedFiles.add(name);
-                    if (BooleanUtils.or(new boolean[] {
-                            FilenameUtils.isExtension(name, registry.extensions()),
-                            ConfigFiles.isConfigFile(name)
-                    })) {
-                        toApply.setTrue();
-                    }
-                });
-                String skipReason = null;
-                AnalysisExcludeCategory skipCategory = null;
-                /**
-                 * The shallow-clone check runs ahead of the extension check because both leave an empty file list.
-                 * Checked the other way round, a commit whose parent is missing would be reported as having no files
-                 * in a registered language, hiding that the fix is to re-run with full history.
-                 */
-                if (analysis.isHistoryIncomplete()) {
-                    skipReason = String.format("commit %s sits on a shallow-clone boundary, so its parent is not present locally and its delta cannot be computed"
-                            + " — re-run with full history (fetch-depth: 0)", args.getCommitId());
-                    skipCategory = AnalysisExcludeCategory.INCOMPLETE_HISTORY;
-                    getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), skipReason));
-                } else if (toApply.isFalse()) {
-                    skipReason = String.format("no diff files match registered languages %s or supported config files (%s) — changed files: %s",
-                            registry.extensions(),
-                            ConfigFiles.describeSupported(),
-                            changedFiles);
-                    skipCategory = AnalysisExcludeCategory.NO_ANALYZABLE_DIFF;
-                    getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), skipReason));
-                }
-
-                boolean branchMatches = args.matchesByBranch(analysis.getBranches());
-                boolean authorMatches = args.matchesByAuthor(analysis.getAuthorEmail());
-                if (BooleanUtils.or(new boolean[] {
-                        BooleanUtils.negate(branchMatches),
-                        BooleanUtils.negate(authorMatches)
-                })) {
-                    skipReason = String.format("filtered by include-rules — branch match: %s (branches=%s), author match: %s (author=%s)",
-                            branchMatches,
-                            analysis.getBranches(),
-                            authorMatches,
-                            analysis.getAuthorEmail());
-                    skipCategory = AnalysisExcludeCategory.FILTERED_BY_RULES;
-                    getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), skipReason));
-                    toApply.setFalse();
-                }
+                CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
 
                 ClientInfoModel clientInfo = new ClientInfoModel();
                 clientInfo.setBuildTool(ClientInfoModel.BuildToolEnum.MAVEN);
                 clientInfo.setVersion(runtimeInformation.getMavenVersion());
                 clientInfo.setName("codiqo-maven-plugin");
 
-                if (Objects.nonNull(skipReason)) {
-                    excludeWithDiff(args, analysis, skipReason, skipCategory);
-                }
-                if (toApply.isTrue()) {
+                Optional<Exclusion> excluded = CommitExclusions.afterDelta(analysis, registry.extensions());
+                if (excluded.isEmpty()) {
                     IndexingSummary index = registry.index(analysis);
                     getLog().info(MemoryReport.snapshot("after index"));
                     registry.identifyAffectedSymbols(index, analysis);
@@ -1566,6 +1507,8 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                     buildHotspots(ctx);
                     return Optional.of(ctx);
                 }
+                getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), excluded.get().getReason()));
+                excludeWithDiff(args, analysis, excluded.get().getReason(), excluded.get().getCategory());
             }
         }
         return Optional.empty();
@@ -1730,24 +1673,8 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             if (BooleanUtils.negate(hadProjectModel)) {
                 args.getProjects().clear();
             }
-            return buildDiffOnlyDegradedSubmission(args, reason, category, diffOnlyFallbackDetail(detail, err));
+            return buildDiffOnlyDegradedSubmission(args, reason, category, SubmissionAssembly.diffOnlyFallbackDetail(detail, err));
         }
-    }
-    /**
-     * Records WHY a degraded analysis fell back to diff-only, in the detail column that every degraded row
-     * already persists. A diff-only submission carries no project metrics, so {@code DriverScaler} is empty:
-     * blocks are priced on raw line counts instead of the project's own distribution, and because the
-     * baseline is zero the global cap cannot bind either. That is a materially different scoring regime from
-     * a source-only degraded run, and a log line alone would not outlive log retention as a record of it.
-     */
-    private static String diffOnlyFallbackDetail(String detail, IOException err) {
-        String note = String.format("%s (%s) — scored diff-only: no project metrics, so driver scores are raw line counts and the global cap does not bind",
-                DIFF_ONLY_FALLBACK_MARKER,
-                ExceptionUtils.getRootCauseMessage(err));
-        if (StringUtils.isBlank(detail)) {
-            return note;
-        }
-        return detail + StringUtils.repeat(CharUtils.LF, 2) + note;
     }
     protected SubmissionContext buildSourceOnlyDegradedSubmission(RunArgs args, String reason, AnalysisExcludeCategory category, String detail) throws Exception {
         LogFactory logFactory = new MavenLogFactory(getLog());
@@ -1779,7 +1706,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             return toReturn;
         });
 
-        applyBuildFailure(ctx, reason, category, detail);
+        ctx.getSubmissionModel().setBuildFailure(SubmissionAssembly.buildFailure(reason, category, detail));
         return ctx;
     }
     /**
@@ -1809,7 +1736,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         new ProjectModelPopulator(getLog()).accept(ctx);
         SubmissionAssembly.diffOnly(ctx);
 
-        applyBuildFailure(ctx, reason, category, detail);
+        ctx.getSubmissionModel().setBuildFailure(SubmissionAssembly.buildFailure(reason, category, detail));
         return ctx;
     }
     @SuppressWarnings("deprecation")
@@ -1883,14 +1810,6 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         }
 
         throw new MojoExecutionException("project build failed: " + Objects.toString(pbe.getMessage(), pbe.getClass().getSimpleName()), pbe);
-    }
-    private static void applyBuildFailure(SubmissionContext ctx, String reason, AnalysisExcludeCategory category, String detail) {
-        AnalysisBuildFailureModel buildFailure = new AnalysisBuildFailureModel();
-        buildFailure.setReason(reason);
-        buildFailure.setCategory(category);
-        buildFailure.setDetail(detail);
-
-        ctx.getSubmissionModel().setBuildFailure(buildFailure);
     }
     /**
      * Hard-link every release artifact from the host's local repository into this attempt's private one. A release

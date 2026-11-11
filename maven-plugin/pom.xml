@@ -134,11 +134,6 @@
         </dependency>
         <dependency>
             <groupId>${project.groupId}</groupId>
-            <artifactId>codiqo-lang-config</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>${project.groupId}</groupId>
             <artifactId>codiqo-llm</artifactId>
             <version>${project.version}</version>
         </dependency>

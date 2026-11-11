@@ -1,10 +1,9 @@
-package io.codiqo.maven;
+package io.codiqo.submit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
-import java.lang.reflect.Method;
 import java.nio.file.NoSuchFileException;
 
 import org.junit.jupiter.api.Test;
@@ -16,10 +15,10 @@ import org.junit.jupiter.api.Test;
  * of why an analysis scored the way it did outlives it.
  */
 class DiffOnlyFallbackDetailTest {
-    private static final String MARKER = "[codiqo] source-only degraded index failed";
+    private static final String MARKER = SubmissionAssembly.DIFF_ONLY_FALLBACK_MARKER;
 
     @Test
-    void theRootCauseIsAppendedToAnExistingDetail() throws Exception {
+    void theRootCauseIsAppendedToAnExistingDetail() {
         String detail = detailFor("[ERROR] COMPILATION ERROR : cannot find symbol",
                 new IOException("outer", new NoSuchFileException("/tmp/codiqo123/module/src")));
 
@@ -33,20 +32,18 @@ class DiffOnlyFallbackDetailTest {
     }
     /** a category that carries no detail of its own must still record why the regime changed */
     @Test
-    void theNoteStandsAloneWhenThereIsNoDetail() throws Exception {
+    void theNoteStandsAloneWhenThereIsNoDetail() {
         String detail = detailFor("   ", new IOException("disk went away"));
 
         assertTrue(detail.startsWith(MARKER), detail);
         assertTrue(detail.contains("disk went away"), detail);
     }
     @Test
-    void aBlankDetailIsNotPrefixedWithSeparatorNoise() throws Exception {
+    void aBlankDetailIsNotPrefixedWithSeparatorNoise() {
         assertEquals(detailFor(null, new IOException("boom")), detailFor("", new IOException("boom")),
                 "null and empty detail must produce the same note, with no leading blank lines");
     }
-    private static String detailFor(String detail, IOException err) throws Exception {
-        Method method = AbstractAnalyzeMojo.class.getDeclaredMethod("diffOnlyFallbackDetail", String.class, IOException.class);
-        method.setAccessible(true);
-        return (String) method.invoke(null, detail, err);
+    private static String detailFor(String detail, IOException err) {
+        return SubmissionAssembly.diffOnlyFallbackDetail(detail, err);
     }
 }
