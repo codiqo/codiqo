@@ -15,8 +15,8 @@ Whose failure a commit's build is, when it failed: the author's, the environment
 _Avoid_: build result, build status
 
 **Exclusion**:
-A commit recorded as not scored, with a category and a reason. The commit stays unscored until its analysis is deleted
-and runs again.
+A commit recorded as not counting toward the project's figures, with a category and a reason. It counts again when
+someone allowed to re-includes it, or when its analysis is deleted and runs again.
 _Avoid_: skip, ignored commit
 
 **Halt**:
@@ -29,7 +29,7 @@ A commit whose build the author broke, scored from its source and its local revi
 _Avoid_: failed commit, broken commit
 
 **Held score**:
-The score of a commit most of whose tests failed, kept out of the project's figures until someone accepts it.
+The score of a commit whose test run failed in large part, kept as an exclusion until someone allowed to accepts it.
 _Avoid_: pending score, quarantined commit
 
 ## Local review

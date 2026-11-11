@@ -4,15 +4,19 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import java.io.File;
-import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.List;
 import java.util.Objects;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.Repository;
@@ -22,6 +26,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import com.google.common.collect.Lists;
+import com.sun.net.httpserver.HttpServer;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisBuildFailureModel;
@@ -35,6 +42,7 @@ import io.codiqo.submit.auth.CredentialStore;
 
 /** a build-failed commit is routed as on Maven */
 class AnalysisEngineDegradedTest {
+    private static final SlfLogFactory LOGS = new SlfLogFactory();
     private static final String BUILD_FAILURE_DETAIL = "Execution failed for task ':compileJava'.";
 
     @TempDir
@@ -53,33 +61,40 @@ class AnalysisEngineDegradedTest {
         repository.close();
         git.close();
     }
+    /**
+     * A tracked source directory the index cannot open fails the source-only index with an I/O error, the case the
+     * fallback is for: the commit is scored from its diff, that is recorded in the build failure, and the whole-tree
+     * module that only the index needed is not sent.
+     */
     @Test
-    void theDiffOnlyFallbackIsRecordedInTheBuildFailureAndKeepsTheProjectModel() throws Exception {
+    void anUnreadableSourceTreeFallsBackToTheDiffAndRecordsIt() throws Exception {
+        commit("src/main/java/b/B.java", "class B {}");
         commit("src/main/java/a/A.java", "class A {}");
         RevCommit broken = commit("src/main/java/a/A.java", "class A { void broken( }");
 
-        AnalysisRequest request = new AnalysisRequest();
-        request.setRootPath(":");
-        request.setRootCode("com.example:app");
-        request.setRootName("app");
-        request.setBuildFailureDetail(BUILD_FAILURE_DETAIL);
-        RunArgs args = new RunArgs();
-        args.setGit(repository);
-        args.setCommitId(broken.getName());
-        args.getProjects().add(GradleSourceOnlyProjectSpec.forWorkTree(tempDir.toFile(), request));
+        AnalysisRequest request = request();
+        RunArgs args = args(broken);
 
-        AnalysisSubmissionModel submission = AnalysisEngine.diffOnlySubmission(
-                request, args, "build failed", new IOException("source index failed", new IOException("src/main/java is gone")), new SlfLogFactory())
-                .getSubmissionModel();
+        Path unreadable = tempDir.resolve(Paths.get("src", "main", "java", "b"));
+        Files.setPosixFilePermissions(unreadable, PosixFilePermissions.fromString("---------"));
+        try {
+            assumeFalse(Files.isReadable(unreadable), "a user who can read any directory cannot make the index fail");
 
-        AnalysisBuildFailureModel buildFailure = submission.getBuildFailure();
-        assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, buildFailure.getCategory());
-        assertTrue(buildFailure.getDetail().startsWith(BUILD_FAILURE_DETAIL), "the build's own failure stays first: " + buildFailure.getDetail());
-        assertTrue(Strings.CS.contains(buildFailure.getDetail(), SubmissionAssembly.DIFF_ONLY_FALLBACK_MARKER), buildFailure.getDetail());
-        assertTrue(Strings.CS.contains(buildFailure.getDetail(), "src/main/java is gone"), "the root cause names what failed: " + buildFailure.getDetail());
+            AnalysisSubmissionModel submission = AnalysisEngine.degradedSubmission(request, args, LOGS, LOGS.getLogger(AnalysisEngineDegradedTest.class))
+                    .getSubmissionModel();
 
-        assertNotNull(submission.getProject(), "the project model is sent with a diff-only submission too");
-        assertEquals("app", submission.getProject().getModules().iterator().next().getName());
+            AnalysisBuildFailureModel buildFailure = submission.getBuildFailure();
+            assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, buildFailure.getCategory());
+            assertTrue(buildFailure.getDetail().startsWith(BUILD_FAILURE_DETAIL), "the build's own failure stays first: " + buildFailure.getDetail());
+            assertTrue(Strings.CS.contains(buildFailure.getDetail(), SubmissionAssembly.DIFF_ONLY_FALLBACK_MARKER), buildFailure.getDetail());
+            assertTrue(Strings.CS.contains(buildFailure.getDetail(), unreadable.toString()), "the root cause names what failed: " + buildFailure.getDetail());
+
+            assertNotNull(submission.getProject(), "the project model is sent with a diff-only submission too");
+            assertTrue(submission.getProject().getModules().isEmpty(), "without the module that stood for the whole tree");
+            assertTrue(args.getProjects().isEmpty());
+        } finally {
+            Files.setPosixFilePermissions(unreadable, PosixFilePermissions.fromString("rwx------"));
+        }
     }
     /**
      * A run told not to tolerate a broken build fails before the review starts, as on Maven. The credential store is
@@ -90,21 +105,17 @@ class AnalysisEngineDegradedTest {
         commit("src/main/java/a/A.java", "class A {}");
         RevCommit broken = commit("src/main/java/a/A.java", "class A { void broken( }");
 
-        AnalysisRequest request = new AnalysisRequest();
+        AnalysisRequest request = request();
         request.setAuthUrl("https://auth.invalid");
-        request.setBuildFailureDetail(BUILD_FAILURE_DETAIL);
-        RunArgs args = new RunArgs();
-        args.setGit(repository);
-        args.setCommitId(broken.getName());
+        RunArgs args = args(broken);
         args.setSkipOnBuildFailure(false);
         args.setReviewEnabled(true);
 
         String home = System.getProperty(CredentialStore.HOME_PROPERTY);
         System.setProperty(CredentialStore.HOME_PROPERTY, Files.createDirectory(tempDir.resolve("codiqo-home")).toString());
         try {
-            SlfLogFactory logs = new SlfLogFactory();
             CommitBuildFailedException err = assertThrows(CommitBuildFailedException.class,
-                    () -> AnalysisEngine.analyse(request, args, logs, logs.getLogger(AnalysisEngineDegradedTest.class)));
+                    () -> AnalysisEngine.analyse(request, args, LOGS, LOGS.getLogger(AnalysisEngineDegradedTest.class)));
 
             assertTrue(Strings.CS.contains(err.getMessage(), BUILD_FAILURE_DETAIL), err.getMessage());
         } finally {
@@ -114,6 +125,55 @@ class AnalysisEngineDegradedTest {
                 System.setProperty(CredentialStore.HOME_PROPERTY, home);
             }
         }
+    }
+    /** nothing analysable on a broken tree is excluded as such, as Maven does before its build, and fails no run */
+    @Test
+    void aCommitWithNothingAnalysableOnABrokenTreeIsExcludedForThat() throws Exception {
+        List<String> calls = Lists.newCopyOnWriteArrayList();
+        List<String> bodies = Lists.newCopyOnWriteArrayList();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/v1/analyses", exchange -> {
+            calls.add(exchange.getRequestMethod() + StringUtils.SPACE + exchange.getRequestURI().getPath());
+            bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+        });
+        server.start();
+
+        commit("src/main/java/a/A.java", "class A { void broken( }");
+        RevCommit docs = commit("README.md", "# A");
+
+        AnalysisRequest request = request();
+        request.setApiUrl(String.format("http://127.0.0.1:%d", server.getAddress().getPort()));
+        request.setApiKey("test-api-key");
+        request.setConnectTimeoutSeconds(5);
+        request.setReadTimeoutSeconds(5);
+        RunArgs args = args(docs);
+        args.setSkipOnBuildFailure(false);
+        try {
+            AnalysisEngine.analyse(request, args, LOGS, LOGS.getLogger(AnalysisEngineDegradedTest.class));
+        } finally {
+            server.stop(0);
+        }
+
+        assertEquals(List.of("PATCH /api/v1/analyses/commit/" + docs.getName() + "/exclude"), calls);
+        assertTrue(Strings.CS.contains(bodies.get(0), AnalysisExcludeCategory.NO_ANALYZABLE_DIFF.getValue()), bodies.get(0));
+        assertTrue(Strings.CS.contains(bodies.get(0), "README.md"), "with the diff the backend records: " + bodies.get(0));
+    }
+    private static AnalysisRequest request() {
+        AnalysisRequest toReturn = new AnalysisRequest();
+        toReturn.setRootPath(":");
+        toReturn.setRootCode("com.example:app");
+        toReturn.setRootName("app");
+        toReturn.setBuildFailureDetail(BUILD_FAILURE_DETAIL);
+        return toReturn;
+    }
+    private RunArgs args(RevCommit commit) {
+        RunArgs toReturn = new RunArgs();
+        toReturn.setGit(repository);
+        toReturn.setCommitId(commit.getName());
+        toReturn.setReviewEnabled(false);
+        return toReturn;
     }
     private RevCommit commit(String path, String content) throws Exception {
         Path file = tempDir.resolve(Paths.get(path));

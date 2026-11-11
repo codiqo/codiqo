@@ -115,7 +115,6 @@ import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.client.ApiException;
-import io.codiqo.client.model.AnalysisBuildFailureModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.ClientInfoModel;
 import io.codiqo.client.model.FileChangeModel;
@@ -1464,15 +1463,13 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                 registry.load();
                 getLog().info(MemoryReport.snapshot("after language server load"));
                 CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
-                List<String> changedFiles = Lists.newArrayList();
-                analysis.forEach(diff -> changedFiles.add(diff.getFile().getName()));
 
                 ClientInfoModel clientInfo = new ClientInfoModel();
                 clientInfo.setBuildTool(ClientInfoModel.BuildToolEnum.MAVEN);
                 clientInfo.setVersion(runtimeInformation.getMavenVersion());
                 clientInfo.setName("codiqo-maven-plugin");
 
-                Optional<Exclusion> excluded = CommitExclusions.afterDelta(args, analysis, registry.extensions(), changedFiles);
+                Optional<Exclusion> excluded = CommitExclusions.afterDelta(analysis, registry.extensions());
                 if (excluded.isEmpty()) {
                     IndexingSummary index = registry.index(analysis);
                     getLog().info(MemoryReport.snapshot("after index"));
@@ -1709,7 +1706,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             return toReturn;
         });
 
-        applyBuildFailure(ctx, reason, category, detail);
+        ctx.getSubmissionModel().setBuildFailure(SubmissionAssembly.buildFailure(reason, category, detail));
         return ctx;
     }
     /**
@@ -1739,7 +1736,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         new ProjectModelPopulator(getLog()).accept(ctx);
         SubmissionAssembly.diffOnly(ctx);
 
-        applyBuildFailure(ctx, reason, category, detail);
+        ctx.getSubmissionModel().setBuildFailure(SubmissionAssembly.buildFailure(reason, category, detail));
         return ctx;
     }
     @SuppressWarnings("deprecation")
@@ -1813,14 +1810,6 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         }
 
         throw new MojoExecutionException("project build failed: " + Objects.toString(pbe.getMessage(), pbe.getClass().getSimpleName()), pbe);
-    }
-    private static void applyBuildFailure(SubmissionContext ctx, String reason, AnalysisExcludeCategory category, String detail) {
-        AnalysisBuildFailureModel buildFailure = new AnalysisBuildFailureModel();
-        buildFailure.setReason(reason);
-        buildFailure.setCategory(category);
-        buildFailure.setDetail(detail);
-
-        ctx.getSubmissionModel().setBuildFailure(buildFailure);
     }
     /**
      * Hard-link every release artifact from the host's local repository into this attempt's private one. A release

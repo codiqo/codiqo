@@ -2,67 +2,59 @@ package io.codiqo.submit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import java.io.File;
+import java.util.Iterator;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-import io.codiqo.api.RunArgs;
+import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 
 /** the gates that need the delta, in the order both build tools rely on */
 class CommitExclusionsAfterDeltaTest {
     private static final List<String> EXTENSIONS = List.of("java");
 
-    /** a parent missing from a shallow clone lists no file, which the other gates would misread */
+    /** a parent missing from a shallow clone lists no file, which the analysable-file gate would misread */
     @Test
-    void aShallowBoundaryIsReportedAsIncompleteHistoryWhateverTheRulesSay() {
-        RunArgs args = new RunArgs();
-        args.setIncludeBranches("release/.*");
-
+    void aShallowBoundaryIsReportedAsIncompleteHistory() {
         assertEquals(AnalysisExcludeCategory.INCOMPLETE_HISTORY,
-                CommitExclusions.afterDelta(args, new Delta(true, List.of("main")), EXTENSIONS, List.of()).orElseThrow().getCategory());
+                CommitExclusions.afterDelta(new Delta(true, List.of()), EXTENSIONS).orElseThrow().getCategory());
     }
-    /** as the before-build gate reports the same commit, so the category does not depend on which gate caught it */
     @Test
-    void aCommitWithNothingAnalysableIsReportedSoEvenWhenTheRulesFilterItToo() {
-        RunArgs args = new RunArgs();
-        args.setIncludeBranches("release/.*");
-
+    void aCommitWithNothingAnalysableIsExcluded() {
         assertEquals(AnalysisExcludeCategory.NO_ANALYZABLE_DIFF,
-                CommitExclusions.afterDelta(args, new Delta(false, List.of("main")), EXTENSIONS, List.of("README.md")).orElseThrow().getCategory());
+                CommitExclusions.afterDelta(new Delta(false, List.of("README.md")), EXTENSIONS).orElseThrow().getCategory());
     }
     @Test
-    void anAnalysableCommitOnABranchTheRulesLeaveOutIsFiltered() {
-        RunArgs args = new RunArgs();
-        args.setIncludeBranches("release/.*");
-
-        assertEquals(AnalysisExcludeCategory.FILTERED_BY_RULES,
-                CommitExclusions.afterDelta(args, new Delta(false, List.of("main")), EXTENSIONS, List.of("A.java")).orElseThrow().getCategory());
-    }
-    @Test
-    void anAnalysableCommitTheRulesKeepIsAnalysed() {
-        RunArgs args = new RunArgs();
-        args.setIncludeBranches("release/.*");
-
-        assertTrue(CommitExclusions.afterDelta(args, new Delta(false, List.of("release/1.0")), EXTENSIONS, List.of("pom.xml")).isEmpty());
+    void aCommitChangingSourceOrABuildFileIsAnalysed() {
+        assertTrue(CommitExclusions.afterDelta(new Delta(false, List.of("README.md", "A.java")), EXTENSIONS).isEmpty());
+        assertTrue(CommitExclusions.afterDelta(new Delta(false, List.of("pom.xml")), EXTENSIONS).isEmpty());
     }
 
     private static final class Delta extends StubAnalysis {
         private final boolean historyIncomplete;
-        private final List<String> branches;
+        private final List<FileAnalysis> files;
 
-        Delta(boolean historyIncomplete, List<String> branches) {
+        Delta(boolean historyIncomplete, List<String> changedFiles) {
             this.historyIncomplete = historyIncomplete;
-            this.branches = branches;
+            this.files = changedFiles.stream().map(Delta::changed).toList();
         }
         @Override
         public boolean isHistoryIncomplete() {
             return historyIncomplete;
         }
         @Override
-        public List<String> getBranches() {
-            return branches;
+        public Iterator<FileAnalysis> iterator() {
+            return files.iterator();
+        }
+        private static FileAnalysis changed(String name) {
+            FileAnalysis toReturn = mock(FileAnalysis.class);
+            when(toReturn.getFile()).thenReturn(new File("src", name));
+            return toReturn;
         }
     }
 }

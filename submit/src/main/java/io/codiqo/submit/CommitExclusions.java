@@ -35,6 +35,11 @@ import lombok.experimental.UtilityClass;
 public class CommitExclusions {
     /**
      * Gates that need only the commit and the run configuration, so they run before the clone/build/analysis pipeline.
+     * The include-rules are among them: they read only the commit's branches and its credited author, as the index
+     * step does ({@link CommitIndexer}), so a commit they leave out is excluded before anything is built or reviewed,
+     * whether its build would pass or fail. Checked after the delta, they started a paid review for a commit that was
+     * then excluded, never applied to a commit whose build failed, and lost to the analysable-file gate while
+     * {@code codiqo.excludeAuthorEmails}, checked here, won over it.
      */
     public static Optional<Exclusion> beforeAnalysis(RunArgs args, IndexedCommits indexed) throws Exception {
         if (JGit.isMerge(args.getGit(), args.getCommitId())) {
@@ -43,17 +48,29 @@ public class CommitExclusions {
                 return merge;
             }
         }
-        if (args.isExcludedAuthor(creditedAuthorEmail(args))) {
+
+        String author = creditedAuthorEmail(args);
+        if (args.isExcludedAuthor(author)) {
             return Optional.of(new Exclusion("author excluded by codiqo.excludeAuthorEmails", AnalysisExcludeCategory.FILTERED_BY_RULES));
         }
-        return Optional.empty();
+
+        List<String> branches = JGit.branchesContaining(args.getGit(), args.getCommitId());
+        boolean branchMatches = args.matchesByBranch(branches);
+        boolean authorMatches = args.matchesByAuthor(author);
+        if (BooleanUtils.and(new boolean[] { branchMatches, authorMatches })) {
+            return Optional.empty();
+        }
+        return Optional.of(new Exclusion(
+                String.format("filtered by include-rules — branch match: %s (branches=%s), author match: %s (author=%s)",
+                        branchMatches, branches, authorMatches, author),
+                AnalysisExcludeCategory.FILTERED_BY_RULES));
     }
     /**
-     * Gates that need the computed delta: whether the delta could be computed at all, whether anything in the diff is
-     * analysable, and whether the commit survives the include-rules. The caller still submits diff-only file models
-     * for an excluded commit, so the backend records what changed even though nothing was scored.
+     * Gates that need the computed delta: whether the delta could be computed at all, and whether anything in the diff
+     * is analysable. The caller still submits diff-only file models for an excluded commit, so the backend records what
+     * changed even though nothing was scored.
      */
-    public static Optional<Exclusion> afterDelta(RunArgs args, CommitAnalysis analysis, Collection<String> extensions, Collection<String> changedFiles) {
+    public static Optional<Exclusion> afterDelta(CommitAnalysis analysis, Collection<String> extensions) {
         /**
          * Checked first: when the delta could not be computed at all, the changed-file list is empty, and the
          * analysable-file gate below would misreport the commit as having no files of a registered language.
@@ -65,24 +82,12 @@ public class CommitExclusions {
                     AnalysisExcludeCategory.INCOMPLETE_HISTORY));
         }
 
-        /**
-         * Checked ahead of the include-rules, as {@link #beforeBuild} is: a commit that fails both is then reported as
-         * having no analysable diff whether the before-build gate caught it or the build ran first. Checked after them,
-         * the same commit came out as FILTERED_BY_RULES here and as NO_ANALYZABLE_DIFF there.
-         */
-        if (BooleanUtils.negate(hasAnalyzableFile(changedFiles, extensions))) {
-            return Optional.of(noAnalyzableDiff(extensions, changedFiles));
+        List<String> changedFiles = Lists.newArrayList();
+        analysis.forEach(diff -> changedFiles.add(diff.getFile().getName()));
+        if (hasAnalyzableFile(changedFiles, extensions)) {
+            return Optional.empty();
         }
-
-        boolean branchMatches = args.matchesByBranch(analysis.getBranches());
-        boolean authorMatches = args.matchesByAuthor(analysis.getAuthorEmail());
-        if (BooleanUtils.or(new boolean[] { BooleanUtils.negate(branchMatches), BooleanUtils.negate(authorMatches) })) {
-            return Optional.of(new Exclusion(
-                    String.format("filtered by include-rules — branch match: %s (branches=%s), author match: %s (author=%s)",
-                            branchMatches, analysis.getBranches(), authorMatches, analysis.getAuthorEmail()),
-                    AnalysisExcludeCategory.FILTERED_BY_RULES));
-        }
-        return Optional.empty();
+        return Optional.of(noAnalyzableDiff(extensions, changedFiles));
     }
     /**
      * The analysable-file gate of {@link #afterDelta}, decided from git alone so the commit is never built: a commit
@@ -90,8 +95,7 @@ public class CommitExclusions {
      * only to be excluded afterwards, and one whose build could not even start (a repository's first commit, holding
      * only a {@code .gitignore} and no {@code pom.xml}) was excluded as a build failure instead. No changed file at all
      * is what a shallow-clone boundary reports, which only the delta can tell, so that commit is left to
-     * {@link #afterDelta}. Decided ahead of the include-rules, so a commit that fails both is reported as having no
-     * analysable diff.
+     * {@link #afterDelta}.
      */
     public static Optional<Exclusion> beforeBuild(Repository repo, String commitId, Collection<String> extensions) throws IOException {
         List<String> changedFiles = JGit.changedFileNames(repo, commitId);

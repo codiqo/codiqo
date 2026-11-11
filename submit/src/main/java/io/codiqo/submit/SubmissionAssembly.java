@@ -14,6 +14,8 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.testing.TestRun;
+import io.codiqo.client.model.AnalysisBuildFailureModel;
+import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.TestRunModel;
 import lombok.experimental.UtilityClass;
 
@@ -69,6 +71,14 @@ public class SubmissionAssembly {
         new FileAnalysisPopulator().accept(ctx);
 
         finish(ctx);
+    }
+    /** the failed build a degraded submission carries, built the same way by both build tools */
+    public AnalysisBuildFailureModel buildFailure(String reason, AnalysisExcludeCategory category, String detail) {
+        AnalysisBuildFailureModel toReturn = new AnalysisBuildFailureModel();
+        toReturn.setReason(reason);
+        toReturn.setCategory(category);
+        toReturn.setDetail(detail);
+        return toReturn;
     }
     /**
      * Records why a degraded analysis fell back to {@link #diffOnly}, in the build-failure detail every degraded row

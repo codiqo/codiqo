@@ -183,6 +183,18 @@ public class AnalysisEngine {
         args.setAnalysisStartedAt(Instant.now());
 
         /**
+         * The commit is excluded from git alone when nothing it changes is analysable, before the build-failed fork, as
+         * on Maven, where this gate runs before the build: a commit with nothing to analyse on a tree whose build is
+         * broken is NO_ANALYZABLE_DIFF on both build tools, never a BUILD_FAILURE, and never fails a run told not to
+         * tolerate a broken build.
+         */
+        Optional<Exclusion> nothingToAnalyse = CommitExclusions.beforeBuild(args.getGit(), args.getCommitId(), DefaultLanguageProcessors.supportedExtensions());
+        if (nothingToAnalyse.isPresent()) {
+            reportExclusionWithDiff(request, args, new JGitDeltaAnalyzer(logFactory, args).analyze(), nothingToAnalyse.get(), logFactory, log);
+            return;
+        }
+
+        /**
          * A failed build leaves no trustworthy class output, so the normal pipeline cannot run: no ClassGraph scan, no
          * JDT import, no coverage. The Maven side takes the same fork, and both must stay aligned so a build-failed
          * commit is treated the same whichever plugin analysed it.
@@ -190,24 +202,24 @@ public class AnalysisEngine {
         if (StringUtils.isNotBlank(request.getBuildFailureDetail())) {
             /**
              * skipOnBuildFailure=false asks for a hard error instead of an exclusion, so it is raised before the review
-             * starts, as on Maven: a review started here was only cancelled again, after its tag fetch and OpenCode had
+             * starts, as on Maven: a review started first was only cancelled again, after its tag fetch and OpenCode had
              * already been paid for. Throwing fails the worker, so javaexec fails the task and a pipeline that opted out
              * of tolerating build failures does not go green on one. A Gradle exception type cannot be used: the worker
              * runs on a bare classpath with no gradle-api.
              */
-            if (BooleanUtils.negate(args.isSkipOnBuildFailure())) {
-                throw new CommitBuildFailedException(String.format("commit %s: %s, and codiqo.skipOnBuildFailure is false%n%s",
-                        args.getCommitId(), BUILD_FAILED, request.getBuildFailureDetail()));
-            }
-            Optional<LocalReviewRun> review = startReview(request, args, logFactory, log);
-            try {
-                runDegraded(request, args, review, logFactory, log);
-            } finally {
-                if (review.isPresent()) {
-                    review.get().close();
+            if (args.isSkipOnBuildFailure()) {
+                Optional<LocalReviewRun> review = startReview(request, args, logFactory, log);
+                try {
+                    runDegraded(request, args, review, logFactory, log);
+                } finally {
+                    if (review.isPresent()) {
+                        review.get().close();
+                    }
                 }
+                return;
             }
-            return;
+            throw new CommitBuildFailedException(String.format("commit %s: %s, and codiqo.skipOnBuildFailure is false%n%s",
+                    args.getCommitId(), BUILD_FAILED, request.getBuildFailureDetail()));
         }
 
         /**
@@ -292,6 +304,17 @@ public class AnalysisEngine {
     private static void reportExclusion(AnalysisRequest request, RunArgs args, String commitSha, Exclusion exclusion, List<FileChangeModel> files, Log log) throws Exception {
         reportExclusion(request, args, commitSha, exclusion, files, log, null, null);
     }
+    /**
+     * An excluded commit still carries the raw git diff so the backend persists per-file changes. Indexing has not run,
+     * so the populator emits diff-only file models with no code units.
+     */
+    private static void reportExclusionWithDiff(AnalysisRequest request, RunArgs args, CommitAnalysis analysis, Exclusion exclusion, LogFactory logFactory, Log log)
+            throws Exception {
+        SubmissionContext ctx = SubmissionContext.create(
+                args, null, analysis, args.getGit().getWorkTree().toPath().normalize(), logFactory, request.getRootCode(), request.getRootName(), clientInfo(request));
+        SubmissionAssembly.excluded(ctx);
+        reportExclusion(request, args, args.getCommitId(), exclusion, ctx.getSubmissionModel().getFiles(), log);
+    }
     private static void reportExclusion(AnalysisRequest request, RunArgs args, String commitSha, Exclusion exclusion, List<FileChangeModel> files, Log log, String detail, ProjectMetricsModel projectMetrics) throws Exception {
         log.warn("commit %s skipped: %s", commitSha, exclusion.getReason());
         AnalysisSubmitter.exclude(
@@ -352,8 +375,7 @@ public class AnalysisEngine {
      * genuine code volume, rather than a score derived from config lines alone.
      */
     private static void runDegraded(AnalysisRequest request, RunArgs args, Optional<LocalReviewRun> review, LogFactory logFactory, Log log) throws Exception {
-        args.getProjects().add(GradleSourceOnlyProjectSpec.forWorkTree(args.getGit().getWorkTree(), request));
-        SubmissionContext ctx = degradedSubmission(request, args, BUILD_FAILED, logFactory, log);
+        SubmissionContext ctx = degradedSubmission(request, args, logFactory, log);
 
         List<FileChangeModel> files = ctx.getSubmissionModel().getFiles();
         /**
@@ -385,16 +407,25 @@ public class AnalysisEngine {
      * degrades the same way rather than losing the commit: without the fallback the exception escapes the worker, no
      * exclusion is ever submitted, and the sha is re-offered as missing on every subsequent run.
      */
-    private static SubmissionContext degradedSubmission(AnalysisRequest request, RunArgs args, String reason, LogFactory logFactory, Log log) throws Exception {
+    @VisibleForTesting
+    public static SubmissionContext degradedSubmission(AnalysisRequest request, RunArgs args, LogFactory logFactory, Log log) throws Exception {
+        GradleSourceOnlyProjectSpec workTree = GradleSourceOnlyProjectSpec.forWorkTree(args.getGit().getWorkTree(), request);
+        args.getProjects().add(workTree);
         try {
-            return sourceOnlySubmission(request, args, reason, logFactory);
+            return sourceOnlySubmission(request, args, logFactory);
         } catch (IOException err) {
             log.warn("commit %s: source-only degraded index failed (%s) — falling back to diff-only scoring",
                     args.getCommitId(), ExceptionUtils.getRootCauseMessage(err));
-            return diffOnlySubmission(request, args, reason, err, logFactory);
+            /**
+             * The whole-work-tree module exists only to give the source-only index an owner for every file. The
+             * diff-only submission indexes nothing, so it would be sent as a module with no source roots: Maven drops
+             * its own the same way, and both build tools send the project without a module.
+             */
+            args.getProjects().remove(workTree);
+            return diffOnlySubmission(request, args, err, logFactory);
         }
     }
-    private static SubmissionContext sourceOnlySubmission(AnalysisRequest request, RunArgs args, String reason, LogFactory logFactory) throws Exception {
+    private static SubmissionContext sourceOnlySubmission(AnalysisRequest request, RunArgs args, LogFactory logFactory) throws Exception {
         Path workTree = args.getGit().getWorkTree().toPath().normalize();
         CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
 
@@ -406,16 +437,14 @@ public class AnalysisEngine {
             SubmissionAssembly.degraded(ctx);
             return ctx;
         });
-        toReturn.getSubmissionModel().setBuildFailure(buildFailure(reason, request.getBuildFailureDetail()));
+        toReturn.getSubmissionModel().setBuildFailure(SubmissionAssembly.buildFailure(BUILD_FAILED, AnalysisExcludeCategory.BUILD_FAILURE, request.getBuildFailureDetail()));
         return toReturn;
     }
     /**
      * Git diff and commit metadata only: no code units, no metrics. The degraded score is derived from the diff alone,
      * and the build-failure detail records why the source-only index was given up, as on Maven.
      */
-    @VisibleForTesting
-    public static SubmissionContext diffOnlySubmission(AnalysisRequest request, RunArgs args, String reason, IOException fallbackCause, LogFactory logFactory)
-            throws Exception {
+    private static SubmissionContext diffOnlySubmission(AnalysisRequest request, RunArgs args, IOException fallbackCause, LogFactory logFactory) throws Exception {
         Path workTree = args.getGit().getWorkTree().toPath().normalize();
         CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
 
@@ -424,7 +453,8 @@ public class AnalysisEngine {
 
         new GradleProjectModelPopulator(logFactory.getLogger(GradleProjectModelPopulator.class)).accept(toReturn);
         SubmissionAssembly.diffOnly(toReturn);
-        toReturn.getSubmissionModel().setBuildFailure(buildFailure(reason, SubmissionAssembly.diffOnlyFallbackDetail(request.getBuildFailureDetail(), fallbackCause)));
+        toReturn.getSubmissionModel().setBuildFailure(SubmissionAssembly.buildFailure(
+                BUILD_FAILED, AnalysisExcludeCategory.BUILD_FAILURE, SubmissionAssembly.diffOnlyFallbackDetail(request.getBuildFailureDetail(), fallbackCause)));
         return toReturn;
     }
     private static ClientInfoModel clientInfo(AnalysisRequest request) {
@@ -432,13 +462,6 @@ public class AnalysisEngine {
         toReturn.setBuildTool(BuildToolEnum.GRADLE);
         toReturn.setVersion(request.getGradleVersion());
         toReturn.setName("codiqo-gradle-plugin");
-        return toReturn;
-    }
-    private static AnalysisBuildFailureModel buildFailure(String reason, String detail) {
-        AnalysisBuildFailureModel toReturn = new AnalysisBuildFailureModel();
-        toReturn.setReason(reason);
-        toReturn.setCategory(AnalysisExcludeCategory.BUILD_FAILURE);
-        toReturn.setDetail(detail);
         return toReturn;
     }
     /**
@@ -585,21 +608,11 @@ public class AnalysisEngine {
                 DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, args);
                 CommitAnalysis analysis = analyzer.analyze();
 
-                List<String> changedFiles = Lists.newArrayList();
-                analysis.forEach(diff -> changedFiles.add(diff.getFile().getName()));
-
                 ClientInfoModel clientInfo = clientInfo(request);
 
-                Optional<Exclusion> excluded = CommitExclusions.afterDelta(args, analysis, registry.extensions(), changedFiles);
+                Optional<Exclusion> excluded = CommitExclusions.afterDelta(analysis, registry.extensions());
                 if (excluded.isPresent()) {
-                    /**
-                     * An excluded commit still carries the raw git diff so the backend persists per-file changes.
-                     * Indexing has not run, so the populator emits diff-only file models with no code units.
-                     */
-                    SubmissionContext excludeCtx = SubmissionContext.create(
-                            args, null, analysis, workTree, logFactory, request.getRootCode(), request.getRootName(), clientInfo);
-                    SubmissionAssembly.excluded(excludeCtx);
-                    reportExclusion(request, args, args.getCommitId(), excluded.get(), excludeCtx.getSubmissionModel().getFiles(), log);
+                    reportExclusionWithDiff(request, args, analysis, excluded.get(), logFactory, log);
                     return;
                 }
 
