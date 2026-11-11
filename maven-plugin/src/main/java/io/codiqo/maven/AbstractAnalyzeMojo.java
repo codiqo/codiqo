@@ -54,7 +54,6 @@ import org.apache.commons.lang3.CharUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
-import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.maven.artifact.ArtifactUtils;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
@@ -106,7 +105,6 @@ import com.google.common.collect.Sets;
 
 import io.codiqo.api.BuildTool;
 import io.codiqo.api.ClassGraphSpec;
-import io.codiqo.api.DeltaAnalyzer;
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.LanguageProcessors;
 import io.codiqo.api.MavenProjectSpec;
@@ -126,7 +124,6 @@ import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.core.ClassGraphWrapper;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
-import io.codiqo.lang.config.ConfigFiles;
 import io.codiqo.maven.coverage.CoverageInjectorConfig;
 import io.codiqo.maven.eventspy.BuildFailureConfig;
 import io.codiqo.maven.eventspy.BuildProgressConfig;
@@ -136,6 +133,8 @@ import io.codiqo.maven.populator.SubmissionSummaryPrinter;
 import io.codiqo.maven.surefire.SurefireInjectorConfig;
 import io.codiqo.maven.timemachine.TimeMachineConfig;
 import io.codiqo.submit.CommitBuildFailedException;
+import io.codiqo.submit.CommitExclusions;
+import io.codiqo.submit.CommitExclusions.Exclusion;
 import io.codiqo.submit.OutputSerializer;
 import io.codiqo.submit.SourceHiding;
 import io.codiqo.util.Env;
@@ -1470,66 +1469,17 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                 getLog().info(MemoryReport.snapshot("before language server load"));
                 registry.load();
                 getLog().info(MemoryReport.snapshot("after language server load"));
-                MutableBoolean toApply = new MutableBoolean();
-                DeltaAnalyzer analyzer = new JGitDeltaAnalyzer(logFactory, args);
-                CommitAnalysis analysis = analyzer.analyze();
+                CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
                 List<String> changedFiles = Lists.newArrayList();
-                analysis.forEach(diff -> {
-                    String name = diff.getFile().getName();
-                    changedFiles.add(name);
-                    if (BooleanUtils.or(new boolean[] {
-                            FilenameUtils.isExtension(name, registry.extensions()),
-                            ConfigFiles.isConfigFile(name)
-                    })) {
-                        toApply.setTrue();
-                    }
-                });
-                String skipReason = null;
-                AnalysisExcludeCategory skipCategory = null;
-                /**
-                 * The shallow-clone check runs ahead of the extension check because both leave an empty file list.
-                 * Checked the other way round, a commit whose parent is missing would be reported as having no files
-                 * in a registered language, hiding that the fix is to re-run with full history.
-                 */
-                if (analysis.isHistoryIncomplete()) {
-                    skipReason = String.format("commit %s sits on a shallow-clone boundary, so its parent is not present locally and its delta cannot be computed"
-                            + " — re-run with full history (fetch-depth: 0)", args.getCommitId());
-                    skipCategory = AnalysisExcludeCategory.INCOMPLETE_HISTORY;
-                    getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), skipReason));
-                } else if (toApply.isFalse()) {
-                    skipReason = String.format("no diff files match registered languages %s or supported config files (%s) — changed files: %s",
-                            registry.extensions(),
-                            ConfigFiles.describeSupported(),
-                            changedFiles);
-                    skipCategory = AnalysisExcludeCategory.NO_ANALYZABLE_DIFF;
-                    getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), skipReason));
-                }
-
-                boolean branchMatches = args.matchesByBranch(analysis.getBranches());
-                boolean authorMatches = args.matchesByAuthor(analysis.getAuthorEmail());
-                if (BooleanUtils.or(new boolean[] {
-                        BooleanUtils.negate(branchMatches),
-                        BooleanUtils.negate(authorMatches)
-                })) {
-                    skipReason = String.format("filtered by include-rules — branch match: %s (branches=%s), author match: %s (author=%s)",
-                            branchMatches,
-                            analysis.getBranches(),
-                            authorMatches,
-                            analysis.getAuthorEmail());
-                    skipCategory = AnalysisExcludeCategory.FILTERED_BY_RULES;
-                    getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), skipReason));
-                    toApply.setFalse();
-                }
+                analysis.forEach(diff -> changedFiles.add(diff.getFile().getName()));
 
                 ClientInfoModel clientInfo = new ClientInfoModel();
                 clientInfo.setBuildTool(ClientInfoModel.BuildToolEnum.MAVEN);
                 clientInfo.setVersion(runtimeInformation.getMavenVersion());
                 clientInfo.setName("codiqo-maven-plugin");
 
-                if (Objects.nonNull(skipReason)) {
-                    excludeWithDiff(args, analysis, skipReason, skipCategory);
-                }
-                if (toApply.isTrue()) {
+                Optional<Exclusion> excluded = CommitExclusions.afterDelta(args, analysis, registry.extensions(), changedFiles);
+                if (excluded.isEmpty()) {
                     IndexingSummary index = registry.index(analysis);
                     getLog().info(MemoryReport.snapshot("after index"));
                     registry.identifyAffectedSymbols(index, analysis);
@@ -1566,6 +1516,8 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                     buildHotspots(ctx);
                     return Optional.of(ctx);
                 }
+                getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), excluded.get().getReason()));
+                excludeWithDiff(args, analysis, excluded.get().getReason(), excluded.get().getCategory());
             }
         }
         return Optional.empty();

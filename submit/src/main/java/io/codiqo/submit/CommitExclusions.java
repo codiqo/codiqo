@@ -65,6 +65,15 @@ public class CommitExclusions {
                     AnalysisExcludeCategory.INCOMPLETE_HISTORY));
         }
 
+        /**
+         * Checked ahead of the include-rules, as {@link #beforeBuild} is: a commit that fails both is then reported as
+         * having no analysable diff whether the before-build gate caught it or the build ran first. Checked after them,
+         * the same commit came out as FILTERED_BY_RULES here and as NO_ANALYZABLE_DIFF there.
+         */
+        if (BooleanUtils.negate(hasAnalyzableFile(changedFiles, extensions))) {
+            return Optional.of(noAnalyzableDiff(extensions, changedFiles));
+        }
+
         boolean branchMatches = args.matchesByBranch(analysis.getBranches());
         boolean authorMatches = args.matchesByAuthor(analysis.getAuthorEmail());
         if (BooleanUtils.or(new boolean[] { BooleanUtils.negate(branchMatches), BooleanUtils.negate(authorMatches) })) {
@@ -72,9 +81,6 @@ public class CommitExclusions {
                     String.format("filtered by include-rules — branch match: %s (branches=%s), author match: %s (author=%s)",
                             branchMatches, analysis.getBranches(), authorMatches, analysis.getAuthorEmail()),
                     AnalysisExcludeCategory.FILTERED_BY_RULES));
-        }
-        if (BooleanUtils.negate(hasAnalyzableFile(changedFiles, extensions))) {
-            return Optional.of(noAnalyzableDiff(extensions, changedFiles));
         }
         return Optional.empty();
     }
