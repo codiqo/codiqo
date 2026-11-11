@@ -2,6 +2,7 @@ package io.codiqo.gradle;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
@@ -10,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Objects;
 
 import org.apache.commons.lang3.Strings;
 import org.eclipse.jgit.api.Git;
@@ -27,9 +29,11 @@ import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.core.logging.SlfLogFactory;
 import io.codiqo.gradle.model.AnalysisRequest;
+import io.codiqo.submit.CommitBuildFailedException;
 import io.codiqo.submit.SubmissionAssembly;
+import io.codiqo.submit.auth.CredentialStore;
 
-/** a build-failed commit whose source index could not be read is scored diff-only, and recorded so, as on Maven */
+/** a build-failed commit is routed as on Maven */
 class AnalysisEngineDegradedTest {
     private static final String BUILD_FAILURE_DETAIL = "Execution failed for task ':compileJava'.";
 
@@ -76,6 +80,40 @@ class AnalysisEngineDegradedTest {
 
         assertNotNull(submission.getProject(), "the project model is sent with a diff-only submission too");
         assertEquals("app", submission.getProject().getModules().iterator().next().getName());
+    }
+    /**
+     * A run told not to tolerate a broken build fails before the review starts, as on Maven. The credential store is
+     * empty, so a review started first fails while it resolves the login, instead of on the build.
+     */
+    @Test
+    void aBrokenBuildThatMustFailTheRunFailsItBeforeAnyReviewStarts() throws Exception {
+        commit("src/main/java/a/A.java", "class A {}");
+        RevCommit broken = commit("src/main/java/a/A.java", "class A { void broken( }");
+
+        AnalysisRequest request = new AnalysisRequest();
+        request.setAuthUrl("https://auth.invalid");
+        request.setBuildFailureDetail(BUILD_FAILURE_DETAIL);
+        RunArgs args = new RunArgs();
+        args.setGit(repository);
+        args.setCommitId(broken.getName());
+        args.setSkipOnBuildFailure(false);
+        args.setReviewEnabled(true);
+
+        String home = System.getProperty(CredentialStore.HOME_PROPERTY);
+        System.setProperty(CredentialStore.HOME_PROPERTY, Files.createDirectory(tempDir.resolve("codiqo-home")).toString());
+        try {
+            SlfLogFactory logs = new SlfLogFactory();
+            CommitBuildFailedException err = assertThrows(CommitBuildFailedException.class,
+                    () -> AnalysisEngine.analyse(request, args, logs, logs.getLogger(AnalysisEngineDegradedTest.class)));
+
+            assertTrue(Strings.CS.contains(err.getMessage(), BUILD_FAILURE_DETAIL), err.getMessage());
+        } finally {
+            if (Objects.isNull(home)) {
+                System.clearProperty(CredentialStore.HOME_PROPERTY);
+            } else {
+                System.setProperty(CredentialStore.HOME_PROPERTY, home);
+            }
+        }
     }
     private RevCommit commit(String path, String content) throws Exception {
         Path file = tempDir.resolve(Paths.get(path));

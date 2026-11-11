@@ -89,6 +89,7 @@ import lombok.experimental.UtilityClass;
 public class AnalysisEngine {
     private static final String ERR_NO_CREDENTIAL = "no codiqo.apiKey configured and no browser login stored; "
             + "run 'gradle codiqoLogin' once on this machine, or set codiqo.apiKey";
+    private static final String BUILD_FAILED = "build failed";
     /**
      * Declared on the worker side, not on the Gradle-typed helper that also uses it. The worker runs on a bare
      * classpath with no gradle-api, so it must not reference a class that imports Gradle types. Reading the constant
@@ -177,7 +178,8 @@ public class AnalysisEngine {
             }
         }
     }
-    private static void analyse(AnalysisRequest request, RunArgs args, LogFactory logFactory, Log log) throws Exception {
+    @VisibleForTesting
+    public static void analyse(AnalysisRequest request, RunArgs args, LogFactory logFactory, Log log) throws Exception {
         args.setAnalysisStartedAt(Instant.now());
 
         /**
@@ -186,6 +188,17 @@ public class AnalysisEngine {
          * commit is treated the same whichever plugin analysed it.
          */
         if (StringUtils.isNotBlank(request.getBuildFailureDetail())) {
+            /**
+             * skipOnBuildFailure=false asks for a hard error instead of an exclusion, so it is raised before the review
+             * starts, as on Maven: a review started here was only cancelled again, after its tag fetch and OpenCode had
+             * already been paid for. Throwing fails the worker, so javaexec fails the task and a pipeline that opted out
+             * of tolerating build failures does not go green on one. A Gradle exception type cannot be used: the worker
+             * runs on a bare classpath with no gradle-api.
+             */
+            if (BooleanUtils.negate(args.isSkipOnBuildFailure())) {
+                throw new CommitBuildFailedException(String.format("commit %s: %s, and codiqo.skipOnBuildFailure is false%n%s",
+                        args.getCommitId(), BUILD_FAILED, request.getBuildFailureDetail()));
+            }
             Optional<LocalReviewRun> review = startReview(request, args, logFactory, log);
             try {
                 runDegraded(request, args, review, logFactory, log);
@@ -339,20 +352,8 @@ public class AnalysisEngine {
      * genuine code volume, rather than a score derived from config lines alone.
      */
     private static void runDegraded(AnalysisRequest request, RunArgs args, Optional<LocalReviewRun> review, LogFactory logFactory, Log log) throws Exception {
-        String reason = "build failed";
-
-        /**
-         * skipOnBuildFailure=false asks for a hard error instead of an exclusion. Throwing here fails the worker, so
-         * javaexec fails the task and a pipeline that opted out of tolerating build failures does not go green on
-         * one. A Gradle exception type cannot be used: the worker runs on a bare classpath with no gradle-api.
-         */
-        if (BooleanUtils.negate(args.isSkipOnBuildFailure())) {
-            throw new CommitBuildFailedException(String.format("commit %s: %s, and codiqo.skipOnBuildFailure is false%n%s",
-                    args.getCommitId(), reason, request.getBuildFailureDetail()));
-        }
-
         args.getProjects().add(GradleSourceOnlyProjectSpec.forWorkTree(args.getGit().getWorkTree(), request));
-        SubmissionContext ctx = degradedSubmission(request, args, reason, logFactory, log);
+        SubmissionContext ctx = degradedSubmission(request, args, BUILD_FAILED, logFactory, log);
 
         List<FileChangeModel> files = ctx.getSubmissionModel().getFiles();
         /**
@@ -375,7 +376,7 @@ public class AnalysisEngine {
         }
 
         reportExclusion(request, args, args.getCommitId(),
-                new Exclusion(reason, AnalysisExcludeCategory.BUILD_FAILURE), files, log,
+                new Exclusion(BUILD_FAILED, AnalysisExcludeCategory.BUILD_FAILURE), files, log,
                 request.getBuildFailureDetail(), ctx.getSubmissionModel().getProjectMetrics());
     }
     /**
