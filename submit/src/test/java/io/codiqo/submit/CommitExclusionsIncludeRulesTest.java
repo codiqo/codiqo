@@ -18,7 +18,7 @@ import org.junit.jupiter.api.io.TempDir;
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 
-/** the include-rules decide from git alone, before anything is built or reviewed, as the index step does */
+/** the include-rules decide from git alone, before the commit is reviewed, as the index step does */
 class CommitExclusionsIncludeRulesTest {
     private static final PersonIdent AUTHOR = new PersonIdent("Author", "author@example.com");
 

@@ -36,10 +36,11 @@ public class CommitExclusions {
     /**
      * Gates that need only the commit and the run configuration, so they run before the clone/build/analysis pipeline.
      * The include-rules are among them: they read only the commit's branches and its credited author, as the index
-     * step does ({@link CommitIndexer}), so a commit they leave out is excluded before anything is built or reviewed,
-     * whether its build would pass or fail. Checked after the delta, they started a paid review for a commit that was
-     * then excluded, never applied to a commit whose build failed, and lost to the analysable-file gate while
-     * {@code codiqo.excludeAuthorEmails}, checked here, won over it.
+     * step does ({@link CommitIndexer}), so a commit they leave out is excluded before it is reviewed, whether its build
+     * passes or fails, and on Maven before it is built too (Gradle builds the commit before its worker starts).
+     * Checked after the delta, they started a paid review for a commit that was then excluded, never applied to a
+     * commit whose build failed, and lost to the analysable-file gate while {@code codiqo.excludeAuthorEmails}, checked
+     * here, won over it.
      */
     public static Optional<Exclusion> beforeAnalysis(RunArgs args, IndexedCommits indexed) throws Exception {
         if (JGit.isMerge(args.getGit(), args.getCommitId())) {
