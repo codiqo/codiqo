@@ -35,7 +35,14 @@ class ReviewVerdictTest {
         ReviewVerdict.CommitFailure failed = assertInstanceOf(ReviewVerdict.CommitFailure.class,
                 ReviewVerdict.unanswered(new IOException("session ses_1 did not end its turn within PT150M"), false, Optional.of("the LLM provider answered 400 once during the review")));
 
-        assertEquals("session ses_1 did not end its turn within PT150M; the LLM provider answered 400 once during the review", failed.getError().getMessage());
+        assertEquals("session ses_1 did not end its turn within PT150M; the LLM provider answered 400 once during the review", failed.getReason());
+    }
+    /** a review that failed on a bug's exception without a message is named by the exception's class */
+    @Test
+    void aFailureWithoutAMessageIsNamedByItsClass() {
+        ReviewVerdict.Failed failed = assertInstanceOf(ReviewVerdict.CodiqoFailure.class, ReviewVerdict.unexpected(new NullPointerException(), Optional.empty()));
+
+        assertEquals("NullPointerException: ", failed.getReason());
     }
     @Test
     void aFailureNoPartOfTheReviewSettledIsCodiqos() {

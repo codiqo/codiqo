@@ -215,7 +215,8 @@ public final class LocalReviewRun implements AutoCloseable {
         return toReturn;
     }
     /**
-     * What a review verdict does to its commit, the one rule of both build tools: the exclusion to record when the
+     * What a review verdict does to its commit on Maven, until Maven runs its commits through
+     * {@link io.codiqo.submit.outcome.CommitRun} as Gradle does: the exclusion to record when the
      * review failed on the commit, empty when the commit goes on to be submitted. A review that failed on the model
      * provider or on Codiqo's side fails the run, whose failure handling halts the project ({@link ProjectHalts}); the
      * provider's failed answers go with it as the halt's reason ({@link ReviewProviderException}). A stopped review fails
@@ -231,7 +232,7 @@ public final class LocalReviewRun implements AutoCloseable {
             toReturn = Optional.of(switch (failed) {
                 case ReviewVerdict.CommitFailure commit -> exclusion(commit, ctx, log);
                 case ReviewVerdict.ProviderFailure provider ->
-                    throw new ReviewProviderException(ReviewVerdict.REVIEW_FAILED + provider.getError().getMessage(), provider.getProviderSummary(), provider.getError());
+                    throw new ReviewProviderException(ReviewVerdict.REVIEW_FAILED + provider.getFailure(), provider.getProviderSummary(), provider.getError());
                 case ReviewVerdict.CodiqoFailure codiqo -> throw new IOException(ReviewVerdict.REVIEW_FAILED + codiqo.getReason(), codiqo.getError());
                 case ReviewVerdict.Stopped stopped -> throw stopped.getError();
             });

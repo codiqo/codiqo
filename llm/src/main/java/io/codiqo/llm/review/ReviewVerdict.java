@@ -1,8 +1,10 @@
 package io.codiqo.llm.review;
 
-import java.io.IOException;
 import java.util.Objects;
 import java.util.Optional;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import io.codiqo.util.Interrupts;
 import lombok.Value;
@@ -23,13 +25,14 @@ public sealed interface ReviewVerdict permits ReviewVerdict.Succeeded, ReviewVer
     /** the provider's summary for a turn OpenCode ended with a provider error that never reached the relay */
     String RELAY_COUNTED_NONE = "OpenCode recorded the provider's failure; the relay counted none";
     String REVIEW_FAILED = "local review failed: ";
+    String SEPARATOR = "; ";
 
     /**
      * Failed on the commit, with the provider's failed answers named in its error: a turn's own error, and an answer
      * cut off at a step cap, say nothing of the 429s that preceded it.
      */
     static ReviewVerdict commitFailure(Exception err, Optional<String> providerErrors) {
-        return new CommitFailure(withProviderErrors(err, providerErrors));
+        return new CommitFailure(err, providerErrors);
     }
     static ReviewVerdict providerFailure(Exception err, Optional<String> providerErrors) {
         return new ProviderFailure(err, providerErrors.orElse(RELAY_COUNTED_NONE));
@@ -55,10 +58,7 @@ public sealed interface ReviewVerdict permits ReviewVerdict.Succeeded, ReviewVer
         if (Interrupts.stopped(err)) {
             return new Stopped(err);
         }
-        return new CodiqoFailure(withProviderErrors(err, providerErrors));
-    }
-    private static Exception withProviderErrors(Exception err, Optional<String> providerErrors) {
-        return providerErrors.<Exception> map(summary -> new IOException(err.getMessage() + "; " + summary, err)).orElse(err);
+        return new CodiqoFailure(err, providerErrors);
     }
 
     @Value
@@ -66,62 +66,76 @@ public sealed interface ReviewVerdict permits ReviewVerdict.Succeeded, ReviewVer
         LocalReviewer.ReviewOutcome outcome;
     }
 
-    /** a review that failed or was stopped */
+    /**
+     * A review that failed or was stopped, with the model provider's failed answers during it when the relay counted
+     * some. They are kept apart from the error, which can fill a halt's reason on its own and would cut them off
+     * ({@link ReviewProviderException}).
+     */
     abstract sealed class Failed implements ReviewVerdict permits CommitFailure, ProviderFailure, CodiqoFailure, Stopped {
         private final Exception error;
+        private final Optional<String> providerErrors;
 
-        protected Failed(Exception error) {
+        protected Failed(Exception error, Optional<String> providerErrors) {
             this.error = Objects.requireNonNull(error);
+            this.providerErrors = Objects.requireNonNull(providerErrors);
         }
         public Exception getError() {
             return error;
         }
-        /** why the review failed, as the developer, an exclusion or a halt reads it */
+        public Optional<String> getProviderErrors() {
+            return providerErrors;
+        }
+        /**
+         * What failed, named by the exception's class when it carries no message: a review that failed on a bug's
+         * NullPointerException would otherwise read "local review failed: null".
+         */
+        public String getFailure() {
+            return StringUtils.defaultIfBlank(error.getMessage(), ExceptionUtils.getMessage(error));
+        }
+        /**
+         * Why the review failed, as the developer, an exclusion or a halt reads it, with the provider's failed answers: a
+         * turn that timed out and a reviewer cut off at its step cap read as the model's own failure without the 429s
+         * that preceded them.
+         */
         public String getReason() {
-            return error.getMessage();
+            return getFailure() + providerErrors.map(summary -> SEPARATOR + summary).orElse(StringUtils.EMPTY);
         }
     }
 
     /** failed on the commit: the commit is excluded */
     final class CommitFailure extends Failed {
         public CommitFailure(Exception error) {
-            super(error);
+            this(error, Optional.empty());
+        }
+        public CommitFailure(Exception error, Optional<String> providerErrors) {
+            super(error, providerErrors);
         }
     }
 
     /** failed on the model provider: the project halts, with the provider's failed answers in the halt's reason */
     final class ProviderFailure extends Failed {
-        /** kept apart from the error, which can fill a halt's reason on its own ({@link ReviewProviderException}) */
-        private final String providerSummary;
-
         public ProviderFailure(Exception error, String providerSummary) {
-            super(error);
-            this.providerSummary = Objects.requireNonNull(providerSummary);
+            super(error, Optional.of(providerSummary));
         }
         public String getProviderSummary() {
-            return providerSummary;
-        }
-        /**
-         * With the provider's failed answers: the error alone names only what was lost, and a reviewer cut off at its step
-         * cap reads as the model's own failure without the 429s that preceded it.
-         */
-        @Override
-        public String getReason() {
-            return getError().getMessage() + "; " + providerSummary;
+            return getProviderErrors().orElseThrow();
         }
     }
 
     /** failed on Codiqo's side: the project halts */
     final class CodiqoFailure extends Failed {
         public CodiqoFailure(Exception error) {
-            super(error);
+            this(error, Optional.empty());
+        }
+        public CodiqoFailure(Exception error, Optional<String> providerErrors) {
+            super(error, providerErrors);
         }
     }
 
     /** the run was stopped while the review ran, which halts nothing */
     final class Stopped extends Failed {
         public Stopped(Exception error) {
-            super(error);
+            super(error, Optional.empty());
         }
     }
 }

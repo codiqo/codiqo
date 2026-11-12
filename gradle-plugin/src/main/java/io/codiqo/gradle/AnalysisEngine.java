@@ -91,13 +91,7 @@ public class AnalysisEngine {
 
             /** a hidden-source run without a usable key fails here, before anything is analysed, sent or paid for */
             CommitRun commit = commitRun(request, server(request, log), args, logFactory);
-            Optional<CommitOutcome> settled = commit.admit();
-            CommitOutcome outcome;
-            if (settled.isPresent()) {
-                outcome = settled.get();
-            } else {
-                outcome = commit.run();
-            }
+            CommitOutcome outcome = commit.admit().orElseGet(commit::run);
             /** the worker exits with the failure, which fails the javaexec and the task; a halt is already recorded */
             if (outcome instanceof CommitOutcome.Failed failed) {
                 throw failed.getCause();

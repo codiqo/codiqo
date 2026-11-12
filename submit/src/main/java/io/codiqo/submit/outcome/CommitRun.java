@@ -46,6 +46,7 @@ import io.codiqo.submit.SubmissionContext;
 import io.codiqo.submit.hotspots.HotspotSnapshots;
 import io.codiqo.submit.review.LocalReviewRun;
 import io.codiqo.util.Fetch;
+import io.codiqo.util.Interrupts;
 import io.codiqo.util.JGit;
 import io.codiqo.util.ProgressStage;
 import io.netty.handler.codec.http.HttpResponseStatus;
@@ -71,6 +72,11 @@ public final class CommitRun {
     private final Log log;
     /** the server accepted the commit's submission: a failure after it has scored the commit, so it halts nothing */
     private boolean submitted;
+    /**
+     * The halt this run recorded, which stays the commit's outcome: a failure closing the language servers or the review
+     * after it is attached to the halt's cause rather than halting the project a second time over that failure.
+     */
+    private Optional<CommitOutcome.Halted> halted = Optional.empty();
 
     /** @param output where the analysis is written before it is sent, so a submission the server refuses can be read */
     public CommitRun(
@@ -108,6 +114,11 @@ public final class CommitRun {
         try {
             return analyse();
         } catch (Exception err) {
+            if (halted.isPresent()) {
+                log.warn("commit %s: %s after the project was halted", args.getCommitId(), ExceptionUtils.getRootCauseMessage(err));
+                halted.get().getCause().addSuppressed(err);
+                return halted.get();
+            }
             if (BooleanUtils.or(new boolean[] { ProjectHalts.haltsNothing(err), submitted })) {
                 return new CommitOutcome.Deferred(err);
             }
@@ -123,10 +134,8 @@ public final class CommitRun {
     public SubmissionContext degradedSubmission(BuildVerdict.Failed failed) throws Exception {
         Optional<ProjectSpec> workTree = Optional.empty();
         try {
-            if (args.getProjects().isEmpty()) {
-                workTree = Optional.of(build.sourceOnlyProject());
-                args.getProjects().add(workTree.get());
-            }
+            workTree = Optional.of(build.sourceOnlyProject());
+            args.getProjects().add(workTree.get());
             return sourceOnlySubmission(failed);
         } catch (IOException err) {
             log.warn("commit %s: source-only degraded index failed (%s) — falling back to diff-only scoring", args.getCommitId(), ExceptionUtils.getRootCauseMessage(err));
@@ -157,16 +166,18 @@ public final class CommitRun {
          * is what scores it; one that failed on the environment starts none, so a build that cannot run costs no review.
          */
         if (build.compile() instanceof BuildVerdict.Failed failed) {
-            requireTolerated(failed);
-            Optional<LocalReviewRun> review = Optional.empty();
-            if (failed.isAuthors()) {
-                review = startReview();
+            if (args.isSkipOnBuildFailure()) {
+                Optional<LocalReviewRun> review = Optional.empty();
+                if (failed.isAuthors()) {
+                    review = startReview();
+                }
+                try {
+                    return degraded(failed, review);
+                } finally {
+                    close(review);
+                }
             }
-            try {
-                return degraded(failed, review);
-            } finally {
-                close(review);
-            }
+            throw untolerated(failed);
         }
 
         /** the language server the full analysis needs is downloaded before the review is paid for */
@@ -178,8 +189,10 @@ public final class CommitRun {
         try {
             BuildVerdict tested = build.test();
             if (tested instanceof BuildVerdict.Failed failed) {
-                requireTolerated(failed);
-                return degraded(failed, review);
+                if (args.isSkipOnBuildFailure()) {
+                    return degraded(failed, review);
+                }
+                throw untolerated(failed);
             }
             if (tested instanceof BuildVerdict.Passed passed) {
                 passed.getTestRun().ifPresent(this::hold);
@@ -216,7 +229,7 @@ public final class CommitRun {
                     toReturn = judged(review, ctx);
                 }
                 /** runs once the commit's own outcome is settled, and only a failure of the run's own skips it */
-                if (BooleanUtils.negate(toReturn instanceof CommitOutcome.Failed)) {
+                if (BooleanUtils.or(new boolean[] { toReturn instanceof CommitOutcome.Submitted, toReturn instanceof CommitOutcome.Excluded })) {
                     reportHotspots(ctx);
                 }
                 return toReturn;
@@ -251,27 +264,31 @@ public final class CommitRun {
                 .files(files)
                 .projectMetrics(ctx.getSubmissionModel().getProjectMetrics()));
     }
-    /**
-     * The review joined into the submission, and what its verdict does to the commit: only a review that failed on the
-     * commit excludes it. One that failed on the model provider or on Codiqo's side halts the project under the
-     * verdict's reason, the provider's failed answers in it; a stopped review halts nothing.
-     */
+    /** the review joined into the submission, and the commit submitted unless the review failed */
     private CommitOutcome judged(Optional<LocalReviewRun> review, SubmissionContext ctx) throws Exception {
-        if (review.isPresent() && review.get().attachTo(ctx) instanceof ReviewVerdict.Failed failed) {
-            return switch (failed) {
-                case ReviewVerdict.CommitFailure commit -> excluded(LocalReviewRun.exclusion(commit, ctx, log));
-                case ReviewVerdict.ProviderFailure provider -> {
-                    String reason = ReviewVerdict.REVIEW_FAILED + provider.getError().getMessage();
-                    yield halt(ProjectHalts.reason(reason, provider.getProviderSummary()), new IOException(reason + "; " + provider.getProviderSummary(), provider.getError()));
-                }
-                case ReviewVerdict.CodiqoFailure codiqo -> {
-                    String reason = ReviewVerdict.REVIEW_FAILED + codiqo.getReason();
-                    yield halt(reason, new IOException(reason, codiqo.getError()));
-                }
-                case ReviewVerdict.Stopped stopped -> new CommitOutcome.Deferred(stopped.getError());
-            };
+        if (review.isEmpty()) {
+            return submit(ctx);
+        }
+        ReviewVerdict verdict = review.get().attachTo(ctx);
+        if (verdict instanceof ReviewVerdict.Failed failed) {
+            return failedReview(failed, ctx);
         }
         return submit(ctx);
+    }
+    /**
+     * What a failed review does to the commit: only a review that failed on the commit excludes it. One that failed on
+     * the model provider or on Codiqo's side halts the project under the verdict's reason, the provider's failed answers
+     * kept whole at its end; a review that was stopped, or that ended while the run was being stopped, halts nothing.
+     */
+    private CommitOutcome failedReview(ReviewVerdict.Failed failed, SubmissionContext ctx) throws Exception {
+        if (BooleanUtils.or(new boolean[] { failed instanceof ReviewVerdict.Stopped, Interrupts.stopped(failed.getError()) })) {
+            return new CommitOutcome.Deferred(failed.getError());
+        }
+        if (failed instanceof ReviewVerdict.CommitFailure commit) {
+            return excluded(LocalReviewRun.exclusion(commit, ctx, log));
+        }
+        return halt(ProjectHalts.reason(ReviewVerdict.REVIEW_FAILED + failed.getFailure(), failed.getProviderErrors()),
+                new IOException(ReviewVerdict.REVIEW_FAILED + failed.getReason(), failed.getError()));
     }
     /** with the review's trace when the commit was reviewed: the review wrote it before it was joined */
     private CommitOutcome submit(SubmissionContext ctx) throws Exception {
@@ -337,7 +354,8 @@ public final class CommitRun {
     private CommitOutcome halt(String reason, Exception cause) {
         boolean recorded = server.halt(args.getCommitId(), reason, ExceptionUtils.getStackTrace(cause));
         ProgressStage.abort(args, reason, ProjectHalts.traceOf(args, args.getCommitId()));
-        return new CommitOutcome.Halted(cause, recorded);
+        halted = Optional.of(new CommitOutcome.Halted(cause, recorded));
+        return halted.get();
     }
     /**
      * Only a commit that changes a file the analysis reads is reviewed: the review spends the organization's model
@@ -366,15 +384,14 @@ public final class CommitRun {
         args.setTestRun(testRun);
     }
     /**
-     * codiqo.skipOnBuildFailure=false asks for a hard error instead of an exclusion, raised before any review starts: a
-     * pipeline that opted out of tolerating build failures does not go green on one. It is the author's failure and
-     * halts nothing: halting would hold the commit that fixes it.
+     * codiqo.skipOnBuildFailure=false asks for a hard error instead of an exclusion: a pipeline that opted out of
+     * tolerating build failures does not go green on one. A compile that failed raises it before any review starts; a
+     * test run that failed, beside the review it started. It is the author's failure and halts nothing: halting would
+     * hold the commit that fixes it.
      */
-    private void requireTolerated(BuildVerdict.Failed failed) throws CommitBuildFailedException {
-        if (BooleanUtils.negate(args.isSkipOnBuildFailure())) {
-            throw new CommitBuildFailedException(String.format("commit %s: %s, and codiqo.skipOnBuildFailure is false%n%s",
-                    args.getCommitId(), failed.getReason(), failed.getDetail()));
-        }
+    private CommitBuildFailedException untolerated(BuildVerdict.Failed failed) {
+        return new CommitBuildFailedException(String.format("commit %s: %s, and codiqo.skipOnBuildFailure is false%n%s",
+                args.getCommitId(), failed.getReason(), failed.getDetail()));
     }
     /** a failure costs only the snapshot, the previous one stays, never the analysis */
     private void reportHotspots(SubmissionContext ctx) {

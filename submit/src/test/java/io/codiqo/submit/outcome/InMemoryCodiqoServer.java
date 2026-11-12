@@ -32,6 +32,8 @@ import io.codiqo.submit.hotspots.FixCommits;
 final class InMemoryCodiqoServer implements CodiqoServer {
     final Map<String, AnalysisExcludeModel> exclusions = Maps.newLinkedHashMap();
     final List<AnalysisSubmissionModel> submissions = Lists.newArrayList();
+    /** the review trace sent with each submission */
+    final List<Optional<File>> traces = Lists.newArrayList();
     /** each recorded halt: the commit and the banner's reason */
     final List<Pair<String, String>> halts = Lists.newArrayList();
     boolean halted;
@@ -53,6 +55,7 @@ final class InMemoryCodiqoServer implements CodiqoServer {
     @Override
     public AnalysisAcceptedModel submit(AnalysisSubmissionModel submission, Optional<File> reviewTrace) {
         submissions.add(submission);
+        traces.add(reviewTrace);
         return new AnalysisAcceptedModel().analysisId(UUID.randomUUID());
     }
     @Override
