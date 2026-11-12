@@ -210,6 +210,50 @@ class CommitRunTest {
         assertInstanceOf(CommitOutcome.Deferred.class, outcome);
         assertEquals(List.of(), server.halts);
     }
+    /** a build that ran out of time is the environment's, never the author's broken build a review would score */
+    @Test
+    void aBuildThatTimedOutStartsNoReview() throws Exception {
+        RunArgs args = args(commit("src/main/java/a/A.java", "class A { int a; }"));
+        build.compile = () -> new BuildVerdict.Failed("build failed", AnalysisExcludeCategory.BUILD_FAILURE, "build timed out", true);
+
+        CommitOutcome.Excluded excluded = assertInstanceOf(CommitOutcome.Excluded.class, run(args, this::noReview).run());
+
+        assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, excluded.getExclusion().getCategory());
+        assertEquals(0, reviewsStarted.get());
+    }
+    /** a revert is never scored, and the work it reverted stops counting */
+    @Test
+    void aRevertIsExcludedWithTheCommitItReverts() throws Exception {
+        RevCommit reverted = commit("src/main/java/a/A.java", "class A { int a; }");
+        RevCommit revert = revertOf(reverted);
+
+        assertInstanceOf(CommitOutcome.Excluded.class, revertReviewed(args(revert)));
+
+        assertEquals(AnalysisExcludeCategory.REVERT_COMMIT, server.exclusions.get(revert.getName()).getCategory());
+        assertEquals(List.of("src/main/java/a/A.java"), paths(server.exclusions.get(revert.getName())), "the revert's own files go with it");
+        assertEquals(AnalysisExcludeCategory.REVERTED, server.exclusions.get(reverted.getName()).getCategory());
+        assertTrue(server.submissions.isEmpty());
+    }
+    @Test
+    void aRevertLeavesTheCommitItRevertsCountingWhenTheRunKeepsReverted() throws Exception {
+        RevCommit reverted = commit("src/main/java/a/A.java", "class A { int a; }");
+        RunArgs args = args(revertOf(reverted));
+        args.setExcludeRevertedCommits(false);
+
+        revertReviewed(args);
+
+        assertEquals(List.of(args.getCommitId()), List.copyOf(server.exclusions.keySet()));
+    }
+    /** a reverted commit older than the project's index is unknown to the server, which fails no run */
+    @Test
+    void aRevertOfACommitTheServerNeverIndexedIsExcludedAllTheSame() throws Exception {
+        RevCommit reverted = commit("src/main/java/a/A.java", "class A { int a; }");
+        RevCommit revert = revertOf(reverted);
+        server.unknown.add(reverted.getName());
+
+        assertInstanceOf(CommitOutcome.Excluded.class, revertReviewed(args(revert)));
+        assertEquals(List.of(revert.getName()), List.copyOf(server.exclusions.keySet()));
+    }
     @Test
     void aStoppedReviewHaltsNothing() throws Exception {
         CommitOutcome outcome = brokenCommitReviewed(new ReviewVerdict.Stopped(new InterruptedException()));
@@ -251,6 +295,25 @@ class CommitRunTest {
             reviewsStarted.incrementAndGet();
             return LocalReviewRun.of(BackgroundReview.start(() -> verdict), List.of(), logFactory);
         }).run();
+    }
+    /** a revert whose build broke, as a review would score it: the revert gate comes before the review's verdict */
+    private CommitOutcome revertReviewed(RunArgs args) {
+        build.compile = () -> authorsFailure();
+        return run(args, (runArgs, codiqo, logFactory) -> {
+            reviewsStarted.incrementAndGet();
+            return LocalReviewRun.of(BackgroundReview.start(() -> new ReviewVerdict.CodiqoFailure(new IOException("the review was not to be joined"))), List.of(), logFactory);
+        }).run();
+    }
+    private RevCommit revertOf(RevCommit reverted) throws Exception {
+        Path file = git.getRepository().getWorkTree().toPath().resolve("src/main/java/a/A.java");
+        Files.writeString(file, "class A {}", StandardCharsets.UTF_8);
+        git.add().addFilepattern("src/main/java/a/A.java").call();
+        return git.commit()
+                .setMessage("Revert \"change\"\n\nThis reverts commit " + reverted.getName() + ".")
+                .setAuthor(AUTHOR)
+                .setCommitter(AUTHOR)
+                .setSign(false)
+                .call();
     }
     private LocalReviewRun noReview(RunArgs args, CodiqoServer codiqo, LogFactory logFactory) {
         reviewsStarted.incrementAndGet();
@@ -296,6 +359,10 @@ class CommitRunTest {
         private int compiled;
 
         @Override
+        public AutoCloseable checkout() {
+            return () -> { };
+        }
+        @Override
         public BuildVerdict compile() throws Exception {
             compiled++;
             return compile.call();
@@ -314,6 +381,9 @@ class CommitRunTest {
         }
         @Override
         public void populateProjectModel(SubmissionContext ctx) {
+        }
+        @Override
+        public void printSummary(SubmissionContext ctx) {
         }
     }
 

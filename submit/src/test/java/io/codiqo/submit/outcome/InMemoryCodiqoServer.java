@@ -6,14 +6,17 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import org.apache.commons.lang3.tuple.Pair;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.client.ApiException;
 import io.codiqo.client.model.AnalysisAcceptedModel;
 import io.codiqo.client.model.AnalysisExcludeModel;
 import io.codiqo.client.model.AnalysisResultModel;
@@ -27,6 +30,7 @@ import io.codiqo.submit.CodiqoServer;
 import io.codiqo.submit.IndexedCommits;
 import io.codiqo.submit.ProjectHaltedException;
 import io.codiqo.submit.hotspots.FixCommits;
+import io.netty.handler.codec.http.HttpResponseStatus;
 
 /** Codiqo as one run sees it, kept in memory: what the run sent is recorded for the test to read */
 final class InMemoryCodiqoServer implements CodiqoServer {
@@ -37,6 +41,8 @@ final class InMemoryCodiqoServer implements CodiqoServer {
     /** each recorded halt: the commit and the banner's reason */
     final List<Pair<String, String>> halts = Lists.newArrayList();
     boolean halted;
+    /** commits the server never indexed, which an exclusion answers with a 404 */
+    final Set<String> unknown = Sets.newHashSet();
 
     @Override
     public IndexedCommits indexedCommits() {
@@ -49,7 +55,10 @@ final class InMemoryCodiqoServer implements CodiqoServer {
         }
     }
     @Override
-    public void exclude(String commitSha, AnalysisExcludeModel exclusion) {
+    public void exclude(String commitSha, AnalysisExcludeModel exclusion) throws ApiException {
+        if (unknown.contains(commitSha)) {
+            throw new ApiException(HttpResponseStatus.NOT_FOUND.code(), "analysis not found: " + commitSha);
+        }
         exclusions.put(commitSha, exclusion);
     }
     @Override

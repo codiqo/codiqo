@@ -56,6 +56,11 @@ public final class GradleCommitBuild implements CommitBuild {
         this.logFactory = Objects.requireNonNull(logFactory);
         this.log = logFactory.getLogger(GradleCommitBuild.class);
     }
+    /** Gradle analyses the working tree its build ran in, which the run leaves as it is */
+    @Override
+    public AutoCloseable checkout() {
+        return () -> { };
+    }
     /**
      * Gradle reports no timeout apart from a failure, nor which failure is the author's, so every failed build counts as
      * the author's. A build that passed is checked, before any review is paid for, for what the full analysis needs: the
@@ -183,6 +188,10 @@ public final class GradleCommitBuild implements CommitBuild {
     @Override
     public void populateProjectModel(SubmissionContext ctx) {
         new GradleProjectModelPopulator(logFactory.getLogger(GradleProjectModelPopulator.class)).accept(ctx);
+    }
+    /** Gradle's worker prints no summary: its output is the analysis it writes beside the build */
+    @Override
+    public void printSummary(SubmissionContext ctx) {
     }
     /**
      * Folds every Test task's exec part into the single per-module file the analysis reads. Gradle deletes a Test

@@ -1540,7 +1540,7 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   answer's `retry-after-ms` up to 15 minutes), and the relay steers that instead of stacking its own retries on it. A
   429 goes back with the current rate-limit round's wait (60 s doubling to 10 minutes, `reviewRelayRateLimit*`), every
   call refused in a round sharing its deadline; after six rounds every call gets a 429 with `x-should-retry: false`,
-  which OpenCode does not retry, so the review fails as the provider's (`ReviewProviderException`). The only retry left
+  which OpenCode does not retry, so the review fails as the provider's (`ReviewVerdict.ProviderFailure`). The only retry left
   is the credential refresh, Codiqo's own login: a refusal that survives it answers 401. A stream cut after the answer started ends with an error event, since its status was already
   sent. A stored login is adopted from disk only when it has this login's OAuth client (another organization's login
   registered another one), and rotated tokens are kept in memory before they are written.
@@ -1567,13 +1567,13 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   analysis worker runs the commit through `CommitRun` (`io.codiqo.submit.outcome`), the one sequence of a commit's run,
   with Gradle's finished build behind `GradleCommitBuild`: it starts `LocalReviewRun` after the exclusion gates and joins
   it before the submission, with the same exclusions and trace. Gradle cannot tell a dependency failure or a timeout
-  from a broken build, so with a review every failed build is scored as the author's. Maven still runs its own copy of
-  the sequence in `AnalyzeCommitMojo` / `SubmitCommitAnalysisMojo` until it moves onto `CommitRun` too.
+  from a broken build, so with a review every failed build is scored as the author's. `submit-commit-analysis` runs the
+  same `CommitRun`, with Maven's two-phase fork and time-machine ladder behind `MavenCommitBuild`.
 - **Uncommitted changes are reviewed too** (`analyze-uncommitted-changes`, when it submits): `WorkingTreeCommit` makes a
   commit object of the working tree through a throwaway index (untracked files as the analysis reads them, `.gitignore`
   respected; the developer's index, files, branches and stash untouched), and `LocalReviewRun`, which runs the review of
   a submitted commit as well, reviews it beside the analysis. A review that fails fails the goal and sends nothing.
-- **A build the author broke does not exclude a commit whose review started** (`SubmitCommitAnalysisMojo.scoresFailedBuild`):
+- **A build the author broke does not exclude a commit whose review started** (`CommitRun`, `BuildVerdict.isAuthors`):
   with `codiqo.skipOnBuildFailure` on (the default; off, a failed build fails the run), a `BUILD_FAILURE` that is not a
   timeout goes the degraded path (there is no other way to score a failed build), as a source-only submission carrying
   `buildFailure` and the review's assessment, since the reviewers read the code through git. The server scores it by
@@ -1606,9 +1606,9 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   who may include it accepts the score in codiqo-web. `codiqo.testFailureHoldShare` / `codiqo.testFailureHoldMinTests`
   (Gradle `-P`, action inputs `test-failure-hold-share` / `-min-tests`) override them, and a share of 1 or more turns the
   check off. A run that
-  fails after the server accepted its submission has scored its commit and halts nothing. On Gradle (`CommitRun`), a
-  review that failed on the provider or on Codiqo's side halts under the review verdict's reason, the provider's failed
-  answers kept whole at its end; Maven halts on the exception's root cause until it runs on `CommitRun` too.
+  fails after the server accepted its submission has scored its commit and halts nothing. A review that failed on the
+  provider or on Codiqo's side halts under the review verdict's reason, the provider's failed answers kept whole at its
+  end. One commit's run, its halt window included, is `CommitRun` on both plugins.
   The action calls `halt-project` for a submit step that died outside the JVM (deadline, OOM kill). Which failures halt
   nothing is one rule for both plugins, `ProjectHalts.haltsNothing`.
 - **A run that cannot download what it needs stores nothing** (`DownloadFailedException`, which `Fetch` and the
@@ -1632,21 +1632,21 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
 - **A commit with nothing to analyse is never built** (`CommitExclusions.beforeBuild`, right after the analysis
   checkout): when git (`JGit.changedFileNames`, a root commit against the empty tree) shows no file of a registered
   language and no supported config file, the commit is excluded as `NO_ANALYZABLE_DIFF` with its diff-only file models
-  (`excludeWithDiff`), so the backend still records what changed. Built first, 217 such commits in 30 days ran a whole
+  (`CommitRun`), so the backend still records what changed. Built first, 217 such commits in 30 days ran a whole
   build and test run only to be excluded, and a repository's first commit (a `.gitignore`, no `pom.xml`) failed to build
   and was excluded as `BUILD_FAILURE`. No changed file at all is a shallow-clone boundary, left to the after-build
   `INCOMPLETE_HISTORY` gate. Gradle builds before its worker starts, so it still decides after the build.
 - **The Maven fork builds twice** (`BuildPhase`): `clean package -DskipTests` (with the time-machine ladder; package, not test-compile, so a sibling module's packaged artifact exists), then `verify`
   without `clean` at the offset that compiled, within what the compile run that compiled left of `buildTimeout` (each
   ladder rung has a whole `buildTimeout` of its own). The review starts in between
-  (`doAfterCompile`): after a compile that passed, or one the author broke (degraded); a compile that failed on the
+  (`CommitRun`): after a compile that passed, or one the author broke (degraded); a compile that failed on the
   environment starts none. The test run keeps the compile run's pinned snapshots and adds its Error Prone findings to
   the compile run's. The JUnit reports become the submission's `testRun` (`TestRuns`): counts, skipped tests, test time,
   each run's duration and the whole analysis's. Gradle builds before its worker starts, so its worker checks coverage
   before it starts the review (`GradleCommitBuild.compile`), and reads the reports beside it.
 - **How a review ended is its review verdict, settled where it failed** (`ReviewVerdict`): `LocalReviewer` and the
   wait in `LocalReviewRun.attachTo` decide it at the site that fails, never from the type of the exception a failure
-  surfaced as, and `LocalReviewRun.exclusionOf` is the one rule both plugins apply to it. A turn OpenCode ended with an
+  surfaced as, and `CommitRun` is the one place both plugins apply it. A turn OpenCode ended with an
   error is the provider's unless the error follows from what the commit asks (`COMMIT_TURN_ERRORS`: an invalid
   request, a content filter), so an error type a new OpenCode version adds halts rather than silently excludes
   (`TurnTest` pins every type OpenCode 2.2.2 ends a turn with; diff `to-session-error.ts` on every bump). A refused
@@ -1663,7 +1663,7 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
 - **Only a review that failed on the commit excludes it** (`LOCAL_REVIEW_FAILURE`, the error as the exclusion's
   detail): submitting it without the review would hand its judgment to the prompt, and leaving it unsubmitted would
   make the next run pay for the review again. Deleting the analysis retries it. A review the provider failed halts the
-  project instead (`ReviewProviderException`, whose summary of the provider's failed answers is the halt's reason): it
+  project instead (the review verdict's reason, with the provider's failed answers whole at its end, is the halt's): it
   is no judgement of the commit, and an excluded commit would stay unscored for good. "Resume and retry" reviews it
   again. A review that failed on Codiqo's side halts the project too, and an interrupt is the run being stopped, which
   halts nothing. A failed labelling or triage turn and a reviewer answer that is not JSON fail the review as well:

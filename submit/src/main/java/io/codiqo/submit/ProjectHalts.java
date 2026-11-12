@@ -13,7 +13,6 @@ import io.codiqo.api.logging.Log;
 import io.codiqo.client.ApiException;
 import io.codiqo.client.api.CommitIndexApi;
 import io.codiqo.client.model.ProjectHaltRequestModel;
-import io.codiqo.llm.review.ReviewProviderException;
 import io.codiqo.llm.review.ReviewTrace;
 import io.codiqo.util.DownloadFailedException;
 import io.codiqo.util.Interrupts;
@@ -98,20 +97,13 @@ public class ProjectHalts {
         }
     }
     /**
-     * The root cause names the failure, except for a review the model's provider failed: the provider's answers are
-     * added by the {@link ReviewProviderException} that wraps the root cause, so the reason is the root cause followed
-     * by them. Nine projects once halted with "session ... finished without an answer" while the provider
-     * answered 429 for eight hours, and only the detail said so, which the halt banner in codiqo-web does not show. The
-     * failure is shortened rather than the summary: a failure that fills the reason's limit on its own would cut off
-     * exactly the part the banner needs.
+     * The root cause names the failure of a run that failed by an exception. A review that failed on the model provider
+     * halts with the review verdict's own reason instead ({@link #reason}), whose provider answers the root cause does
+     * not carry: nine projects once halted with "session ... finished without an answer" while the provider answered
+     * 429 for eight hours, and only the detail said so, which the halt banner in codiqo-web does not show.
      */
     public String reasonOf(Throwable cause) {
-        String failure = ExceptionUtils.getRootCauseMessage(cause);
-        int provider = ExceptionUtils.indexOfType(cause, ReviewProviderException.class);
-        if (provider >= 0) {
-            return reason(failure, ((ReviewProviderException) ExceptionUtils.getThrowables(cause)[provider]).getProviderSummary());
-        }
-        return failure;
+        return ExceptionUtils.getRootCauseMessage(cause);
     }
     /** the failure followed by the provider's failed answers, the failure shortened so the answers fit the reason's limit */
     public String reason(String failure, String providerSummary) {

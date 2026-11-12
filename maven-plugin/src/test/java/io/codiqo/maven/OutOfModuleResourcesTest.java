@@ -18,7 +18,7 @@ import org.junit.jupiter.api.io.TempDir;
  * an arbitrary repository, so a POM that puts {@code <resources>} anywhere other than alone on its own line, or
  * declares a charset other than UTF-8, is the normal case rather than the exotic one.
  */
-class AnalyzeCommitMojoResourceRelaxationTest {
+class OutOfModuleResourcesTest {
     private static final String NEUTRALISED = "target/codiqo-out-of-module-resources";
 
     @TempDir
@@ -253,9 +253,7 @@ class AnalyzeCommitMojoResourceRelaxationTest {
         assertFalse(read(pom).contains(NEUTRALISED), read(pom));
     }
     private void relax() throws Exception {
-        AnalyzeCommitMojo mojo = new AnalyzeCommitMojo();
-        mojo.setLog(new SystemStreamLog());
-        mojo.relaxOutOfModuleResourceDirs(new File(workTree.toString()));
+        new OutOfModuleResources(new SystemStreamLog()).relax(new File(workTree.toString()));
     }
     private Path writeModulePom(String module, String build) throws Exception {
         Path pom = workTree.resolve(module).resolve("pom.xml");

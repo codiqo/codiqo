@@ -23,7 +23,6 @@ import com.sun.net.httpserver.HttpServer;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.client.api.CommitIndexApi;
-import io.codiqo.llm.review.ReviewProviderException;
 import io.codiqo.submit.auth.ApiKeyCredential;
 import io.codiqo.util.DownloadFailedException;
 import io.netty.handler.codec.http.HttpHeaderNames;
@@ -121,18 +120,16 @@ class ProjectHaltsTest {
         });
         server.start();
         try {
-            IOException unanswered = new IOException("session ses_1 finished without an answer");
-            ReviewProviderException provider = new ReviewProviderException("local review failed: " + unanswered.getMessage(),
-                    "the LLM provider answered 429 13 times and 504 5 times during the review", unanswered);
-            halt(server, provider);
+            String failure = "local review failed: session ses_1 finished without an answer";
+            ProjectHalts.halt(new NoopLog(), client(server), url(server), "p1", SHA,
+                    ProjectHalts.reason(failure, "the LLM provider answered 429 13 times and 504 5 times during the review"), failure, false);
 
             String reason = posted.get().get("reason").asString();
             assertTrue(reason.contains("the LLM provider answered 429 13 times"), reason);
             assertTrue(reason.contains("finished without an answer"), reason);
 
-            IOException wordy = new IOException("opencode answered 500: " + "x".repeat(2100));
-            ReviewProviderException behindWordy = new ReviewProviderException(wordy.getMessage(), "the LLM provider answered 429 once during the review", wordy);
-            halt(server, new IOException("submit failed", behindWordy));
+            String wordy = "opencode answered 500: " + "x".repeat(2100);
+            ProjectHalts.halt(new NoopLog(), client(server), url(server), "p1", SHA, ProjectHalts.reason(wordy, "the LLM provider answered 429 once during the review"), wordy, false);
 
             String shortened = posted.get().get("reason").asString();
             assertTrue(shortened.endsWith("; the LLM provider answered 429 once during the review"), "a long failure is shortened, never the provider's summary");

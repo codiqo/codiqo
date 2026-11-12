@@ -48,6 +48,7 @@ import io.codiqo.submit.review.LocalReviewRun;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.Interrupts;
 import io.codiqo.util.JGit;
+import io.codiqo.util.MemoryReport;
 import io.codiqo.util.ProgressStage;
 import io.netty.handler.codec.http.HttpResponseStatus;
 
@@ -70,7 +71,10 @@ public final class CommitRun {
     private final ReviewStarter reviews;
     private final LogFactory logFactory;
     private final Log log;
-    /** the server accepted the commit's submission: a failure after it has scored the commit, so it halts nothing */
+    /**
+     * The server accepted the commit's submission. A failure after it has scored the commit, so it halts nothing: a halt
+     * resumed with "skip" would otherwise exclude a commit that was already scored.
+     */
     private boolean submitted;
     /**
      * The halt this run recorded, which stays the commit's outcome: a failure closing the language servers or the review
@@ -109,9 +113,9 @@ public final class CommitRun {
         server.requireRunning();
         return Optional.empty();
     }
-    /** the checked-out commit to its outcome: a failure is the outcome's, never thrown */
+    /** the commit, checked out, to its outcome: a failure is the outcome's, never thrown */
     public CommitOutcome run() {
-        try {
+        try (AutoCloseable checkout = build.checkout()) {
             return analyse();
         } catch (Exception err) {
             if (halted.isPresent()) {
@@ -205,7 +209,9 @@ public final class CommitRun {
     private CommitOutcome analyseInFull(Optional<LocalReviewRun> review) throws Exception {
         try (ClassGraphSpec scan = build.projects()) {
             try (Fetch fetch = new Fetch(args); LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, args, fetch)) {
+                log.info(MemoryReport.snapshot("before language server load"));
                 registry.load();
+                log.info(MemoryReport.snapshot("after language server load"));
                 CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
 
                 Optional<Exclusion> excluded = CommitExclusions.afterDelta(analysis, registry.extensions());
@@ -214,12 +220,20 @@ public final class CommitRun {
                 }
 
                 IndexingSummary index = registry.index(analysis);
+                log.info(MemoryReport.snapshot("after index"));
                 registry.identifyAffectedSymbols(index, analysis);
+                /**
+                 * A capture failure here comes after a build that passed: a module whose tests ran produced no coverage
+                 * data, or the coverage it produced predates the sources. Both are a broken measurement on Codiqo's
+                 * side, never the author's, so the run halts and is investigated: scored as the author's broken build,
+                 * a commit whose agent did not attach to eight modules was scored with penalties only.
+                 */
                 registry.collectAndCapture(index, analysis);
+                log.info(MemoryReport.snapshot("after coverage capture"));
 
                 SubmissionContext ctx = context(index, analysis);
                 build.populateProjectModel(ctx);
-                SubmissionAssembly.full(ctx);
+                SubmissionAssembly.full(ctx, build::printSummary);
                 output.accept(ctx);
 
                 CommitOutcome toReturn;

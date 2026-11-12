@@ -36,7 +36,6 @@ import io.codiqo.llm.review.LocalReviewModels;
 import io.codiqo.llm.review.LocalReviewer;
 import io.codiqo.llm.review.PreviousFinding;
 import io.codiqo.llm.review.ReviewEndpoint;
-import io.codiqo.llm.review.ReviewProviderException;
 import io.codiqo.llm.review.ReviewTags;
 import io.codiqo.llm.review.ReviewUnit;
 import io.codiqo.llm.review.ReviewVerdict;
@@ -44,7 +43,6 @@ import io.codiqo.llm.review.StaticFinding;
 import io.codiqo.llm.review.StaticFindings;
 import io.codiqo.llm.review.UnitLabelling;
 import io.codiqo.llm.review.UnitLabels;
-import io.codiqo.submit.ProjectHalts;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.submit.auth.CodiqoCredential;
 
@@ -210,31 +208,6 @@ public final class LocalReviewRun implements AutoCloseable {
             toReturn = new ReviewEndpoint(args.getReviewBaseUrl(), null, header -> {
                 member.accept(header);
                 header.accept(PROJECT_HEADER, projectCode);
-            });
-        }
-        return toReturn;
-    }
-    /**
-     * What a review verdict does to its commit on Maven, until Maven runs its commits through
-     * {@link io.codiqo.submit.outcome.CommitRun} as Gradle does: the exclusion to record when the
-     * review failed on the commit, empty when the commit goes on to be submitted. A review that failed on the model
-     * provider or on Codiqo's side fails the run, whose failure handling halts the project ({@link ProjectHalts}); the
-     * provider's failed answers go with it as the halt's reason ({@link ReviewProviderException}). A stopped review fails
-     * the run as well, which halts nothing.
-     *
-     * <p>Local mode judges a commit with its review alone, so a review that failed on the commit leaves it unjudged: it
-     * is excluded, which keeps the next run from paying for the review again and the server's prompt from judging it in
-     * the review's place. Deleting the analysis retries it.
-     */
-    public static Optional<AnalysisExcludeModel> exclusionOf(ReviewVerdict verdict, SubmissionContext ctx, Log log) throws Exception {
-        Optional<AnalysisExcludeModel> toReturn = Optional.empty();
-        if (verdict instanceof ReviewVerdict.Failed failed) {
-            toReturn = Optional.of(switch (failed) {
-                case ReviewVerdict.CommitFailure commit -> exclusion(commit, ctx, log);
-                case ReviewVerdict.ProviderFailure provider ->
-                    throw new ReviewProviderException(ReviewVerdict.REVIEW_FAILED + provider.getFailure(), provider.getProviderSummary(), provider.getError());
-                case ReviewVerdict.CodiqoFailure codiqo -> throw new IOException(ReviewVerdict.REVIEW_FAILED + codiqo.getReason(), codiqo.getError());
-                case ReviewVerdict.Stopped stopped -> throw stopped.getError();
             });
         }
         return toReturn;

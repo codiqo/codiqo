@@ -44,7 +44,7 @@ class BuildBackoffTimeoutTest {
                 new AbstractAnalyzeMojo.BuildOutcome.Skipped("unresolved dependency", AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, "could not resolve"),
                 new AbstractAnalyzeMojo.BuildOutcome.Skipped("build failed", AnalysisExcludeCategory.BUILD_FAILURE, "build timed out", true)));
 
-        AbstractAnalyzeMojo.BuildOutcome.Skipped skipped = (AbstractAnalyzeMojo.BuildOutcome.Skipped) mojo.buildWithBackoff(args(), null);
+        AbstractAnalyzeMojo.BuildOutcome.Skipped skipped = (AbstractAnalyzeMojo.BuildOutcome.Skipped) new MavenCommitBuild(mojo, args()).buildWithBackoff(null);
 
         assertTrue(skipped.isTimedOut(), "the latest-snapshots attempt timed out");
         assertEquals(AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, skipped.getCategory(), "the commit-faithful attempt is still the headline");
@@ -63,7 +63,7 @@ class BuildBackoffTimeoutTest {
     }
 
     /** answers each attempt of the ladder with the next scripted outcome instead of forking a build */
-    private static final class LadderMojo extends AnalyzeCommitMojo {
+    private static final class LadderMojo extends SubmitCommitAnalysisMojo {
         private final Deque<AbstractAnalyzeMojo.BuildOutcome> outcomes;
 
         private LadderMojo(List<AbstractAnalyzeMojo.BuildOutcome> outcomes) {

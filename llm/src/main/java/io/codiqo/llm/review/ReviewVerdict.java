@@ -68,8 +68,8 @@ public sealed interface ReviewVerdict permits ReviewVerdict.Succeeded, ReviewVer
 
     /**
      * A review that failed or was stopped, with the model provider's failed answers during it when the relay counted
-     * some. They are kept apart from the error, which can fill a halt's reason on its own and would cut them off
-     * ({@link ReviewProviderException}).
+     * some. They are kept apart from the error, which can fill a halt's reason on its own and would cut them off: the
+     * halt's reason shortens the error so they fit.
      */
     abstract sealed class Failed implements ReviewVerdict permits CommitFailure, ProviderFailure, CodiqoFailure, Stopped {
         private final Exception error;
