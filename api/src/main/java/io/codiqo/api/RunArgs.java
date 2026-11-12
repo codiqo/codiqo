@@ -759,12 +759,6 @@ public class RunArgs {
     private int testFailureHoldMinTests = 20;
 
     /**
-     * Set once the server accepted the commit's submission. A run that fails after that has scored its commit, so it does
-     * not halt the project: a halt resumed with "skip" would otherwise exclude a commit that was already scored.
-     */
-    private transient boolean submissionAccepted;
-
-    /**
      * Comma-separated <b>regular expressions</b> matched against a commit's branches; empty accepts everything.
      * Applied at indexing time as well as analysis time, because a commit this rejects is not worth a build.
      */

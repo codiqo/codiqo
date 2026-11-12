@@ -167,6 +167,42 @@ class AnalysisEngineDegradedTest {
         assertTrue(Strings.CS.contains(bodies.get(0), AnalysisExcludeCategory.NO_ANALYZABLE_DIFF.getValue()), bodies.get(0));
         assertTrue(Strings.CS.contains(bodies.get(0), "README.md"), "with the diff the backend records: " + bodies.get(0));
     }
+    /**
+     * A broken build nobody reviewed is excluded for it with its files and the driver-score statistics of its source, so
+     * a later degraded re-score prices its real code volume rather than its config lines.
+     */
+    @Test
+    void aBrokenBuildNobodyReviewedIsExcludedWithItsSourcesStatistics() throws Exception {
+        List<String> bodies = Lists.newCopyOnWriteArrayList();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/v1/analyses", exchange -> {
+            bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+        });
+        server.start();
+
+        commit("src/main/java/a/A.java", "package a;\n\nclass A {\n    int one() {\n        return 1;\n    }\n}\n");
+        RevCommit broken = commit("src/main/java/a/A.java", "package a;\n\nclass A {\n    int one() {\n        return 1 + 1;\n    }\n}\n");
+
+        AnalysisRequest request = request();
+        request.setApiUrl(String.format("http://127.0.0.1:%d", server.getAddress().getPort()));
+        request.setApiKey("test-api-key");
+        request.setConnectTimeoutSeconds(5);
+        request.setReadTimeoutSeconds(5);
+        RunArgs args = args(broken);
+        args.setReviewEnabled(false);
+        try {
+            assertInstanceOf(CommitOutcome.Excluded.class, AnalysisEngine.commitRun(request, AnalysisEngine.server(request, LOG), args, LOGS).run());
+        } finally {
+            server.stop(0);
+        }
+
+        assertEquals(1, bodies.size());
+        assertTrue(Strings.CS.contains(bodies.get(0), AnalysisExcludeCategory.BUILD_FAILURE.getValue()), bodies.get(0));
+        assertTrue(Strings.CS.contains(bodies.get(0), "src/main/java/a/A.java"), "with its files: " + bodies.get(0));
+        assertTrue(Strings.CS.contains(bodies.get(0), "driverScalers"), "with its source's driver-score statistics: " + bodies.get(0));
+    }
     private static AnalysisRequest request() {
         AnalysisRequest toReturn = new AnalysisRequest();
         toReturn.setRootPath(":");

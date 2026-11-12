@@ -103,49 +103,28 @@ import com.google.common.collect.Sets;
 
 import io.codiqo.api.BuildTool;
 import io.codiqo.api.ClassGraphSpec;
-import io.codiqo.api.IndexingSummary;
-import io.codiqo.api.LanguageProcessors;
 import io.codiqo.api.MavenProjectSpec;
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.code.CompilerFinding;
-import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.Log;
-import io.codiqo.api.logging.LogFactory;
-import io.codiqo.client.ApiException;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.ClientInfoModel;
-import io.codiqo.client.model.FileChangeModel;
-import io.codiqo.client.model.HotspotSnapshotModel;
-import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.core.ClassGraphWrapper;
-import io.codiqo.core.DefaultLanguageProcessors;
-import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.maven.coverage.CoverageInjectorConfig;
 import io.codiqo.maven.eventspy.BuildFailureConfig;
 import io.codiqo.maven.eventspy.BuildProgressConfig;
 import io.codiqo.maven.logging.MavenLogFactory;
 import io.codiqo.maven.populator.ProjectModelPopulator;
-import io.codiqo.maven.populator.SubmissionSummaryPrinter;
 import io.codiqo.maven.surefire.SurefireInjectorConfig;
 import io.codiqo.maven.timemachine.TimeMachineConfig;
 import io.codiqo.submit.CommitBuildFailedException;
-import io.codiqo.submit.CommitExclusions;
-import io.codiqo.submit.CommitExclusions.Exclusion;
-import io.codiqo.submit.OutputSerializer;
 import io.codiqo.submit.SourceHiding;
 import io.codiqo.util.Env;
-import io.codiqo.submit.SubmissionAssembly;
-import io.codiqo.submit.SubmissionContext;
-import io.codiqo.submit.hotspots.FixCommits;
-import io.codiqo.submit.hotspots.HotspotSnapshots;
-import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
-import io.codiqo.util.MemoryReport;
 import io.codiqo.util.ProgressStage;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
-import io.netty.handler.codec.http.HttpResponseStatus;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -660,7 +639,6 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             doPrepare(args);
             doExecute(args);
         } catch (Exception err) {
-            doOnFailure(args, err);
             throw new MojoFailureException(err);
         } finally {
             args.getProjects().forEach(prj -> {
@@ -1394,155 +1372,6 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             args.setRemoteUrls(JGit.detectRemoteUrls(args.getGit()));
         }
     }
-    protected void doExecute(RunArgs args) throws Exception {
-        Optional<SubmissionContext> opt = doAnalyze(args);
-        if (opt.isPresent()) {
-            SubmissionContext ctx = opt.get();
-            if (ctx.getAnalysis().isRevertCommit()) {
-                doExcludeRevertCommit(args, ctx);
-            } else {
-                doSubmit(ctx);
-            }
-            doHotspots(ctx);
-        }
-    }
-    /**
-     * The hotspot snapshot is submitted only after the commit's own analysis, because that submission is what creates
-     * the project the snapshot belongs to; submitted first, the snapshot would target a project that does not exist
-     * yet. A failure is logged and the previously submitted snapshot stays in place.
-     */
-    protected void doHotspots(SubmissionContext ctx) {
-        if (ctx.getHotspotSnapshot().isPresent()) {
-            try {
-                doSubmitHotspots(ctx, ctx.getHotspotSnapshot().get());
-            } catch (Exception err) {
-                getLog().warn(String.format("hotspot snapshot for %s not submitted, the previous one stays: %s", ctx.getArgs().getCommitId(), err), err);
-            }
-        }
-    }
-    /**
-     * Must be called while the language processors are still open: the code blocks' metrics resolve lazily against
-     * the processors' class loaders, so building the snapshot after they close would fail or resolve nothing. A
-     * failure is caught and logged, so it costs only the snapshot and never the commit's analysis.
-     */
-    private void buildHotspots(SubmissionContext ctx) {
-        Log log = new MavenLogFactory(getLog()).getLogger(HotspotSnapshots.class);
-        try {
-            Optional<HotspotSnapshotModel> snapshot = HotspotSnapshots.build(ctx, since -> fixCommits(ctx, since), log);
-            if (snapshot.isPresent()) {
-                HotspotSnapshots.write(ctx, snapshot.get(), log);
-                ctx.setHotspotSnapshot(snapshot);
-            }
-        } catch (Exception err) {
-            getLog().warn(String.format("hotspot snapshot for %s not produced, the previous one stays: %s", ctx.getArgs().getCommitId(), err), err);
-        }
-    }
-    protected void doSubmitHotspots(SubmissionContext ctx, HotspotSnapshotModel snapshot) throws Exception {
-        getLog().debug("hotspot snapshot not submitted: this goal does not submit");
-    }
-    /** a goal that does not submit has no server to ask, so every commit is judged by its message */
-    protected FixCommits fixCommits(SubmissionContext ctx, Instant since) throws Exception {
-        return FixCommits.byMessage();
-    }
-    protected Optional<SubmissionContext> doAnalyze(RunArgs args) throws Exception {
-        purgeNonJavaSourceJars(args);
-
-        LogFactory logFactory = new MavenLogFactory(getLog());
-        Path workTree = args.getGit().getWorkTree().toPath().normalize();
-        try (Fetch fetch = new Fetch(args)) {
-            try (LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, args, fetch)) {
-                getLog().info(MemoryReport.snapshot("before language server load"));
-                registry.load();
-                getLog().info(MemoryReport.snapshot("after language server load"));
-                CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
-
-                ClientInfoModel clientInfo = new ClientInfoModel();
-                clientInfo.setBuildTool(ClientInfoModel.BuildToolEnum.MAVEN);
-                clientInfo.setVersion(runtimeInformation.getMavenVersion());
-                clientInfo.setName("codiqo-maven-plugin");
-
-                Optional<Exclusion> excluded = CommitExclusions.afterDelta(analysis, registry.extensions());
-                if (excluded.isEmpty()) {
-                    IndexingSummary index = registry.index(analysis);
-                    getLog().info(MemoryReport.snapshot("after index"));
-                    registry.identifyAffectedSymbols(index, analysis);
-                    getLog().info(MemoryReport.snapshot("after identify symbols"));
-                    /**
-                     * A capture failure here comes after a build that passed: a module whose tests ran produced no
-                     * JaCoCo data (codiqo.failOnUninstrumentedModule), or the coverage it produced predates the sources.
-                     * Both are a broken measurement on codiqo's side, never the author's, so the run fails and is
-                     * investigated. It used to be scored as the author's BUILD_FAILURE in degraded mode: a
-                     * production commit whose agent did not attach to eight modules was scored with penalties
-                     * only. Failing also cancels the commit's local review, which the checkout's finally block closes.
-                     */
-                    registry.collectAndCapture(index, analysis);
-                    getLog().info(MemoryReport.snapshot("after collect capture"));
-
-                    SubmissionContext ctx = SubmissionContext.create(
-                            args,
-                            index,
-                            analysis,
-                            workTree,
-                            logFactory,
-                            project.getGroupId() + ":" + project.getArtifactId(),
-                            project.getName(),
-                            clientInfo);
-                    new ProjectModelPopulator(getLog()).accept(ctx);
-                    /**
-                     * The summary is printed from the hook between the populators and the instruction read, because
-                     * reading the instruction files throws when they exceed the budget. Printed after that read, a
-                     * commit that fails over budget would leave no submission summary in the log to diagnose it by.
-                     */
-                    SubmissionAssembly.full(ctx, new SubmissionSummaryPrinter(getLog()));
-
-                    new OutputSerializer(preferYaml, logFactory.getLogger(OutputSerializer.class)).accept(ctx);
-                    buildHotspots(ctx);
-                    return Optional.of(ctx);
-                }
-                getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), excluded.get().getReason()));
-                excludeWithDiff(args, analysis, excluded.get().getReason(), excluded.get().getCategory());
-            }
-        }
-        return Optional.empty();
-    }
-    protected void doSubmit(SubmissionContext ctx) throws Exception {
-        getLog().debug("analysis not submitted: this goal does not submit");
-    }
-    /**
-     * shared revert gate for the successful-build and degraded paths: the revert itself is excluded
-     * unconditionally, and with codiqo.excludeRevertedCommits enabled the original (reverted) commit
-     * is retroactively excluded too — the backend flips its already-scored analysis to excluded, so
-     * reverted work stops counting toward effort. 404 means the original predates the indexing window
-     */
-    protected void doExcludeRevertCommit(RunArgs args, SubmissionContext ctx) throws Exception {
-        getLog().warn(String.format("commit %s skipped: revert commit (no LLM scoring or submission)", args.getCommitId()));
-        doExcludeAnalysis(args.getCommitId(), "revert commit (no LLM scoring performed)", AnalysisExcludeCategory.REVERT_COMMIT, null, ctx.getSubmissionModel().getFiles());
-
-        if (args.isExcludeRevertedCommits()) {
-            String revertedSha = ctx.getAnalysis().getRevertedCommitId();
-            try {
-                doExcludeAnalysis(revertedSha, String.format("reverted by commit %s", JGit.shortSha(args.getCommitId())), AnalysisExcludeCategory.REVERTED);
-            } catch (ApiException err) {
-                if (err.getCode() == HttpResponseStatus.NOT_FOUND.code()) {
-                    getLog().warn(String.format("reverted commit %s not known to backend (outside indexing window?) — skipping its exclusion", revertedSha));
-                } else {
-                    throw err;
-                }
-            }
-        }
-    }
-    protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category) throws Exception {
-        doExcludeAnalysis(commitSha, reason, category, null);
-    }
-    protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail) throws Exception {
-        doExcludeAnalysis(commitSha, reason, category, detail, List.of());
-    }
-    protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files) throws Exception {
-        doExcludeAnalysis(commitSha, reason, category, detail, files, null);
-    }
-    protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files, ProjectMetricsModel projectMetrics) throws Exception {
-        getLog().debug(String.format("no exclusion handler, commit %s would be excluded with reason: %s (category: %s)", commitSha, reason, category));
-    }
     /**
      * For a goal that forks the commit's build. Without the agent no module records coverage, so a run that requires it
      * would build, test and review the commit and only then fail at coverage capture. Called before the review starts,
@@ -1556,66 +1385,14 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                     JACOCO_AGENT_CLASSIFIER));
         }
     }
-    /** runs once when the goal fails, before the failure is rethrown; a commit the run excluded is not a failure */
-    protected void doOnFailure(RunArgs args, Exception err) {
-    }
-    /**
-     * Excludes the commit with its raw git diff, so the backend still records what it changed (the build-failure path
-     * does the same): indexing has not run, so the populator emits diff-only file models without code units or coverage.
-     */
-    protected void excludeWithDiff(RunArgs args, CommitAnalysis analysis, String reason, AnalysisExcludeCategory category) throws Exception {
-        ClientInfoModel clientInfo = new ClientInfoModel();
-        clientInfo.setBuildTool(ClientInfoModel.BuildToolEnum.MAVEN);
-        clientInfo.setVersion(runtimeInformation.getMavenVersion());
-        clientInfo.setName("codiqo-maven-plugin");
-
-        SubmissionContext ctx = SubmissionContext.create(
-                args,
-                null,
-                analysis,
-                args.getGit().getWorkTree().toPath().normalize(),
-                new MavenLogFactory(getLog()),
-                project.getGroupId() + ":" + project.getArtifactId(),
-                project.getName(),
-                clientInfo);
-        SubmissionAssembly.excluded(ctx);
-        doExcludeAnalysis(args.getCommitId(), reason, category, null, ctx.getSubmissionModel().getFiles());
-    }
-    /**
-     * when {@link #scoresFailedBuild} holds, a build-pipeline failure does not exclude the commit
-     * outright: the change still represents real developer work, so score it in degraded mode instead.
-     * falls back to exclusion when it does not (no review started), when the commit has no analyzable diff files,
-     * and mirrors the revert gate that the successful-build path applies in doExecute. only reachable from
-     * historical commit analysis — analyze-uncommitted-changes never forks a build (it analyzes the working
-     * tree against the host session's already-resolved reactor), so it has no failure signal to degrade on.
-     */
-    protected void doDegradedAnalysis(RunArgs args, String reason, AnalysisExcludeCategory category, String detail) throws Exception {
-        doDegradedAnalysis(args, reason, category, detail, false);
-    }
-    protected void doDegradedAnalysis(RunArgs args, BuildOutcome.Skipped skipped) throws Exception {
-        doDegradedAnalysis(args, skipped.getReason(), skipped.getCategory(), skipped.getDetail(), skipped.isTimedOut());
-    }
-    private void doDegradedAnalysis(RunArgs args, String reason, AnalysisExcludeCategory category, String detail, boolean timedOut) throws Exception {
-        SubmissionContext ctx = buildDegradedSubmission(args, reason, category, detail);
-        List<FileChangeModel> files = ctx.getSubmissionModel().getFiles();
-
-        if (scoresFailedBuild(category, timedOut)) {
-            if (CollectionUtils.isEmpty(files)) {
-                getLog().warn(String.format("commit %s skipped: build failed and no analyzable diff — %s", args.getCommitId(), reason));
-                doExcludeAnalysis(args.getCommitId(), reason, category, detail, files, ctx.getSubmissionModel().getProjectMetrics());
-                return;
-            }
-            if (ctx.getAnalysis().isRevertCommit()) {
-                doExcludeRevertCommit(args, ctx);
-                return;
-            }
-            getLog().warn(String.format("commit %s: build failed (%s: %s) — running degraded analysis", args.getCommitId(), category, reason));
-            new OutputSerializer(preferYaml, ctx.getLogFactory().getLogger(OutputSerializer.class)).accept(ctx);
-            doSubmit(ctx);
-        } else {
-            getLog().warn(String.format("commit %s skipped: %s", args.getCommitId(), reason));
-            doExcludeAnalysis(args.getCommitId(), reason, category, detail, files, ctx.getSubmissionModel().getProjectMetrics());
-        }
+    /** the goal's work, once the run's settings are in place ({@link #doPrepare}) */
+    protected abstract void doExecute(RunArgs args) throws Exception;
+    protected ClientInfoModel clientInfo() {
+        ClientInfoModel toReturn = new ClientInfoModel();
+        toReturn.setBuildTool(ClientInfoModel.BuildToolEnum.MAVEN);
+        toReturn.setVersion(runtimeInformation.getMavenVersion());
+        toReturn.setName("codiqo-maven-plugin");
+        return toReturn;
     }
     protected SourceHiding sourceHiding() {
         return hiding;
@@ -1634,105 +1411,8 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         Optional.ofNullable(reviewRelayRetries).ifPresent(args::setReviewRelayRetries);
         Optional.ofNullable(reviewRelayTimeoutSeconds).ifPresent(seconds -> args.setReviewRelayRequestTimeout(Duration.ofSeconds(seconds)));
     }
-    /**
-     * Only a commit whose review started is scored after a failed build, and only for a failure that is the author's:
-     * a dependency that could not be resolved or a build that ran out of time is the environment's failure.
-     */
-    protected boolean scoresFailedBuild(AnalysisExcludeCategory category, boolean timedOut) {
-        return false;
-    }
-    /**
-     * degraded submission for a build-failed commit. a failed build leaves no resolved reactor, so a
-     * synthetic whole-worktree owner drives a source-only PMD index (no JDT, no coverage, no CPD) that
-     * still yields the driver-score statistics and the changed-code blocks the volume scorer needs, so
-     * genuine code volume is measured rather than scored from config lines alone. any failure of that
-     * best-effort pass falls back to the strictly diff-only submission (git diff + commit metadata).
-     */
-    protected SubmissionContext buildDegradedSubmission(RunArgs args, String reason, AnalysisExcludeCategory category, String detail) throws Exception {
-        boolean hadProjectModel = CollectionUtils.isNotEmpty(args.getProjects());
-        try {
-            return buildSourceOnlyDegradedSubmission(args, reason, category, detail);
-        } catch (IOException err) {
-            /**
-             * only an I/O failure of the best-effort source index degrades to diff-only; codiqo-internal
-             * defects (RuntimeExceptions from the populators) are not caught here so they propagate and
-             * fail loudly rather than silently masking a bug as a config-only score
-             */
-            getLog().warn(String.format("commit %s: source-only degraded index failed (%s) — falling back to diff-only scoring",
-                    args.getCommitId(),
-                    ExceptionUtils.getRootCauseMessage(err)),
-                    err);
-            if (BooleanUtils.negate(hadProjectModel)) {
-                args.getProjects().clear();
-            }
-            return buildDiffOnlyDegradedSubmission(args, reason, category, SubmissionAssembly.diffOnlyFallbackDetail(detail, err));
-        }
-    }
-    protected SubmissionContext buildSourceOnlyDegradedSubmission(RunArgs args, String reason, AnalysisExcludeCategory category, String detail) throws Exception {
-        LogFactory logFactory = new MavenLogFactory(getLog());
-        Path workTree = args.getGit().getWorkTree().toPath().normalize();
-
-        if (CollectionUtils.isEmpty(args.getProjects())) {
-            args.getProjects().add(SourceOnlyProjectSpec.forWorkTree(args.getGit().getWorkTree(), project));
-        }
-
-        CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
-
-        ClientInfoModel clientInfo = new ClientInfoModel();
-        clientInfo.setBuildTool(ClientInfoModel.BuildToolEnum.MAVEN);
-        clientInfo.setVersion(runtimeInformation.getMavenVersion());
-        clientInfo.setName("codiqo-maven-plugin");
-
-        SubmissionContext ctx = DefaultLanguageProcessors.sourceOnlyIndex(args, analysis, logFactory, index -> {
-            SubmissionContext toReturn = SubmissionContext.create(
-                    args,
-                    index,
-                    analysis,
-                    workTree,
-                    logFactory,
-                    project.getGroupId() + ":" + project.getArtifactId(),
-                    project.getName(),
-                    clientInfo);
-            new ProjectModelPopulator(getLog()).accept(toReturn);
-            SubmissionAssembly.degraded(toReturn);
-            return toReturn;
-        });
-
-        ctx.getSubmissionModel().setBuildFailure(SubmissionAssembly.buildFailure(reason, category, detail));
-        return ctx;
-    }
-    /**
-     * strictly diff-only submission: git diff + commit metadata, no code units, no coverage, no PMD/CPD,
-     * no project-level metrics. the degraded score is derived from the diff alone. carries the
-     * buildFailure block that drives degraded LLM scoring.
-     */
-    protected SubmissionContext buildDiffOnlyDegradedSubmission(RunArgs args, String reason, AnalysisExcludeCategory category, String detail) throws Exception {
-        LogFactory logFactory = new MavenLogFactory(getLog());
-        Path workTree = args.getGit().getWorkTree().toPath().normalize();
-        CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
-
-        ClientInfoModel clientInfo = new ClientInfoModel();
-        clientInfo.setBuildTool(ClientInfoModel.BuildToolEnum.MAVEN);
-        clientInfo.setVersion(runtimeInformation.getMavenVersion());
-        clientInfo.setName("codiqo-maven-plugin");
-
-        SubmissionContext ctx = SubmissionContext.create(
-                args,
-                null,
-                analysis,
-                workTree,
-                logFactory,
-                project.getGroupId() + ":" + project.getArtifactId(),
-                project.getName(),
-                clientInfo);
-        new ProjectModelPopulator(getLog()).accept(ctx);
-        SubmissionAssembly.diffOnly(ctx);
-
-        ctx.getSubmissionModel().setBuildFailure(SubmissionAssembly.buildFailure(reason, category, detail));
-        return ctx;
-    }
     @SuppressWarnings("deprecation")
-    private void purgeNonJavaSourceJars(RunArgs args) throws IOException {
+    protected void purgeNonJavaSourceJars(RunArgs args) throws IOException {
         List<String> exclusions = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(StringUtils.defaultString(jdtSourceExclusions));
         if (CollectionUtils.isNotEmpty(exclusions)) {
             LocalRepositoryManager localRepoManager = mavenSession.getRepositorySession().getLocalRepositoryManager();

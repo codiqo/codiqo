@@ -293,7 +293,7 @@ public final class LlmRelay implements AutoCloseable {
             } catch (IOException err) {
                 /**
                  * Answered as a 5xx, which OpenCode retries, and counted as the provider's failure: an end point that
-                 * cannot be reached or does not answer in time is the outage ReviewProviderException exists for, and
+                 * cannot be reached or does not answer in time is the outage a provider failure halts for (ReviewVerdict), and
                  * left uncounted it would exclude the commit for good.
                  */
                 log.warn("llm relay: %s %s failed: %s", exchange.getRequestMethod(), path, err.getMessage());

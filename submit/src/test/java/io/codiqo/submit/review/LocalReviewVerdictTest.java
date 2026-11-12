@@ -2,16 +2,14 @@ package io.codiqo.submit.review;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 
-import org.apache.commons.lang3.Strings;
 import org.junit.jupiter.api.Test;
 import org.slf4j.event.Level;
 
@@ -23,18 +21,19 @@ import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.AnalysisExcludeModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.FileChangeModel;
-import io.codiqo.llm.review.ReviewProviderException;
+import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.llm.review.ReviewVerdict;
 import io.codiqo.submit.SubmissionContext;
 
 /**
- * A review's verdict, settled where the caller waits for it, and what it does to its commit on both build tools: only
- * a failure on the commit excludes it; a failure on the provider or on Codiqo's side fails the run, which halts the
- * project, and a stopped review fails it too, halting nothing.
+ * A review's verdict, settled where the caller waits for it: what only the wait sees, a review thread that failed before
+ * its reviewer settled anything, a review that outlived its limits, and a run stopped while it waited. What the verdict
+ * then does to the commit is the commit's run's ({@code CommitRunTest}).
  */
 class LocalReviewVerdictTest {
     private static final String COMMIT = "1a2b3c4d";
     private static final Log LOG = new NoopLog();
+    private static final String PROVIDER_ERRORS = "the LLM provider answered 429 12 times during the review";
     private static final LogFactory LOGS = clazz -> LOG;
 
     /** the project's tag vocabulary is fetched on the review's thread, before a reviewer exists to settle anything */
@@ -76,9 +75,7 @@ class LocalReviewVerdictTest {
         }), List.of(), LOGS)) {
             Thread.currentThread().interrupt();
             try {
-                ReviewVerdict.Stopped stopped = assertInstanceOf(ReviewVerdict.Stopped.class, run.attachTo(context()));
-
-                assertThrows(InterruptedException.class, () -> LocalReviewRun.exclusionOf(stopped, context(), LOG), "the run fails, and its interrupt halts nothing");
+                assertInstanceOf(ReviewVerdict.Stopped.class, run.attachTo(context()));
             } finally {
                 assertTrue(Thread.interrupted(), "the interrupt is kept for the caller");
             }
@@ -86,48 +83,33 @@ class LocalReviewVerdictTest {
             release.countDown();
         }
     }
+    /** a built commit whose review failed on it is excluded for the review, with the failure's stack as the detail */
     @Test
-    void aReviewThatFailedOnTheCommitExcludesIt() throws Exception {
-        AnalysisExcludeModel excluded = LocalReviewRun.exclusionOf(new ReviewVerdict.CommitFailure(new IOException("the coordinator started no reviewer")), context(), LOG)
-                .orElseThrow();
+    void aReviewThatFailedOnABuiltCommitExcludesItForTheReview() {
+        ReviewVerdict.CommitFailure failed = new ReviewVerdict.CommitFailure(new IOException("the coordinator started no reviewer"), Optional.of(PROVIDER_ERRORS));
+
+        AnalysisExcludeModel excluded = LocalReviewRun.exclusion(failed, context(), LOG);
 
         assertEquals(AnalysisExcludeCategory.LOCAL_REVIEW_FAILURE, excluded.getCategory());
-        assertEquals("local review failed: the coordinator started no reviewer", excluded.getReason());
-        assertTrue(Strings.CS.contains(excluded.getDetail(), "the coordinator started no reviewer"), "the stack trace is the detail");
+        assertEquals("local review failed: the coordinator started no reviewer; " + PROVIDER_ERRORS, excluded.getReason());
+        assertTrue(excluded.getDetail().contains("the coordinator started no reviewer"), "the stack trace is the detail");
         assertEquals(List.of(), excluded.getFiles());
     }
+    /** an operator's re-inclusion of a build failure survives a re-analysis only under that category */
     @Test
-    void aBuildFailedCommitWhoseReviewFailedOnItKeepsTheBuildFailure() throws Exception {
+    void aBuildFailedCommitWhoseReviewFailedOnItKeepsItsBuildFailureWithItsFilesAndMetrics() {
         SubmissionContext ctx = context();
         ctx.getSubmissionModel().setBuildFailure(new AnalysisBuildFailureModel().reason("[ERROR] COMPILATION ERROR").category(AnalysisExcludeCategory.BUILD_FAILURE).detail("cannot find symbol"));
         ctx.getSubmissionModel().setFiles(List.of(new FileChangeModel().path("src/A.java")));
+        ctx.getSubmissionModel().setProjectMetrics(new ProjectMetricsModel());
 
-        AnalysisExcludeModel excluded = LocalReviewRun.exclusionOf(new ReviewVerdict.CommitFailure(new IOException("refused")), ctx, LOG).orElseThrow();
+        AnalysisExcludeModel excluded = LocalReviewRun.exclusion(new ReviewVerdict.CommitFailure(new IOException("refused")), ctx, LOG);
 
-        assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, excluded.getCategory(), "an operator's re-inclusion of a build failure survives only under its category");
+        assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, excluded.getCategory());
         assertEquals("[ERROR] COMPILATION ERROR", excluded.getReason());
         assertEquals("cannot find symbol", excluded.getDetail());
         assertEquals(ctx.getSubmissionModel().getFiles(), excluded.getFiles());
-    }
-    @Test
-    void aReviewThatFailedOnTheProviderFailsTheRunWithTheProvidersAnswers() {
-        IOException unanswered = new IOException("session ses_1 ended its turn with provider.rate-limit: Too Many Requests");
-        ReviewVerdict verdict = new ReviewVerdict.ProviderFailure(unanswered, "the LLM provider answered 429 40 times during the review");
-
-        ReviewProviderException err = assertThrows(ReviewProviderException.class, () -> LocalReviewRun.exclusionOf(verdict, context(), LOG));
-
-        assertEquals("the LLM provider answered 429 40 times during the review", err.getProviderSummary(), "the halt's reason keeps it whole");
-        assertSame(unanswered, err.getCause());
-    }
-    /** an OpenCode that would not start is Codiqo's failure: the project halts rather than the commit being excluded */
-    @Test
-    void aReviewThatFailedOnCodiqosSideFailsTheRun() {
-        IOException startup = new IOException("opencode serve exited with code 1");
-
-        IOException err = assertThrows(IOException.class, () -> LocalReviewRun.exclusionOf(new ReviewVerdict.CodiqoFailure(startup), context(), LOG));
-
-        assertEquals("local review failed: opencode serve exited with code 1", err.getMessage());
-        assertSame(startup, err.getCause());
+        assertEquals(ctx.getSubmissionModel().getProjectMetrics(), excluded.getProjectMetrics(), "the degraded submission's driver-score statistics go with it");
     }
     private static SubmissionContext context() {
         RunArgs args = new RunArgs();

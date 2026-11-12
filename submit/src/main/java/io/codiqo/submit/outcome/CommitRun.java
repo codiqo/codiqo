@@ -48,18 +48,20 @@ import io.codiqo.submit.review.LocalReviewRun;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.Interrupts;
 import io.codiqo.util.JGit;
+import io.codiqo.util.MemoryReport;
 import io.codiqo.util.ProgressStage;
 import io.netty.handler.codec.http.HttpResponseStatus;
 
 /**
  * One commit's run, from the commit as its build tool hands it over to its commit outcome. Maven and Gradle analyse a
  * commit by these rules, so a commit cannot end one way on one build tool and another way on the other: what differs
- * between them, how the commit is built and what its projects are, sits behind {@link CommitBuild}, and every call to
- * Codiqo behind {@link CodiqoServer}.
+ * between them, how the commit is checked out and built and what its projects are, sits behind {@link CommitBuild}, and
+ * every call to Codiqo behind {@link CodiqoServer}.
  *
- * <p>{@link #admit} decides from git alone, before the commit is checked out or built. {@link #run} takes the checked-out
- * commit to its outcome and halts the project on a failure on Codiqo's or the model provider's side: such a run submits
- * nothing, so the next scheduled run would analyse the same commit and pay for its review again, every hour.
+ * <p>{@link #admit} decides from git alone, before the commit is checked out or built. {@link #run} checks the commit out
+ * ({@link CommitBuild#checkout}) and takes it to its outcome, and halts the project on a failure on Codiqo's or the model
+ * provider's side: such a run submits nothing, so the next scheduled run would analyse the same commit and pay for its
+ * review again, every hour.
  */
 public final class CommitRun {
     private final RunArgs args;
@@ -70,7 +72,10 @@ public final class CommitRun {
     private final ReviewStarter reviews;
     private final LogFactory logFactory;
     private final Log log;
-    /** the server accepted the commit's submission: a failure after it has scored the commit, so it halts nothing */
+    /**
+     * The server accepted the commit's submission. A failure after it has scored the commit, so it halts nothing: a halt
+     * resumed with "skip" would otherwise exclude a commit that was already scored.
+     */
     private boolean submitted;
     /**
      * The halt this run recorded, which stays the commit's outcome: a failure closing the language servers or the review
@@ -109,9 +114,9 @@ public final class CommitRun {
         server.requireRunning();
         return Optional.empty();
     }
-    /** the checked-out commit to its outcome: a failure is the outcome's, never thrown */
+    /** the commit, checked out, to its outcome: a failure is the outcome's, never thrown */
     public CommitOutcome run() {
-        try {
+        try (AutoCloseable checkout = build.checkout()) {
             return analyse();
         } catch (Exception err) {
             if (halted.isPresent()) {
@@ -188,11 +193,14 @@ public final class CommitRun {
         Optional<LocalReviewRun> review = startReview();
         try {
             BuildVerdict tested = build.test();
+            /**
+             * No skipOnBuildFailure check here: Maven's test fork raises an untolerated failure itself, as it does for its
+             * compile, and what fails after a test run that passed, the host building the module models, was always
+             * degraded or excluded whatever the setting. Refused here, such a commit was deferred and rebuilt, and
+             * its review paid for again, on every scheduled run.
+             */
             if (tested instanceof BuildVerdict.Failed failed) {
-                if (args.isSkipOnBuildFailure()) {
-                    return degraded(failed, review);
-                }
-                throw untolerated(failed);
+                return degraded(failed, review);
             }
             if (tested instanceof BuildVerdict.Passed passed) {
                 passed.getTestRun().ifPresent(this::hold);
@@ -205,7 +213,9 @@ public final class CommitRun {
     private CommitOutcome analyseInFull(Optional<LocalReviewRun> review) throws Exception {
         try (ClassGraphSpec scan = build.projects()) {
             try (Fetch fetch = new Fetch(args); LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, args, fetch)) {
+                log.info(MemoryReport.snapshot("before language server load"));
                 registry.load();
+                log.info(MemoryReport.snapshot("after language server load"));
                 CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
 
                 Optional<Exclusion> excluded = CommitExclusions.afterDelta(analysis, registry.extensions());
@@ -214,12 +224,20 @@ public final class CommitRun {
                 }
 
                 IndexingSummary index = registry.index(analysis);
+                log.info(MemoryReport.snapshot("after index"));
                 registry.identifyAffectedSymbols(index, analysis);
+                /**
+                 * A capture failure here comes after a build that passed: a module whose tests ran produced no coverage
+                 * data, or the coverage it produced predates the sources. Both are a broken measurement on Codiqo's
+                 * side, never the author's, so the run halts and is investigated: scored as the author's broken build,
+                 * a commit whose agent did not attach to eight modules was scored with penalties only.
+                 */
                 registry.collectAndCapture(index, analysis);
+                log.info(MemoryReport.snapshot("after coverage capture"));
 
                 SubmissionContext ctx = context(index, analysis);
                 build.populateProjectModel(ctx);
-                SubmissionAssembly.full(ctx);
+                SubmissionAssembly.full(ctx, build::printSummary);
                 output.accept(ctx);
 
                 CommitOutcome toReturn;
@@ -385,9 +403,8 @@ public final class CommitRun {
     }
     /**
      * codiqo.skipOnBuildFailure=false asks for a hard error instead of an exclusion: a pipeline that opted out of
-     * tolerating build failures does not go green on one. A compile that failed raises it before any review starts; a
-     * test run that failed, beside the review it started. It is the author's failure and halts nothing: halting would
-     * hold the commit that fixes it.
+     * tolerating build failures does not go green on one. A compile that failed raises it before any review starts. It
+     * is the author's failure and halts nothing: halting would hold the commit that fixes it.
      */
     private CommitBuildFailedException untolerated(BuildVerdict.Failed failed) {
         return new CommitBuildFailedException(String.format("commit %s: %s, and codiqo.skipOnBuildFailure is false%n%s",

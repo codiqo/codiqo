@@ -44,7 +44,7 @@ class JGitShallowBoundaryTest {
             Set<ObjectId> boundary = shallowCommits(source);
             assertEquals(1, boundary.size(), "precondition: the checkout is shallow");
 
-            /** The analysis clone is made the way AnalyzeCommitMojo makes it: an empty repository plus a fetch. */
+            /** The analysis clone is made the way MavenCommitBuild makes it: an empty repository plus a fetch. */
             try (Repository clone = new FileRepositoryBuilder().setGitDir(dir.resolve("clone/.git").toFile()).build()) {
                 clone.create(false);
                 try (Git cloneGit = Git.wrap(clone)) {

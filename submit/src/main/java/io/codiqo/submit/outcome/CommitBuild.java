@@ -11,6 +11,12 @@ import io.codiqo.submit.SubmissionContext;
  */
 public interface CommitBuild {
     /**
+     * Checks the commit out where it is analysed, into the run's repository, and what closing it removes once the commit
+     * is settled. Maven analyses a clone of the developer's repository, so their working tree stays as it was; Gradle
+     * analyses the working tree its build ran in.
+     */
+    AutoCloseable checkout() throws Exception;
+    /**
      * Builds the commit's production code. It is asked after the exclusion gates that need git alone, and a commit's
      * review starts once it passed, or once it failed on the author.
      */
@@ -29,4 +35,6 @@ public interface CommitBuild {
     ProjectSpec sourceOnlyProject() throws Exception;
     /** the build tool's model of the project, its modules and dependencies, into the submission */
     void populateProjectModel(SubmissionContext ctx);
+    /** the assembled submission of a fully analysed commit, summarised in the build's log before it is sent */
+    void printSummary(SubmissionContext ctx);
 }

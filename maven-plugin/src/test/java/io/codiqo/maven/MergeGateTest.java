@@ -25,7 +25,7 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.submit.CommitExclusions;
 import io.codiqo.submit.IndexedCommits;
 
-class AnalyzeCommitMojoMergeGateTest {
+class MergeGateTest {
     @TempDir
     Path tempDir;
 
