@@ -415,7 +415,6 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                                     if (isAffected) {
                                         PmdAffectedSymbolInfo symbol = new PmdAffectedSymbolInfo(block, processor.lang());
                                         gitAnalysis.getPotentiallyAffectedSymbols().add(symbol);
-                                        block.accept(symbol);
                                         identified.incrementAndGet();
                                     }
                                 }
@@ -623,13 +622,6 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         if (BooleanUtils.negate(args.isIgnoreDiagnostics())) {
             for (LanguageSpec processor : processors) {
                 processor.captureViolations(summary, analysis);
-                for (FileAnalysis fileAnalysis : analysis) {
-                    for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
-                        symbol.block().ifPresent(block -> {
-
-                        });
-                    }
-                }
             }
         }
     }

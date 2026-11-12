@@ -2,15 +2,12 @@ package io.codiqo.api.code;
 
 import java.io.File;
 import java.util.Collection;
-import java.util.Optional;
-import java.util.function.Consumer;
 
 import io.codiqo.api.coverage.CodeBlockCoverage;
-import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.metrics.CodeBlockMetrics;
 import net.sourceforge.pmd.reporting.RuleViolation;
 
-public interface CodeBlockInfo extends Consumer<AffectedSymbolInfo> {
+public interface CodeBlockInfo {
     String getSignature();
     File getFile();
     SourceLocation getLocation();
@@ -18,8 +15,6 @@ public interface CodeBlockInfo extends Consumer<AffectedSymbolInfo> {
     String getBody();
     boolean isTrivial();
     void pmdViolation(RuleViolation violation);
-    boolean hasMethodCalls();
-    Optional<AffectedSymbolInfo> affectedSymbol();
     CodeBlockMetrics metrics();
     CodeBlockCoverage coverage();
 }
