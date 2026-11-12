@@ -100,7 +100,7 @@ class HttpCodiqoServerTest {
     /** the run still fails with its own cause, which a missing login thrown from the halt would replace */
     @Test
     void aHaltWithoutALoginIsNotRecordedAndThrowsNothing() {
-        assertFalse(server("http://127.0.0.1:1", NO_LOGIN).halt(SHA, new IOException("opencode serve exited with code 1")));
+        assertFalse(server("http://127.0.0.1:1", NO_LOGIN).halt(SHA, "IOException: opencode serve exited with code 1", "java.io.IOException: opencode serve exited with code 1"));
     }
     /** the review runs without the hint, as it does when the fetch itself fails */
     @Test

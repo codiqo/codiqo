@@ -1,8 +1,8 @@
 package io.codiqo.gradle;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
@@ -40,6 +40,8 @@ import io.codiqo.gradle.model.AnalysisRequest;
 import io.codiqo.submit.CommitBuildFailedException;
 import io.codiqo.submit.SubmissionAssembly;
 import io.codiqo.submit.auth.CredentialStore;
+import io.codiqo.submit.outcome.BuildVerdict;
+import io.codiqo.submit.outcome.CommitOutcome;
 
 /** a build-failed commit is routed as on Maven */
 class AnalysisEngineDegradedTest {
@@ -84,7 +86,8 @@ class AnalysisEngineDegradedTest {
         try {
             assumeFalse(Files.isReadable(unreadable), "a user who can read any directory cannot make the index fail");
 
-            AnalysisSubmissionModel submission = AnalysisEngine.degradedSubmission(request, args, LOGS, LOGS.getLogger(AnalysisEngineDegradedTest.class))
+            AnalysisSubmissionModel submission = AnalysisEngine.commitRun(request, AnalysisEngine.server(request, LOG), args, LOGS)
+                    .degradedSubmission(new BuildVerdict.Failed("build failed", AnalysisExcludeCategory.BUILD_FAILURE, BUILD_FAILURE_DETAIL, false))
                     .getSubmissionModel();
 
             AnalysisBuildFailureModel buildFailure = submission.getBuildFailure();
@@ -118,9 +121,9 @@ class AnalysisEngineDegradedTest {
         String home = System.getProperty(CredentialStore.HOME_PROPERTY);
         System.setProperty(CredentialStore.HOME_PROPERTY, Files.createDirectory(tempDir.resolve("codiqo-home")).toString());
         try {
-            CommitBuildFailedException err = assertThrows(CommitBuildFailedException.class,
-                    () -> AnalysisEngine.analyse(request, AnalysisEngine.server(request, LOG), args, LOGS, LOG));
+            CommitOutcome.Deferred deferred = assertInstanceOf(CommitOutcome.Deferred.class, AnalysisEngine.commitRun(request, AnalysisEngine.server(request, LOG), args, LOGS).run());
 
+            CommitBuildFailedException err = assertInstanceOf(CommitBuildFailedException.class, deferred.getCause());
             assertTrue(Strings.CS.contains(err.getMessage(), BUILD_FAILURE_DETAIL), err.getMessage());
         } finally {
             if (Objects.isNull(home)) {
@@ -155,7 +158,7 @@ class AnalysisEngineDegradedTest {
         RunArgs args = args(docs);
         args.setSkipOnBuildFailure(false);
         try {
-            AnalysisEngine.analyse(request, AnalysisEngine.server(request, LOG), args, LOGS, LOG);
+            assertInstanceOf(CommitOutcome.Excluded.class, AnalysisEngine.commitRun(request, AnalysisEngine.server(request, LOG), args, LOGS).run());
         } finally {
             server.stop(0);
         }

@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.junit.jupiter.api.Test;
 import org.slf4j.event.Level;
 
@@ -99,7 +100,7 @@ class ProjectHaltsTest {
         });
         server.start();
         try {
-            ProjectHalts.halt(new NoopLog(), client(server), url(server), "p1", SHA, new IllegalStateException("capture failed", new IOException("agent did not attach")), false);
+            halt(server, new IllegalStateException("capture failed", new IOException("agent did not attach")));
 
             assertEquals(SHA, posted.get().get("commitSha").asString());
             assertTrue(posted.get().get("reason").asString().contains("agent did not attach"), posted.get().toString());
@@ -123,7 +124,7 @@ class ProjectHaltsTest {
             IOException unanswered = new IOException("session ses_1 finished without an answer");
             ReviewProviderException provider = new ReviewProviderException("local review failed: " + unanswered.getMessage(),
                     "the LLM provider answered 429 13 times and 504 5 times during the review", unanswered);
-            ProjectHalts.halt(new NoopLog(), client(server), url(server), "p1", SHA, provider, false);
+            halt(server, provider);
 
             String reason = posted.get().get("reason").asString();
             assertTrue(reason.contains("the LLM provider answered 429 13 times"), reason);
@@ -131,7 +132,7 @@ class ProjectHaltsTest {
 
             IOException wordy = new IOException("opencode answered 500: " + "x".repeat(2100));
             ReviewProviderException behindWordy = new ReviewProviderException(wordy.getMessage(), "the LLM provider answered 429 once during the review", wordy);
-            ProjectHalts.halt(new NoopLog(), client(server), url(server), "p1", SHA, new IOException("submit failed", behindWordy), false);
+            halt(server, new IOException("submit failed", behindWordy));
 
             String shortened = posted.get().get("reason").asString();
             assertTrue(shortened.endsWith("; the LLM provider answered 429 once during the review"), "a long failure is shortened, never the provider's summary");
@@ -146,7 +147,7 @@ class ProjectHaltsTest {
         server.createContext("/api/v1/projects", exchange -> respond(exchange, HttpResponseStatus.BAD_REQUEST.code(), JSON.objectNode().put("message", "bad").toString()));
         server.start();
         try {
-            assertDoesNotThrow(() -> ProjectHalts.halt(new NoopLog(), client(server), url(server), "p1", SHA, new IOException("boom"), false));
+            assertDoesNotThrow(() -> halt(server, new IOException("boom")));
         } finally {
             server.stop(0);
         }
@@ -163,6 +164,10 @@ class ProjectHaltsTest {
         exchange.sendResponseHeaders(status, bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();
+    }
+    /** the halt of a failure known by its exception, as a run records it */
+    private static boolean halt(HttpServer server, Throwable cause) {
+        return ProjectHalts.halt(new NoopLog(), client(server), url(server), "p1", SHA, ProjectHalts.reasonOf(cause), ExceptionUtils.getStackTrace(cause), false);
     }
     private static final class NoopLog implements Log {
         @Override
