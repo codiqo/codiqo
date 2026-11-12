@@ -32,20 +32,33 @@ jobs:
             *) echo "Refusing to publish non-SNAPSHOT version from main: $VERSION"; exit 1;;
           esac
 
+      - name: Build and sign
+        env:
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        # The deploy below uploads each module as soon as it is built, so a module that fails to build (javadoc runs
+        # only in this job) would leave the earlier modules published and the later ones not. Building every module
+        # first stops the job before anything is uploaded.
+        run: mvn -Prelease clean verify -DskipTests
+
       - name: Deploy SNAPSHOT
         env:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
-        # Central answers 429 when a runner's shared IP sends too many requests, and Maven's default retries (5, 10
-        # and 15 seconds) give up after about 30 seconds. The deferred upload sends one file at a time, so a retry
-        # pauses the whole upload: wait 10, 20, ... 100 seconds instead, and honour a Retry-After of up to 10 minutes.
-        # Maven 3.9 (Resolver 1.9) reads aether.connector.http.*; Maven 3.10 and 4 (Resolver 2) read aether.transport.http.*.
+        # Central's snapshot repository answers 429 after 500 requests from one runner, with a Retry-After that
+        # another project saw at 20 minutes. The release profile's publishing plugin uploads one file at a time and
+        # rewrites the snapshot metadata after each: 913 requests for 15 modules. deploy:deploy uploads each module in
+        # one batch, and SHA-1 checksums alone drop the .md5 files: 376 requests, every artifact and signature kept.
+        # The lifecycle stops at verify, so the publishing plugin, bound to deploy, never runs. A 429 that still comes
+        # is waited out: Maven honours a Retry-After of up to 25 minutes, and retries one without it after 10, 20, ...
+        # 100 seconds. Maven 3.9 (Resolver 1.9) reads aether.connector.http.*; Maven 3.10 and 4 (Resolver 2) read
+        # aether.transport.http.*.
         run: >-
-          mvn -Prelease clean deploy -DskipTests -Dmaven.repository.credentialScope=id
+          mvn -Prelease verify deploy:deploy -DskipTests -Dmaven.repository.credentialScope=id
+          -Daether.checksums.algorithms=SHA-1
           -Daether.connector.http.retryHandler.count=10
           -Daether.connector.http.retryHandler.interval=10000
-          -Daether.connector.http.retryHandler.intervalMax=600000
+          -Daether.connector.http.retryHandler.intervalMax=1500000
           -Daether.transport.http.retryHandler.count=10
           -Daether.transport.http.retryHandler.interval=10000
-          -Daether.transport.http.retryHandler.intervalMax=600000
+          -Daether.transport.http.retryHandler.intervalMax=1500000
