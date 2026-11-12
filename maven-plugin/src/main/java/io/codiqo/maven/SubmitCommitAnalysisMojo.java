@@ -55,7 +55,10 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
     private String resourceUrl;
 
     private LocalReviewRun reviewRun;
-    /** made once the run knows whether it hides the source ({@link #doPrepare}) */
+    /**
+     * Made in {@link #doPrepare}, once the run knows whether it hides the source: it keeps that hiding for every model it
+     * sends, so a server made before would send a hidden-source project's code in plain.
+     */
     private CodiqoServer server;
     /**
      * The commit whose failure halts the project, set once the server confirmed the project is not halted. A failure
@@ -63,6 +66,21 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
      */
     private String haltableCommitId;
 
+    /** the project is the root POM's {@code groupId:artifactId}, the code its submissions name it by */
+    @Override
+    protected void doPrepare(RunArgs args) throws Exception {
+        super.doPrepare(args);
+
+        server = new HttpCodiqoServer(
+                apiUrl,
+                resourceUrl,
+                () -> MavenCredentials.resolve(apiKey, authUrl, resourceUrl, getLog()),
+                connectTimeoutSeconds,
+                readTimeoutSeconds,
+                project.getGroupId() + ":" + project.getArtifactId(),
+                sourceHiding(),
+                new MavenMessageReporter(getLog()));
+    }
     @Override
     protected void doBeforeAnalysis(RunArgs args) throws Exception {
         applyReviewSettings(args);
@@ -72,12 +90,12 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
          * the exclusion gate needs at the latest, and one opened later would go unnoticed. Before the review starts: a
          * halted project must not pay for another review the same failure would waste.
          */
-        server().requireRunning();
+        server.requireRunning();
         haltableCommitId = args.getCommitId();
     }
     @Override
     protected IndexedCommits indexedCommits() throws Exception {
-        return server().indexedCommits();
+        return server.indexedCommits();
     }
     /**
      * A run that fails here submits nothing, so the next scheduled run would analyse the same commit and pay for its
@@ -89,7 +107,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
     protected void doOnFailure(RunArgs args, Exception err) {
         /** a run that fails after its submission was accepted has scored its commit, so it halts nothing */
         if (Objects.nonNull(haltableCommitId) && BooleanUtils.negate(BooleanUtils.or(new boolean[] { ProjectHalts.haltsNothing(err), args.isSubmissionAccepted() }))) {
-            server().halt(haltableCommitId, err);
+            server.halt(haltableCommitId, err);
             ProgressStage.abort(args, ExceptionUtils.getRootCauseMessage(err), ProjectHalts.traceOf(args, haltableCommitId));
         }
     }
@@ -114,10 +132,10 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
                         args,
                         clone.getWorkTree().toPath(),
                         args.getCommitId(),
-                        server().reviewEndpoint(args),
+                        server.reviewEndpoint(args),
                         LocalReviewGuidance.read(args, getLog()),
-                        server()::projectTags,
-                        () -> server().previousFindings(args.getCommitId()),
+                        server::projectTags,
+                        () -> server.previousFindings(args.getCommitId()),
                         DefaultLanguageProcessors.reviewLanguages(),
                         new MavenLogFactory(getLog()));
                 getLog().info("local review of " + args.getCommitId() + " started next to the analysis");
@@ -162,38 +180,23 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
             if (Objects.nonNull(ctx.getSubmissionModel().getLocalReview())) {
                 reviewTrace = Optional.of(ReviewTrace.file(ctx.getArgs(), ctx.getArgs().getCommitId()));
             }
-            AnalysisAcceptedModel response = server().submit(ctx.getSubmissionModel(), reviewTrace);
+            AnalysisAcceptedModel response = server.submit(ctx.getSubmissionModel(), reviewTrace);
             ctx.getArgs().setSubmissionAccepted(true);
             getLog().info(String.format("accepted analysis id: %s status: %s", response.getAnalysisId(), response.getStatus()));
             stage.succeeded();
         }
     }
-    /** the project is the root POM's {@code groupId:artifactId}, the code its submissions name it by */
-    private CodiqoServer server() {
-        if (Objects.isNull(server)) {
-            server = new HttpCodiqoServer(
-                    apiUrl,
-                    resourceUrl,
-                    () -> MavenCredentials.resolve(apiKey, authUrl, resourceUrl, getLog()),
-                    connectTimeoutSeconds,
-                    readTimeoutSeconds,
-                    project.getGroupId() + ":" + project.getArtifactId(),
-                    sourceHiding(),
-                    new MavenMessageReporter(getLog()));
-        }
-        return server;
-    }
     @Override
     protected FixCommits fixCommits(SubmissionContext ctx, Instant since) throws Exception {
-        return server().fixCommits(since);
+        return server.fixCommits(since);
     }
     @Override
     protected void doSubmitHotspots(SubmissionContext ctx, HotspotSnapshotModel snapshot) throws Exception {
-        server().submitHotspots(snapshot);
+        server.submitHotspots(snapshot);
     }
     @Override
     protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files, ProjectMetricsModel projectMetrics) throws Exception {
-        server().exclude(commitSha, new AnalysisExcludeModel().reason(reason).category(category).detail(detail).files(files).projectMetrics(projectMetrics));
+        server.exclude(commitSha, new AnalysisExcludeModel().reason(reason).category(category).detail(detail).files(files).projectMetrics(projectMetrics));
     }
     /** a build the author broke; an unresolvable dependency or a build that ran out of time is the environment's */
     private static boolean isAuthorsFailure(AnalysisExcludeCategory category, boolean timedOut) {

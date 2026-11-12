@@ -2,14 +2,18 @@ package io.codiqo.submit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.junit.jupiter.api.Test;
 import org.slf4j.event.Level;
 
@@ -20,6 +24,7 @@ import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.AnalysisExcludeModel;
+import io.codiqo.client.model.HotspotSnapshotModel;
 import io.codiqo.submit.auth.ApiKeyCredential;
 import io.codiqo.submit.auth.CodiqoCredential;
 import io.netty.handler.codec.http.HttpResponseStatus;
@@ -28,11 +33,12 @@ import io.netty.handler.codec.http.HttpResponseStatus;
 class HttpCodiqoServerTest {
     private static final String SHA = "0123456789abcdef0123456789abcdef01234567";
     private static final String PROJECT = "com.example:app";
+    private static final String HASH_KEY = "0123456789abcdef0123456789abcdef";
     private static final Callable<CodiqoCredential> NO_LOGIN = () -> {
         throw new IOException("no stored login for this machine");
     };
 
-    /** Gradle resolved the member's login again for every call it made; one run now reads it once, as Maven did */
+    /** one login for the whole run: resolved per call, a missing one opened a browser login at each of them */
     @Test
     void theCredentialIsResolvedOnceForEveryCall() throws Exception {
         List<String> calls = Lists.newCopyOnWriteArrayList();
@@ -59,6 +65,37 @@ class HttpCodiqoServerTest {
 
         assertEquals(List.of("PATCH /api/v1/analyses/commit/" + SHA + "/exclude", "PATCH /api/v1/analyses/commit/" + SHA + "/exclude"), calls);
         assertEquals(1, resolved.get());
+    }
+    /** a hidden-source run's exclusion and hotspots leave without the code, whichever of them is sent */
+    @Test
+    void everyModelSentLeavesHidden() throws Exception {
+        List<String> bodies = Lists.newCopyOnWriteArrayList();
+        HttpServer api = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        api.createContext("/api/v1", exchange -> {
+            bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            exchange.sendResponseHeaders(HttpResponseStatus.NO_CONTENT.code(), -1);
+            exchange.close();
+        });
+        api.start();
+        try {
+            CodiqoServer server = new HttpCodiqoServer(String.format("http://127.0.0.1:%d", api.getAddress().getPort()), RunArgs.DEFAULT_RESOURCE_URL,
+                    () -> new ApiKeyCredential("test-api-key"), 5, 5, PROJECT, SourceHiding.of(true, Optional.of(HASH_KEY)), new NoopLog());
+
+            server.exclude(SHA, new AnalysisExcludeModel()
+                    .reason("no diff files match registered languages — changed files: [Secret.sql]")
+                    .category(AnalysisExcludeCategory.NO_ANALYZABLE_DIFF)
+                    .detail("Secret.sql changed")
+                    .files(List.of()));
+            server.submitHotspots(new HotspotSnapshotModel().commitSha(SHA).classes(List.of()));
+        } finally {
+            api.stop(0);
+        }
+
+        assertEquals(2, bodies.size());
+        for (String body : bodies) {
+            assertTrue(Strings.CS.contains(body, "\"sourceHidden\":true"), body);
+            assertFalse(Strings.CS.contains(body, "Secret"), body);
+        }
     }
     /** the run still fails with its own cause, which a missing login thrown from the halt would replace */
     @Test

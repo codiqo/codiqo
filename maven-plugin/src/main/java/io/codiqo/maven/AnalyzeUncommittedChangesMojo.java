@@ -24,6 +24,7 @@ import io.codiqo.submit.CodiqoServer;
 import io.codiqo.submit.CommitExclusions;
 import io.codiqo.submit.HttpCodiqoServer;
 import io.codiqo.submit.SubmissionContext;
+import io.codiqo.submit.auth.CodiqoCredential;
 import io.codiqo.util.JGit;
 import io.codiqo.submit.review.LocalReviewRun;
 import io.codiqo.maven.logging.MavenLogFactory;
@@ -74,8 +75,13 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
     @Parameter(defaultValue = "${reactorProjects}", readonly = true)
     protected List<MavenProject> reactors;
 
-    /** made once the run knows whether it hides the source; the review and the submission share its one browser login */
+    /**
+     * Made in {@link #doPrepare}, once the run knows whether it hides the source: it keeps that hiding for every model it
+     * sends, so a server made before would send the developer's code in plain.
+     */
     private CodiqoServer server;
+    /** resolved once per run, so the review and the submission share one browser login */
+    private CodiqoCredential credential;
     private LocalReviewRun reviewRun;
 
     @Override
@@ -84,6 +90,16 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
 
         args.setIncludeUntracked(includeUntracked);
         applyReviewSettings(args);
+
+        server = new HttpCodiqoServer(
+                apiUrl,
+                resourceUrl,
+                this::credential,
+                connectTimeoutSeconds,
+                readTimeoutSeconds,
+                project.getGroupId() + ":" + project.getArtifactId(),
+                sourceHiding(),
+                new MavenMessageReporter(getLog()));
     }
     @Override
     protected void doExecute(RunArgs args) throws Exception {
@@ -111,13 +127,19 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
             Path workTree = args.getGit().getWorkTree().toPath();
             String sha = WorkingTreeCommit.create(workTree, includeUntracked);
             if (CommitExclusions.hasAnalyzableFile(JGit.changedFileNames(args.getGit(), sha), DefaultLanguageProcessors.supportedExtensions())) {
+                /**
+                 * Here, while the developer is at the terminal: the review asks for the project's tags on its own
+                 * thread, and a browser login opened there, for a review that calls its model directly, would wait
+                 * unnoticed while the analysis runs.
+                 */
+                credential();
                 reviewRun = LocalReviewRun.start(
                         args,
                         workTree,
                         sha,
-                        server().reviewEndpoint(args),
+                        server.reviewEndpoint(args),
                         LocalReviewGuidance.read(args, getLog()),
-                        server()::projectTags,
+                        server::projectTags,
                         List::of,
                         DefaultLanguageProcessors.reviewLanguages(),
                         new MavenLogFactory(getLog()));
@@ -127,19 +149,11 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
             }
         }
     }
-    private CodiqoServer server() {
-        if (Objects.isNull(server)) {
-            server = new HttpCodiqoServer(
-                    apiUrl,
-                    resourceUrl,
-                    () -> MavenCredentials.resolve(apiKey, authUrl, resourceUrl, getLog()),
-                    connectTimeoutSeconds,
-                    readTimeoutSeconds,
-                    project.getGroupId() + ":" + project.getArtifactId(),
-                    sourceHiding(),
-                    new MavenMessageReporter(getLog()));
+    private CodiqoCredential credential() throws Exception {
+        if (Objects.isNull(credential)) {
+            credential = MavenCredentials.resolve(apiKey, authUrl, resourceUrl, getLog());
         }
-        return server;
+        return credential;
     }
     @Override
     protected void doSubmit(SubmissionContext ctx) throws Exception {
@@ -148,12 +162,12 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
             if (Objects.nonNull(reviewRun) && reviewRun.attachTo(ctx) instanceof ReviewVerdict.Failed failed) {
                 throw new MojoFailureException("the uncommitted changes were not reviewed, so nothing was submitted: " + failed.getReason(), failed.getError());
             }
-            AnalysisAcceptedModel response = server().submitUncommitted(ctx.getSubmissionModel());
+            AnalysisAcceptedModel response = server.submitUncommitted(ctx.getSubmissionModel());
             getLog().info(String.format("accepted uncommitted analysis id: %s status: %s",
                     response.getAnalysisId(),
                     response.getStatus()));
 
-            AnalysisResultModel result = server().awaitCompletion(response.getAnalysisId(), Duration.ofMinutes(scoringTimeoutMinutes), POLL_INTERVAL);
+            AnalysisResultModel result = server.awaitCompletion(response.getAnalysisId(), Duration.ofMinutes(scoringTimeoutMinutes), POLL_INTERVAL);
 
             /**
              * a terminal FAILED is the server saying it accepted the submission and could not score it, so the goal

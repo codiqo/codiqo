@@ -36,11 +36,17 @@ public final class HttpCodiqoServer implements CodiqoServer {
     private final SourceHiding hiding;
     private final Log log;
     /**
-     * Resolved on the first call that needs it and shared by every later one. Each call used to resolve its own, so a
-     * developer with no stored login got one browser login from the fix-commit lookup in the middle of the analysis,
-     * while the language servers held their memory, and when nobody approved it in time, a second one at the submission.
+     * Resolved on the first call that needs it and shared by every later one. Resolved per call, a developer with no
+     * stored login got one browser login from the fix-commit lookup in the middle of the analysis, while the language
+     * servers held their memory, and when nobody approved it in time, a second one at the submission.
      */
     private CodiqoCredential credential;
+    /**
+     * One client for every call of the commit index: a pull request's merge looks up to
+     * {@link RunArgs#MERGE_LINE_LOOKUP_LIMIT} commits up one by one, and a client per lookup is an HTTP client, a mapper
+     * and a TLS handshake each. The client authorises each request as it is sent, so a refreshed login reaches it.
+     */
+    private CommitIndexApi commitIndex;
 
     /**
      * @param projectCode the code the REST API names the project by
@@ -74,19 +80,7 @@ public final class HttpCodiqoServer implements CodiqoServer {
     }
     @Override
     public void exclude(String commitSha, AnalysisExcludeModel exclusion) throws Exception {
-        AnalysisSubmitter.exclude(
-                apiUrl,
-                credential(),
-                connectTimeoutSeconds,
-                readTimeoutSeconds,
-                commitSha,
-                exclusion.getReason(),
-                exclusion.getCategory(),
-                exclusion.getDetail(),
-                exclusion.getFiles(),
-                exclusion.getProjectMetrics(),
-                hiding,
-                log);
+        AnalysisSubmitter.exclude(apiUrl, credential(), connectTimeoutSeconds, readTimeoutSeconds, commitSha, exclusion, hiding, log);
     }
     @Override
     public AnalysisAcceptedModel submit(AnalysisSubmissionModel submission, Optional<File> reviewTrace) throws Exception {
@@ -110,6 +104,7 @@ public final class HttpCodiqoServer implements CodiqoServer {
         try {
             client = commitIndexClient();
         } catch (Exception err) {
+            keepInterrupt(err);
             log.error(err, "project %s could not be halted: %s", projectCode, err.getMessage());
             return false;
         }
@@ -126,6 +121,7 @@ public final class HttpCodiqoServer implements CodiqoServer {
         try {
             member = credential();
         } catch (Exception err) {
+            keepInterrupt(err);
             log.warn("previous findings: not fetched, no credential: %s", err.getMessage());
             return List.of();
         }
@@ -143,13 +139,25 @@ public final class HttpCodiqoServer implements CodiqoServer {
     public ReviewEndpoint reviewEndpoint(RunArgs args) throws Exception {
         return LocalReviewRun.endpoint(args, resourceUrl, projectCode, this::credential);
     }
-    private CommitIndexApi commitIndexClient() throws Exception {
-        return CommitIndexPublisher.buildClient(apiUrl, credential(), connectTimeoutSeconds, readTimeoutSeconds);
+    private synchronized CommitIndexApi commitIndexClient() throws Exception {
+        if (Objects.isNull(commitIndex)) {
+            commitIndex = CommitIndexPublisher.buildClient(apiUrl, credential(), connectTimeoutSeconds, readTimeoutSeconds);
+        }
+        return commitIndex;
     }
     private synchronized CodiqoCredential credential() throws Exception {
         if (Objects.isNull(credential)) {
             credential = credentialSource.call();
         }
         return credential;
+    }
+    /**
+     * A login interrupted while it waited is the run being stopped, not a missing credential: the flag is set again, so
+     * the review stops at its next wait rather than spending more of the model's budget.
+     */
+    private static void keepInterrupt(Exception err) {
+        if (err instanceof InterruptedException) {
+            Thread.currentThread().interrupt();
+        }
     }
 }

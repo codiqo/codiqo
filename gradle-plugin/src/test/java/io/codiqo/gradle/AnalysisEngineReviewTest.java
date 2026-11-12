@@ -60,7 +60,7 @@ class AnalysisEngineReviewTest {
     }
     @Test
     void aCommitWithoutAReviewIsSubmittedAsItIs() throws Exception {
-        assertTrue(AnalysisEngine.judged(AnalysisEngine.server(request(RunArgs.DEFAULT_API_URL), LOG), new RunArgs(), Optional.empty(), context(), LOG));
+        assertTrue(AnalysisEngine.judged(AnalysisEngine.server(request("http://127.0.0.1:1"), LOG), new RunArgs(), Optional.empty(), context(), LOG));
     }
     @Test
     void aFailedReviewLeavesTheCommitUnsubmitted() throws Exception {

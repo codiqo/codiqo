@@ -45,6 +45,8 @@ import io.codiqo.submit.auth.CredentialStore;
 class AnalysisEngineDegradedTest {
     private static final SlfLogFactory LOGS = new SlfLogFactory();
     private static final Log LOG = LOGS.getLogger(AnalysisEngineDegradedTest.class);
+    /** a call that should never be made fails here rather than reaching Codiqo's own API */
+    private static final String UNREACHABLE_API = "http://127.0.0.1:1";
     private static final String BUILD_FAILURE_DETAIL = "Execution failed for task ':compileJava'.";
 
     @TempDir
@@ -167,7 +169,7 @@ class AnalysisEngineDegradedTest {
         toReturn.setRootPath(":");
         toReturn.setRootCode("com.example:app");
         toReturn.setRootName("app");
-        toReturn.setApiUrl(RunArgs.DEFAULT_API_URL);
+        toReturn.setApiUrl(UNREACHABLE_API);
         toReturn.setResourceUrl(RunArgs.DEFAULT_RESOURCE_URL);
         toReturn.setBuildFailureDetail(BUILD_FAILURE_DETAIL);
         return toReturn;
