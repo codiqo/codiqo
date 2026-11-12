@@ -6,12 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 
-import org.eclipse.lsp4j.SymbolKind;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import io.codiqo.api.code.CompilerFinding;
+import io.codiqo.api.code.UnitKind;
 import io.codiqo.client.model.CodeUnitModel;
 import io.codiqo.client.model.DiagnosticModel;
 import io.codiqo.client.model.FileChangeModel;
@@ -34,20 +34,17 @@ class FileAnalysisPopulatorTest {
             """;
 
     @Test
-    void mapsEnumConstantCallerToEnumMember() {
-        assertEquals(SymbolKindModel.ENUM_MEMBER, FileAnalysisPopulator.resolveSymbolKind(SymbolKind.EnumMember));
-    }
-    @Test
-    void mapsExecutableKindsToTheirSchemaCounterparts() {
-        assertEquals(SymbolKindModel.METHOD, FileAnalysisPopulator.resolveSymbolKind(SymbolKind.Method));
-        assertEquals(SymbolKindModel.CONSTRUCTOR, FileAnalysisPopulator.resolveSymbolKind(SymbolKind.Constructor));
-        assertEquals(SymbolKindModel.FIELD, FileAnalysisPopulator.resolveSymbolKind(SymbolKind.Field));
-        assertEquals(SymbolKindModel.propertyClass, FileAnalysisPopulator.resolveSymbolKind(SymbolKind.Class));
+    void mapsUnitKindsToTheirSchemaCounterparts() {
+        assertEquals(SymbolKindModel.ENUM_MEMBER, FileAnalysisPopulator.symbolKind(UnitKind.ENUM_MEMBER));
+        assertEquals(SymbolKindModel.METHOD, FileAnalysisPopulator.symbolKind(UnitKind.METHOD));
+        assertEquals(SymbolKindModel.CONSTRUCTOR, FileAnalysisPopulator.symbolKind(UnitKind.CONSTRUCTOR));
+        assertEquals(SymbolKindModel.FIELD, FileAnalysisPopulator.symbolKind(UnitKind.FIELD));
+        assertEquals(SymbolKindModel.propertyClass, FileAnalysisPopulator.symbolKind(UnitKind.CLASS));
     }
     @ParameterizedTest
-    @EnumSource(SymbolKind.class)
-    void mapsEveryLanguageServerKind(SymbolKind kind) {
-        assertNotNull(FileAnalysisPopulator.resolveSymbolKind(kind), "unmapped language server kind: " + kind);
+    @EnumSource(UnitKind.class)
+    void mapsEveryUnitKind(UnitKind kind) {
+        assertNotNull(FileAnalysisPopulator.symbolKind(kind), "unmapped unit kind: " + kind);
     }
     /**
      * A compiler finding on an added line goes to the innermost added or changed unit holding it, as a warning of its

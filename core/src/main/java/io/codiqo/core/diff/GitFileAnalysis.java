@@ -10,20 +10,20 @@ import org.apache.commons.lang3.builder.HashCodeBuilder;
 import org.eclipse.collections.api.map.primitive.MutableIntObjectMap;
 import org.eclipse.collections.impl.map.mutable.primitive.IntObjectHashMap;
 import org.eclipse.jgit.diff.DiffEntry;
-import org.jacoco.core.analysis.ILine;
 
 import com.google.common.collect.Sets;
 
 
 import io.codiqo.api.ProjectSpec;
+import io.codiqo.api.SourceLanguage;
 import io.codiqo.api.code.CodeBlockInfo;
+import io.codiqo.api.coverage.LineCoverage;
 import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.diff.FileAnalysis;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
-import net.sourceforge.pmd.lang.Language;
 
 @Setter
 @Getter
@@ -32,7 +32,7 @@ public class GitFileAnalysis implements FileAnalysis {
     private String oldPath;
     private String newPath;
     private File file;
-    private Language language;
+    private SourceLanguage language;
     private DiffEntry.ChangeType changeType;
     private String diffText;
     @ToString.Exclude
@@ -46,22 +46,22 @@ public class GitFileAnalysis implements FileAnalysis {
     @ToString.Exclude
     private Set<CodeBlockInfo> removedCodeBlocks = Sets.newLinkedHashSet();
     @ToString.Exclude
-    private MutableIntObjectMap<ILine> lineCoverage = new IntObjectHashMap<>();
+    private MutableIntObjectMap<LineCoverage> lineCoverage = new IntObjectHashMap<>();
     private boolean testFile;
     @Getter(AccessLevel.NONE)
     private Optional<ProjectSpec> project = Optional.empty();
 
     @Override
-    public MutableIntObjectMap<ILine> getLineCoverage() {
+    public MutableIntObjectMap<LineCoverage> getLineCoverage() {
         return lineCoverage;
     }
     @Override
-    public void lineCoverage(int lineNumber, ILine line) {
+    public void lineCoverage(int lineNumber, LineCoverage line) {
         lineCoverage.put(lineNumber, line);
     }
     @Override
-    public boolean isExtension(Language lang) {
-        return FilenameUtils.isExtension(file.getName(), lang.getExtensions());
+    public boolean isExtension(SourceLanguage language) {
+        return FilenameUtils.isExtension(file.getName(), language.getExtensions());
     }
     @Override
     public void accept(ProjectSpec spec) {

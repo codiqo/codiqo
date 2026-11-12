@@ -64,6 +64,8 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.base.Splitter;
 import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.Interner;
+import com.google.common.collect.Interners;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -88,6 +90,7 @@ import io.codiqo.api.JvmProjectSpec;
 import io.codiqo.api.LanguageSpec;
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.SourceLanguage;
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.DeclaredType;
 import io.codiqo.api.code.ParsedSources;
@@ -96,6 +99,7 @@ import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.code.TypeReference;
 import io.codiqo.api.coverage.CoverageExclusionReason;
 import io.codiqo.api.coverage.ExcludedCoverageClass;
+import io.codiqo.api.coverage.LineCoverage;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.api.logging.Log;
@@ -155,6 +159,12 @@ public class JavaLanguageSpec implements LanguageSpec {
     private static final int PMD_THREADS = 1;
 
     private static final String XML_EXTENSION = "xml";
+    /**
+     * Every line of every method of the project is converted, and most lines share a handful of values (an empty line, a
+     * line hit once): JaCoCo shares its own line objects the same way, and one object per line held millions of copies on
+     * a large multi-module project.
+     */
+    private static final Interner<LineCoverage> LINES = Interners.newStrongInterner();
     private static final String JUNIT_REPORT_PREFIX = "TEST-";
 
     private static final String META_INF_DIR = "META-INF";
@@ -173,7 +183,9 @@ public class JavaLanguageSpec implements LanguageSpec {
 
     private final Log log;
     private final RunArgs args;
-    private final JavaLanguageModule language = new JavaLanguageModule();
+    private final JavaLanguageModule pmdLanguage = new JavaLanguageModule();
+    /** the value the submission's file language carries on the wire for a Java file */
+    private final SourceLanguage sourceLanguage = new SourceLanguage("java", pmdLanguage.getExtensions());
     private final Function<NodeStream<? extends JavaNode>, Collection<JInvocationBlock>> outboundASTconverter = stream -> {
         List<JInvocationBlock> builder = Lists.newArrayList();
         stream.toStream().forEach(node -> {
@@ -224,7 +236,11 @@ public class JavaLanguageSpec implements LanguageSpec {
     }
     @Override
     public Language lang() {
-        return language;
+        return pmdLanguage;
+    }
+    @Override
+    public SourceLanguage language() {
+        return sourceLanguage;
     }
     @Override
     public boolean supportsCpd() {
@@ -239,12 +255,12 @@ public class JavaLanguageSpec implements LanguageSpec {
         boolean readTypeGraph = args.isHotspotsCommit();
 
         LanguageProcessorRegistry processingRegistry = registries.computeIfAbsent(owner, this::processingRegistry);
-        Parser pmd = processingRegistry.getProcessor(language).services().getParser();
+        Parser pmd = processingRegistry.getProcessor(pmdLanguage).services().getParser();
         SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
 
         for (File destination : files) {
             if (FilenameUtils.isExtension(destination.getName(), lang().getExtensions())) {
-                TextFile text = TextFile.forPath(destination.toPath().normalize(), StandardCharsets.UTF_8, language.getDefaultVersion());
+                TextFile text = TextFile.forPath(destination.toPath().normalize(), StandardCharsets.UTF_8, pmdLanguage.getDefaultVersion());
                 boolean test = owner.isTestResource(destination);
                 parseTree(destination, text, pmd, errorReporter, processingRegistry, "skipping code unit indexing for this file", tree -> {
                     List<CodeBlockInfo> fileBlocks = collectBlocks(owner, destination, tree);
@@ -280,19 +296,19 @@ public class JavaLanguageSpec implements LanguageSpec {
         Multimap<File, CodeBlockInfo> toReturn = ArrayListMultimap.create();
 
         LanguageProcessorRegistry processingRegistry = registries.computeIfAbsent(owner, this::processingRegistry);
-        Parser pmd = processingRegistry.getProcessor(language).services().getParser();
+        Parser pmd = processingRegistry.getProcessor(pmdLanguage).services().getParser();
         SemanticErrorReporter errorReporter = SemanticErrorReporter.reportToLogger(log);
         String unpaired = "the code units the commit removed from it are not reported";
 
         for (PreviousRevision revision : revisions) {
             File file = revision.getFile();
-            TextFile now = TextFile.forPath(file.toPath().normalize(), StandardCharsets.UTF_8, language.getDefaultVersion());
+            TextFile now = TextFile.forPath(file.toPath().normalize(), StandardCharsets.UTF_8, pmdLanguage.getDefaultVersion());
             Optional<Map<List<JavaSourceIdentity.Step>, Declaration>> declaredNow = parseTree(file, now, pmd, errorReporter, processingRegistry, unpaired,
                     tree -> declaredIdentities(tree, FilenameUtils.getBaseName(file.getName())));
 
             if (declaredNow.isPresent()) {
                 String previousPrimaryType = FilenameUtils.getBaseName(revision.getPath());
-                TextFile before = TextFile.forCharSeq(revision.getContent(), FileId.fromPath(file.toPath().normalize()), language.getDefaultVersion());
+                TextFile before = TextFile.forCharSeq(revision.getContent(), FileId.fromPath(file.toPath().normalize()), pmdLanguage.getDefaultVersion());
                 parseTree(file, before, pmd, errorReporter, processingRegistry, "its previous content: " + unpaired,
                         tree -> Pair.of(collectBlocks(owner, file, tree), declaredIdentities(tree, previousPrimaryType)))
                         .ifPresent(previous -> removedBlocks(previous.getLeft(), previous.getRight(), declaredNow.get(), previousPrimaryType)
@@ -303,7 +319,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         return toReturn;
     }
     private LanguageProcessorRegistry processingRegistry(ProjectSpec owner) {
-        LanguagePropertyBundle bundle = language.newPropertyBundle();
+        LanguagePropertyBundle bundle = pmdLanguage.newPropertyBundle();
         bundle.setProperty(JavaLanguageProperties.FIRST_CLASS_LOMBOK, true);
 
         if (owner instanceof JvmProjectSpec jvm) {
@@ -313,8 +329,8 @@ public class JavaLanguageSpec implements LanguageSpec {
             bundle.setProperty(JvmLanguagePropertyBundle.AUX_CLASSPATH, Joiner.on(File.pathSeparator).join(jars));
         }
 
-        LanguageRegistry languageRegistry = LanguageRegistry.singleton(language);
-        Map<Language, LanguagePropertyBundle> languageProperties = Map.of(language, bundle);
+        LanguageRegistry languageRegistry = LanguageRegistry.singleton(pmdLanguage);
+        Map<Language, LanguagePropertyBundle> languageProperties = Map.of(pmdLanguage, bundle);
         return LanguageProcessorRegistry.create(languageRegistry, languageProperties, log);
     }
     @Override
@@ -332,18 +348,18 @@ public class JavaLanguageSpec implements LanguageSpec {
     }
     @Override
     public int hashCode() {
-        return language.hashCode();
+        return pmdLanguage.hashCode();
     }
     @Override
     public boolean equals(Object other) {
         if (other instanceof JavaLanguageSpec spec) {
-            return Objects.equals(language, spec.language);
+            return Objects.equals(pmdLanguage, spec.pmdLanguage);
         }
         return false;
     }
     @Override
     public String toString() {
-        return language.toString();
+        return pmdLanguage.toString();
     }
     @Override
     public void close() throws IOException {
@@ -634,7 +650,7 @@ public class JavaLanguageSpec implements LanguageSpec {
 
             collisions.addAll(coverageBuilder.getNoMatchClasses());
 
-            IBundleCoverage bundle = coverageBuilder.getBundle(language.getName());
+            IBundleCoverage bundle = coverageBuilder.getBundle(pmdLanguage.getName());
 
             Set<CoverageSourceFile> excludedSources = Collections.emptySet();
             if (project instanceof JvmProjectSpec jvm) {
@@ -728,7 +744,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         int linesWithCoverage = 0;
 
         for (FileAnalysis fileAnalysis : analysis) {
-            if (fileAnalysis.isExtension(lang())) {
+            if (fileAnalysis.isExtension(language())) {
                 ISourceFileCoverage source = coverages.get(fileAnalysis.getFile());
                 if (Objects.nonNull(source)) {
                     matched++;
@@ -738,7 +754,7 @@ public class JavaLanguageSpec implements LanguageSpec {
                     if (firstLine > 0) {
                         for (int lineNumber = firstLine; lineNumber <= lastLine; lineNumber++) {
                             ILine line = source.getLine(lineNumber);
-                            fileAnalysis.lineCoverage(lineNumber, line);
+                            fileAnalysis.lineCoverage(lineNumber, lineCoverage(line));
                             if (isCovered(line)) {
                                 linesWithCoverage++;
                             }
@@ -756,7 +772,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         Map<ProjectSpec, List<File>> filesByProject = Maps.newLinkedHashMap();
         List<File> orphans = Lists.newArrayList();
         for (File sourceFile : summary.getBlocks().keySet()) {
-            if (FilenameUtils.isExtension(sourceFile.getName(), language.getExtensions())) {
+            if (FilenameUtils.isExtension(sourceFile.getName(), pmdLanguage.getExtensions())) {
                 Optional<ProjectSpec> owner = args.owner(sourceFile);
                 if (owner.isPresent()) {
                     filesByProject.computeIfAbsent(owner.get(), k -> Lists.newArrayList()).add(sourceFile);
@@ -808,8 +824,8 @@ public class JavaLanguageSpec implements LanguageSpec {
                         int markEnd = violation.getLocation().getEndLine();
                         Collection<CodeBlockInfo> blocks = summary.getBlocks().get(sourceFile);
                         for (CodeBlockInfo block : blocks) {
-                            if (block.getLocation().getStartLine() <= markStart && markEnd <= block.getLocation().getEndLine()) {
-                                block.pmdViolation(violation);
+                            if (block.getLocation().getStartLine() <= markStart && markEnd <= block.getLocation().getEndLine() && block instanceof JavaCodeBlockInfo javaBlock) {
+                                javaBlock.pmdViolation(violation);
                                 if (analysis.isPresent(sourceFile, block)) {
                                     log.info("detected PMD violation for %s : line(%d:%d-%d:%d)  %s",
                                             block,
@@ -1191,7 +1207,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         boolean toReturn = false;
         for (int lineNumber = location.getStartLine(); lineNumber <= location.getEndLine(); lineNumber++) {
             ILine line = source.getLine(lineNumber);
-            javaBlock.lineCoverage(lineNumber, line);
+            javaBlock.lineCoverage(lineNumber, lineCoverage(line));
             if (isCovered(line)) {
                 toReturn = true;
             }
@@ -1204,6 +1220,16 @@ public class JavaLanguageSpec implements LanguageSpec {
      */
     private static boolean isCovered(ILine line) {
         return (line.getStatus() & ICounter.FULLY_COVERED) != 0;
+    }
+    /** a JaCoCo line as the analysis's own line coverage, any status JaCoCo does not name read as an empty line */
+    private static LineCoverage lineCoverage(ILine line) {
+        LineCoverage.Status status = switch (line.getStatus()) {
+            case ICounter.NOT_COVERED -> LineCoverage.Status.MISSED;
+            case ICounter.PARTLY_COVERED -> LineCoverage.Status.PARTIAL;
+            case ICounter.FULLY_COVERED -> LineCoverage.Status.COVERED;
+            default -> LineCoverage.Status.EMPTY;
+        };
+        return LINES.intern(new LineCoverage(status, line.getInstructionCounter().getCoveredCount(), line.getBranchCounter().getCoveredCount(), line.getBranchCounter().getMissedCount()));
     }
     private static boolean containsJunitReports(File dir) {
         return dir.isDirectory() && CollectionUtils.isNotEmpty(FileUtils.listFiles(dir, JUNIT_REPORT_FILTER, null));

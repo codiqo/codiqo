@@ -3,8 +3,6 @@ package io.codiqo.api.coverage;
 import java.util.Locale;
 
 import org.eclipse.collections.api.map.primitive.IntObjectMap;
-import org.jacoco.core.analysis.ICounter;
-import org.jacoco.core.analysis.ILine;
 
 import lombok.Builder;
 import lombok.Value;
@@ -87,7 +85,7 @@ public class CodeBlockCoverage {
 
         return sb.toString();
     }
-    public static CodeBlockCoverage from(IntObjectMap<ILine> coverageByLine) {
+    public static CodeBlockCoverage from(IntObjectMap<LineCoverage> coverageByLine) {
         if (coverageByLine.isEmpty()) {
             return NONE;
         }
@@ -99,26 +97,17 @@ public class CodeBlockCoverage {
         int coveredBranches = 0;
         int missedBranches = 0;
 
-        for (ILine line : coverageByLine.values()) {
+        for (LineCoverage line : coverageByLine.values()) {
             switch (line.getStatus()) {
-                case ICounter.FULLY_COVERED:
-                    covered++;
-                    break;
-                case ICounter.PARTLY_COVERED:
-                    partial++;
-                    break;
-                case ICounter.NOT_COVERED:
-                    missed++;
-                    break;
-                case ICounter.EMPTY:
-                default:
-                    empty++;
-                    break;
+                case COVERED -> covered++;
+                case PARTIAL -> partial++;
+                case MISSED -> missed++;
+                case EMPTY -> empty++;
+                default -> throw new IllegalArgumentException("Unknown line status: " + line.getStatus());
             }
 
-            ICounter branchCounter = line.getBranchCounter();
-            coveredBranches += branchCounter.getCoveredCount();
-            missedBranches += branchCounter.getMissedCount();
+            coveredBranches += line.getCoveredBranches();
+            missedBranches += line.getMissedBranches();
         }
 
         return CodeBlockCoverage.builder()

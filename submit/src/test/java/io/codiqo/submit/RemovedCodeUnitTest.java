@@ -72,7 +72,7 @@ class RemovedCodeUnitTest {
         try (Fetch fetch = new Fetch(args); JavaLanguageSpec spec = new JavaLanguageSpec(StubAnalysis.LOGS, args, fetch)) {
             SubmissionContext ctx = SubmissionContext.builder().build();
             byName = spec.parseRemoved(mock(ProjectSpec.class), List.of(new PreviousRevision(source.toFile(), "Shrinking.java", before))).values().stream()
-                    .map(block -> FileAnalysisPopulator.removedCodeUnitModel(ctx, spec.lang(), (JavaCodeBlockInfo) block, workTree))
+                    .map(block -> FileAnalysisPopulator.removedCodeUnitModel(ctx, (JavaCodeBlockInfo) block, workTree))
                     .collect(Collectors.toMap(CodeUnitModel::getName, Function.identity()));
         }
 

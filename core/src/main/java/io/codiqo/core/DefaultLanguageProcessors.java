@@ -106,7 +106,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         this.args = Objects.requireNonNull(args);
         this.processors = Lists.newArrayList(List.of(new JavaLanguageSpec(logFactory, args, fetch)));
 
-        processors.forEach(processor -> extensions.addAll(processor.lang().getExtensions()));
+        processors.forEach(processor -> extensions.addAll(processor.language().getExtensions()));
     }
     @Override
     public void collectAndCapture(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
@@ -300,7 +300,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
 
             filesByOwner.entrySet().parallelStream().forEach(group -> processors.forEach(processor -> {
                 List<File> matching = group.getValue().stream()
-                        .filter(file -> FilenameUtils.isExtension(file.getName(), processor.lang().getExtensions()))
+                        .filter(file -> FilenameUtils.isExtension(file.getName(), processor.language().getExtensions()))
                         .toList();
                 if (CollectionUtils.isNotEmpty(matching)) {
                     for (;;) {
@@ -392,9 +392,9 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
             Map<ProjectSpec, Map<GitFileAnalysis, Set<Integer>>> removalCandidates = Maps.newLinkedHashMap();
 
             for (FileAnalysis it : analysis) {
-                if (it.isExtension(processor.lang())) {
+                if (it.isExtension(processor.language())) {
                     if (it instanceof GitFileAnalysis gitAnalysis) {
-                        gitAnalysis.setLanguage(processor.lang());
+                        gitAnalysis.setLanguage(processor.language());
 
                         Set<Integer> lines = Sets.newHashSet();
                         if (Objects.nonNull(gitAnalysis.getStructuredDiff())) {
@@ -413,7 +413,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                                     int endLine = block.getLocation().getEndLine();
                                     boolean isAffected = lines.stream().anyMatch(line -> line >= startLine && line <= endLine);
                                     if (isAffected) {
-                                        PmdAffectedSymbolInfo symbol = new PmdAffectedSymbolInfo(block, processor.lang());
+                                        PmdAffectedSymbolInfo symbol = new PmdAffectedSymbolInfo(block);
                                         gitAnalysis.getPotentiallyAffectedSymbols().add(symbol);
                                         identified.incrementAndGet();
                                     }

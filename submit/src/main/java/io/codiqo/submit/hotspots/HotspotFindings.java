@@ -72,8 +72,8 @@ public class HotspotFindings {
             if (block.metrics().cognitive() > COMPLEX_METHOD_THRESHOLD) {
                 complex.add(block);
             }
-            block.getPmdViolations().forEach(violation -> violations.merge(violation, block, HotspotFindings::innermost));
             if (block instanceof JavaCodeBlockInfo java) {
+                java.getPmdViolations().forEach(violation -> violations.merge(violation, block, HotspotFindings::innermost));
                 java.getSpotbugs().forEach(bug -> bugs.merge(bug, block, HotspotFindings::innermost));
             }
         }
