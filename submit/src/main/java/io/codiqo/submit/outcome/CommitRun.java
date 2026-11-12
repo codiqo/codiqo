@@ -3,7 +3,7 @@ package io.codiqo.submit.outcome;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.time.Instant;
+import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -11,6 +11,7 @@ import java.util.Optional;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.apache.commons.lang3.time.StopWatch;
 
 import com.google.common.annotations.VisibleForTesting;
 
@@ -30,6 +31,7 @@ import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.AnalysisExcludeModel;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.HotspotSnapshotModel;
+import io.codiqo.client.model.TestRunModel;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.llm.review.ReviewTrace;
@@ -82,6 +84,8 @@ public final class CommitRun {
      * after it is attached to the halt's cause rather than halting the project a second time over that failure.
      */
     private Optional<CommitOutcome.Halted> halted = Optional.empty();
+    /** started once the commit is checked out, for the test-run record's time of the whole analysis */
+    private final StopWatch analysisClock = new StopWatch();
 
     /** @param output where the analysis is written before it is sent, so a submission the server refuses can be read */
     public CommitRun(
@@ -153,7 +157,7 @@ public final class CommitRun {
         }
     }
     private CommitOutcome analyse() throws Exception {
-        args.setAnalysisStartedAt(Instant.now());
+        analysisClock.start();
 
         /**
          * A commit that changes nothing analysable is excluded from git alone, before it is built: on a tree whose build
@@ -170,7 +174,8 @@ public final class CommitRun {
          * its source and its review, or excluded for its build. A compile the author broke is reviewed, since that review
          * is what scores it; one that failed on the environment starts none, so a build that cannot run costs no review.
          */
-        if (build.compile() instanceof BuildVerdict.Failed failed) {
+        BuildVerdict compiled = build.compile();
+        if (compiled instanceof BuildVerdict.Failed failed) {
             if (args.isSkipOnBuildFailure()) {
                 Optional<LocalReviewRun> review = Optional.empty();
                 if (failed.isAuthors()) {
@@ -202,15 +207,13 @@ public final class CommitRun {
             if (tested instanceof BuildVerdict.Failed failed) {
                 return degraded(failed, review);
             }
-            if (tested instanceof BuildVerdict.Passed passed) {
-                passed.getTestRun().ifPresent(this::hold);
-            }
-            return analyseInFull(review);
+            BuildVerdict.Passed passed = (BuildVerdict.Passed) tested;
+            return analyseInFull(review, passed.getTestRun().map(run -> testRun(run, ((BuildVerdict.Passed) compiled).getTook(), passed.getTook())));
         } finally {
             close(review);
         }
     }
-    private CommitOutcome analyseInFull(Optional<LocalReviewRun> review) throws Exception {
+    private CommitOutcome analyseInFull(Optional<LocalReviewRun> review, Optional<TestRunModel> testRun) throws Exception {
         try (ClassGraphSpec scan = build.projects()) {
             try (Fetch fetch = new Fetch(args); LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, args, fetch)) {
                 log.info(MemoryReport.snapshot("before language server load"));
@@ -238,6 +241,7 @@ public final class CommitRun {
                 SubmissionContext ctx = context(index, analysis);
                 build.populateProjectModel(ctx);
                 SubmissionAssembly.full(ctx, build::printSummary);
+                testRun.ifPresent(ctx.getSubmissionModel()::setTestRun);
                 output.accept(ctx);
 
                 CommitOutcome toReturn;
@@ -308,9 +312,13 @@ public final class CommitRun {
         return halt(ProjectHalts.reason(ReviewVerdict.REVIEW_FAILED + failed.getFailure(), failed.getProviderErrors()),
                 new IOException(ReviewVerdict.REVIEW_FAILED + failed.getReason(), failed.getError()));
     }
-    /** with the review's trace when the commit was reviewed: the review wrote it before it was joined */
+    /**
+     * With the review's trace when the commit was reviewed: the review wrote it before it was joined. The whole
+     * analysis's time is stamped right before the submission is sent, since the review, joined after the assembly, is
+     * usually the longest part of the analysis.
+     */
     private CommitOutcome submit(SubmissionContext ctx) throws Exception {
-        SubmissionAssembly.stampAnalysisTime(ctx);
+        Optional.ofNullable(ctx.getSubmissionModel().getTestRun()).ifPresent(run -> run.setAnalysisMs(analysisClock.getDuration().toMillis()));
         try (ProgressStage stage = ProgressStage.start(args, "submit")) {
             Optional<File> trace = Optional.empty();
             if (Objects.nonNull(ctx.getSubmissionModel().getLocalReview())) {
@@ -389,17 +397,29 @@ public final class CommitRun {
         return toReturn;
     }
     /**
-     * A run where most tests failed is reviewed and scored all the same, and the server holds its score until someone
-     * accepts it (TestRuns.heldReason): such a run cannot tell a commit that broke what its tests share from an
-     * environment the analysis cannot rebuild, and halting stopped the whole project on one commit's own defect.
+     * The commit's test-run record, with how long each build step ran when the build tool timed it. A run where most
+     * tests failed is reviewed and scored all the same, and the server holds its score until someone accepts it
+     * (TestRuns.heldReason): such a run cannot tell a commit that broke what its tests share from an environment the
+     * analysis cannot rebuild, and halting stopped the whole project on one commit's own defect.
      */
-    private void hold(TestRun testRun) {
-        log.info("test run: %d tests, %d failed, %d errors, %d skipped in %s", testRun.getTests(), testRun.getFailures(), testRun.getErrors(), testRun.getSkipped(), testRun.getTestTime());
-        TestRuns.heldReason(testRun, args.getTestFailureHoldShare(), args.getTestFailureHoldMinTests()).ifPresent(reason -> {
+    private TestRunModel testRun(TestRun run, Optional<Duration> compileTook, Optional<Duration> testTook) {
+        log.info("test run: %d tests, %d failed, %d errors, %d skipped in %s", run.getTests(), run.getFailures(), run.getErrors(), run.getSkipped(), run.getTestTime());
+        TestRunModel toReturn = new TestRunModel()
+                .tests(run.getTests())
+                .failures(run.getFailures())
+                .errors(run.getErrors())
+                .skipped(run.getSkipped())
+                .testTimeMs(run.getTestTime().toMillis())
+                .skippedTests(run.getSkippedTests());
+
+        compileTook.map(Duration::toMillis).ifPresent(toReturn::compilePhaseMs);
+        testTook.map(Duration::toMillis).ifPresent(toReturn::testPhaseMs);
+
+        TestRuns.heldReason(run, args.getTestFailureHoldShare(), args.getTestFailureHoldMinTests()).ifPresent(reason -> {
             log.warn("%s: the commit is scored and its score held until someone accepts it", reason);
-            args.setTestRunHeldReason(reason);
+            toReturn.heldReason(reason);
         });
-        args.setTestRun(testRun);
+        return toReturn;
     }
     /**
      * codiqo.skipOnBuildFailure=false asks for a hard error instead of an exclusion: a pipeline that opted out of

@@ -13,7 +13,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
@@ -49,7 +48,6 @@ import com.google.common.collect.Sets;
 
 import edu.umd.cs.findbugs.Priorities;
 import io.codiqo.api.code.CompilerFinding;
-import io.codiqo.api.testing.TestRun;
 import io.codiqo.util.DownloadFailedException;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
@@ -727,25 +725,6 @@ public class RunArgs {
      * failing does not exclude a commit that compiles, and these are those warnings, triaged like PMD and SpotBugs.
      */
     private transient List<CompilerFinding> compilerFindings = Lists.newArrayList();
-
-    /** The commit's test run, read from the JUnit reports once the build's test run finished; unset when it did not. */
-    @Nullable
-    private transient TestRun testRun;
-
-    /** Why the commit's score is held ({@link io.codiqo.api.testing.TestRuns#heldReason}), decided once where the test run is read; unset when it is not held. */
-    @Nullable
-    private transient String testRunHeldReason;
-
-    /** How long the build's compile run took, and its test run, for the submission's test-run record. */
-    @Nullable
-    private transient Duration compilePhaseTook;
-
-    @Nullable
-    private transient Duration testPhaseTook;
-
-    /** When the commit's analysis started, from its checkout, for the submission's overall analysis time. */
-    @Nullable
-    private transient Instant analysisStartedAt;
 
     /**
      * The share of executed tests that, failing or erroring, holds the commit's score out of every figure until someone

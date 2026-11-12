@@ -74,8 +74,8 @@ class BuildBackoffTimeoutTest {
             return new DefaultInvocationRequest();
         }
         @Override
-        protected BuildOutcome buildProject(RunArgs args, InvocationRequest request, ProjectBuildingRequest buildingRequest, BuildPhase phase, Duration timeout) {
-            return outcomes.removeFirst();
+        protected ForkRun buildProject(RunArgs args, InvocationRequest request, ProjectBuildingRequest buildingRequest, BuildPhase phase, Duration timeout) {
+            return new ForkRun(outcomes.removeFirst(), Duration.ZERO);
         }
     }
 }

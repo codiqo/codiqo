@@ -86,16 +86,16 @@ public final class GradleCommitBuild implements CommitBuild {
                 requireCoverage(request.getModules(), log);
             }
         }
-        return BuildVerdict.passed();
+        return BuildVerdict.passed(Optional.empty());
     }
     /** the tests ran in Gradle's build; their reports are read only when the run measures coverage */
     @Override
     public BuildVerdict test() {
         if (request.isIgnoreCoverage()) {
-            return BuildVerdict.passed();
+            return BuildVerdict.passed(Optional.empty());
         }
         List<File> reports = request.getModules().stream().flatMap(module -> module.getTestReportDirectories().stream()).map(File::new).distinct().toList();
-        return BuildVerdict.tested(TestRuns.read(reports, log));
+        return BuildVerdict.tested(TestRuns.read(reports, log), Optional.empty());
     }
     /**
      * The modules the collector read from Gradle's model before the build, as projects whose class output and classpath

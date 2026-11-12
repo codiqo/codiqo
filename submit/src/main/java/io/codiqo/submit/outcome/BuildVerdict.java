@@ -1,8 +1,10 @@
 package io.codiqo.submit.outcome;
 
+import java.time.Duration;
 import java.util.Optional;
 
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 
 import io.codiqo.api.testing.TestRun;
 import io.codiqo.client.model.AnalysisExcludeCategory;
@@ -14,17 +16,29 @@ import lombok.Value;
  * tests ran without the coverage agent, is no verdict on the commit: the build throws it, and the run halts.
  */
 public sealed interface BuildVerdict permits BuildVerdict.Passed, BuildVerdict.Failed {
-    static BuildVerdict passed() {
-        return new Passed(Optional.empty());
+    static BuildVerdict passed(Optional<Duration> took) {
+        return new Passed(Optional.empty(), took);
     }
-    static BuildVerdict tested(TestRun testRun) {
-        return new Passed(Optional.of(testRun));
+    static BuildVerdict tested(TestRun testRun, Optional<Duration> took) {
+        return new Passed(Optional.of(testRun), took);
     }
 
-    /** the test run the step produced, read only when the run measures coverage */
-    @Value
-    final class Passed implements BuildVerdict {
-        Optional<TestRun> testRun;
+    /**
+     * The test run the step produced, read only when the run measures coverage, and how long the step's build ran when
+     * the build tool timed it: Gradle built the commit before the analysis started, so it times nothing.
+     */
+    final class Passed extends ImmutablePair<Optional<TestRun>, Optional<Duration>> implements BuildVerdict {
+        private static final long serialVersionUID = 1L;
+
+        private Passed(Optional<TestRun> testRun, Optional<Duration> took) {
+            super(testRun, took);
+        }
+        public Optional<TestRun> getTestRun() {
+            return getLeft();
+        }
+        public Optional<Duration> getTook() {
+            return getRight();
+        }
     }
 
     /** the reason, category and detail are what the commit's exclusion, or its degraded submission, records */
