@@ -1572,6 +1572,16 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   multi-cause failure included), before the detail is cut to 4 KB. It cannot see a timeout, javac's own crash (only its
   console has it) or a crash of a javac run through `forkOptions.executable` (only an exit code), so with a review those
   are scored as the author's broken build; a failed `plugins {}` download fails before any task, so no analysis runs.
+  `GradleModelCollector` resolves each module's classpaths while the task graph is built, before any task, so it never
+  throws there: a main or test classpath that does not resolve reaches the analysis task as a failure of its own,
+  whether or not a task needed it, and skips the Test tasks, whose coverage nothing would read. A module
+  `codiqo.excludeProjects` leaves out reports none, though a task of it that fails still counts, as on Maven, whose
+  fork builds it; the other configurations only attribute dependencies, leniently, logging what they skip. Any Gradle
+  failure the collector meets is reported, never thrown (a dependency that fails its verification throws one of its
+  own). Gradle names the repositories it searched for a missing module only once per build, so a later not-found
+  report (`ModuleVersionNotFoundException`, `ArtifactNotFoundException`, read from the failure's class, never its text)
+  is the environment's when the build searched that module remotely; one missing from a flatDir or file repository
+  stays the author's. Each cause a resolve failure bundles, nested ones included, is classified on its own.
   `submit-commit-analysis` runs the
   same `CommitRun`, with Maven's two-phase fork and time-machine ladder behind `MavenCommitBuild`.
 - **Uncommitted changes are reviewed too** (`analyze-uncommitted-changes`, when it submits): `WorkingTreeCommit` makes a

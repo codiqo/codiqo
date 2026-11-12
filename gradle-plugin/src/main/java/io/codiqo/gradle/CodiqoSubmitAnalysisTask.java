@@ -8,6 +8,7 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -45,6 +46,7 @@ public abstract class CodiqoSubmitAnalysisTask extends DefaultTask {
 
     private AnalysisRequest request;
     private List<Task> scheduledTasks = List.of();
+    private Map<String, Throwable> unresolvedClasspaths = Map.of();
 
     @Inject
     protected abstract ExecOperations getExecOperations();
@@ -57,6 +59,9 @@ public abstract class CodiqoSubmitAnalysisTask extends DefaultTask {
     }
     public void setScheduledTasks(List<Task> scheduledTasks) {
         this.scheduledTasks = scheduledTasks;
+    }
+    public void setUnresolvedClasspaths(Map<String, Throwable> unresolvedClasspaths) {
+        this.unresolvedClasspaths = unresolvedClasspaths;
     }
     @TaskAction
     public void analyze() throws URISyntaxException, IOException {
@@ -78,7 +83,7 @@ public abstract class CodiqoSubmitAnalysisTask extends DefaultTask {
          * read here, not in the worker: task state lives in the daemon that ran the build, and by this point every
          * task the analysis is ordered after has finished
          */
-        BuildFailures.of(scheduledTasks).ifPresent(failure -> {
+        BuildFailures.of(scheduledTasks, unresolvedClasspaths).ifPresent(failure -> {
             getLogger().warn("codiqo: the build failed ({}{}), so the commit cannot be scored in full", failure.getCategory(), failure.getCompilerCrash().map(line -> ", the compiler crashed").orElse(StringUtils.EMPTY));
             payload.put("buildFailureDetail", failure.getDetail());
             payload.put("buildFailureCategory", failure.getCategory().getValue());

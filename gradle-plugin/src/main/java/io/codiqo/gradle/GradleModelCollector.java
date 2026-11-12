@@ -6,6 +6,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
@@ -17,6 +18,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.gradle.api.GradleException;
 import org.gradle.api.Project;
+import org.gradle.api.artifacts.ArtifactCollection;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.ResolveException;
 import org.gradle.api.artifacts.component.ComponentIdentifier;
@@ -25,14 +27,17 @@ import org.gradle.api.artifacts.result.DependencyResult;
 import org.gradle.api.artifacts.result.ResolvedArtifactResult;
 import org.gradle.api.artifacts.result.ResolvedDependencyResult;
 import org.gradle.api.artifacts.result.ResolvedVariantResult;
+import org.gradle.api.file.FileCollection;
 import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.SourceSetContainer;
 import org.gradle.api.tasks.testing.Test;
 
 import com.google.common.base.Joiner;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 
+import io.codiqo.api.RunArgs;
 import io.codiqo.gradle.model.AnalysisRequest;
 import io.codiqo.gradle.model.DependencyData;
 import io.codiqo.gradle.model.ModuleData;
@@ -53,7 +58,8 @@ public class GradleModelCollector {
     private static final String VERSIONS_RESOURCE = "codiqo.versions";
     private static final String LOMBOK_MODULE = "org.projectlombok:lombok";
 
-    public AnalysisRequest collect(Project root, CodiqoExtension ext) {
+    /** @param unresolved receives every module classpath that could not be resolved, by its configuration's path */
+    public AnalysisRequest collect(Project root, CodiqoExtension ext, Map<String, Throwable> unresolved) {
         AnalysisRequest request = new AnalysisRequest();
         request.setRootDir(root.getProjectDir().getAbsolutePath());
         request.setRootCode(root.getGroup() + ":" + root.getName());
@@ -126,8 +132,15 @@ public class GradleModelCollector {
         request.setImportTimeoutMinutes(longProp(root, "codiqo.importTimeoutMinutes", ext.getImportTimeoutMinutes()));
         request.setLspQueryTimeoutSeconds(longProp(root, "codiqo.lspQueryTimeoutSeconds", ext.getLspQueryTimeoutSeconds()));
 
+        RunArgs exclusions = new RunArgs();
+        exclusions.setExcludeProjects(request.getExcludeProjects());
         for (Project project : root.getAllprojects()) {
-            collectModule(project).ifPresent(request.getModules()::add);
+            Map<String, Throwable> moduleUnresolved = Maps.newLinkedHashMap();
+            collectModule(project, moduleUnresolved).ifPresent(request.getModules()::add);
+            /** a module the run excludes is left out of the analysis, so a classpath of its that does not resolve fails nothing */
+            if (BooleanUtils.negate(exclusions.isExcludedProject(String.valueOf(project.getGroup()), project.getName()))) {
+                unresolved.putAll(moduleUnresolved);
+            }
         }
         return request;
     }
@@ -136,7 +149,7 @@ public class GradleModelCollector {
      * reactor.getModules()) because an ancestor whose directory contains a subproject's sources would otherwise
      * become that file's owner through RunArgs.owner()'s containment lookup.
      */
-    private static Optional<ModuleData> collectModule(Project project) {
+    private static Optional<ModuleData> collectModule(Project project, Map<String, Throwable> unresolved) {
         if (CollectionUtils.isNotEmpty(project.getSubprojects())) {
             return Optional.empty();
         }
@@ -164,7 +177,7 @@ public class GradleModelCollector {
         for (File dir : main.getJava().getSrcDirs()) {
             toReturn.getCompileSourceRoots().add(dir.getAbsolutePath());
         }
-        for (File file : main.getCompileClasspath().getFiles()) {
+        for (File file : files(project, main.getCompileClasspath(), main.getCompileClasspathConfigurationName(), unresolved)) {
             toReturn.getCompileClasspathElements().add(file.getAbsolutePath());
         }
 
@@ -173,7 +186,7 @@ public class GradleModelCollector {
             for (File dir : test.getJava().getSrcDirs()) {
                 toReturn.getTestCompileSourceRoots().add(dir.getAbsolutePath());
             }
-            for (File file : test.getRuntimeClasspath().getFiles()) {
+            for (File file : files(project, test.getRuntimeClasspath(), test.getRuntimeClasspathConfigurationName(), unresolved)) {
                 toReturn.getTestClasspathElements().add(file.getAbsolutePath());
             }
         }
@@ -188,6 +201,22 @@ public class GradleModelCollector {
 
         collectDependencies(project, toReturn);
         return Optional.of(toReturn);
+    }
+    /**
+     * A classpath's files, or none when it does not resolve, with the failure recorded. The model is collected while the
+     * task graph is built, before any task runs, so a failure must not be thrown here: it would fail the whole build before
+     * codiqoSubmitAnalysis runs, and the commit would be neither excluded nor halted, so every scheduled run would try it
+     * again. The analysis task reports it as the build's failure (BuildFailures), and a commit with a failed build is not
+     * analysed in full, the only reader of these files. Any of Gradle's failures, not only a ResolveException: a
+     * dependency that fails its verification (verification-metadata.xml) throws a GradleException of its own.
+     */
+    private static Set<File> files(Project project, FileCollection classpath, String configurationName, Map<String, Throwable> unresolved) {
+        try {
+            return classpath.getFiles();
+        } catch (GradleException err) {
+            unresolved.put(project.absoluteProjectPath(configurationName), err);
+            return Set.of();
+        }
     }
     /**
      * The ClassGraph scan uses compile and test classpaths alike, so coordinates are resolved for all of them —
@@ -213,16 +242,30 @@ public class GradleModelCollector {
                             direct.add(resolved.getSelected().getId());
                             resolved.getResolvedVariant().getExternalVariant().map(ResolvedVariantResult::getOwner).ifPresent(direct::add);
                         });
-                for (ResolvedArtifactResult artifact : config.getIncoming().getArtifacts()) {
-                    if (artifact.getId().getComponentIdentifier() instanceof ModuleComponentIdentifier component) {
-                        String filePath = artifact.getFile().getAbsolutePath();
-                        if (seenFiles.add(filePath)) {
-                            DependencyData dependency = dependency(component, filePath);
-                            dependency.setScope(configName);
-                            dependency.setTransitive(BooleanUtils.negate(direct.contains(component)));
-                            module.getDependencies().add(dependency);
+                /**
+                 * Leniently, for the same reason files() does not throw: the attribution skips what does not resolve, and a
+                 * main or test classpath that does not resolve is reported there. What is skipped is logged, never dropped
+                 * silently; Gradle throws even from a lenient view for a dependency that fails its verification.
+                 */
+                ArtifactCollection artifacts = config.getIncoming().artifactView(view -> view.setLenient(true)).getArtifacts();
+                try {
+                    for (ResolvedArtifactResult artifact : artifacts) {
+                        if (artifact.getId().getComponentIdentifier() instanceof ModuleComponentIdentifier component) {
+                            String filePath = artifact.getFile().getAbsolutePath();
+                            if (seenFiles.add(filePath)) {
+                                DependencyData dependency = dependency(component, filePath);
+                                dependency.setScope(configName);
+                                dependency.setTransitive(BooleanUtils.negate(direct.contains(component)));
+                                module.getDependencies().add(dependency);
+                            }
                         }
                     }
+                    if (CollectionUtils.isNotEmpty(artifacts.getFailures())) {
+                        project.getLogger().warn("codiqo: {} dependencies of {} did not resolve and are not attributed: {}",
+                                artifacts.getFailures().size(), project.absoluteProjectPath(configName), ExceptionUtils.getRootCauseMessage(artifacts.getFailures().iterator().next()));
+                    }
+                } catch (GradleException err) {
+                    project.getLogger().warn("codiqo: the dependencies of {} are not attributed: {}", project.absoluteProjectPath(configName), ExceptionUtils.getRootCauseMessage(err));
                 }
             }
         }
