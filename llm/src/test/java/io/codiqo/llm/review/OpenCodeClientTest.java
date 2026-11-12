@@ -219,8 +219,7 @@ class OpenCodeClientTest {
         if (route.equals("GET /api/session/" + CONTINUED + "/message")) {
             return continuedReviewer(query);
         }
-        Matcher traced = TRACED_MESSAGES.matcher(route);
-        if (BooleanUtils.and(new boolean[] { traced.matches(), BooleanUtils.negate(Strings.CS.contains(query, "type=")) })) {
+        if (TRACED_MESSAGES.matcher(route).matches()) {
             return tracePage(query);
         }
         Matcher session = TRACED_SESSION.matcher(route);
@@ -233,7 +232,6 @@ class OpenCodeClientTest {
             case "POST /api/session/" + SESSION + "/prompt" -> data(JSON.objectNode().put("id", "msg_1"));
             case "POST /api/session/" + SESSION + "/fork" -> data(JSON.objectNode().put("id", "ses_fork"));
             case "POST /api/experimental/session/" + SESSION + "/wait" -> StringUtils.EMPTY;
-            case "GET /api/session/" + SESSION + "/message" -> messagePage(query);
             case "GET /api/session/" + SESSION -> data(session(SESSION, OpenCodeReviewConfig.COORDINATOR, "coordinator-model", 10, 2, 1, 100));
             case "GET /api/session" -> query.contains("parentID=" + SESSION)
                     ? page(null, List.of(
@@ -242,22 +240,6 @@ class OpenCodeClientTest {
                     : page(null, List.of());
             default -> throw new IllegalArgumentException("unexpected route " + route);
         };
-    }
-    /**
-     * newest first and paged, as OpenCode 2.0.20 serves it: the answer is on the second page, after a text-less step.
-     * The cursor carries the order and OpenCode refuses a page that names it again, but the type filter goes with every
-     * page.
-     */
-    private static String messagePage(String query) {
-        if (BooleanUtils.and(new boolean[] { query.contains("type=assistant"), query.contains("cursor=page-2"), BooleanUtils.negate(query.contains("order=")) })) {
-            ObjectNode answer = assistant(200);
-            answer.putArray("content").add(part("reasoning", "thinking")).add(part("text", EMPTY_FINDINGS));
-            return page(null, List.of(answer, assistant(100).put("text", "I will start by listing the changed files.")));
-        }
-        if (BooleanUtils.and(new boolean[] { query.contains("type=assistant"), query.contains("order=desc"), BooleanUtils.negate(query.contains("cursor=")) })) {
-            return page("page-2", List.of(assistant(300).put("text", StringUtils.EMPTY)));
-        }
-        throw new IllegalArgumentException("unexpected message query " + query);
     }
     /** a tool call whose output is longer than the trace keeps, then a text answer, then the empty page after the last */
     private static String tracePage(String query) {

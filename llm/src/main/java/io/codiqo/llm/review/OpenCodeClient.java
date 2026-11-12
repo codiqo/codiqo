@@ -41,7 +41,6 @@ import tools.jackson.databind.node.ObjectNode;
  * which for a coordinator includes every foreground sub-agent it started; a pinned OpenCode version keeps it stable.
  */
 public class OpenCodeClient implements Closeable {
-    public static final String ORDER_NEWEST_FIRST = "desc";
     public static final String ORDER_OLDEST_FIRST = "asc";
     public static final String USER = "opencode";
     public static final MediaType JSON = MediaType.get(HttpHeaderValues.APPLICATION_JSON.toString());
@@ -129,7 +128,7 @@ public class OpenCodeClient implements Closeable {
         List<JsonNode> toReturn = Lists.newArrayList();
         Optional<String> cursor = Optional.empty();
         do {
-            JsonNode page = messagePage(sessionId, Optional.empty(), ORDER_OLDEST_FIRST, cursor);
+            JsonNode page = messagePage(sessionId, cursor);
             page.path("data").forEach(toReturn::add);
             cursor = nextPage(page);
         } while (cursor.isPresent());
@@ -200,17 +199,15 @@ public class OpenCodeClient implements Closeable {
         throw new IOException(response.request().method() + " " + response.request().url().encodedPath() + " failed with " + response.code() + ": " + text);
     }
     /**
-     * One page of a session's messages, as OpenCode 2.0.20 serves them: the first page names the order and a cursor
-     * carries it, so a later page that names it again is refused ("Cursor cannot be combined with order"), while a
-     * filter such as {@code type} is not carried and goes with every page.
+     * One page of a session's messages, oldest first, as OpenCode 2.0.20 serves them: the first page names the order and
+     * a cursor carries it, so a later page that names it again is refused ("Cursor cannot be combined with order").
      */
-    private JsonNode messagePage(String sessionId, Optional<String> type, String order, Optional<String> cursor) throws IOException {
+    private JsonNode messagePage(String sessionId, Optional<String> cursor) throws IOException {
         HttpUrl.Builder url = path("api", "session", sessionId, "message").newBuilder().addQueryParameter("limit", Integer.toString(PAGE));
-        type.ifPresent(value -> url.addQueryParameter("type", value));
         if (cursor.isPresent()) {
             url.addQueryParameter("cursor", cursor.get());
         } else {
-            url.addQueryParameter("order", order);
+            url.addQueryParameter("order", ORDER_OLDEST_FIRST);
         }
         return get(url.build());
     }

@@ -8,7 +8,6 @@ import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
-import org.apache.commons.collections4.CollectionUtils;
 import org.eclipse.collections.api.map.primitive.MutableIntObjectMap;
 import org.eclipse.collections.impl.map.mutable.primitive.IntObjectHashMap;
 import org.jacoco.core.analysis.ILine;
@@ -21,7 +20,6 @@ import com.google.common.collect.Lists;
 import edu.umd.cs.findbugs.BugInstance;
 import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.coverage.CodeBlockCoverage;
-import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.metrics.CodeBlockMetrics;
 import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
@@ -60,8 +58,6 @@ public abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInf
     private List<BugInstance> spotbugs = Lists.newArrayList();
     @Builder.Default
     private MutableIntObjectMap<ILine> lineCoverage = new IntObjectHashMap<>();
-    @Builder.Default
-    private Optional<AffectedSymbolInfo> affectedSymbol = Optional.empty();
 
     private final Supplier<CodeBlockCoverage> coverage = Suppliers.memoize(() -> CodeBlockCoverage.from(lineCoverage));
     private final Supplier<CodeBlockMetrics> metrics = Suppliers.memoize(() -> {
@@ -155,10 +151,6 @@ public abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInf
     });
 
     @Override
-    public void accept(AffectedSymbolInfo info) {
-        this.affectedSymbol = Optional.of(info);
-    }
-    @Override
     public List<String> getModifiers() {
         return node.getModifiers().getEffectiveModifiers().stream().map(JModifier::getToken).collect(Collectors.toList());
     }
@@ -203,17 +195,9 @@ public abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInf
         return node.getArity();
     }
     @Override
-    public boolean hasMethodCalls() {
-        return CollectionUtils.isNotEmpty(invocations);
-    }
-    @Override
     public boolean isTrivial() {
         CodeBlockMetrics blockMetrics = metrics.get();
         return blockMetrics.ncss() <= TRIVIAL_NCSS_MAX && blockMetrics.directInvocationCount() == 0 && blockMetrics.cyclo() <= TRIVIAL_CYCLO_MAX;
-    }
-    @Override
-    public Optional<AffectedSymbolInfo> affectedSymbol() {
-        return affectedSymbol;
     }
     @Override
     public CodeBlockMetrics metrics() {

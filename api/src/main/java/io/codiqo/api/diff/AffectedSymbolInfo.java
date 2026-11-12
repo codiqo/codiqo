@@ -4,7 +4,6 @@ import java.io.File;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
-import java.util.function.Consumer;
 
 import org.eclipse.lsp4j.CallHierarchyIncomingCall;
 import org.eclipse.lsp4j.SymbolKind;
@@ -24,12 +23,5 @@ public interface AffectedSymbolInfo {
     List<CallHierarchyIncomingCall> getIncomingCalls();
     default List<SymbolTag> getTags() {
         return Collections.emptyList();
-    }
-    default void acceptBlockIfPresent(Class<?> type, Consumer<CodeBlockInfo> consumer) {
-        block().ifPresent(t -> {
-            if (type.isInstance(t)) {
-                consumer.accept(t);
-            }
-        });
     }
 }
