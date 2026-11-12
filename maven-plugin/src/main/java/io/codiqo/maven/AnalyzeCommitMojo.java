@@ -368,7 +368,8 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
              */
         }
     }
-    private BuildOutcome buildWithBackoff(RunArgs args, ProjectBuildingRequest buildingReq) throws Exception {
+    @VisibleForTesting
+    protected BuildOutcome buildWithBackoff(RunArgs args, ProjectBuildingRequest buildingReq) throws Exception {
         Instant commitTimestamp = TimeMachineSupport.resolveCommitTimestamp(args);
         List<String> attemptFailures = Lists.newArrayList();
         BuildOutcome.Skipped firstSkipped = null;
@@ -418,9 +419,11 @@ public class AnalyzeCommitMojo extends AbstractAnalyzeMojo {
                     /**
                      * the first attempt is the commit-faithful build, so its failure describes the commit's true
                      * state; later attempts fail against increasingly anachronistic picks. Headline the first, and
-                     * keep the full ladder in the detail.
+                     * keep the full ladder in the detail. A last attempt that timed out says so, as a timeout at any
+                     * other rung does: without it the timeout read as the author's broken build, whose commit is
+                     * reviewed and scored as degraded, where a build that ran out of time is the environment's.
                      */
-                    return new BuildOutcome.Skipped(firstSkipped.getReason(), firstSkipped.getCategory(), attemptHistoryDetail(attemptFailures));
+                    return new BuildOutcome.Skipped(firstSkipped.getReason(), firstSkipped.getCategory(), attemptHistoryDetail(attemptFailures), lastSkipped.isTimedOut());
                 }
                 return latest;
             }
