@@ -103,39 +103,25 @@ import com.google.common.collect.Sets;
 
 import io.codiqo.api.BuildTool;
 import io.codiqo.api.ClassGraphSpec;
-import io.codiqo.api.IndexingSummary;
-import io.codiqo.api.LanguageProcessors;
 import io.codiqo.api.MavenProjectSpec;
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.code.CompilerFinding;
-import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.Log;
-import io.codiqo.api.logging.LogFactory;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.ClientInfoModel;
 import io.codiqo.core.ClassGraphWrapper;
-import io.codiqo.core.DefaultLanguageProcessors;
-import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.maven.coverage.CoverageInjectorConfig;
 import io.codiqo.maven.eventspy.BuildFailureConfig;
 import io.codiqo.maven.eventspy.BuildProgressConfig;
 import io.codiqo.maven.logging.MavenLogFactory;
 import io.codiqo.maven.populator.ProjectModelPopulator;
-import io.codiqo.maven.populator.SubmissionSummaryPrinter;
 import io.codiqo.maven.surefire.SurefireInjectorConfig;
 import io.codiqo.maven.timemachine.TimeMachineConfig;
 import io.codiqo.submit.CommitBuildFailedException;
-import io.codiqo.submit.CommitExclusions;
-import io.codiqo.submit.CommitExclusions.Exclusion;
-import io.codiqo.submit.OutputSerializer;
 import io.codiqo.submit.SourceHiding;
 import io.codiqo.util.Env;
-import io.codiqo.submit.SubmissionAssembly;
-import io.codiqo.submit.SubmissionContext;
-import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
-import io.codiqo.util.MemoryReport;
 import io.codiqo.util.ProgressStage;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
@@ -1386,70 +1372,6 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             args.setRemoteUrls(JGit.detectRemoteUrls(args.getGit()));
         }
     }
-    /** the working tree's analysis, as analyze-uncommitted-changes runs it; a commit's run is {@link io.codiqo.submit.outcome.CommitRun} */
-    protected void doExecute(RunArgs args) throws Exception {
-        Optional<SubmissionContext> analysed = doAnalyze(args);
-        if (analysed.isPresent()) {
-            doSubmit(analysed.get());
-        }
-    }
-    protected Optional<SubmissionContext> doAnalyze(RunArgs args) throws Exception {
-        purgeNonJavaSourceJars(args);
-
-        LogFactory logFactory = new MavenLogFactory(getLog());
-        Path workTree = args.getGit().getWorkTree().toPath().normalize();
-        try (Fetch fetch = new Fetch(args)) {
-            try (LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, args, fetch)) {
-                getLog().info(MemoryReport.snapshot("before language server load"));
-                registry.load();
-                getLog().info(MemoryReport.snapshot("after language server load"));
-                CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
-
-                Optional<Exclusion> excluded = CommitExclusions.afterDelta(analysis, registry.extensions());
-                if (excluded.isEmpty()) {
-                    IndexingSummary index = registry.index(analysis);
-                    getLog().info(MemoryReport.snapshot("after index"));
-                    registry.identifyAffectedSymbols(index, analysis);
-                    getLog().info(MemoryReport.snapshot("after identify symbols"));
-                    /**
-                     * A capture failure here comes after a build that passed: a module whose tests ran produced no
-                     * JaCoCo data (codiqo.failOnUninstrumentedModule), or the coverage it produced predates the sources.
-                     * Both are a broken measurement on codiqo's side, never the author's, so the run fails and is
-                     * investigated. It used to be scored as the author's BUILD_FAILURE in degraded mode: a
-                     * production commit whose agent did not attach to eight modules was scored with penalties
-                     * only. Failing also cancels the commit's local review, which the checkout's finally block closes.
-                     */
-                    registry.collectAndCapture(index, analysis);
-                    getLog().info(MemoryReport.snapshot("after collect capture"));
-
-                    SubmissionContext ctx = SubmissionContext.create(
-                            args,
-                            index,
-                            analysis,
-                            workTree,
-                            logFactory,
-                            project.getGroupId() + ":" + project.getArtifactId(),
-                            project.getName(),
-                            clientInfo());
-                    new ProjectModelPopulator(getLog()).accept(ctx);
-                    /**
-                     * The summary is printed from the hook between the populators and the instruction read, because
-                     * reading the instruction files throws when they exceed the budget. Printed after that read, a
-                     * commit that fails over budget would leave no submission summary in the log to diagnose it by.
-                     */
-                    SubmissionAssembly.full(ctx, new SubmissionSummaryPrinter(getLog()));
-
-                    new OutputSerializer(preferYaml, logFactory.getLogger(OutputSerializer.class)).accept(ctx);
-                    return Optional.of(ctx);
-                }
-                getLog().warn(String.format("nothing to submit: %s", excluded.get().getReason()));
-            }
-        }
-        return Optional.empty();
-    }
-    protected void doSubmit(SubmissionContext ctx) throws Exception {
-        getLog().debug("analysis not submitted: this goal does not submit");
-    }
     /**
      * For a goal that forks the commit's build. Without the agent no module records coverage, so a run that requires it
      * would build, test and review the commit and only then fail at coverage capture. Called before the review starts,
@@ -1463,6 +1385,8 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                     JACOCO_AGENT_CLASSIFIER));
         }
     }
+    /** the goal's work, once the run's settings are in place ({@link #doPrepare}) */
+    protected abstract void doExecute(RunArgs args) throws Exception;
     protected ClientInfoModel clientInfo() {
         ClientInfoModel toReturn = new ClientInfoModel();
         toReturn.setBuildTool(ClientInfoModel.BuildToolEnum.MAVEN);

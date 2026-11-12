@@ -44,7 +44,7 @@ class BuildBackoffTimeoutTest {
                 new AbstractAnalyzeMojo.BuildOutcome.Skipped("unresolved dependency", AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, "could not resolve"),
                 new AbstractAnalyzeMojo.BuildOutcome.Skipped("build failed", AnalysisExcludeCategory.BUILD_FAILURE, "build timed out", true)));
 
-        AbstractAnalyzeMojo.BuildOutcome.Skipped skipped = (AbstractAnalyzeMojo.BuildOutcome.Skipped) new MavenCommitBuild(mojo, args()).buildWithBackoff(null);
+        AbstractAnalyzeMojo.BuildOutcome.Skipped skipped = (AbstractAnalyzeMojo.BuildOutcome.Skipped) mojo.new MavenCommitBuild(args()).buildWithBackoff(null);
 
         assertTrue(skipped.isTimedOut(), "the latest-snapshots attempt timed out");
         assertEquals(AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, skipped.getCategory(), "the commit-faithful attempt is still the headline");

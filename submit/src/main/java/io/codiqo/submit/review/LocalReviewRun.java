@@ -87,8 +87,8 @@ public final class LocalReviewRun implements AutoCloseable {
     }
     /**
      * Hands the review the analysis's units and findings, waits for it and, when it succeeded, attaches its judgment to
-     * the submission; returns how it ended, and a review that failed attaches nothing ({@link #exclusionOf} says what
-     * that does to the commit). The review is mapped before anything is attached, and its labels are applied all or
+     * the submission; returns how it ended, and a review that failed attaches nothing (the commit's run,
+     * {@link io.codiqo.submit.outcome.CommitRun}, decides what that does to the commit). The review is mapped before anything is attached, and its labels are applied all or
      * nothing, so a failure while mapping leaves no half-attached review behind.
      */
     public ReviewVerdict attachTo(SubmissionContext ctx) {

@@ -55,12 +55,13 @@ import io.netty.handler.codec.http.HttpResponseStatus;
 /**
  * One commit's run, from the commit as its build tool hands it over to its commit outcome. Maven and Gradle analyse a
  * commit by these rules, so a commit cannot end one way on one build tool and another way on the other: what differs
- * between them, how the commit is built and what its projects are, sits behind {@link CommitBuild}, and every call to
- * Codiqo behind {@link CodiqoServer}.
+ * between them, how the commit is checked out and built and what its projects are, sits behind {@link CommitBuild}, and
+ * every call to Codiqo behind {@link CodiqoServer}.
  *
- * <p>{@link #admit} decides from git alone, before the commit is checked out or built. {@link #run} takes the checked-out
- * commit to its outcome and halts the project on a failure on Codiqo's or the model provider's side: such a run submits
- * nothing, so the next scheduled run would analyse the same commit and pay for its review again, every hour.
+ * <p>{@link #admit} decides from git alone, before the commit is checked out or built. {@link #run} checks the commit out
+ * ({@link CommitBuild#checkout}) and takes it to its outcome, and halts the project on a failure on Codiqo's or the model
+ * provider's side: such a run submits nothing, so the next scheduled run would analyse the same commit and pay for its
+ * review again, every hour.
  */
 public final class CommitRun {
     private final RunArgs args;
@@ -192,11 +193,14 @@ public final class CommitRun {
         Optional<LocalReviewRun> review = startReview();
         try {
             BuildVerdict tested = build.test();
+            /**
+             * No skipOnBuildFailure check here: Maven's test fork raises an untolerated failure itself, as it does for its
+             * compile, and what fails after a test run that passed, the host building the module models, was always
+             * degraded or excluded whatever the setting. Refused here, such a commit was deferred and rebuilt, and
+             * its review paid for again, on every scheduled run.
+             */
             if (tested instanceof BuildVerdict.Failed failed) {
-                if (args.isSkipOnBuildFailure()) {
-                    return degraded(failed, review);
-                }
-                throw untolerated(failed);
+                return degraded(failed, review);
             }
             if (tested instanceof BuildVerdict.Passed passed) {
                 passed.getTestRun().ifPresent(this::hold);
@@ -399,9 +403,8 @@ public final class CommitRun {
     }
     /**
      * codiqo.skipOnBuildFailure=false asks for a hard error instead of an exclusion: a pipeline that opted out of
-     * tolerating build failures does not go green on one. A compile that failed raises it before any review starts; a
-     * test run that failed, beside the review it started. It is the author's failure and halts nothing: halting would
-     * hold the commit that fixes it.
+     * tolerating build failures does not go green on one. A compile that failed raises it before any review starts. It
+     * is the author's failure and halts nothing: halting would hold the commit that fixes it.
      */
     private CommitBuildFailedException untolerated(BuildVerdict.Failed failed) {
         return new CommitBuildFailedException(String.format("commit %s: %s, and codiqo.skipOnBuildFailure is false%n%s",

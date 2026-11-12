@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 
 import org.junit.jupiter.api.Test;
@@ -15,7 +16,12 @@ import org.slf4j.event.Level;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
+import io.codiqo.client.model.AnalysisBuildFailureModel;
+import io.codiqo.client.model.AnalysisExcludeCategory;
+import io.codiqo.client.model.AnalysisExcludeModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
+import io.codiqo.client.model.FileChangeModel;
+import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.llm.review.ReviewVerdict;
 import io.codiqo.submit.SubmissionContext;
 
@@ -27,6 +33,7 @@ import io.codiqo.submit.SubmissionContext;
 class LocalReviewVerdictTest {
     private static final String COMMIT = "1a2b3c4d";
     private static final Log LOG = new NoopLog();
+    private static final String PROVIDER_ERRORS = "the LLM provider answered 429 12 times during the review";
     private static final LogFactory LOGS = clazz -> LOG;
 
     /** the project's tag vocabulary is fetched on the review's thread, before a reviewer exists to settle anything */
@@ -75,6 +82,34 @@ class LocalReviewVerdictTest {
         } finally {
             release.countDown();
         }
+    }
+    /** a built commit whose review failed on it is excluded for the review, with the failure's stack as the detail */
+    @Test
+    void aReviewThatFailedOnABuiltCommitExcludesItForTheReview() {
+        ReviewVerdict.CommitFailure failed = new ReviewVerdict.CommitFailure(new IOException("the coordinator started no reviewer"), Optional.of(PROVIDER_ERRORS));
+
+        AnalysisExcludeModel excluded = LocalReviewRun.exclusion(failed, context(), LOG);
+
+        assertEquals(AnalysisExcludeCategory.LOCAL_REVIEW_FAILURE, excluded.getCategory());
+        assertEquals("local review failed: the coordinator started no reviewer; " + PROVIDER_ERRORS, excluded.getReason());
+        assertTrue(excluded.getDetail().contains("the coordinator started no reviewer"), "the stack trace is the detail");
+        assertEquals(List.of(), excluded.getFiles());
+    }
+    /** an operator's re-inclusion of a build failure survives a re-analysis only under that category */
+    @Test
+    void aBuildFailedCommitWhoseReviewFailedOnItKeepsItsBuildFailureWithItsFilesAndMetrics() {
+        SubmissionContext ctx = context();
+        ctx.getSubmissionModel().setBuildFailure(new AnalysisBuildFailureModel().reason("[ERROR] COMPILATION ERROR").category(AnalysisExcludeCategory.BUILD_FAILURE).detail("cannot find symbol"));
+        ctx.getSubmissionModel().setFiles(List.of(new FileChangeModel().path("src/A.java")));
+        ctx.getSubmissionModel().setProjectMetrics(new ProjectMetricsModel());
+
+        AnalysisExcludeModel excluded = LocalReviewRun.exclusion(new ReviewVerdict.CommitFailure(new IOException("refused")), ctx, LOG);
+
+        assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, excluded.getCategory());
+        assertEquals("[ERROR] COMPILATION ERROR", excluded.getReason());
+        assertEquals("cannot find symbol", excluded.getDetail());
+        assertEquals(ctx.getSubmissionModel().getFiles(), excluded.getFiles());
+        assertEquals(ctx.getSubmissionModel().getProjectMetrics(), excluded.getProjectMetrics(), "the degraded submission's driver-score statistics go with it");
     }
     private static SubmissionContext context() {
         RunArgs args = new RunArgs();

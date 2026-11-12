@@ -4,6 +4,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.maven.plugin.MojoFailureException;
@@ -13,21 +14,33 @@ import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
 
 import io.codiqo.api.ClassGraphSpec;
+import io.codiqo.api.IndexingSummary;
+import io.codiqo.api.LanguageProcessors;
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.diff.CommitAnalysis;
+import io.codiqo.api.logging.LogFactory;
 import io.codiqo.client.model.AnalysisAcceptedModel;
 import io.codiqo.client.model.AnalysisResultModel;
 import io.codiqo.core.DefaultLanguageProcessors;
+import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.llm.review.ReviewVerdict;
 import io.codiqo.maven.auth.MavenCredentials;
+import io.codiqo.maven.logging.MavenLogFactory;
 import io.codiqo.maven.logging.MavenMessageReporter;
+import io.codiqo.maven.populator.ProjectModelPopulator;
+import io.codiqo.maven.populator.SubmissionSummaryPrinter;
 import io.codiqo.submit.CodiqoServer;
+import io.codiqo.submit.CommitExclusions.Exclusion;
 import io.codiqo.submit.CommitExclusions;
 import io.codiqo.submit.HttpCodiqoServer;
+import io.codiqo.submit.OutputSerializer;
+import io.codiqo.submit.SubmissionAssembly;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.submit.auth.CodiqoCredential;
-import io.codiqo.util.JGit;
 import io.codiqo.submit.review.LocalReviewRun;
-import io.codiqo.maven.logging.MavenLogFactory;
+import io.codiqo.util.Fetch;
+import io.codiqo.util.JGit;
+import io.codiqo.util.MemoryReport;
 
 /**
  * Scores the working tree as if it were a commit.
@@ -110,7 +123,10 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
         DefaultLanguageProcessors.requireRuntime(args);
         try (ClassGraphSpec scan = scanProjects(args, reactors)) {
             startReview(args);
-            super.doExecute(args);
+            Optional<SubmissionContext> analysed = analyse(args);
+            if (analysed.isPresent()) {
+                submit(analysed.get());
+            }
         } finally {
             if (Objects.nonNull(reviewRun)) {
                 reviewRun.close();
@@ -155,8 +171,56 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
         }
         return credential;
     }
-    @Override
-    protected void doSubmit(SubmissionContext ctx) throws Exception {
+    /**
+     * The working tree's full analysis, empty when it changes nothing analysable. The host build already resolved the
+     * reactor, so nothing is built or forked here.
+     */
+    private Optional<SubmissionContext> analyse(RunArgs args) throws Exception {
+        purgeNonJavaSourceJars(args);
+
+        LogFactory logFactory = new MavenLogFactory(getLog());
+        Path workTree = args.getGit().getWorkTree().toPath().normalize();
+        try (Fetch fetch = new Fetch(args)) {
+            try (LanguageProcessors registry = new DefaultLanguageProcessors(logFactory, args, fetch)) {
+                getLog().info(MemoryReport.snapshot("before language server load"));
+                registry.load();
+                getLog().info(MemoryReport.snapshot("after language server load"));
+                CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
+
+                Optional<Exclusion> excluded = CommitExclusions.afterDelta(analysis, registry.extensions());
+                if (excluded.isEmpty()) {
+                    IndexingSummary index = registry.index(analysis);
+                    getLog().info(MemoryReport.snapshot("after index"));
+                    registry.identifyAffectedSymbols(index, analysis);
+                    getLog().info(MemoryReport.snapshot("after identify symbols"));
+                    /**
+                     * A capture failure here is a broken measurement on Codiqo's side, never the developer's, so the
+                     * goal fails; doExecute closes the review it started.
+                     */
+                    registry.collectAndCapture(index, analysis);
+                    getLog().info(MemoryReport.snapshot("after collect capture"));
+
+                    SubmissionContext ctx = SubmissionContext.create(
+                            args,
+                            index,
+                            analysis,
+                            workTree,
+                            logFactory,
+                            project.getGroupId() + ":" + project.getArtifactId(),
+                            project.getName(),
+                            clientInfo());
+                    new ProjectModelPopulator(getLog()).accept(ctx);
+                    SubmissionAssembly.full(ctx, new SubmissionSummaryPrinter(getLog()));
+
+                    new OutputSerializer(preferYaml, logFactory.getLogger(OutputSerializer.class)).accept(ctx);
+                    return Optional.of(ctx);
+                }
+                getLog().warn(String.format("nothing to submit: %s", excluded.get().getReason()));
+            }
+        }
+        return Optional.empty();
+    }
+    private void submit(SubmissionContext ctx) throws Exception {
         if (submit) {
             /** a review that failed leaves the changes unjudged: the developer is told, and nothing is sent */
             if (Objects.nonNull(reviewRun) && reviewRun.attachTo(ctx) instanceof ReviewVerdict.Failed failed) {

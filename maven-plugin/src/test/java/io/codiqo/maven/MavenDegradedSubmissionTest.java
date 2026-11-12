@@ -28,6 +28,7 @@ import org.junit.jupiter.api.io.TempDir;
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.AnalysisSubmissionModel;
+import io.codiqo.client.model.ClientInfoModel;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.maven.logging.MavenLogFactory;
 import io.codiqo.maven.logging.MavenMessageReporter;
@@ -151,8 +152,8 @@ class MavenDegradedSubmissionTest {
                 new HttpCodiqoServer("http://127.0.0.1:1", RunArgs.DEFAULT_RESOURCE_URL, () -> {
                     throw new IllegalStateException("no call to Codiqo is expected");
                 }, 5, 5, "com.example:demo", SourceHiding.NONE, new MavenMessageReporter(mojo.getLog())),
-                new MavenCommitBuild(mojo, args),
-                new AnalysedProject("com.example:demo", "demo", mojo.clientInfo()),
+                mojo.new MavenCommitBuild(args),
+                new AnalysedProject("com.example:demo", "demo", new ClientInfoModel()),
                 new OutputSerializer(true, logs.getLogger(OutputSerializer.class)),
                 ReviewStarter.LOCAL,
                 logs);
