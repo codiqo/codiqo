@@ -78,9 +78,11 @@ public abstract class CodiqoSubmitAnalysisTask extends DefaultTask {
          * read here, not in the worker: task state lives in the daemon that ran the build, and by this point every
          * task the analysis is ordered after has finished
          */
-        BuildFailures.detail(scheduledTasks).ifPresent(detail -> {
-            getLogger().warn("codiqo: the build failed — the commit will be reported as build-failed rather than scored");
-            payload.put("buildFailureDetail", detail);
+        BuildFailures.of(scheduledTasks).ifPresent(failure -> {
+            getLogger().warn("codiqo: the build failed ({}{}), so the commit cannot be scored in full", failure.getCategory(), failure.getCompilerCrash().map(line -> ", the compiler crashed").orElse(StringUtils.EMPTY));
+            payload.put("buildFailureDetail", failure.getDetail());
+            payload.put("buildFailureCategory", failure.getCategory().getValue());
+            failure.getCompilerCrash().ifPresent(line -> payload.put("compilerCrash", line));
         });
         byte[] bytes = mapper.writeValueAsBytes(payload);
         List<File> classpath = workerClasspath();

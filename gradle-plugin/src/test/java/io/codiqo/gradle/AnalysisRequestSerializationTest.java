@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 
 import tools.jackson.databind.ObjectMapper;
 
+import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.gradle.model.AnalysisRequest;
 import io.codiqo.gradle.model.DependencyData;
 import io.codiqo.gradle.model.ModuleData;
@@ -76,6 +77,9 @@ class AnalysisRequestSerializationTest {
         toReturn.setJdtlsVersion("1.60.0");
         toReturn.setImportTimeoutMinutes(15);
         toReturn.setLspQueryTimeoutSeconds(30);
+        toReturn.setBuildFailureDetail(":app:compileJava: Execution failed for task ':app:compileJava'.");
+        toReturn.setBuildFailureCategory(AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE);
+        toReturn.setCompilerCrash("App.java:4: error: An unhandled exception was thrown by the Error Prone static analysis plugin.");
         toReturn.getModules().add(module);
         return toReturn;
     }

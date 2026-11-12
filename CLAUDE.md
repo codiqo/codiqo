@@ -1566,8 +1566,13 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
 - **Gradle has local mode too** (`codiqoSubmitAnalysis`, on by default, `-Pcodiqo.review…` settings as on Maven): the
   analysis worker runs the commit through `CommitRun` (`io.codiqo.submit.outcome`), the one sequence of a commit's run,
   with Gradle's finished build behind `GradleCommitBuild`: it starts `LocalReviewRun` after the exclusion gates and joins
-  it before the submission, with the same exclusions and trace. Gradle cannot tell a dependency failure or a timeout
-  from a broken build, so with a review every failed build is scored as the author's. `submit-commit-analysis` runs the
+  it before the submission, with the same exclusions and trace. Both plugins read whose failure a failed build is
+  through `BuildFailureClassifier`: a failed download or an unresolved dependency is the environment's, a compiler crash
+  halts. Gradle classifies each failed task's whole message chain in the daemon (`BuildFailures`, every cause of a
+  multi-cause failure included), before the detail is cut to 4 KB. It cannot see a timeout, javac's own crash (only its
+  console has it) or a crash of a javac run through `forkOptions.executable` (only an exit code), so with a review those
+  are scored as the author's broken build; a failed `plugins {}` download fails before any task, so no analysis runs.
+  `submit-commit-analysis` runs the
   same `CommitRun`, with Maven's two-phase fork and time-machine ladder behind `MavenCommitBuild`.
 - **Uncommitted changes are reviewed too** (`analyze-uncommitted-changes`, when it submits): `WorkingTreeCommit` makes a
   commit object of the working tree through a throwaway index (untracked files as the analysis reads them, `.gitignore`
@@ -1579,9 +1584,9 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   `buildFailure` and the review's assessment, since the reviewers read the code through git. The server scores it by
   rules as a degraded commit (penalties only, no bonus) and counts the failed build as a blocking finding when it
   alerts. A dependency that could not be resolved or a build that timed out is the environment's failure and stays
-  excluded, and so is a build plugin whose own download failed (`Maven.classifyForkFailure`: the failure names a URL
-  and shows a connection error or an HTML page where content was expected, as Spotless did fetching the Eclipse
-  formatter from download.eclipse.org's outage page). A review that fails on such a commit excludes it under its build failure when it failed on the commit, files and
+  excluded, and so is a build plugin whose own download failed (`BuildFailureClassifier`, which both plugins apply: the
+  failure names a URL and shows a connection error, an HTML page where content was expected, as Spotless did fetching
+  the Eclipse formatter from download.eclipse.org's outage page, or Gradle's words for a fetch that failed). A review that fails on such a commit excludes it under its build failure when it failed on the commit, files and
   metrics included, not as `LOCAL_REVIEW_FAILURE`: the server keeps an operator's re-inclusion of a build failure only
   under that category. A review that failed on the provider or on Codiqo's side halts the project, as on any commit.
 - **A run that fails on codiqo's side halts the project** (`ProjectHalts`): it submits nothing, so the next scheduled

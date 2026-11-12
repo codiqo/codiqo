@@ -121,6 +121,7 @@ import io.codiqo.maven.surefire.SurefireInjectorConfig;
 import io.codiqo.maven.timemachine.TimeMachineConfig;
 import io.codiqo.submit.CommitBuildFailedException;
 import io.codiqo.submit.SourceHiding;
+import io.codiqo.submit.outcome.BuildFailureClassifier;
 import io.codiqo.util.Env;
 import io.codiqo.util.JGit;
 import io.codiqo.util.ProgressStage;
@@ -1652,17 +1653,6 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     private static final class CapturingOutputHandler implements InvocationOutputHandler {
         private static final Pattern HELP_LINE = Pattern.compile("\\[ERROR\\]\\s+\\[Help\\s+\\d+\\]\\s+");
         private static final int MAX_CAPTURED_ERROR_LINES = 500;
-        /**
-         * What javac prints when it crashes, what Error Prone prints when one of its checks throws, and what
-         * maven-compiler-plugin prints when javac threw instead of reporting the code's errors. The last was seen on
-         * a production commit: javac on a newer JDK than the project's failed with
-         * "Fatal error compiling: java.lang.ExceptionInInitializerError", which read as the author's broken build, so
-         * the commit's review started and the commit was excluded instead of the run failing.
-         */
-        private static final String[] COMPILER_CRASH_MARKERS = {
-                "An exception has occurred in the compiler",
-                "An unhandled exception was thrown by the Error Prone static analysis plugin",
-                "Fatal error compiling" };
 
         private final InvocationOutputHandler delegate;
         private final int captureLimit;
@@ -1691,7 +1681,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             if (ErrorProneWarnings.isWarning(line)) {
                 errorProneWarningLines.add(line);
             }
-            if (BooleanUtils.and(new boolean[] { Objects.isNull(compilerCrashLine), Strings.CS.containsAny(line, COMPILER_CRASH_MARKERS) })) {
+            if (BooleanUtils.and(new boolean[] { Objects.isNull(compilerCrashLine), BuildFailureClassifier.isCompilerCrash(line) })) {
                 compilerCrashLine = line;
             }
         }

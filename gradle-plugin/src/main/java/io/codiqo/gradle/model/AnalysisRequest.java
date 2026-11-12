@@ -5,6 +5,7 @@ import java.util.List;
 
 import com.google.common.collect.Lists;
 
+import io.codiqo.client.model.AnalysisExcludeCategory;
 import lombok.Data;
 
 /**
@@ -39,9 +40,12 @@ public class AnalysisRequest implements Serializable {
     private long readTimeoutSeconds;
 
     /**
-     * Set by the task from the build-failure recorder, because it is only known once the build has run.
+     * Set by the task from the build-failure recorder, because it is only known once the build has run: the detail, whose
+     * failure it is, and the line that shows the compiler crashed, classified before the detail was cut to its limit.
      */
     private String buildFailureDetail;
+    private AnalysisExcludeCategory buildFailureCategory;
+    private String compilerCrash;
     private boolean skipOnBuildFailure = true;
 
     /** hidden-source mode and its HMAC key, resolved from {@code env:VAR} in the daemon like the API key */
