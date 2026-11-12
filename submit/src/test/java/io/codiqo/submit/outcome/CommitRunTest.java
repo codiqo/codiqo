@@ -355,7 +355,7 @@ class CommitRunTest {
      * would not, so a build-failed commit is scored from its diff.
      */
     private static final class ScriptedBuild implements CommitBuild {
-        private Callable<BuildVerdict> compile = BuildVerdict::passed;
+        private Callable<BuildVerdict> compile = () -> BuildVerdict.passed(Optional.empty());
         private int compiled;
 
         @Override

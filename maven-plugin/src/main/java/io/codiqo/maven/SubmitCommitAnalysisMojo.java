@@ -21,6 +21,7 @@ import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
 import org.apache.maven.project.ProjectBuildingRequest;
 import org.apache.maven.project.ProjectBuildingResult;
+import org.apache.maven.shared.invoker.InvocationRequest;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ResetCommand;
 import org.eclipse.jgit.lib.Constants;
@@ -179,6 +180,12 @@ public class SubmitCommitAnalysisMojo extends AbstractAnalyzeMojo {
         private final Log log;
         private final Collection<MavenProject> reactors = Lists.newLinkedList();
         private ProjectBuildingRequest buildingRequest;
+        /**
+         * How long the fork of the last compile run ran: the run behind the compile verdict, the last rung of the
+         * time-machine ladder when it ran. The test run gets what that run left of the build timeout, and the time travels
+         * in the test-run record.
+         */
+        private Duration compileTook = Duration.ZERO;
 
         public MavenCommitBuild(RunArgs args) {
             this.args = Objects.requireNonNull(args);
@@ -307,13 +314,16 @@ public class SubmitCommitAnalysisMojo extends AbstractAnalyzeMojo {
                 log.warn(String.format("pre-flight host model building failed (%s), deferring to fork build", skipped.getReason()));
             }
 
-            BuildOutcome toReturn;
+            BuildOutcome compiled;
             if (args.isTimeMachineEnabled()) {
-                toReturn = buildWithBackoff(buildingRequest);
+                compiled = buildWithBackoff(buildingRequest);
             } else {
-                toReturn = buildProject(args, invocationRequest(args, false, Duration.ZERO, BuildPhase.COMPILE), buildingRequest, BuildPhase.COMPILE, args.getBuildTimeout());
+                compiled = compileRun(invocationRequest(args, false, Duration.ZERO, BuildPhase.COMPILE), buildingRequest);
             }
-            return verdict(toReturn);
+            if (compiled instanceof BuildOutcome.Skipped skipped) {
+                return failed(skipped);
+            }
+            return BuildVerdict.passed(Optional.of(compileTook));
         }
         /**
          * The test run builds on the compile run's pinned snapshots, at the offset that compiled, within what that compile
@@ -325,28 +335,30 @@ public class SubmitCommitAnalysisMojo extends AbstractAnalyzeMojo {
         @Override
         public BuildVerdict test() throws Exception {
             Duration offset = args.getTimeMachineTargetOffset();
-            BuildOutcome tested = buildProject(
+            ForkRun tested = buildProject(
                     args,
                     invocationRequest(args, Objects.nonNull(offset), Optional.ofNullable(offset).orElse(Duration.ZERO), BuildPhase.TESTS),
                     buildingRequest,
                     BuildPhase.TESTS,
-                    args.getBuildTimeout().minus(args.getCompilePhaseTook()));
-            if (tested instanceof BuildOutcome.Skipped skipped) {
-                return verdict(skipped);
+                    args.getBuildTimeout().minus(compileTook));
+            if (tested.getOutcome() instanceof BuildOutcome.Skipped skipped) {
+                return failed(skipped);
             }
 
-            ProjectBuildingResult result = ((BuildOutcome.Proceeded) tested).getResult();
+            ProjectBuildingResult result = ((BuildOutcome.Proceeded) tested.getOutcome()).getResult();
             Optional<BuildOutcome.Skipped> modules = buildAndCollectModules(result.getProject(), args.getGit().getWorkTree(), buildingRequest, args, reactors);
             if (modules.isPresent()) {
-                return verdict(modules.get());
+                return failed(modules.get());
             }
 
             if (args.isIgnoreCoverage()) {
-                return BuildVerdict.passed();
+                return BuildVerdict.passed(Optional.of(tested.getTook()));
             }
-            return BuildVerdict.tested(TestRuns.read(
-                    reactors.stream().flatMap(reactor -> TestReportDirectories.resolve(reactor).stream()).distinct().toList(),
-                    new MavenMessageReporter(log)));
+            return BuildVerdict.tested(
+                    TestRuns.read(
+                            reactors.stream().flatMap(reactor -> TestReportDirectories.resolve(reactor).stream()).distinct().toList(),
+                            new MavenMessageReporter(log)),
+                    Optional.of(tested.getTook()));
         }
         /**
          * The reactor's modules as the host model built them, scanned into one class graph. The clone's POMs are relaxed
@@ -388,7 +400,7 @@ public class SubmitCommitAnalysisMojo extends AbstractAnalyzeMojo {
             Duration offset = Duration.ZERO;
             for (;;) {
                 args.setTimeMachineTargetOffset(offset);
-                BuildOutcome outcome = buildProject(args, invocationRequest(args, true, offset, BuildPhase.COMPILE), request, BuildPhase.COMPILE, args.getBuildTimeout());
+                BuildOutcome outcome = compileRun(invocationRequest(args, true, offset, BuildPhase.COMPILE), request);
                 if (outcome instanceof BuildOutcome.Proceeded) {
                     return outcome;
                 }
@@ -425,7 +437,7 @@ public class SubmitCommitAnalysisMojo extends AbstractAnalyzeMojo {
                 if (next.isEmpty()) {
                     log.warn(String.format("commit %s: time-machine build failed at offset %s (%s), retrying with latest snapshots", args.getCommitId(), offset, skipped.getReason()));
                     args.setTimeMachineTargetOffset(null);
-                    BuildOutcome latest = buildProject(args, invocationRequest(args, false, Duration.ZERO, BuildPhase.COMPILE), request, BuildPhase.COMPILE, args.getBuildTimeout());
+                    BuildOutcome latest = compileRun(invocationRequest(args, false, Duration.ZERO, BuildPhase.COMPILE), request);
                     if (latest instanceof BuildOutcome.Skipped lastSkipped) {
                         attemptFailures.add(attemptEntry("latest snapshots", lastSkipped));
                         /**
@@ -444,11 +456,13 @@ public class SubmitCommitAnalysisMojo extends AbstractAnalyzeMojo {
                 log.warn(String.format("commit %s: time-machine build failed (%s), retrying with target offset %s", args.getCommitId(), skipped.getReason(), offset));
             }
         }
-        private static BuildVerdict verdict(BuildOutcome outcome) {
-            if (outcome instanceof BuildOutcome.Skipped skipped) {
-                return new BuildVerdict.Failed(skipped.getReason(), skipped.getCategory(), skipped.getDetail(), skipped.isTimedOut());
-            }
-            return BuildVerdict.passed();
+        private BuildOutcome compileRun(InvocationRequest request, ProjectBuildingRequest projectRequest) throws Exception {
+            ForkRun toReturn = buildProject(args, request, projectRequest, BuildPhase.COMPILE, args.getBuildTimeout());
+            compileTook = toReturn.getTook();
+            return toReturn.getOutcome();
+        }
+        private static BuildVerdict failed(BuildOutcome.Skipped skipped) {
+            return new BuildVerdict.Failed(skipped.getReason(), skipped.getCategory(), skipped.getDetail(), skipped.isTimedOut());
         }
         private static String attemptEntry(String label, BuildOutcome.Skipped skipped) {
             String toReturn = label + ": " + skipped.getReason();

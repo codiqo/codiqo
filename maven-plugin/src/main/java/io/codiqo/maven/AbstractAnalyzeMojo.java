@@ -54,6 +54,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.time.StopWatch;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.maven.artifact.ArtifactUtils;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.execution.MavenSession;
@@ -1095,7 +1096,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                 "codiqo-maven-time-machine is not loaded in the host Maven — host-side POM model building resolves LATEST snapshots and may fail on historical commits whose POMs no longer interpolate against them. relaunch with: -Dmaven.ext.class.path=%s",
                 Joiner.on(File.pathSeparator).join(extensionJarPaths(timeMachineExtensionJars))));
     }
-    protected BuildOutcome buildProject(
+    protected ForkRun buildProject(
             RunArgs args,
             InvocationRequest request,
             ProjectBuildingRequest buildingRequest,
@@ -1141,11 +1142,6 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             }
         }
         took.stop();
-        if (BuildPhase.COMPILE == phase) {
-            args.setCompilePhaseTook(took.getDuration());
-        } else {
-            args.setTestPhaseTook(took.getDuration());
-        }
 
         if (timedOut || result.getExitCode() != 0) {
             /**
@@ -1175,7 +1171,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                 String reason = "fork build timed out after " + timeout;
                 if (args.isSkipOnBuildFailure()) {
                     getLog().warn(reason + ", skipping with category " + AnalysisExcludeCategory.BUILD_FAILURE);
-                    return skipped(args, reason, AnalysisExcludeCategory.BUILD_FAILURE, true, sysout, syserr);
+                    return new ForkRun(skipped(args, reason, AnalysisExcludeCategory.BUILD_FAILURE, true, sysout, syserr), took.getDuration());
                 }
                 /**
                  * proceeding here would score a reactor whose `clean` already wiped target/ for every module the
@@ -1192,7 +1188,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                 helpLines.addAll(syserr.helpUrlLines());
                 AnalysisExcludeCategory category = Maven.classifyForkFailure(helpLines, buildFailureDetail(args, sysout, syserr).orElse(reason));
                 getLog().warn(String.format(Locale.ROOT, "fork build failed (exit code %d), skipping with category %s: %s", result.getExitCode(), category, reason));
-                return skipped(args, reason, category, false, sysout, syserr);
+                return new ForkRun(skipped(args, reason, category, false, sysout, syserr), took.getDuration());
             } else {
                 throw new CommitBuildFailedException("maven build failed in fork, and codiqo.skipOnBuildFailure is false", result.getExecutionException());
             }
@@ -1208,7 +1204,9 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         if (CollectionUtils.isNotEmpty(args.getCompilerFindings())) {
             getLog().info(String.format(Locale.ROOT, "the build reported %d Error Prone findings", args.getCompilerFindings().size()));
         }
-        return new BuildOutcome.Proceeded(TimeMachineSupport.withHostPinning(args, getLog(), () -> projectBuilder.build(rootPom, buildingRequest)));
+        return new ForkRun(
+                new BuildOutcome.Proceeded(TimeMachineSupport.withHostPinning(args, getLog(), () -> projectBuilder.build(rootPom, buildingRequest))),
+                took.getDuration());
     }
     private Optional<String> buildFailureDetail(RunArgs args, CapturingOutputHandler sysout, CapturingOutputHandler syserr) {
         return readBuildFailureReport(args)
@@ -1630,6 +1628,24 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         @Value
         final class Proceeded implements BuildOutcome {
             ProjectBuildingResult result;
+        }
+    }
+    /**
+     * A fork run of the commit's build and how long the fork itself ran. The host's building of the root model after the
+     * fork is left out: the test run gets what the compile run left of the build timeout, and counting the host's model
+     * building, which can resolve parent and BOM POMs over the network, could leave it a negative timeout.
+     */
+    protected static final class ForkRun extends ImmutablePair<BuildOutcome, Duration> {
+        private static final long serialVersionUID = 1L;
+
+        public ForkRun(BuildOutcome outcome, Duration took) {
+            super(outcome, took);
+        }
+        public BuildOutcome getOutcome() {
+            return getLeft();
+        }
+        public Duration getTook() {
+            return getRight();
         }
     }
     @RequiredArgsConstructor
