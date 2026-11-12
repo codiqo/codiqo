@@ -15,9 +15,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.Strings;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.artifact.resolver.ArtifactNotFoundException;
 import org.apache.maven.artifact.resolver.ArtifactResolutionException;
@@ -39,9 +37,8 @@ import org.eclipse.aether.repository.LocalRepository;
 import org.eclipse.aether.repository.WorkspaceReader;
 import org.eclipse.aether.util.repository.SimpleResolutionErrorPolicy;
 
-import com.google.common.annotations.VisibleForTesting;
-
 import io.codiqo.client.model.AnalysisExcludeCategory;
+import io.codiqo.submit.outcome.BuildFailureClassifier;
 import kr.motd.maven.os.Detector;
 import lombok.experimental.UtilityClass;
 
@@ -62,28 +59,6 @@ public class Maven {
             DependencyResolutionRequiredException.class.getSimpleName(),
             ArtifactNotFoundException.class.getSimpleName(),
             PluginResolutionException.class.getSimpleName());
-    /**
-     * A plugin that downloads something of its own while it runs fails without any of the exceptions above, under the
-     * generic PluginExecutionException, so the failure itself has to say that a download failed: it names a URL, and
-     * either the connection failed or an HTML page came back where the content was expected. During a
-     * download.eclipse.org outage every path answered 200 with a "Temporary shutdown" page; Spotless, fetching the
-     * Eclipse formatter, reported "We could not parse the content at https://download.eclipse.org/..." followed by
-     * that page, and the commit was scored as a build its author had broken, with the failed build as a blocking
-     * finding. Both conditions are needed: a compile error never names a URL, and a plugin that rejects the project's
-     * own configuration does not print a web page.
-     */
-    private static final Pattern REMOTE_URL = Pattern.compile("https?://\\S+");
-    private static final String[] TRANSPORT_FAILURES = {
-            "UnknownHostException",
-            "ConnectException",
-            "NoRouteToHostException",
-            "SocketTimeoutException",
-            "HttpTimeoutException",
-            "SSLHandshakeException",
-            "Connection reset",
-            "Connection refused" };
-    private static final String[] HTML_PAGE_MARKERS = { "<!DOCTYPE html", "<html" };
-
     private static final EnumSet<ModelProblem.Severity> SEVERE_MODEL_PROBLEM_SEVERITIES = EnumSet.of(ModelProblem.Severity.FATAL, ModelProblem.Severity.ERROR);
 
     public static ProjectBuildingRequest buildingRequest(MavenSession session) {
@@ -171,8 +146,8 @@ public class Maven {
     }
     /**
      * DEPENDENCY_RESOLUTION_FAILURE when the fork failed because something it needed could not be downloaded, either by
-     * Maven (its help links name the exception) or by a plugin while it ran (failureText, the build's failure output):
-     * the environment's failure, never the author's.
+     * Maven (its help links name the exception) or by a plugin while it ran (failureText, the build's failure output,
+     * read by the rules Gradle's failures are read by): the environment's failure, never the author's.
      */
     public static AnalysisExcludeCategory classifyForkFailure(List<String> capturedHelpLines, String failureText) {
         for (String line : capturedHelpLines) {
@@ -181,15 +156,7 @@ public class Maven {
                 return AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE;
             }
         }
-        if (isFailedDownload(failureText)) {
-            return AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE;
-        }
-        return AnalysisExcludeCategory.BUILD_FAILURE;
-    }
-    @VisibleForTesting
-    public static boolean isFailedDownload(String failureText) {
-        boolean failedFetch = BooleanUtils.or(new boolean[] { Strings.CS.containsAny(failureText, TRANSPORT_FAILURES), Strings.CI.containsAny(failureText, HTML_PAGE_MARKERS) });
-        return BooleanUtils.and(new boolean[] { failedFetch, REMOTE_URL.matcher(failureText).find() });
+        return BuildFailureClassifier.category(failureText);
     }
     /**
      * the multi-POM build reports its problems through getResults(), but the single-POM

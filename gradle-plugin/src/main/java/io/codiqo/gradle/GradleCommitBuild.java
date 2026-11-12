@@ -28,7 +28,6 @@ import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.api.testing.TestRun;
 import io.codiqo.api.testing.TestRuns;
-import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.core.ClassGraphWrapper;
 import io.codiqo.gradle.model.AnalysisRequest;
 import io.codiqo.gradle.model.ModuleData;
@@ -62,16 +61,21 @@ public final class GradleCommitBuild implements CommitBuild {
         return () -> { };
     }
     /**
-     * Gradle reports no timeout apart from a failure, nor which failure is the author's, so every failed build counts as
-     * the author's. A build that passed is checked, before any review is paid for, for what the full analysis needs: the
-     * language server's lombok agent, and coverage the tests recorded. Coverage is merged only here, after the exclusion
+     * Whose failure a failed build is was decided where the failed tasks were read ({@link BuildFailures}), by the rules
+     * Maven's output is read by: a download or a dependency that failed is the environment's, and an Error Prone crash is
+     * the toolchain's and halts the run. Gradle reports no timeout apart from a failure, and javac's own crash reaches only
+     * its console, so both count as the author's. A build that passed is checked, before any review is paid for, for what
+     * the full analysis needs: the language server's lombok agent, and coverage the tests recorded. Coverage is merged only here, after the exclusion
      * gates: merging is pointless work for an excluded commit, and the merge throws when it cannot stamp the merged file,
      * which would fail a run that should have ended in an exclusion.
      */
     @Override
     public BuildVerdict compile() throws IOException {
         if (StringUtils.isNotBlank(request.getBuildFailureDetail())) {
-            return new BuildVerdict.Failed(BUILD_FAILED, AnalysisExcludeCategory.BUILD_FAILURE, request.getBuildFailureDetail(), false);
+            if (StringUtils.isNotBlank(request.getCompilerCrash())) {
+                throw new IllegalStateException("the compiler crashed in the analysis build, which is not the commit's doing: " + request.getCompilerCrash());
+            }
+            return new BuildVerdict.Failed(BUILD_FAILED, Objects.requireNonNull(request.getBuildFailureCategory(), "a failed build's category"), request.getBuildFailureDetail(), false);
         }
 
         if (StringUtils.isNotBlank(request.getLombokAgentError())) {

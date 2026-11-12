@@ -203,6 +203,49 @@ class AnalysisEngineDegradedTest {
         assertTrue(Strings.CS.contains(bodies.get(0), "src/main/java/a/A.java"), "with its files: " + bodies.get(0));
         assertTrue(Strings.CS.contains(bodies.get(0), "driverScalers"), "with its source's driver-score statistics: " + bodies.get(0));
     }
+    /** a download the build could not make is the environment's failure, and the commit is excluded for it as such */
+    @Test
+    void aDownloadTheBuildCouldNotMakeExcludesTheCommitAsTheEnvironments() throws Exception {
+        List<String> bodies = Lists.newCopyOnWriteArrayList();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/v1/analyses", exchange -> {
+            bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+        });
+        server.start();
+
+        commit("src/main/java/a/A.java", "class A {}");
+        RevCommit commit = commit("src/main/java/a/A.java", "class A { int a; }");
+
+        AnalysisRequest request = request();
+        request.setBuildFailureCategory(AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE);
+        request.setApiUrl(String.format("http://127.0.0.1:%d", server.getAddress().getPort()));
+        request.setApiKey("test-api-key");
+        request.setConnectTimeoutSeconds(5);
+        request.setReadTimeoutSeconds(5);
+        try {
+            assertInstanceOf(CommitOutcome.Excluded.class, AnalysisEngine.commitRun(request, AnalysisEngine.server(request, LOG), args(commit), LOGS).run());
+        } finally {
+            server.stop(0);
+        }
+
+        assertEquals(1, bodies.size());
+        assertTrue(Strings.CS.contains(bodies.get(0), AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE.getValue()), bodies.get(0));
+    }
+    /** a compiler that crashed is the toolchain's failure, not the commit's: the project is halted, as on Maven */
+    @Test
+    void aCompilerCrashHaltsTheProject() throws Exception {
+        commit("src/main/java/a/A.java", "class A {}");
+        RevCommit commit = commit("src/main/java/a/A.java", "class A { int a; }");
+
+        AnalysisRequest request = request();
+        request.setCompilerCrash("App.java:4: error: An unhandled exception was thrown by the Error Prone static analysis plugin.");
+
+        CommitOutcome.Halted halted = assertInstanceOf(CommitOutcome.Halted.class, AnalysisEngine.commitRun(request, AnalysisEngine.server(request, LOG), args(commit), LOGS).run());
+
+        assertTrue(Strings.CS.contains(halted.getCause().getMessage(), "An unhandled exception was thrown by the Error Prone static analysis plugin"), halted.getCause().getMessage());
+    }
     private static AnalysisRequest request() {
         AnalysisRequest toReturn = new AnalysisRequest();
         toReturn.setRootPath(":");
@@ -211,6 +254,7 @@ class AnalysisEngineDegradedTest {
         toReturn.setApiUrl(UNREACHABLE_API);
         toReturn.setResourceUrl(RunArgs.DEFAULT_RESOURCE_URL);
         toReturn.setBuildFailureDetail(BUILD_FAILURE_DETAIL);
+        toReturn.setBuildFailureCategory(AnalysisExcludeCategory.BUILD_FAILURE);
         return toReturn;
     }
     private RunArgs args(RevCommit commit) {
