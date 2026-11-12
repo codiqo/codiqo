@@ -1564,9 +1564,11 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   warnings, and the triage judges them through Error Prone's `StaticAnalysisLists` row. A project that also sets
   `-Werror` or `failOnWarning` still fails: the extension leaves both alone.
 - **Gradle has local mode too** (`codiqoSubmitAnalysis`, on by default, `-Pcodiqo.review…` settings as on Maven): the
-  analysis worker starts `LocalReviewRun` on the checked-out commit after the exclusion gate and joins it before the
-  submission (`AnalysisEngine.judged`), with the same exclusions and trace. Gradle cannot tell a dependency failure or a
-  timeout from a broken build, so with a review every failed build is scored as the author's.
+  analysis worker runs the commit through `CommitRun` (`io.codiqo.submit.outcome`), the one sequence of a commit's run,
+  with Gradle's finished build behind `GradleCommitBuild`: it starts `LocalReviewRun` after the exclusion gates and joins
+  it before the submission, with the same exclusions and trace. Gradle cannot tell a dependency failure or a timeout
+  from a broken build, so with a review every failed build is scored as the author's. Maven still runs its own copy of
+  the sequence in `AnalyzeCommitMojo` / `SubmitCommitAnalysisMojo` until it moves onto `CommitRun` too.
 - **Uncommitted changes are reviewed too** (`analyze-uncommitted-changes`, when it submits): `WorkingTreeCommit` makes a
   commit object of the working tree through a throwaway index (untracked files as the analysis reads them, `.gitignore`
   respected; the developer's index, files, branches and stash untouched), and `LocalReviewRun`, which runs the review of
@@ -1604,7 +1606,9 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   who may include it accepts the score in codiqo-web. `codiqo.testFailureHoldShare` / `codiqo.testFailureHoldMinTests`
   (Gradle `-P`, action inputs `test-failure-hold-share` / `-min-tests`) override them, and a share of 1 or more turns the
   check off. A run that
-  fails after the server accepted its submission (`RunArgs.submissionAccepted`) has scored its commit and halts nothing.
+  fails after the server accepted its submission has scored its commit and halts nothing. On Gradle (`CommitRun`), a
+  review that failed on the provider or on Codiqo's side halts under the review verdict's reason, the provider's failed
+  answers kept whole at its end; Maven halts on the exception's root cause until it runs on `CommitRun` too.
   The action calls `halt-project` for a submit step that died outside the JVM (deadline, OOM kill). Which failures halt
   nothing is one rule for both plugins, `ProjectHalts.haltsNothing`.
 - **A run that cannot download what it needs stores nothing** (`DownloadFailedException`, which `Fetch` and the
@@ -1638,8 +1642,8 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   (`doAfterCompile`): after a compile that passed, or one the author broke (degraded); a compile that failed on the
   environment starts none. The test run keeps the compile run's pinned snapshots and adds its Error Prone findings to
   the compile run's. The JUnit reports become the submission's `testRun` (`TestRuns`): counts, skipped tests, test time,
-  each run's duration and the whole analysis's. Gradle builds before its worker starts, so its worker reads the reports
-  and checks coverage before it starts the review.
+  each run's duration and the whole analysis's. Gradle builds before its worker starts, so its worker checks coverage
+  before it starts the review (`GradleCommitBuild.compile`), and reads the reports beside it.
 - **How a review ended is its review verdict, settled where it failed** (`ReviewVerdict`): `LocalReviewer` and the
   wait in `LocalReviewRun.attachTo` decide it at the site that fails, never from the type of the exception a failure
   surfaced as, and `LocalReviewRun.exclusionOf` is the one rule both plugins apply to it. A turn OpenCode ended with an

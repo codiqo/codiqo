@@ -42,7 +42,7 @@ class CoverageMergeStalenessTest {
         writeEmptyExec(new File(jacocoDir, AnalysisEngine.EXEC_PART_PREFIX + "integrationTest.exec"), recent);
 
         File merged = new File(jacocoDir, MERGED_EXEC);
-        AnalysisEngine.mergeCoverageParts(moduleAt(merged), NoopLog.INSTANCE);
+        GradleCommitBuild.mergeCoverageParts(moduleAt(merged), NoopLog.INSTANCE);
 
         assertTrue(merged.isFile(), "merge did not produce " + merged);
         assertEquals(old, merged.lastModified(),
@@ -54,7 +54,7 @@ class CoverageMergeStalenessTest {
         assertTrue(jacocoDir.mkdirs());
 
         File merged = new File(jacocoDir, MERGED_EXEC);
-        AnalysisEngine.mergeCoverageParts(moduleAt(merged), NoopLog.INSTANCE);
+        GradleCommitBuild.mergeCoverageParts(moduleAt(merged), NoopLog.INSTANCE);
 
         assertFalse(merged.exists(), "a module whose tests never ran must not get an empty exec file");
     }
