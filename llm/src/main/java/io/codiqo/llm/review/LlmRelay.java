@@ -205,7 +205,15 @@ public final class LlmRelay implements AutoCloseable {
      * answer in the wrong shape as the commit's failure before it asks here.
      */
     public boolean providerFailed() {
-        return providerErrors.elementSet().stream().anyMatch(not(REFUSED_REQUESTS::contains));
+        return providerFailures() > 0;
+    }
+    /**
+     * How many of the end point's answers so far were the provider's failures, as {@link #providerFailed()} counts them.
+     * A step of the review that runs after others reads it before and after its own turn, so a failure the provider had
+     * during an earlier step does not make the step's own lost answer the provider's.
+     */
+    public long providerFailures() {
+        return providerErrors.stream().filter(not(REFUSED_REQUESTS::contains)).count();
     }
     @Override
     public void close() {

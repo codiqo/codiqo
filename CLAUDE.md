@@ -1579,8 +1579,9 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   alerts. A dependency that could not be resolved or a build that timed out is the environment's failure and stays
   excluded, and so is a build plugin whose own download failed (`Maven.classifyForkFailure`: the failure names a URL
   and shows a connection error or an HTML page where content was expected, as Spotless did fetching the Eclipse
-  formatter from download.eclipse.org's outage page). A review that fails on such a commit excludes it under its build failure, files and metrics included, not
-  as `LOCAL_REVIEW_FAILURE`: the server keeps an operator's re-inclusion of a build failure only under that category.
+  formatter from download.eclipse.org's outage page). A review that fails on such a commit excludes it under its build failure when it failed on the commit, files and
+  metrics included, not as `LOCAL_REVIEW_FAILURE`: the server keeps an operator's re-inclusion of a build failure only
+  under that category. A review that failed on the provider or on Codiqo's side halts the project, as on any commit.
 - **A run that fails on codiqo's side halts the project** (`ProjectHalts`): it submits nothing, so the next scheduled
   run would pick the same commit and pay for its review again every hour. `submit-commit-analysis` and the Gradle
   worker post the failure as the project's halt (`POST /api/v1/projects/{projectId}/halt`, the first halt is kept);
@@ -1639,25 +1640,35 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   the compile run's. The JUnit reports become the submission's `testRun` (`TestRuns`): counts, skipped tests, test time,
   each run's duration and the whole analysis's. Gradle builds before its worker starts, so its worker reads the reports
   and checks coverage before it starts the review.
-- **A review the provider failed halts the project instead** (`ReviewProviderException`,
-  `LocalReviewException.isProviderFailure`): it is no judgement of the commit, and an excluded commit would stay unscored
-  for good. "Resume and retry" reviews it again. What failed decides (`LocalReviewer.isProviderFailure`): a turn OpenCode
-  ended with an error is the provider's unless the error follows from what the commit asks (`COMMIT_TURN_ERRORS`: an
-  invalid request, a content filter), so an error type a new OpenCode version adds halts rather than silently excludes
-  (`TurnTest` pins every type OpenCode 2.2.2 ends a turn with; diff `to-session-error.ts` on every bump); an answer in
-  the wrong shape (`ReviewAnswerException`) is always the commit's; anything else, an unanswered reviewer or a turn that
-  timed out, is the provider's when the relay counted a provider failure during the review (`LlmRelay.providerFailed`: a
-  429, a 5xx, an end point it could not reach or an answer cut short after it started, never a request the provider
-  only refused, 400, 413 or 422). The parallel reviewers share the relay, so a failure cannot be traced to one call.
-- **A review that fails excludes the commit** (`LOCAL_REVIEW_FAILURE`, the error as the exclusion's detail): submitting
-  it without the review would hand its judgment to the prompt, and leaving it unsubmitted would make the next run pay
-  for the review again. Deleting the analysis retries it. An interrupt is the run being stopped, not a failed review.
-  A failed labelling or triage turn, a reviewer answer that is not JSON and a tag vocabulary the server cannot give
-  after its retries fail the review as well: none of them falls back to a review that judges with less.
+- **How a review ended is its review verdict, settled where it failed** (`ReviewVerdict`): `LocalReviewer` and the
+  wait in `LocalReviewRun.attachTo` decide it at the site that fails, never from the type of the exception a failure
+  surfaced as, and `LocalReviewRun.exclusionOf` is the one rule both plugins apply to it. A turn OpenCode ended with an
+  error is the provider's unless the error follows from what the commit asks (`COMMIT_TURN_ERRORS`: an invalid
+  request, a content filter), so an error type a new OpenCode version adds halts rather than silently excludes
+  (`TurnTest` pins every type OpenCode 2.2.2 ends a turn with; diff `to-session-error.ts` on every bump). A refused
+  answer, a turn the model ended without the answer call, an answer Codiqo could not read (it fails the same way on
+  every run) and a coordinator that started no reviewer are the commit's. A session cut off at its step cap, a turn
+  that did not end within `reviewTimeout` and a review its caller stopped waiting for (`LocalReviewer.longestReview`)
+  are unanswered (`ReviewVerdict.unanswered`): the provider's when the relay counted a provider failure during the
+  turn that lost the answer (`LlmRelay.providerFailures`, read before and after it: a 429, a 5xx, an end point it could
+  not reach or an answer cut short after it started, never a request the provider only refused, 400, 413 or 422), the
+  commit's otherwise. The coordinator's turn spans the review up to it, and the parallel reviewers run within it and
+  share the relay, so their failures cannot be traced to one call; the labelling and triage turns count only their own. Everything else is Codiqo's: a relay, answer server or
+  OpenCode that would not start, connect or answer, a session that could not be created, a tag vocabulary the server
+  cannot give after its retries, a trace that cannot be written after a review that succeeded, and a bug.
+- **Only a review that failed on the commit excludes it** (`LOCAL_REVIEW_FAILURE`, the error as the exclusion's
+  detail): submitting it without the review would hand its judgment to the prompt, and leaving it unsubmitted would
+  make the next run pay for the review again. Deleting the analysis retries it. A review the provider failed halts the
+  project instead (`ReviewProviderException`, whose summary of the provider's failed answers is the halt's reason): it
+  is no judgement of the commit, and an excluded commit would stay unscored for good. "Resume and retry" reviews it
+  again. A review that failed on Codiqo's side halts the project too, and an interrupt is the run being stopped, which
+  halts nothing. A failed labelling or triage turn and a reviewer answer that is not JSON fail the review as well:
+  none of them falls back to a review that judges with less.
 - **A failed review names a failing provider.** `LlmRelay` counts every answer of the model's end point that was not
   a success, retried ones included, by status, and `LocalReviewer` appends them to the error of a review that fails
-  while the relay is open: `local review failed: timeout; the LLM provider answered 429 482 times and 504 once during
-  the review`, since a turn that timed out says only `timeout` on its own. The
+  while the relay is open: `local review failed: session ses_… did not end its turn within PT2H30M; the LLM provider
+  answered 429 482 times and 504 once during the review`, since a turn that timed out says nothing of the provider on
+  its own. The
   relay also reads the first 4 KB of each 429's body, which still goes on whole to OpenCode, and quotes the provider's own words and its `Retry-After` and
   `x-ratelimit-*` headers in the round's log line and in that summary (`; its last 429 said: ...`), so a halt tells a
   short rate limit from an exhausted usage quota.
@@ -1732,11 +1743,11 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   verdict per listed finding). A refused call is answered with what is wrong, by the answer's own path
   (`unitLabels[0]: …`), and the agent calls again in the same turn; after `reviewAnswerAttempts` (3) refused calls the
   answer stays refused. A call to another answer tool than the session's (a fork carries the coordinator's prompt) is
-  turned away without counting. `LocalReviewer.answerOf` settles every session the same way, in this order: an
+  turned away without counting. `LocalReviewer` settles every session the same way, in this order: an
   accepted answer stands, whatever the turn did after it (the closing sentence is one more model call); a turn
   OpenCode ended with an error fails with that error, a refused call before it included, since OpenCode has already
   retried the provider by then; a refused answer, and a turn the model ended on its own without the call (the old
-  prose-only answers), are the commit's failure (`ReviewAnswerException`); a session cut off without either, at its
+  prose-only answers), are the commit's failure; a session cut off without either, at its
   step cap, is unanswered, and so fails the review (the coordinator retries no area), as a coordinator that started no
   reviewer does. Codiqo itself never repairs an answer, reads one leniently, or sends a
   correction turn, a fork asked for a final answer or a resume prompt: fix the prompt or the schema that let the shape

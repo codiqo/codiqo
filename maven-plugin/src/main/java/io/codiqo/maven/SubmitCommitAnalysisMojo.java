@@ -4,6 +4,7 @@ import java.io.File;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -16,8 +17,8 @@ import org.eclipse.jgit.lib.Repository;
 import io.codiqo.api.RunArgs;
 import io.codiqo.client.api.CommitIndexApi;
 import io.codiqo.client.model.AnalysisAcceptedModel;
-import io.codiqo.client.model.AnalysisBuildFailureModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
+import io.codiqo.client.model.AnalysisExcludeModel;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.HotspotSnapshotModel;
 import io.codiqo.client.model.ProjectMetricsModel;
@@ -40,7 +41,6 @@ import io.codiqo.submit.SubmissionContext;
 import io.codiqo.submit.auth.CodiqoCredential;
 import io.codiqo.submit.hotspots.FixCommits;
 import io.codiqo.submit.hotspots.HotspotSnapshots;
-import io.codiqo.submit.review.LocalReviewException;
 import io.codiqo.submit.review.LocalReviewRun;
 import io.codiqo.util.JGit;
 import io.codiqo.util.ProgressStage;
@@ -166,39 +166,11 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
     @Override
     protected void doSubmit(SubmissionContext ctx) throws Exception {
         if (Objects.nonNull(reviewRun)) {
-            try {
-                reviewRun.attachTo(ctx);
-            } catch (LocalReviewException err) {
-                /**
-                 * Local mode judges a commit with the review alone, so a review that failed or ran out of time leaves
-                 * the commit unjudged: it is excluded, which keeps the next run from paying for the review again and
-                 * the server's prompt from judging it in the review's place. Deleting the analysis retries it. An
-                 * interrupt is the run being stopped, not a failed review: the thread's flag tells the two apart. A
-                 * review the provider failed is no judgement of the commit either: excluded, the commit would stay
-                 * unscored for good, so the run fails and doOnFailure halts the project until the provider recovers.
-                 */
-                if (BooleanUtils.or(new boolean[] { Thread.currentThread().isInterrupted(), err.isProviderFailure() })) {
-                    throw err;
-                }
-                getLog().error(String.format("commit %s excluded: %s", ctx.getArgs().getCommitId(), err.getMessage()), err);
-                AnalysisBuildFailureModel buildFailure = ctx.getSubmissionModel().getBuildFailure();
-                if (Objects.nonNull(buildFailure)) {
-                    /**
-                     * A build-failed commit keeps its build failure, with its files and metrics, as the exclusion a
-                     * failed build without a review records: an operator's re-inclusion of a build failure survives a
-                     * re-analysis only under that category, and the files are what the server stores as the excluded
-                     * commit's per-file changes.
-                     */
-                    doExcludeAnalysis(
-                            ctx.getArgs().getCommitId(),
-                            buildFailure.getReason(),
-                            buildFailure.getCategory(),
-                            buildFailure.getDetail(),
-                            ctx.getSubmissionModel().getFiles(),
-                            ctx.getSubmissionModel().getProjectMetrics());
-                } else {
-                    doExcludeAnalysis(ctx.getArgs().getCommitId(), err.getMessage(), AnalysisExcludeCategory.LOCAL_REVIEW_FAILURE, ExceptionUtils.getStackTrace(err));
-                }
+            /** a review that failed on the provider or on Codiqo's side fails the run here, and doOnFailure halts the project */
+            Optional<AnalysisExcludeModel> excluded = LocalReviewRun.exclusionOf(reviewRun.attachTo(ctx), ctx, new MavenMessageReporter(getLog()));
+            if (excluded.isPresent()) {
+                AnalysisExcludeModel exclusion = excluded.get();
+                doExcludeAnalysis(ctx.getArgs().getCommitId(), exclusion.getReason(), exclusion.getCategory(), exclusion.getDetail(), exclusion.getFiles(), exclusion.getProjectMetrics());
                 return;
             }
         }

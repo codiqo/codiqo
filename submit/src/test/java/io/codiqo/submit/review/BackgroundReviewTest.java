@@ -8,7 +8,9 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import org.junit.jupiter.api.Test;
 
@@ -30,8 +32,8 @@ class BackgroundReviewTest {
         try (BackgroundReview<LocalReview> background = BackgroundReview.start(() -> {
             throw new IOException("opencode serve exited with code 1");
         })) {
-            LocalReviewException err = assertThrows(LocalReviewException.class, () -> background.await(WAIT));
-            assertTrue(err.getMessage().contains("opencode serve exited"), err.getMessage());
+            ExecutionException err = assertThrows(ExecutionException.class, () -> background.await(WAIT));
+            assertEquals("opencode serve exited with code 1", err.getCause().getMessage());
         }
     }
     @Test
@@ -41,7 +43,7 @@ class BackgroundReviewTest {
             release.await();
             return null;
         })) {
-            assertThrows(LocalReviewException.class, () -> background.await(Duration.ofMillis(50)));
+            assertThrows(TimeoutException.class, () -> background.await(Duration.ofMillis(50)));
         }
     }
     @Test

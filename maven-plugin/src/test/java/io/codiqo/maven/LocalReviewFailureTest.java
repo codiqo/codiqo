@@ -19,32 +19,43 @@ import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.ProjectMetricsModel;
-import io.codiqo.llm.review.LocalReviewer;
+import io.codiqo.llm.review.ReviewVerdict;
 import io.codiqo.submit.SubmissionContext;
-import io.codiqo.submit.review.LocalReviewException;
 import io.codiqo.submit.review.LocalReviewRun;
 import io.codiqo.submit.review.BackgroundReview;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.maven.logging.MavenLogFactory;
 
 /**
- * Local mode judges a commit with the review alone, so a review that fails excludes the commit: the server's prompt
- * never judges it in the review's place, and the next run does not pay for the review again. The test mojo has no
- * server to submit to, so a submission would fail the call.
+ * Local mode judges a commit with the review alone, so a review that failed on the commit excludes it: the server's
+ * prompt never judges it in the review's place, and the next run does not pay for the review again. A review that
+ * failed on Codiqo's side fails the run instead, which halts the project. The test mojo has no server to submit to, so
+ * a submission would fail the call.
  */
 class LocalReviewFailureTest {
     private static final String COMMIT = "1a2b3c4d";
 
     @Test
-    void aFailedReviewExcludesTheCommitAndSubmitsNothing() throws Exception {
+    void aReviewThatFailedOnTheCommitExcludesItAndSubmitsNothing() throws Exception {
+        List<String> excluded = Lists.newArrayList();
+        SubmitCommitAnalysisMojo mojo = excludingMojo(excluded, () -> new ReviewVerdict.CommitFailure(new IOException("the coordinator started no reviewer")));
+
+        mojo.doSubmit(context());
+
+        assertEquals(List.of(COMMIT + " " + AnalysisExcludeCategory.LOCAL_REVIEW_FAILURE + " local review failed: the coordinator started no reviewer"), excluded);
+    }
+    /** an OpenCode that would not start fails every review the same way until Codiqo's side is fixed: no commit is excluded for it */
+    @Test
+    void aReviewThatFailedOnCodiqosSideFailsTheRun() throws Exception {
         List<String> excluded = Lists.newArrayList();
         SubmitCommitAnalysisMojo mojo = excludingMojo(excluded, () -> {
             throw new IOException("opencode serve exited with code 1");
         });
 
-        mojo.doSubmit(context());
+        IOException err = assertThrows(IOException.class, () -> mojo.doSubmit(context()));
 
-        assertEquals(List.of(COMMIT + " " + AnalysisExcludeCategory.LOCAL_REVIEW_FAILURE + " local review failed: opencode serve exited with code 1"), excluded);
+        assertEquals("local review failed: opencode serve exited with code 1", err.getMessage());
+        assertEquals(List.of(), excluded);
     }
     /** an interrupt is the run being stopped, not a failed review: the commit is left for the next run */
     @Test
@@ -57,13 +68,13 @@ class LocalReviewFailureTest {
 
         Thread.currentThread().interrupt();
         try {
-            assertThrows(LocalReviewException.class, () -> mojo.doSubmit(context()));
+            assertThrows(InterruptedException.class, () -> mojo.doSubmit(context()));
         } finally {
             assertTrue(Thread.interrupted(), "the interrupt is kept for the caller");
         }
         assertEquals(List.of(), excluded);
     }
-    private static SubmitCommitAnalysisMojo excludingMojo(List<String> excluded, Callable<LocalReviewer.ReviewOutcome> review) throws IllegalAccessException {
+    private static SubmitCommitAnalysisMojo excludingMojo(List<String> excluded, Callable<ReviewVerdict> review) throws IllegalAccessException {
         SubmitCommitAnalysisMojo toReturn = new SubmitCommitAnalysisMojo() {
             @Override
             protected void doExcludeAnalysis(String commitSha, String reason, AnalysisExcludeCategory category, String detail, List<FileChangeModel> files, ProjectMetricsModel projectMetrics) {

@@ -40,8 +40,8 @@ import io.codiqo.api.testing.TestRun;
 import io.codiqo.api.testing.TestRuns;
 import io.codiqo.client.ApiException;
 import io.codiqo.client.model.AnalysisAcceptedModel;
-import io.codiqo.client.model.AnalysisBuildFailureModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
+import io.codiqo.client.model.AnalysisExcludeModel;
 import io.codiqo.client.model.ClientInfoModel;
 import io.codiqo.client.model.ClientInfoModel.BuildToolEnum;
 import io.codiqo.client.model.FileChangeModel;
@@ -71,7 +71,6 @@ import io.codiqo.util.ProgressStage;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
-import io.codiqo.submit.review.LocalReviewException;
 import io.codiqo.submit.review.LocalReviewRun;
 import io.codiqo.llm.ConventionGuidance;
 import io.codiqo.llm.review.ReviewTrace;
@@ -675,35 +674,22 @@ public class AnalysisEngine {
         return Optional.empty();
     }
     /**
-     * Joins the review into the submission; whether the commit is to be submitted. A review that failed leaves the commit
-     * unjudged, so it is excluded, as on Maven: under its build failure when its build failed too, so an operator's
-     * re-inclusion survives a re-analysis, else as LOCAL_REVIEW_FAILURE. An interrupt is the run being stopped, not a
-     * failed review. A commit without a review is submitted as it is.
+     * Joins the review into the submission; whether the commit is to be submitted. The verdict does to the commit what it
+     * does on Maven ({@link LocalReviewRun#exclusionOf}); a commit without a review is submitted as it is.
      */
     @VisibleForTesting
     public static boolean judged(AnalysisRequest request, RunArgs args, Optional<LocalReviewRun> review, SubmissionContext ctx, Log log) throws Exception {
         if (review.isEmpty()) {
             return true;
         }
-        try {
-            review.get().attachTo(ctx);
-            return true;
-        } catch (LocalReviewException err) {
-            /** as on Maven: a stopped run and a review the provider failed fail the run, which halts the project */
-            if (BooleanUtils.or(new boolean[] { Thread.currentThread().isInterrupted(), err.isProviderFailure() })) {
-                throw err;
-            }
-            log.error("commit %s excluded: %s", args.getCommitId(), err.getMessage());
-            AnalysisBuildFailureModel buildFailure = ctx.getSubmissionModel().getBuildFailure();
-            if (Objects.nonNull(buildFailure)) {
-                reportExclusion(request, args, args.getCommitId(), new Exclusion(buildFailure.getReason(), buildFailure.getCategory()),
-                        ctx.getSubmissionModel().getFiles(), log, buildFailure.getDetail(), ctx.getSubmissionModel().getProjectMetrics());
-            } else {
-                reportExclusion(request, args, args.getCommitId(), new Exclusion(err.getMessage(), AnalysisExcludeCategory.LOCAL_REVIEW_FAILURE),
-                        List.of(), log, ExceptionUtils.getStackTrace(err), null);
-            }
+        Optional<AnalysisExcludeModel> excluded = LocalReviewRun.exclusionOf(review.get().attachTo(ctx), ctx, log);
+        if (excluded.isPresent()) {
+            AnalysisExcludeModel exclusion = excluded.get();
+            reportExclusion(request, args, args.getCommitId(), new Exclusion(exclusion.getReason(), exclusion.getCategory()), exclusion.getFiles(), log, exclusion.getDetail(),
+                    exclusion.getProjectMetrics());
             return false;
         }
+        return true;
     }
     /** with the review's trace when it was reviewed: the trace goes with the review it explains, never alone */
     private static AnalysisAcceptedModel submit(AnalysisRequest request, SubmissionContext ctx, Log log) throws Exception {

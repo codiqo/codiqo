@@ -25,7 +25,7 @@ import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.logging.SlfLogFactory;
 import io.codiqo.gradle.model.AnalysisRequest;
-import io.codiqo.llm.review.LocalReviewer;
+import io.codiqo.llm.review.ReviewVerdict;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.submit.review.BackgroundReview;
 import io.codiqo.submit.review.LocalReviewRun;
@@ -81,9 +81,7 @@ class AnalysisEngineReviewTest {
         request.setConnectTimeoutSeconds(5);
         request.setReadTimeoutSeconds(5);
 
-        try (BackgroundReview<LocalReviewer.ReviewOutcome> failing = BackgroundReview.start(() -> {
-            throw new IOException(REVIEW_ERROR);
-        })) {
+        try (BackgroundReview<ReviewVerdict> failing = BackgroundReview.start(() -> new ReviewVerdict.CommitFailure(new IOException(REVIEW_ERROR)))) {
             Optional<LocalReviewRun> review = Optional.of(LocalReviewRun.of(failing, DefaultLanguageProcessors.reviewLanguages(), LOGS));
             SubmissionContext ctx = context();
 
