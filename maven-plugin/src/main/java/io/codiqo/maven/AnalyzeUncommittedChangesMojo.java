@@ -142,7 +142,7 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
         if (submit) {
             /** a review that failed leaves the changes unjudged: the developer is told, and nothing is sent */
             if (Objects.nonNull(reviewRun) && reviewRun.attachTo(ctx) instanceof ReviewVerdict.Failed failed) {
-                throw new MojoFailureException("the uncommitted changes were not reviewed, so nothing was submitted: " + failed.getError().getMessage(), failed.getError());
+                throw new MojoFailureException("the uncommitted changes were not reviewed, so nothing was submitted: " + failed.getReason(), failed.getError());
             }
             CodiqoCredential creds = credential();
             Log reporter = new MavenMessageReporter(getLog());

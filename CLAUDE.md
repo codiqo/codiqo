@@ -1579,8 +1579,9 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   alerts. A dependency that could not be resolved or a build that timed out is the environment's failure and stays
   excluded, and so is a build plugin whose own download failed (`Maven.classifyForkFailure`: the failure names a URL
   and shows a connection error or an HTML page where content was expected, as Spotless did fetching the Eclipse
-  formatter from download.eclipse.org's outage page). A review that fails on such a commit excludes it under its build failure, files and metrics included, not
-  as `LOCAL_REVIEW_FAILURE`: the server keeps an operator's re-inclusion of a build failure only under that category.
+  formatter from download.eclipse.org's outage page). A review that fails on such a commit excludes it under its build failure when it failed on the commit, files and
+  metrics included, not as `LOCAL_REVIEW_FAILURE`: the server keeps an operator's re-inclusion of a build failure only
+  under that category. A review that failed on the provider or on Codiqo's side halts the project, as on any commit.
 - **A run that fails on codiqo's side halts the project** (`ProjectHalts`): it submits nothing, so the next scheduled
   run would pick the same commit and pay for its review again every hour. `submit-commit-analysis` and the Gradle
   worker post the failure as the project's halt (`POST /api/v1/projects/{projectId}/halt`, the first halt is kept);

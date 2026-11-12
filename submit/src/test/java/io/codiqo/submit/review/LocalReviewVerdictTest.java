@@ -48,9 +48,9 @@ class LocalReviewVerdictTest {
             assertEquals("listing the project's tags failed with 503 after 3 attempts", failed.getError().getMessage());
         }
     }
-    /** without a reviewer, no relay counted a provider failure, so a review that outlived its limits is the commit's */
+    /** a review that ran out of time before its reviewer existed never reached the model, so no commit is excluded for it */
     @Test
-    void aReviewThatOutlivedEveryLimitOfItsOwnIsUnanswered() throws Exception {
+    void aReviewThatRanOutOfTimeBeforeReachingTheModelIsCodiqos() throws Exception {
         CountDownLatch release = new CountDownLatch(1);
         SubmissionContext ctx = context();
         ctx.getArgs().setReviewStartupTimeout(Duration.ofMillis(10));
@@ -59,9 +59,10 @@ class LocalReviewVerdictTest {
             release.await();
             return null;
         }), List.of(), LOGS)) {
-            ReviewVerdict.CommitFailure failed = assertInstanceOf(ReviewVerdict.CommitFailure.class, run.attachTo(ctx));
+            ReviewVerdict.CodiqoFailure failed = assertInstanceOf(ReviewVerdict.CodiqoFailure.class, run.attachTo(ctx));
 
             assertEquals("local review did not finish within PT0.04S", failed.getError().getMessage());
+            assertEquals(null, failed.getError().getCause(), "a halt's reason is the root cause's, which the timeout would leave blank");
         } finally {
             release.countDown();
         }

@@ -2,9 +2,11 @@ package io.codiqo.llm.review;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -46,13 +48,15 @@ import tools.jackson.databind.node.ObjectNode;
  */
 class TurnTest {
     private static final String SESSION = "ses_coordinator";
+    private static final String REFUSED_REVIEWER = "ses_refused";
+    private static final String RATE_LIMITED_REVIEWER = "ses_rate_limited";
     private static final String PROMPT = "Review commit 1a2b3c of this repository.";
     private static final Duration CLIENT_TIMEOUT = Duration.ofSeconds(10);
+    private static final Duration TURN_TIMEOUT = Duration.ofMillis(300);
 
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final List<String> prompts = Lists.newCopyOnWriteArrayList();
-    private final LocalReviewer reviewer = new LocalReviewer(new RunArgs(), new ReviewEndpoint("http://127.0.0.1:1", null, null), StringUtils.EMPTY, ReviewTags.NONE, List.of(),
-            List.of(), new NoopLog());
+    private final LocalReviewer reviewer = reviewer(new RunArgs());
     /** held by a turn that does not end, until the test is over */
     private final CountDownLatch turnEnds = new CountDownLatch(1);
     private HttpServer server;
@@ -199,18 +203,53 @@ class TurnTest {
     void aTurnThatDidNotEndInTimeIsUnanswered() throws Exception {
         endless = true;
         providerFails();
+        RunArgs args = new RunArgs();
+        args.setReviewTimeout(TURN_TIMEOUT);
 
-        ReviewVerdict.ProviderFailure failed = assertInstanceOf(ReviewVerdict.ProviderFailure.class, ask(Duration.ofMillis(300)).orElseThrow());
+        ReviewVerdict.ProviderFailure failed = assertInstanceOf(ReviewVerdict.ProviderFailure.class, ask(reviewer(args), TURN_TIMEOUT).orElseThrow());
 
-        assertTrue(failed.getError().getMessage().startsWith("session ses_coordinator did not end its turn within "), failed.getError().getMessage());
+        assertEquals("session ses_coordinator did not end its turn within PT0.3S", failed.getError().getMessage());
+    }
+    /**
+     * OkHttp ends a connect to OpenCode that timed out with the same kind of exception as a call that outlived the review
+     * timeout: one that ends sooner is no turn that ran out of time, and goes on as Codiqo's failure.
+     */
+    @Test
+    void aWaitThatFailedBeforeTheReviewTimeoutIsNoTurnThatRanOutOfTime() {
+        endless = true;
+
+        assertThrows(InterruptedIOException.class, () -> ask(reviewer, TURN_TIMEOUT));
+    }
+    /** a reviewer the provider failed halts the review, so the commit is reviewed again rather than silently excluded */
+    @Test
+    void aReviewerTheProviderFailedSettlesTheReviewersWhicheverOrderTheyAreListedIn() throws Exception {
+        answers.expect(REFUSED_REVIEWER, AnswerTool.REVIEW, arguments -> {
+            throw new ReviewAnswers.RefusedAnswerException("no unitLabels");
+        });
+        answers.answerCall(REFUSED_REVIEWER, AnswerTool.REVIEW.getToolName(), mapper.readTree("{}"));
+
+        try (OpenCodeClient client = new OpenCodeClient(url, "pw", CLIENT_TIMEOUT)) {
+            for (List<String> listed : List.of(List.of(REFUSED_REVIEWER, RATE_LIMITED_REVIEWER), List.of(RATE_LIMITED_REVIEWER, REFUSED_REVIEWER))) {
+                ReviewVerdict.ProviderFailure failed = assertInstanceOf(ReviewVerdict.ProviderFailure.class,
+                        LocalReviewer.settleReviewers(client, answers, relay, listed).orElseThrow(), listed.toString());
+
+                assertEquals("session ses_rate_limited ended its turn with provider.rate-limit: stream cut", failed.getError().getMessage());
+            }
+        }
     }
     private void answer(String arguments) {
         answers.answerCall(SESSION, AnswerTool.LABELS.getToolName(), mapper.readTree(arguments));
     }
     private Optional<ReviewVerdict> ask(Duration timeout) throws IOException {
+        return ask(reviewer, timeout);
+    }
+    private Optional<ReviewVerdict> ask(LocalReviewer asking, Duration timeout) throws IOException {
         try (OpenCodeClient client = new OpenCodeClient(url, "pw", timeout)) {
-            return reviewer.ask(client, answers, relay, SESSION, PROMPT, AnswerTool.LABELS);
+            return asking.ask(client, answers, relay, SESSION, PROMPT, AnswerTool.LABELS);
         }
+    }
+    private static LocalReviewer reviewer(RunArgs args) {
+        return new LocalReviewer(args, new ReviewEndpoint("http://127.0.0.1:1", null, null), StringUtils.EMPTY, ReviewTags.NONE, List.of(), List.of(), new NoopLog());
     }
     /** the provider answers one of the review's calls with a 503, which the relay counts */
     private void providerFails() throws Exception {
@@ -227,7 +266,11 @@ class TurnTest {
         } else if (route.equals("POST /api/experimental/session/" + SESSION + "/wait") && endless) {
             awaitTurnEnd();
         } else if (route.equals("GET /api/session/" + SESSION + "/message")) {
-            body = messages();
+            body = messages(error);
+        } else if (route.equals("GET /api/session/" + REFUSED_REVIEWER + "/message")) {
+            body = messages(Optional.empty());
+        } else if (route.equals("GET /api/session/" + RATE_LIMITED_REVIEWER + "/message")) {
+            body = messages(Optional.of("provider.rate-limit"));
         }
         respond(exchange, HttpResponseStatus.OK.code(), body);
     }
@@ -240,11 +283,11 @@ class TurnTest {
         }
     }
     /** the session's one turn, oldest first: the prompt, then an assistant message that stopped, failed or was cut off */
-    private String messages() {
+    private String messages(Optional<String> turnError) {
         ObjectNode message = JsonNodeFactory.instance.objectNode().put("type", "assistant");
-        if (error.isPresent()) {
+        if (turnError.isPresent()) {
             message.put("finish", "error");
-            message.putObject("error").put("type", error.get()).put("message", "stream cut");
+            message.putObject("error").put("type", turnError.get()).put("message", "stream cut");
         } else if (cutOff) {
             message.put("finish", "tool-calls");
         } else {

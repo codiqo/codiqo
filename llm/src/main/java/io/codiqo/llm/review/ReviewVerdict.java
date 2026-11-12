@@ -24,6 +24,7 @@ import lombok.Value;
 public sealed interface ReviewVerdict permits ReviewVerdict.Succeeded, ReviewVerdict.Failed {
     /** the provider's summary for a turn OpenCode ended with a provider error that never reached the relay */
     String RELAY_COUNTED_NONE = "OpenCode recorded the provider's failure; the relay counted none";
+    String REVIEW_FAILED = "local review failed: ";
 
     /**
      * Failed on the commit, with the provider's failed answers named in its error: a turn's own error, and an answer
@@ -68,7 +69,7 @@ public sealed interface ReviewVerdict permits ReviewVerdict.Succeeded, ReviewVer
         LocalReviewer.ReviewOutcome outcome;
     }
 
-    /** a review that failed or was stopped: its error's message is the reason an exclusion or a halt records */
+    /** a review that failed or was stopped */
     abstract sealed class Failed implements ReviewVerdict permits CommitFailure, ProviderFailure, CodiqoFailure, Stopped {
         private final Exception error;
 
@@ -77,6 +78,10 @@ public sealed interface ReviewVerdict permits ReviewVerdict.Succeeded, ReviewVer
         }
         public Exception getError() {
             return error;
+        }
+        /** why the review failed, as the developer, an exclusion or a halt reads it */
+        public String getReason() {
+            return error.getMessage();
         }
     }
 
@@ -98,6 +103,14 @@ public sealed interface ReviewVerdict permits ReviewVerdict.Succeeded, ReviewVer
         }
         public String getProviderSummary() {
             return providerSummary;
+        }
+        /**
+         * With the provider's failed answers: the error alone names only what was lost, and a reviewer cut off at its step
+         * cap reads as the model's own failure without the 429s that preceded it.
+         */
+        @Override
+        public String getReason() {
+            return getError().getMessage() + "; " + providerSummary;
         }
     }
 

@@ -92,8 +92,12 @@ public class LocalReviewer {
     private final List<PreviousFinding> previousFindings;
     private final List<ReviewLanguage> languages;
     private final Log log;
-    /** the relay of the review running now, read by a caller that stopped waiting for it ({@link #timedOut}) */
-    private final AtomicReference<LlmRelay> runningRelay = new AtomicReference<>();
+    /**
+     * The relay of the review, set once its agents are prompted and read by a caller that stopped waiting for the review
+     * ({@link #timedOut}). Until then no agent can have lost an answer, so a review that ran out of time before it was
+     * failed on Codiqo's side, never on the commit.
+     */
+    private final AtomicReference<LlmRelay> promptedRelay = new AtomicReference<>();
 
     public LocalReviewer(
             RunArgs args,
@@ -114,7 +118,7 @@ public class LocalReviewer {
     public LocalReview review(Path directory, String commit) throws IOException {
         return switch (reviewThenFollowUp(directory, commit, Optional.empty(), Optional.empty())) {
             case ReviewVerdict.Succeeded succeeded -> succeeded.getOutcome().getReview();
-            case ReviewVerdict.Failed failed -> throw new IOException("local review failed: " + failed.getError().getMessage(), failed.getError());
+            case ReviewVerdict.Failed failed -> throw new IOException(ReviewVerdict.REVIEW_FAILED + failed.getReason(), failed.getError());
         };
     }
     /**
@@ -125,7 +129,6 @@ public class LocalReviewer {
         try {
             ReviewTarget target = target(directory, commit);
             try (LlmRelay relay = LlmRelay.start(args, endpoint, log); ReviewAnswers answers = ReviewAnswers.start(args, log)) {
-                runningRelay.set(relay);
                 try {
                     return runReview(target.getWorkTree(), target.getSha(), target.getNamingRules(), relay, answers, units, findings);
                 } catch (IOException | RuntimeException err) {
@@ -138,11 +141,51 @@ public class LocalReviewer {
     }
     /**
      * The verdict on this reviewer's review when its caller stopped waiting for it, settled as a turn that did not end in
-     * time is ({@link ReviewVerdict#unanswered}) by what the relay of the review, still running, has counted so far.
+     * time is ({@link ReviewVerdict#unanswered}) by what the relay has counted so far, once the agents were prompted.
      */
     public ReviewVerdict timedOut(Exception err) {
-        Optional<LlmRelay> relay = Optional.ofNullable(runningRelay.get());
-        return ReviewVerdict.unanswered(err, relay.map(LlmRelay::providerFailed).orElse(false), relay.flatMap(LlmRelay::providerErrors));
+        Optional<LlmRelay> relay = Optional.ofNullable(promptedRelay.get());
+        if (relay.isPresent()) {
+            return ReviewVerdict.unanswered(err, relay.get().providerFailed(), relay.get().providerErrors());
+        }
+        return new ReviewVerdict.CodiqoFailure(err);
+    }
+    /**
+     * Prompts the session once and settles its turn: empty when it answered through its tool, else the verdict its
+     * failure makes ({@link #failureOf}). A turn that did not end within the review timeout and a session cut off
+     * without an answer, at its step cap for one, end the review unanswered ({@link ReviewVerdict#unanswered}).
+     */
+    @VisibleForTesting
+    public Optional<ReviewVerdict> ask(OpenCodeClient client, ReviewAnswers answers, LlmRelay relay, String sessionId, String prompt, AnswerTool tool) throws IOException {
+        client.prompt(sessionId, prompt);
+        promptedRelay.compareAndSet(null, relay);
+        StopWatch turn = StopWatch.createStarted();
+        try {
+            client.awaitIdle(sessionId);
+        } catch (InterruptedIOException err) {
+            /**
+             * OkHttp ends a call that outlived its call timeout, which is the review timeout, with this exception, and
+             * also a connect to OpenCode that timed out after seconds (a SocketTimeoutException) and an interrupted wait.
+             * Only the first is a turn that did not end in time, and only it comes after the whole review timeout: the
+             * others are Codiqo's failure or a stopped run, settled where the review is.
+             */
+            if (BooleanUtils.or(new boolean[] { Thread.currentThread().isInterrupted(), turn.getDuration().compareTo(args.getReviewTimeout()) < 0 })) {
+                throw err;
+            }
+            return Optional.of(ReviewVerdict.unanswered(
+                    new IOException("session " + sessionId + " did not end its turn within " + args.getReviewTimeout()),
+                    relay.providerFailed(),
+                    relay.providerErrors()));
+        }
+
+        Optional<ReviewVerdict> toReturn = failureOf(client, answers, relay, sessionId, tool);
+        if (toReturn.isEmpty() && answers.accepted(sessionId, Object.class).isEmpty()) {
+            toReturn = Optional.of(ReviewVerdict.unanswered(
+                    new IOException("session " + sessionId + " was cut off before it called " + tool.getOpenCodeName() + ", so it gave no answer"),
+                    relay.providerFailed(),
+                    relay.providerErrors()));
+        }
+        return toReturn;
     }
     private ReviewTarget target(Path directory, String commit) throws IOException {
         try (Repository repository = new FileRepositoryBuilder().findGitDir(directory.toFile()).setMustExist(true).build()) {
@@ -185,7 +228,10 @@ public class LocalReviewer {
                     throw err;
                 }
 
-                /** a trace that cannot be written fails a review that succeeded, as Codiqo's failure */
+                /**
+                 * Every submitted review is sent with its trace (AnalysisSubmitter.putReviewTrace), so a trace that
+                 * cannot be written fails a review that succeeded: it is thrown, and settled as Codiqo's failure.
+                 */
                 switch (toReturn) {
                     case ReviewVerdict.Succeeded succeeded -> ReviewTrace.write(args, client, sha, sessionId, forkIds, log);
                     case ReviewVerdict.Failed failed -> writeTrace(client, sha, sessionId, forkIds, failed.getError());
@@ -205,7 +251,6 @@ public class LocalReviewer {
             failure.addSuppressed(traceErr);
         }
     }
-    /** the coordinator's review, then the follow-ups the build asked for, each taking the outcome so far */
     private ReviewVerdict review(
             OpenCodeClient client,
             ReviewAnswers answers,
@@ -241,11 +286,15 @@ public class LocalReviewer {
                 sessions.add(withConfiguredModel(child));
             }
 
-            failed = settleReviewers(client, answers, relay, sessions);
+            List<String> reviewerIds = sessions.stream()
+                    .filter(session -> OpenCodeReviewConfig.REVIEWER.equals(session.getAgent()))
+                    .map(SessionUsage::getSessionId)
+                    .toList();
+            failed = settleReviewers(client, answers, relay, reviewerIds);
             if (failed.isPresent()) {
                 return failed.get();
             }
-            ReviewerAnswers reviewers = reviewerAnswers(answers, sessions);
+            ReviewerAnswers reviewers = reviewerAnswers(answers, reviewerIds);
 
             LlmScoringResponse assessment = answer.getParsed().getAssessment();
             assessment.setBlockCategories(reviewers.getBlockCategories());
@@ -347,36 +396,6 @@ public class LocalReviewer {
         }
         return new ReviewVerdict.Succeeded(new ReviewOutcome(reviewed.getReview(), reviewed.getLabels(), Optional.of(triage)));
     }
-    /**
-     * Prompts the session once and settles its turn: empty when it answered through its tool, else the verdict its
-     * failure makes ({@link #failureOf}). A turn that did not end within the review timeout and a session cut off
-     * without an answer, at its step cap for one, end the review unanswered ({@link ReviewVerdict#unanswered}).
-     */
-    @VisibleForTesting
-    public Optional<ReviewVerdict> ask(OpenCodeClient client, ReviewAnswers answers, LlmRelay relay, String sessionId, String prompt, AnswerTool tool) throws IOException {
-        client.prompt(sessionId, prompt);
-        try {
-            client.awaitIdle(sessionId);
-        } catch (InterruptedIOException err) {
-            /** OkHttp ends a call that outlived its timeout with this exception as well; only an interrupt sets the flag */
-            if (Thread.currentThread().isInterrupted()) {
-                throw err;
-            }
-            return Optional.of(ReviewVerdict.unanswered(
-                    new IOException("session " + sessionId + " did not end its turn within " + args.getReviewTimeout(), err),
-                    relay.providerFailed(),
-                    relay.providerErrors()));
-        }
-
-        Optional<ReviewVerdict> toReturn = failureOf(client, answers, relay, sessionId, tool);
-        if (toReturn.isEmpty() && answers.accepted(sessionId, Object.class).isEmpty()) {
-            toReturn = Optional.of(ReviewVerdict.unanswered(
-                    new IOException("session " + sessionId + " was cut off before it called " + tool.getOpenCodeName() + ", so it gave no answer"),
-                    relay.providerFailed(),
-                    relay.providerErrors()));
-        }
-        return toReturn;
-    }
     private <T> ForkAnswer<T> forkAnswer(OpenCodeClient client, ReviewAnswers answers, String forkId, Class<T> type) throws IOException {
         ReviewAnswers.Accepted<T> answer = answers.accepted(forkId, type).orElseThrow();
         return new ForkAnswer<>(answer.getParsed(), answer.getArguments(), withConfiguredModel(client.usage(forkId)));
@@ -406,34 +425,30 @@ public class LocalReviewer {
         }
     }
     /** the reviewers' answers, every one of them accepted ({@link #settleReviewers}) */
-    private ReviewerAnswers reviewerAnswers(ReviewAnswers answers, List<SessionUsage> sessions) {
+    private ReviewerAnswers reviewerAnswers(ReviewAnswers answers, List<String> reviewerIds) {
         Map<Pair<String, String>, LlmScoringResponse.CodeBlockCategoryView> labels = Maps.newLinkedHashMap();
         /** the coordinator is told not to repeat them, so the reviewers' own answers are the only place they exist */
         Set<String> observations = Sets.newLinkedHashSet();
         Set<String> notChecked = Sets.newLinkedHashSet();
-        int total = 0;
-        for (SessionUsage session : sessions) {
-            if (OpenCodeReviewConfig.REVIEWER.equals(session.getAgent())) {
-                total++;
-                ReviewerAnswer answer = answers.accepted(session.getSessionId(), ReviewerAnswer.class).orElseThrow().getParsed();
-                if (answer.getLabels().isEmpty()) {
-                    log.warn("reviewer session %s labelled none of its code units", session.getSessionId());
-                }
-                answer.getLabels().forEach(block -> labels.putIfAbsent(Pair.of(block.getFile(), block.getSignature()), block));
+        for (String reviewerId : reviewerIds) {
+            ReviewerAnswer answer = answers.accepted(reviewerId, ReviewerAnswer.class).orElseThrow().getParsed();
+            if (answer.getLabels().isEmpty()) {
+                log.warn("reviewer session %s labelled none of its code units", reviewerId);
+            }
+            answer.getLabels().forEach(block -> labels.putIfAbsent(Pair.of(block.getFile(), block.getSignature()), block));
 
-                for (String observation : answer.getObservations()) {
-                    if (StringUtils.isNotBlank(observation)) {
-                        observations.add(observation.strip());
-                    }
+            for (String observation : answer.getObservations()) {
+                if (StringUtils.isNotBlank(observation)) {
+                    observations.add(observation.strip());
                 }
-                for (String note : answer.getNotChecked()) {
-                    if (StringUtils.isNotBlank(note)) {
-                        notChecked.add(note.strip());
-                    }
+            }
+            for (String note : answer.getNotChecked()) {
+                if (StringUtils.isNotBlank(note)) {
+                    notChecked.add(note.strip());
                 }
             }
         }
-        return new ReviewerAnswers(total, Lists.newArrayList(labels.values()),
+        return new ReviewerAnswers(reviewerIds.size(), Lists.newArrayList(labels.values()),
                 observations.stream().limit(args.getReviewMaxObservations()).toList(),
                 notChecked.stream().limit(args.getReviewMaxNotChecked()).toList());
     }
@@ -556,34 +571,36 @@ public class LocalReviewer {
     /**
      * Settles every reviewer's session: empty when each gave its answer. A coordinator that started no reviewer reviewed
      * nothing of the commit, which is the commit's failure; reviewers cut off without an answer left their areas
-     * unreviewed ({@link ReviewVerdict#unanswered}).
+     * unreviewed ({@link ReviewVerdict#unanswered}). Reviewers that failed differently settle the review as the
+     * provider's failure when one of them failed on the provider, whatever order OpenCode lists them in: the halt is
+     * reported and the commit reviewed again on resume, where an exclusion would leave it unscored over a review the
+     * provider broke.
      */
-    private static Optional<ReviewVerdict> settleReviewers(OpenCodeClient client, ReviewAnswers answers, LlmRelay relay, List<SessionUsage> sessions) throws IOException {
-        List<String> reviewers = sessions.stream()
-                .filter(session -> OpenCodeReviewConfig.REVIEWER.equals(session.getAgent()))
-                .map(SessionUsage::getSessionId)
-                .toList();
-        if (reviewers.isEmpty()) {
+    @VisibleForTesting
+    public static Optional<ReviewVerdict> settleReviewers(OpenCodeClient client, ReviewAnswers answers, LlmRelay relay, List<String> reviewerIds) throws IOException {
+        if (reviewerIds.isEmpty()) {
             return Optional.of(ReviewVerdict.commitFailure(new IOException("the coordinator started no reviewer, so nothing of the commit was reviewed"), relay.providerErrors()));
         }
 
+        List<ReviewVerdict> failures = Lists.newArrayList();
         List<String> unanswered = Lists.newArrayList();
-        for (String reviewer : reviewers) {
-            Optional<ReviewVerdict> failed = failureOf(client, answers, relay, reviewer, AnswerTool.REVIEW);
-            if (failed.isPresent()) {
-                return failed;
-            }
-            if (answers.accepted(reviewer, ReviewerAnswer.class).isEmpty()) {
-                unanswered.add(reviewer);
+        for (String reviewerId : reviewerIds) {
+            Optional<ReviewVerdict> failed = failureOf(client, answers, relay, reviewerId, AnswerTool.REVIEW);
+            failed.ifPresent(failures::add);
+            if (BooleanUtils.and(new boolean[] { failed.isEmpty(), answers.accepted(reviewerId, ReviewerAnswer.class).isEmpty() })) {
+                unanswered.add(reviewerId);
             }
         }
         if (CollectionUtils.isNotEmpty(unanswered)) {
-            return Optional.of(ReviewVerdict.unanswered(
-                    new IOException(unanswered.size() + " of " + reviewers.size() + " reviewer sessions ended without an answer, so their areas went unreviewed: " + unanswered),
+            failures.add(ReviewVerdict.unanswered(
+                    new IOException(unanswered.size() + " of " + reviewerIds.size() + " reviewer sessions ended without an answer, so their areas went unreviewed: " + unanswered),
                     relay.providerFailed(),
                     relay.providerErrors()));
         }
-        return Optional.empty();
+        return failures.stream()
+                .filter(ReviewVerdict.ProviderFailure.class::isInstance)
+                .findFirst()
+                .or(() -> failures.stream().findFirst());
     }
     @Value
     public static class ReviewerAnswers {

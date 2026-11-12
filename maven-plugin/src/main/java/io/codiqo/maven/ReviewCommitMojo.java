@@ -168,7 +168,7 @@ public class ReviewCommitMojo extends AbstractMojo {
 
             LocalReviewer.ReviewOutcome result = switch (reviewer.reviewThenFollowUp(directory.toPath(), commit, units, source)) {
                 case ReviewVerdict.Succeeded succeeded -> succeeded.getOutcome();
-                case ReviewVerdict.Failed failed -> throw failed.getError();
+                case ReviewVerdict.Failed failed -> throw new IOException(failed.getReason(), failed.getError());
             };
             logFindings(result.getReview());
             result.getTriage().ifPresent(this::logTriage);

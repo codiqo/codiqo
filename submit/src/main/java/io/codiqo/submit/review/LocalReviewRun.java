@@ -63,7 +63,6 @@ public final class LocalReviewRun implements AutoCloseable {
 
     /** enough unmatched labels to show the drift, few enough to keep the log readable */
     private static final int UNMATCHED_LABEL_SAMPLE = 10;
-    private static final String REVIEW_FAILED = "local review failed: ";
 
     private final BackgroundReview<ReviewVerdict> review;
     /** the review's reviewer once the review's thread made one, which settles a review that ran out of time */
@@ -122,7 +121,9 @@ public final class LocalReviewRun implements AutoCloseable {
     /**
      * The review's verdict, settled here for what only the wait sees: the review's thread failed before a reviewer could
      * settle anything (the project's tag vocabulary could not be fetched), the review outlived every limit of its own,
-     * or the run was stopped while it waited.
+     * or the run was stopped while it waited. A review that ran out of time before a reviewer existed never reached the
+     * model, so it failed on Codiqo's side ({@link LocalReviewer#timedOut} settles the others). The timeout carries no
+     * message of its own, and a halt's reason is its failure's root cause, so it is not kept as the cause.
      */
     private ReviewVerdict await(Duration timeout) {
         try {
@@ -134,10 +135,10 @@ public final class LocalReviewRun implements AutoCloseable {
             }
             return ReviewVerdict.unexpected(failure, Optional.empty());
         } catch (TimeoutException err) {
-            IOException timedOut = new IOException("local review did not finish within " + timeout, err);
+            IOException timedOut = new IOException("local review did not finish within " + timeout);
             return Optional.ofNullable(reviewer.get())
                     .map(started -> started.timedOut(timedOut))
-                    .orElseGet(() -> ReviewVerdict.unanswered(timedOut, false, Optional.empty()));
+                    .orElseGet(() -> new ReviewVerdict.CodiqoFailure(timedOut));
         } catch (InterruptedException err) {
             Thread.currentThread().interrupt();
             return new ReviewVerdict.Stopped(err);
@@ -227,9 +228,10 @@ public final class LocalReviewRun implements AutoCloseable {
     public static Optional<AnalysisExcludeModel> exclusionOf(ReviewVerdict verdict, SubmissionContext ctx, Log log) throws Exception {
         return switch (verdict) {
             case ReviewVerdict.Succeeded succeeded -> Optional.empty();
-            case ReviewVerdict.CommitFailure failed -> Optional.of(excluded(failed.getError(), ctx, log));
-            case ReviewVerdict.ProviderFailure failed -> throw new ReviewProviderException(REVIEW_FAILED + failed.getError().getMessage(), failed.getProviderSummary(), failed.getError());
-            case ReviewVerdict.CodiqoFailure failed -> throw new IOException(REVIEW_FAILED + failed.getError().getMessage(), failed.getError());
+            case ReviewVerdict.CommitFailure failed -> Optional.of(excluded(failed, ctx, log));
+            case ReviewVerdict.ProviderFailure failed ->
+                throw new ReviewProviderException(ReviewVerdict.REVIEW_FAILED + failed.getError().getMessage(), failed.getProviderSummary(), failed.getError());
+            case ReviewVerdict.CodiqoFailure failed -> throw new IOException(ReviewVerdict.REVIEW_FAILED + failed.getReason(), failed.getError());
             case ReviewVerdict.Stopped stopped -> throw stopped.getError();
         };
     }
@@ -242,9 +244,9 @@ public final class LocalReviewRun implements AutoCloseable {
      * a review records: an operator's re-inclusion of a build failure survives a re-analysis only under that category,
      * and the files are what the server stores as the excluded commit's per-file changes.
      */
-    private static AnalysisExcludeModel excluded(Exception error, SubmissionContext ctx, Log log) {
-        String reason = REVIEW_FAILED + error.getMessage();
-        log.error(error, "commit %s excluded: %s", ctx.getArgs().getCommitId(), reason);
+    private static AnalysisExcludeModel excluded(ReviewVerdict.CommitFailure failed, SubmissionContext ctx, Log log) {
+        String reason = ReviewVerdict.REVIEW_FAILED + failed.getReason();
+        log.error(failed.getError(), "commit %s excluded: %s", ctx.getArgs().getCommitId(), reason);
 
         AnalysisBuildFailureModel buildFailure = ctx.getSubmissionModel().getBuildFailure();
         if (Objects.nonNull(buildFailure)) {
@@ -258,7 +260,7 @@ public final class LocalReviewRun implements AutoCloseable {
         return new AnalysisExcludeModel()
                 .reason(reason)
                 .category(AnalysisExcludeCategory.LOCAL_REVIEW_FAILURE)
-                .detail(ExceptionUtils.getStackTrace(error))
+                .detail(ExceptionUtils.getStackTrace(failed.getError()))
                 .files(Lists.newArrayList());
     }
 }
