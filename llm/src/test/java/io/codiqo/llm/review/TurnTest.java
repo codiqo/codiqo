@@ -60,6 +60,8 @@ class TurnTest {
     /** held by a turn that does not end, until the test is over */
     private final CountDownLatch turnEnds = new CountDownLatch(1);
     private HttpServer server;
+    /** the model's end point behind the relay, which answers every call with a 503 */
+    private HttpServer provider;
     private ReviewAnswers answers;
     private LlmRelay relay;
     private String url;
@@ -68,15 +70,19 @@ class TurnTest {
     /** a turn cut off at its step cap: its last message neither stopped on its own nor failed */
     private boolean cutOff;
     private boolean endless;
+    /** the provider fails while the turn runs, not before it */
+    private boolean providerFailsDuringTurn;
 
     @BeforeEach
     void start() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", this::handle);
-        server.createContext("/v1/models", exchange -> respond(exchange, HttpResponseStatus.SERVICE_UNAVAILABLE.code(), "{}"));
         server.start();
         url = RunArgs.loopbackUrl(server.getAddress().getPort()).build().toString();
-        relay = LlmRelay.start(new RunArgs(), new ReviewEndpoint(RunArgs.loopbackUrl(server.getAddress().getPort()).encodedPath("/v1").build().toString(), null, null), new NoopLog());
+        provider = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        provider.createContext("/v1/models", exchange -> respond(exchange, HttpResponseStatus.SERVICE_UNAVAILABLE.code(), "{}"));
+        provider.start();
+        relay = LlmRelay.start(new RunArgs(), new ReviewEndpoint(RunArgs.loopbackUrl(provider.getAddress().getPort()).encodedPath("/v1").build().toString(), null, null), new NoopLog());
         answers = ReviewAnswers.start(new RunArgs(), new NoopLog());
         answers.expect(SESSION, AnswerTool.LABELS, arguments -> {
             if (arguments.path("labels").isEmpty()) {
@@ -89,6 +95,7 @@ class TurnTest {
     void stop() {
         turnEnds.countDown();
         server.stop(0);
+        provider.stop(0);
         relay.close();
         answers.close();
     }
@@ -186,23 +193,37 @@ class TurnTest {
         assertEquals("index out of date", failed.getError().getCause().getCause().getCause().getMessage());
         assertTrue(failed.getError().getMessage().endsWith("; the LLM provider answered 503 once during the review"), failed.getError().getMessage());
     }
-    /** a session cut off at its step cap says nothing of why: the relay's count decides */
+    /** a session cut off at its step cap says nothing of why: the relay's count during its turn decides */
     @Test
-    void aSessionCutOffIsTheProvidersFailureOnlyWhenTheProviderFailed() throws Exception {
+    void aSessionCutOffIsTheProvidersFailureOnlyWhenTheProviderFailedDuringItsTurn() throws Exception {
         cutOff = true;
 
         ReviewVerdict.CommitFailure unanswered = assertInstanceOf(ReviewVerdict.CommitFailure.class, ask(CLIENT_TIMEOUT).orElseThrow());
         assertEquals("session ses_coordinator was cut off before it called codiqo_submit_labels, so it gave no answer", unanswered.getError().getMessage());
 
-        providerFails();
+        providerFailsDuringTurn = true;
         ReviewVerdict.ProviderFailure failed = assertInstanceOf(ReviewVerdict.ProviderFailure.class, ask(CLIENT_TIMEOUT).orElseThrow());
         assertEquals("the LLM provider answered 503 once during the review", failed.getProviderSummary());
+    }
+    /**
+     * A labelling or triage turn runs after the coordinator's: a provider failure during an earlier turn, which OpenCode
+     * retried, does not make this turn's lost answer the provider's, though the error still names it.
+     */
+    @Test
+    void aSessionCutOffAfterAnEarlierTurnsProviderFailureIsTheCommits() throws Exception {
+        cutOff = true;
+        providerFails();
+
+        ReviewVerdict.CommitFailure unanswered = assertInstanceOf(ReviewVerdict.CommitFailure.class, ask(CLIENT_TIMEOUT).orElseThrow());
+
+        assertEquals("session ses_coordinator was cut off before it called codiqo_submit_labels, so it gave no answer; the LLM provider answered 503 once during the review",
+                unanswered.getError().getMessage());
     }
     /** a turn that outlives the review timeout is settled like a session cut off, never as Codiqo's failure */
     @Test
     void aTurnThatDidNotEndInTimeIsUnanswered() throws Exception {
         endless = true;
-        providerFails();
+        providerFailsDuringTurn = true;
         RunArgs args = new RunArgs();
         args.setReviewTimeout(TURN_TIMEOUT);
 
@@ -252,19 +273,24 @@ class TurnTest {
         return new LocalReviewer(args, new ReviewEndpoint("http://127.0.0.1:1", null, null), StringUtils.EMPTY, ReviewTags.NONE, List.of(), List.of(), new NoopLog());
     }
     /** the provider answers one of the review's calls with a 503, which the relay counts */
-    private void providerFails() throws Exception {
-        HttpResponse<String> response = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(URI.create(relay.getUrl() + "/models")).GET().header(HttpHeaderNames.AUTHORIZATION.toString(), RequestAuthorizer.bearer(relay.getSecret())).build(),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(HttpResponseStatus.SERVICE_UNAVAILABLE.code(), response.statusCode());
+    private void providerFails() throws IOException {
+        try {
+            HttpResponse<String> response = HttpClient.newHttpClient().send(
+                    HttpRequest.newBuilder(URI.create(relay.getUrl() + "/models")).GET().header(HttpHeaderNames.AUTHORIZATION.toString(), RequestAuthorizer.bearer(relay.getSecret())).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(HttpResponseStatus.SERVICE_UNAVAILABLE.code(), response.statusCode());
+        } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
+            throw new IOException(err);
+        }
     }
     private void handle(HttpExchange exchange) throws IOException {
         String route = exchange.getRequestMethod() + " " + exchange.getRequestURI().getPath();
         String body = "{}";
         if (route.equals("POST /api/session/" + SESSION + "/prompt")) {
             prompts.add(mapper.readTree(exchange.getRequestBody().readAllBytes()).path("text").asString());
-        } else if (route.equals("POST /api/experimental/session/" + SESSION + "/wait") && endless) {
-            awaitTurnEnd();
+        } else if (route.equals("POST /api/experimental/session/" + SESSION + "/wait")) {
+            awaitTurn();
         } else if (route.equals("GET /api/session/" + SESSION + "/message")) {
             body = messages(error);
         } else if (route.equals("GET /api/session/" + REFUSED_REVIEWER + "/message")) {
@@ -273,6 +299,15 @@ class TurnTest {
             body = messages(Optional.of("provider.rate-limit"));
         }
         respond(exchange, HttpResponseStatus.OK.code(), body);
+    }
+    /** the turn as the test sets it up: the provider failing during it, and a turn that does not end */
+    private void awaitTurn() throws IOException {
+        if (providerFailsDuringTurn) {
+            providerFails();
+        }
+        if (endless) {
+            awaitTurnEnd();
+        }
     }
     private void awaitTurnEnd() throws IOException {
         try {

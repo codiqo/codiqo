@@ -1650,9 +1650,10 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   every run) and a coordinator that started no reviewer are the commit's. A session cut off at its step cap, a turn
   that did not end within `reviewTimeout` and a review its caller stopped waiting for (`LocalReviewer.longestReview`)
   are unanswered (`ReviewVerdict.unanswered`): the provider's when the relay counted a provider failure during the
-  review (`LlmRelay.providerFailed`: a 429, a 5xx, an end point it could not reach or an answer cut short after it
-  started, never a request the provider only refused, 400, 413 or 422), the commit's otherwise; the parallel reviewers
-  share the relay, so a failure cannot be traced to one call. Everything else is Codiqo's: a relay, answer server or
+  turn that lost the answer (`LlmRelay.providerFailures`, read before and after it: a 429, a 5xx, an end point it could
+  not reach or an answer cut short after it started, never a request the provider only refused, 400, 413 or 422), the
+  commit's otherwise. The coordinator's turn spans the review up to it, and the parallel reviewers run within it and
+  share the relay, so their failures cannot be traced to one call; the labelling and triage turns count only their own. Everything else is Codiqo's: a relay, answer server or
   OpenCode that would not start, connect or answer, a session that could not be created, a tag vocabulary the server
   cannot give after its retries, a trace that cannot be written after a review that succeeded, and a bug.
 - **Only a review that failed on the commit excludes it** (`LOCAL_REVIEW_FAILURE`, the error as the exclusion's

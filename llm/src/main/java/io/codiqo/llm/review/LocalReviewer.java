@@ -153,10 +153,16 @@ public class LocalReviewer {
     /**
      * Prompts the session once and settles its turn: empty when it answered through its tool, else the verdict its
      * failure makes ({@link #failureOf}). A turn that did not end within the review timeout and a session cut off
-     * without an answer, at its step cap for one, end the review unanswered ({@link ReviewVerdict#unanswered}).
+     * without an answer, at its step cap for one, end the review unanswered ({@link ReviewVerdict#unanswered}), decided
+     * by the provider's failures during this turn alone. The labelling and triage turns run one after another, after the
+     * coordinator's: counted over the whole review, a single 503 OpenCode retried during the coordinator's turn would make
+     * a labelling turn cut off at its step cap the provider's failure, a halt that comes back on every resume when the
+     * commit's units are what ran the turn to its cap. The coordinator's turn, during which the reviewers run, spans the
+     * whole review up to it.
      */
     @VisibleForTesting
     public Optional<ReviewVerdict> ask(OpenCodeClient client, ReviewAnswers answers, LlmRelay relay, String sessionId, String prompt, AnswerTool tool) throws IOException {
+        long failuresBefore = relay.providerFailures();
         client.prompt(sessionId, prompt);
         promptedRelay.compareAndSet(null, relay);
         StopWatch turn = StopWatch.createStarted();
@@ -174,7 +180,7 @@ public class LocalReviewer {
             }
             return Optional.of(ReviewVerdict.unanswered(
                     new IOException("session " + sessionId + " did not end its turn within " + args.getReviewTimeout()),
-                    relay.providerFailed(),
+                    relay.providerFailures() > failuresBefore,
                     relay.providerErrors()));
         }
 
@@ -182,7 +188,7 @@ public class LocalReviewer {
         if (toReturn.isEmpty() && answers.accepted(sessionId, Object.class).isEmpty()) {
             toReturn = Optional.of(ReviewVerdict.unanswered(
                     new IOException("session " + sessionId + " was cut off before it called " + tool.getOpenCodeName() + ", so it gave no answer"),
-                    relay.providerFailed(),
+                    relay.providerFailures() > failuresBefore,
                     relay.providerErrors()));
         }
         return toReturn;
