@@ -1811,7 +1811,8 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
 exactly as its plain submission would.** `SourceHiding` is the one transform, applied to every request model as it is sent
 (`AnalysisSubmitter.submit`/`submitUncommitted`/`exclude`, `HotspotSnapshots.submit`, `ProjectHalts.halt`), after the
 local review has read and labelled the plain code. Every one of those methods takes a `SourceHiding` (`NONE` for plain),
-so no send path can forget it. Maven resolves the key in `AbstractAnalyzeMojo.doPrepare`, before any exclusion,
+and both plugins reach them only through `HttpCodiqoServer` (the `CodiqoServer` port), which holds the run's
+`SourceHiding` and its one credential, so no send path can forget it. Maven resolves the key in `AbstractAnalyzeMojo.doPrepare`, before any exclusion,
 review or submission; Gradle in `GradleModelCollector`. A halt only needs the flag (`ProjectHalts.halt(..., sourceHidden)`),
 so a halt is recorded even when the key cannot be read.
 

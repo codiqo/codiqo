@@ -26,7 +26,6 @@ import com.google.common.base.Joiner;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
-import io.codiqo.client.api.CommitIndexApi;
 import io.codiqo.api.BuildTool;
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.DeltaAnalyzer;
@@ -52,18 +51,16 @@ import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.core.JGitDeltaAnalyzer;
 import io.codiqo.gradle.model.AnalysisRequest;
 import io.codiqo.gradle.model.ModuleData;
-import io.codiqo.submit.AnalysisSubmitter;
+import io.codiqo.submit.CodiqoServer;
 import io.codiqo.submit.CommitBuildFailedException;
 import io.codiqo.submit.CommitExclusions;
-import io.codiqo.submit.CommitIndexPublisher;
 import io.codiqo.submit.CommitExclusions.Exclusion;
-import io.codiqo.submit.IndexedCommits;
+import io.codiqo.submit.HttpCodiqoServer;
 import io.codiqo.submit.OutputSerializer;
 import io.codiqo.submit.SubmissionAssembly;
 import io.codiqo.submit.SubmissionContext;
 import io.codiqo.submit.auth.CodiqoCredential;
 import io.codiqo.submit.auth.CodiqoCredentials;
-import io.codiqo.submit.hotspots.FixCommits;
 import io.codiqo.submit.hotspots.HotspotSnapshots;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
@@ -74,10 +71,8 @@ import io.github.classgraph.ScanResult;
 import io.codiqo.submit.review.LocalReviewRun;
 import io.codiqo.llm.ConventionGuidance;
 import io.codiqo.llm.review.ReviewTrace;
-import io.codiqo.submit.PreviousFindings;
 import io.codiqo.submit.ProjectHalts;
 import io.codiqo.submit.SourceHiding;
-import io.codiqo.submit.ProjectTags;
 import lombok.experimental.UtilityClass;
 
 /**
@@ -144,20 +139,19 @@ public class AnalysisEngine {
              * walk rather than a full analysis.
              */
             /** a hidden-source run without a usable key fails before anything is analysed, sent or paid for */
-            hiding(request);
-            CommitIndexApi client = CommitIndexPublisher.buildClient(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(), request.getReadTimeoutSeconds());
+            CodiqoServer server = server(request, log);
             Optional<Exclusion> excluded = CommitExclusions.beforeAnalysis(
                     args,
-                    IndexedCommits.of(log, client, request.getApiUrl(), request.getRootCode()));
+                    server.indexedCommits());
             if (excluded.isPresent()) {
-                reportExclusion(request, args, args.getCommitId(), excluded.get(), List.of(), log);
+                reportExclusion(server, args.getCommitId(), excluded.get(), List.of(), log);
                 return;
             }
 
             /** before the review starts: a halted project must not pay for another review the same failure would waste */
-            ProjectHalts.requireRunning(log, client, request.getApiUrl(), request.getRootCode());
+            server.requireRunning();
             try {
-                analyse(request, args, logFactory, log);
+                analyse(request, server, args, logFactory, log);
             } catch (Exception err) {
                 /**
                  * A run that fails here submits nothing, so the next scheduled run would analyse the same commit and pay
@@ -167,7 +161,7 @@ public class AnalysisEngine {
                  * scored its commit, so it halts nothing either.
                  */
                 if (BooleanUtils.negate(BooleanUtils.or(new boolean[] { ProjectHalts.haltsNothing(err), args.isSubmissionAccepted() }))) {
-                    ProjectHalts.halt(log, client, request.getApiUrl(), request.getRootCode(), args.getCommitId(), err, request.isSourceHidden());
+                    server.halt(args.getCommitId(), err);
                     ProgressStage.abort(args, ExceptionUtils.getRootCauseMessage(err), ProjectHalts.traceOf(args, args.getCommitId()));
                 }
                 throw err;
@@ -175,7 +169,7 @@ public class AnalysisEngine {
         }
     }
     @VisibleForTesting
-    public static void analyse(AnalysisRequest request, RunArgs args, LogFactory logFactory, Log log) throws Exception {
+    public static void analyse(AnalysisRequest request, CodiqoServer server, RunArgs args, LogFactory logFactory, Log log) throws Exception {
         args.setAnalysisStartedAt(Instant.now());
 
         /**
@@ -186,7 +180,7 @@ public class AnalysisEngine {
          */
         Optional<Exclusion> nothingToAnalyse = CommitExclusions.beforeBuild(args.getGit(), args.getCommitId(), DefaultLanguageProcessors.supportedExtensions());
         if (nothingToAnalyse.isPresent()) {
-            reportExclusionWithDiff(request, args, new JGitDeltaAnalyzer(logFactory, args).analyze(), nothingToAnalyse.get(), logFactory, log);
+            reportExclusionWithDiff(request, server, args, new JGitDeltaAnalyzer(logFactory, args).analyze(), nothingToAnalyse.get(), logFactory, log);
             return;
         }
 
@@ -204,9 +198,9 @@ public class AnalysisEngine {
              * runs on a bare classpath with no gradle-api.
              */
             if (args.isSkipOnBuildFailure()) {
-                Optional<LocalReviewRun> review = startReview(request, args, logFactory, log);
+                Optional<LocalReviewRun> review = startReview(server, args, logFactory, log);
                 try {
-                    runDegraded(request, args, review, logFactory, log);
+                    runDegraded(request, server, args, review, logFactory, log);
                 } finally {
                     if (review.isPresent()) {
                         review.get().close();
@@ -259,9 +253,9 @@ public class AnalysisEngine {
             fetch.downloadJdtls(logFactory, args);
         }
 
-        Optional<LocalReviewRun> review = startReview(request, args, logFactory, log);
+        Optional<LocalReviewRun> review = startReview(server, args, logFactory, log);
         try (ClassGraphSpec scan = buildProjects(request, args, log)) {
-            runEngine(request, args, review, logFactory);
+            runEngine(request, server, args, review, logFactory);
         } finally {
             args.getProjects().forEach(spec -> {
                 try {
@@ -297,35 +291,23 @@ public class AnalysisEngine {
      * An excluded commit is reported to the backend rather than scored, so its files are still recorded and it is not
      * re-offered as missing on the next run.
      */
-    private static void reportExclusion(AnalysisRequest request, RunArgs args, String commitSha, Exclusion exclusion, List<FileChangeModel> files, Log log) throws Exception {
-        reportExclusion(request, args, commitSha, exclusion, files, log, null, null);
+    private static void reportExclusion(CodiqoServer server, String commitSha, Exclusion exclusion, List<FileChangeModel> files, Log log) throws Exception {
+        reportExclusion(server, commitSha, exclusion, files, log, null, null);
     }
     /**
      * An excluded commit still carries the raw git diff so the backend persists per-file changes. Indexing has not run,
      * so the populator emits diff-only file models with no code units.
      */
-    private static void reportExclusionWithDiff(AnalysisRequest request, RunArgs args, CommitAnalysis analysis, Exclusion exclusion, LogFactory logFactory, Log log)
+    private static void reportExclusionWithDiff(AnalysisRequest request, CodiqoServer server, RunArgs args, CommitAnalysis analysis, Exclusion exclusion, LogFactory logFactory, Log log)
             throws Exception {
         SubmissionContext ctx = SubmissionContext.create(
                 args, null, analysis, args.getGit().getWorkTree().toPath().normalize(), logFactory, request.getRootCode(), request.getRootName(), clientInfo(request));
         SubmissionAssembly.excluded(ctx);
-        reportExclusion(request, args, args.getCommitId(), exclusion, ctx.getSubmissionModel().getFiles(), log);
+        reportExclusion(server, args.getCommitId(), exclusion, ctx.getSubmissionModel().getFiles(), log);
     }
-    private static void reportExclusion(AnalysisRequest request, RunArgs args, String commitSha, Exclusion exclusion, List<FileChangeModel> files, Log log, String detail, ProjectMetricsModel projectMetrics) throws Exception {
+    private static void reportExclusion(CodiqoServer server, String commitSha, Exclusion exclusion, List<FileChangeModel> files, Log log, String detail, ProjectMetricsModel projectMetrics) throws Exception {
         log.warn("commit %s skipped: %s", commitSha, exclusion.getReason());
-        AnalysisSubmitter.exclude(
-                request.getApiUrl(),
-                credential(request, log),
-                request.getConnectTimeoutSeconds(),
-                request.getReadTimeoutSeconds(),
-                commitSha,
-                exclusion.getReason(),
-                exclusion.getCategory(),
-                detail,
-                files,
-                projectMetrics,
-                hiding(request),
-                log);
+        server.exclude(commitSha, new AnalysisExcludeModel().reason(exclusion.getReason()).category(exclusion.getCategory()).detail(detail).files(files).projectMetrics(projectMetrics));
     }
     /**
      * Folds every Test task's exec part into the single per-module file the analysis reads. Gradle deletes a Test
@@ -370,7 +352,7 @@ public class AnalysisEngine {
      * it is scored, from a source-only index that runs PMD over the work tree but never starts the language server —
      * genuine code volume, rather than a score derived from config lines alone.
      */
-    private static void runDegraded(AnalysisRequest request, RunArgs args, Optional<LocalReviewRun> review, LogFactory logFactory, Log log) throws Exception {
+    private static void runDegraded(AnalysisRequest request, CodiqoServer server, RunArgs args, Optional<LocalReviewRun> review, LogFactory logFactory, Log log) throws Exception {
         SubmissionContext ctx = degradedSubmission(request, args, logFactory, log);
 
         List<FileChangeModel> files = ctx.getSubmissionModel().getFiles();
@@ -381,19 +363,19 @@ public class AnalysisEngine {
          */
         if (BooleanUtils.and(new boolean[] { review.isPresent(), CollectionUtils.isNotEmpty(files) })) {
             if (ctx.getAnalysis().isRevertCommit()) {
-                reportRevert(request, args, ctx, log);
+                reportRevert(server, args, ctx, log);
                 return;
             }
             log.warn("commit %s: build failed — running degraded analysis", args.getCommitId());
             new OutputSerializer(true, logFactory.getLogger(OutputSerializer.class)).accept(ctx);
-            if (judged(request, args, review, ctx, log)) {
-                AnalysisAcceptedModel accepted = submit(request, ctx, log);
+            if (judged(server, args, review, ctx, log)) {
+                AnalysisAcceptedModel accepted = submit(server, ctx);
                 log.info("accepted degraded analysis id: %s status: %s", accepted.getAnalysisId(), accepted.getStatus());
             }
             return;
         }
 
-        reportExclusion(request, args, args.getCommitId(),
+        reportExclusion(server, args.getCommitId(),
                 new Exclusion(BUILD_FAILED, AnalysisExcludeCategory.BUILD_FAILURE), files, log,
                 request.getBuildFailureDetail(), ctx.getSubmissionModel().getProjectMetrics());
     }
@@ -465,15 +447,15 @@ public class AnalysisEngine {
      * excluded too, so reverted work stops counting. A 404 means the original predates the indexing window; it is
      * logged rather than thrown so an old revert target does not fail the run.
      */
-    private static void reportRevert(AnalysisRequest request, RunArgs args, SubmissionContext ctx, Log log) throws Exception {
-        reportExclusion(request, args, args.getCommitId(),
+    private static void reportRevert(CodiqoServer server, RunArgs args, SubmissionContext ctx, Log log) throws Exception {
+        reportExclusion(server, args.getCommitId(),
                 new Exclusion("revert commit (no LLM scoring performed)", AnalysisExcludeCategory.REVERT_COMMIT),
                 ctx.getSubmissionModel().getFiles(), log);
 
         if (args.isExcludeRevertedCommits()) {
             String revertedSha = ctx.getAnalysis().getRevertedCommitId();
             try {
-                reportExclusion(request, args, revertedSha,
+                reportExclusion(server, revertedSha,
                         new Exclusion(String.format("reverted by commit %s", JGit.shortSha(args.getCommitId())), AnalysisExcludeCategory.REVERTED),
                         List.of(), log);
             } catch (ApiException err) {
@@ -568,28 +550,16 @@ public class AnalysisEngine {
      * Runs after the commit's own outcome is settled and swallows its failure into a warning, so a failure costs only
      * the snapshot (the previous one stays), never the analysis.
      */
-    private static void reportHotspots(AnalysisRequest request, SubmissionContext ctx, Log log) {
+    private static void reportHotspots(CodiqoServer server, SubmissionContext ctx, Log log) {
         try {
-            Optional<HotspotSnapshotModel> snapshot = HotspotSnapshots.build(ctx, since -> fixCommits(request, since, log), log);
+            Optional<HotspotSnapshotModel> snapshot = HotspotSnapshots.build(ctx, server::fixCommits, log);
             if (snapshot.isPresent()) {
                 HotspotSnapshots.write(ctx, snapshot.get(), log);
-                HotspotSnapshots.submit(
-                        request.getApiUrl(),
-                        credential(request, log),
-                        request.getConnectTimeoutSeconds(),
-                        request.getReadTimeoutSeconds(),
-                        request.getRootCode(),
-                        snapshot.get(),
-                        hiding(request),
-                        log);
+                server.submitHotspots(snapshot.get());
             }
         } catch (Exception err) {
             log.warn("hotspot snapshot for %s not produced, the previous one stays: %s", ctx.getArgs().getCommitId(), err);
         }
-    }
-    private static FixCommits fixCommits(AnalysisRequest request, Instant since, Log log) throws Exception {
-        return FixCommits.fetch(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(), request.getReadTimeoutSeconds(),
-                request.getRootCode(), since, log);
     }
     /**
      * What the analysed repository says about the commit: its branch, the commit and the repository's URLs, which the
@@ -607,7 +577,7 @@ public class AnalysisEngine {
     private static String resolveCommitId(AnalysisRequest request, Repository git) throws Exception {
         return JGit.resolveCommit(git, Optional.ofNullable(request.getCommitId()).orElse(Constants.HEAD));
     }
-    private static void runEngine(AnalysisRequest request, RunArgs args, Optional<LocalReviewRun> review, LogFactory logFactory) throws Exception {
+    private static void runEngine(AnalysisRequest request, CodiqoServer server, RunArgs args, Optional<LocalReviewRun> review, LogFactory logFactory) throws Exception {
         Log log = logFactory.getLogger(AnalysisEngine.class);
         Path workTree = args.getGit().getWorkTree().toPath().normalize();
         try (Fetch fetch = new Fetch(args)) {
@@ -621,7 +591,7 @@ public class AnalysisEngine {
 
                 Optional<Exclusion> excluded = CommitExclusions.afterDelta(analysis, registry.extensions());
                 if (excluded.isPresent()) {
-                    reportExclusionWithDiff(request, args, analysis, excluded.get(), logFactory, log);
+                    reportExclusionWithDiff(request, server, args, analysis, excluded.get(), logFactory, log);
                     return;
                 }
 
@@ -646,15 +616,15 @@ public class AnalysisEngine {
 
                 /** The YAML is written first, so a submission the backend rejects still leaves it to inspect. */
                 if (analysis.isRevertCommit()) {
-                    reportRevert(request, args, ctx, log);
-                } else if (judged(request, args, review, ctx, log)) {
+                    reportRevert(server, args, ctx, log);
+                } else if (judged(server, args, review, ctx, log)) {
                     try (ProgressStage stage = ProgressStage.start(args, "submit")) {
-                        AnalysisAcceptedModel accepted = submit(request, ctx, log);
+                        AnalysisAcceptedModel accepted = submit(server, ctx);
                         log.info("accepted analysis id: %s status: %s", accepted.getAnalysisId(), accepted.getStatus());
                         stage.succeeded();
                     }
                 }
-                reportHotspots(request, ctx, log);
+                reportHotspots(server, ctx, log);
             }
         }
     }
@@ -663,19 +633,17 @@ public class AnalysisEngine {
      * changes a file the analysis reads is reviewed: the review spends the organization's LLM budget through the
      * proxy, which an excluded commit has no use for.
      */
-    private static Optional<LocalReviewRun> startReview(AnalysisRequest request, RunArgs args, LogFactory logFactory, Log log) throws Exception {
+    private static Optional<LocalReviewRun> startReview(CodiqoServer server, RunArgs args, LogFactory logFactory, Log log) throws Exception {
         boolean analyzable = CommitExclusions.hasAnalyzableFile(JGit.changedFileNames(args.getGit(), args.getCommitId()), DefaultLanguageProcessors.supportedExtensions());
         if (BooleanUtils.and(new boolean[] { args.isReviewEnabled(), analyzable })) {
-            CodiqoCredential credential = credential(request, log);
             LocalReviewRun toReturn = LocalReviewRun.start(
                     args,
                     args.getGit().getWorkTree().toPath(),
                     args.getCommitId(),
-                    LocalReviewRun.endpoint(args, request.getResourceUrl(), request.getRootCode(), () -> credential),
+                    server.reviewEndpoint(args),
                     ConventionGuidance.read(args, logFactory.getLogger(ConventionGuidance.class)),
-                    () -> ProjectTags.fetch(request.getApiUrl(), credential, request.getConnectTimeoutSeconds(), request.getReadTimeoutSeconds(), request.getRootCode(), log),
-                    () -> PreviousFindings.fetch(request.getApiUrl(), credential, request.getConnectTimeoutSeconds(), request.getReadTimeoutSeconds(), request.getRootCode(),
-                            args.getCommitId(), request.isSourceHidden(), log),
+                    server::projectTags,
+                    () -> server.previousFindings(args.getCommitId()),
                     DefaultLanguageProcessors.reviewLanguages(),
                     logFactory);
             log.info("local review of %s started next to the analysis", args.getCommitId());
@@ -688,33 +656,35 @@ public class AnalysisEngine {
      * does on Maven ({@link LocalReviewRun#exclusionOf}); a commit without a review is submitted as it is.
      */
     @VisibleForTesting
-    public static boolean judged(AnalysisRequest request, RunArgs args, Optional<LocalReviewRun> review, SubmissionContext ctx, Log log) throws Exception {
+    public static boolean judged(CodiqoServer server, RunArgs args, Optional<LocalReviewRun> review, SubmissionContext ctx, Log log) throws Exception {
         if (review.isEmpty()) {
             return true;
         }
         Optional<AnalysisExcludeModel> excluded = LocalReviewRun.exclusionOf(review.get().attachTo(ctx), ctx, log);
         if (excluded.isPresent()) {
             AnalysisExcludeModel exclusion = excluded.get();
-            reportExclusion(request, args, args.getCommitId(), new Exclusion(exclusion.getReason(), exclusion.getCategory()), exclusion.getFiles(), log, exclusion.getDetail(),
+            reportExclusion(server, args.getCommitId(), new Exclusion(exclusion.getReason(), exclusion.getCategory()), exclusion.getFiles(), log, exclusion.getDetail(),
                     exclusion.getProjectMetrics());
             return false;
         }
         return true;
     }
     /** with the review's trace when it was reviewed: the trace goes with the review it explains, never alone */
-    private static AnalysisAcceptedModel submit(AnalysisRequest request, SubmissionContext ctx, Log log) throws Exception {
+    private static AnalysisAcceptedModel submit(CodiqoServer server, SubmissionContext ctx) throws Exception {
         SubmissionAssembly.stampAnalysisTime(ctx);
-        File trace = ReviewTrace.file(ctx.getArgs(), ctx.getArgs().getCommitId());
-        AnalysisAcceptedModel toReturn;
+        Optional<File> trace = Optional.empty();
         if (Objects.nonNull(ctx.getSubmissionModel().getLocalReview())) {
-            toReturn = AnalysisSubmitter.submit(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(),
-                    request.getReadTimeoutSeconds(), ctx.getSubmissionModel(), trace, hiding(request), log);
-        } else {
-            toReturn = AnalysisSubmitter.submit(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(),
-                    request.getReadTimeoutSeconds(), ctx.getSubmissionModel(), hiding(request), log);
+            trace = Optional.of(ReviewTrace.file(ctx.getArgs(), ctx.getArgs().getCommitId()));
         }
+        AnalysisAcceptedModel toReturn = server.submit(ctx.getSubmissionModel(), trace);
         ctx.getArgs().setSubmissionAccepted(true);
         return toReturn;
+    }
+    /** Codiqo for the run's project, as the configured key or the browser login stored on this machine ({@link #credential}) */
+    @VisibleForTesting
+    public static CodiqoServer server(AnalysisRequest request, Log log) {
+        return new HttpCodiqoServer(request.getApiUrl(), request.getResourceUrl(), () -> credential(request, log), request.getConnectTimeoutSeconds(),
+                request.getReadTimeoutSeconds(), request.getRootCode(), hiding(request), log);
     }
     private static SourceHiding hiding(AnalysisRequest request) {
         return SourceHiding.of(request.isSourceHidden(), Optional.ofNullable(request.getSourceHashKey()));
