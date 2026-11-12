@@ -5,6 +5,14 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Every deploy uploads every module, and Central serves each module's last upload. Two merges a few seconds apart ran
+# two deploys at once, and Central ended up serving the library modules of the later commit beside the submit and plugin
+# modules of the earlier one, whose code called methods the later API had removed. One deploy at a time keeps the latest
+# commit's build the one that finishes last; a deploy still waiting is replaced by a newer one, which uploads everything.
+concurrency:
+  group: snapshot-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
