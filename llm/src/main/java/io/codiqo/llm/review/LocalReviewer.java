@@ -238,9 +238,10 @@ public class LocalReviewer {
                  * Every submitted review is sent with its trace (AnalysisSubmitter.putReviewTrace), so a trace that
                  * cannot be written fails a review that succeeded: it is thrown, and settled as Codiqo's failure.
                  */
-                switch (toReturn) {
-                    case ReviewVerdict.Succeeded succeeded -> ReviewTrace.write(args, client, sha, sessionId, forkIds, log);
-                    case ReviewVerdict.Failed failed -> writeTrace(client, sha, sessionId, forkIds, failed.getError());
+                if (toReturn instanceof ReviewVerdict.Failed failed) {
+                    writeTrace(client, sha, sessionId, forkIds, failed.getError());
+                } else {
+                    ReviewTrace.write(args, client, sha, sessionId, forkIds, log);
                 }
                 return toReturn;
             }

@@ -226,14 +226,17 @@ public final class LocalReviewRun implements AutoCloseable {
      * the review's place. Deleting the analysis retries it.
      */
     public static Optional<AnalysisExcludeModel> exclusionOf(ReviewVerdict verdict, SubmissionContext ctx, Log log) throws Exception {
-        return switch (verdict) {
-            case ReviewVerdict.Succeeded succeeded -> Optional.empty();
-            case ReviewVerdict.CommitFailure failed -> Optional.of(excluded(failed, ctx, log));
-            case ReviewVerdict.ProviderFailure failed ->
-                throw new ReviewProviderException(ReviewVerdict.REVIEW_FAILED + failed.getError().getMessage(), failed.getProviderSummary(), failed.getError());
-            case ReviewVerdict.CodiqoFailure failed -> throw new IOException(ReviewVerdict.REVIEW_FAILED + failed.getReason(), failed.getError());
-            case ReviewVerdict.Stopped stopped -> throw stopped.getError();
-        };
+        Optional<AnalysisExcludeModel> toReturn = Optional.empty();
+        if (verdict instanceof ReviewVerdict.Failed failed) {
+            toReturn = Optional.of(switch (failed) {
+                case ReviewVerdict.CommitFailure commit -> excluded(commit, ctx, log);
+                case ReviewVerdict.ProviderFailure provider ->
+                    throw new ReviewProviderException(ReviewVerdict.REVIEW_FAILED + provider.getError().getMessage(), provider.getProviderSummary(), provider.getError());
+                case ReviewVerdict.CodiqoFailure codiqo -> throw new IOException(ReviewVerdict.REVIEW_FAILED + codiqo.getReason(), codiqo.getError());
+                case ReviewVerdict.Stopped stopped -> throw stopped.getError();
+            });
+        }
+        return toReturn;
     }
     @VisibleForTesting
     public static LocalReviewRun of(BackgroundReview<ReviewVerdict> review, List<ReviewLanguage> languages, LogFactory logFactory) {
