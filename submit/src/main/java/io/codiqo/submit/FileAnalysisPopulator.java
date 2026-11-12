@@ -3,9 +3,7 @@ package io.codiqo.submit;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
@@ -21,13 +19,6 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.eclipse.collections.api.map.primitive.IntObjectMap;
 import org.eclipse.collections.api.map.primitive.MutableIntObjectMap;
 import org.eclipse.collections.impl.map.mutable.primitive.IntObjectHashMap;
-import org.eclipse.lsp4j.CallHierarchyIncomingCall;
-import org.eclipse.lsp4j.CallHierarchyItem;
-import org.eclipse.lsp4j.Range;
-import org.eclipse.lsp4j.SymbolKind;
-import org.eclipse.lsp4j.SymbolTag;
-import org.jacoco.core.analysis.ICounter;
-import org.jacoco.core.analysis.ILine;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ListMultimap;
@@ -38,10 +29,13 @@ import edu.umd.cs.findbugs.BugInstance;
 import edu.umd.cs.findbugs.BugRankCategory;
 import edu.umd.cs.findbugs.MethodAnnotation;
 import edu.umd.cs.findbugs.Priorities;
+import io.codiqo.api.code.Caller;
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.CompilerFinding;
 import io.codiqo.api.code.SourceLocation;
+import io.codiqo.api.code.UnitKind;
 import io.codiqo.api.coverage.CodeBlockCoverage;
+import io.codiqo.api.coverage.LineCoverage;
 import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.diff.EffectiveLineParser;
 import io.codiqo.api.diff.FileAnalysis;
@@ -69,7 +63,6 @@ import io.codiqo.lang.spec.PmdAffectedSymbolInfo;
 import io.codiqo.llm.lang.LanguageCapabilities;
 import io.codiqo.util.JGit;
 import lombok.RequiredArgsConstructor;
-import net.sourceforge.pmd.lang.Language;
 import net.sourceforge.pmd.lang.java.ast.ASTAnnotation;
 import net.sourceforge.pmd.lang.java.ast.ASTAnonymousClassDeclaration;
 import net.sourceforge.pmd.lang.java.ast.ASTExecutableDeclaration;
@@ -109,7 +102,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             fileChangeModel.setPath(JGit.effectivePath(fileAnalysis.getChangeType(), fileAnalysis.getOldPath(), fileAnalysis.getNewPath()));
             fileChangeModel.setIsTest(fileAnalysis.isTestFile());
             if (Objects.nonNull(fileAnalysis.getLanguage())) {
-                fileChangeModel.setLanguage(FileChangeModel.LanguageEnum.fromValue(fileAnalysis.getLanguage().getId()));
+                fileChangeModel.setLanguage(FileChangeModel.LanguageEnum.fromValue(fileAnalysis.getLanguage().getWireId()));
             }
             fileAnalysis.project().ifPresent(spec -> {
                 fileChangeModel.setModule(spec.getId());
@@ -117,11 +110,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             });
 
             for (AffectedSymbolInfo affectedSymbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
-                LocationModel locationModel = new LocationModel();
-                locationModel.setStartLine(affectedSymbol.getLocation().getStartLine());
-                locationModel.setStartColumn(affectedSymbol.getLocation().getStartColumn());
-                locationModel.setEndLine(affectedSymbol.getLocation().getEndLine());
-                locationModel.setEndColumn(affectedSymbol.getLocation().getEndColumn());
+                LocationModel locationModel = locationModel(affectedSymbol.getLocation());
 
                 affectedSymbol.block().ifPresent(block -> {
                     if (block instanceof JavaCodeBlockInfo javaBlock) {
@@ -132,7 +121,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             }
             for (CodeBlockInfo removed : fileAnalysis.getRemovedCodeBlocks()) {
                 if (removed instanceof JavaCodeBlockInfo javaBlock) {
-                    fileChangeModel.getCodeUnits().add(removedCodeUnitModel(ctx, fileAnalysis.getLanguage(), javaBlock, workTreeRealPath));
+                    fileChangeModel.getCodeUnits().add(removedCodeUnitModel(ctx, javaBlock, workTreeRealPath));
                 }
             }
 
@@ -196,15 +185,11 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         }
     }
     @VisibleForTesting
-    public static CodeUnitModel removedCodeUnitModel(SubmissionContext ctx, Language language, JavaCodeBlockInfo javaBlock, Path workTreeRealPath) {
+    public static CodeUnitModel removedCodeUnitModel(SubmissionContext ctx, JavaCodeBlockInfo javaBlock, Path workTreeRealPath) {
         JavaInfoModel infoModel = javaInfo(javaBlock);
-        AffectedSymbolInfo symbol = new PmdAffectedSymbolInfo(javaBlock, language);
+        AffectedSymbolInfo symbol = new PmdAffectedSymbolInfo(javaBlock);
 
-        LocationModel locationModel = new LocationModel();
-        locationModel.setStartLine(javaBlock.getLocation().getStartLine());
-        locationModel.setStartColumn(javaBlock.getLocation().getStartColumn());
-        locationModel.setEndLine(javaBlock.getLocation().getEndLine());
-        locationModel.setEndColumn(javaBlock.getLocation().getEndColumn());
+        LocationModel locationModel = locationModel(javaBlock.getLocation());
 
         CodeUnitModel toReturn = new CodeUnitModel();
         toReturn.setName(symbol.getName());
@@ -273,18 +258,13 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
     }
     private static void populateSymbolInfo(
             SubmissionContext ctx,
-            AffectedSymbolInfo lsp4jSymbol,
+            AffectedSymbolInfo symbol,
             CodeUnitModel codeUnitModel,
             JavaInfoModel infoModel,
             Path workTreeRealPath) {
-        codeUnitModel.setKind(resolveSymbolKind(lsp4jSymbol.getKind()));
-        List<SymbolTag> symbolTags = lsp4jSymbol.getTags();
-        if (CollectionUtils.isNotEmpty(symbolTags)) {
-            for (SymbolTag tag : symbolTags) {
-                if (tag == SymbolTag.Deprecated) {
-                    infoModel.setIsDeprecated(true);
-                }
-            }
+        codeUnitModel.setKind(symbolKind(symbol.getKind()));
+        if (symbol.isDeprecated()) {
+            infoModel.setIsDeprecated(true);
         }
 
         /**
@@ -292,66 +272,33 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
          * bodies outweighed every other part of the submission. Blast radius is grounded by counting these rows,
          * so the rows themselves must stay complete.
          */
-        for (CallHierarchyIncomingCall incomingCall : lsp4jSymbol.getIncomingCalls()) {
-            CallHierarchyItem from = incomingCall.getFrom();
-            if (Objects.isNull(from)) {
-                continue;
-            }
-
+        for (Caller caller : symbol.getCallers()) {
             CallerModel callerModel = new CallerModel();
-            callerModel.setName(from.getName());
-            callerModel.setSymbol(from.getDetail());
-            if (StringUtils.isNotEmpty(from.getUri())) {
-                try {
-                    URI uri = new URI(from.getUri());
-                    Path callerPath = Paths.get(uri);
-                    File file = callerPath.toFile();
-                    if (file.exists()) {
-                        ctx.getArgs().owner(file).ifPresent(fileSpec -> {
-                            callerModel.setIsTest(fileSpec.isTestResource(file));
-                        });
-                    }
-                    callerModel.setPath(workTreeRealPath.relativize(callerPath.toRealPath()).toString());
-                } catch (URISyntaxException | IOException err) {
-                    ExceptionUtils.wrapAndThrow(err);
-                }
+            callerModel.setName(caller.getName());
+            callerModel.setSymbol(caller.getSymbol());
+            caller.getPath().ifPresent(path -> callerPath(ctx, callerModel, path, workTreeRealPath));
+            caller.getKind().map(FileAnalysisPopulator::symbolKind).ifPresent(callerModel::setKind);
+            if (caller.isDeprecated()) {
+                callerModel.setIsDeprecated(true);
             }
-
-            if (Objects.nonNull(from.getKind())) {
-                callerModel.setKind(resolveSymbolKind(from.getKind()));
-            }
-
-            List<SymbolTag> callerTags = from.getTags();
-            if (CollectionUtils.isNotEmpty(callerTags)) {
-                for (SymbolTag tag : callerTags) {
-                    if (tag == SymbolTag.Deprecated) {
-                        callerModel.setIsDeprecated(true);
-                    }
-                }
-            }
-
-            if (Objects.nonNull(from.getRange())) {
-                LocationModel callerLocation = new LocationModel();
-                callerLocation.setStartLine(from.getRange().getStart().getLine() + SourceLocation.LSP_OFFSET);
-                callerLocation.setStartColumn(from.getRange().getStart().getCharacter() + SourceLocation.LSP_OFFSET);
-                callerLocation.setEndLine(from.getRange().getEnd().getLine() + SourceLocation.LSP_OFFSET);
-                callerLocation.setEndColumn(from.getRange().getEnd().getCharacter() + SourceLocation.LSP_OFFSET);
-                callerModel.setLocation(callerLocation);
-            }
-
-            List<Range> fromRanges = incomingCall.getFromRanges();
-            if (CollectionUtils.isNotEmpty(fromRanges)) {
-                for (Range range : fromRanges) {
-                    LocationModel callSiteLocation = new LocationModel();
-                    callSiteLocation.setStartLine(range.getStart().getLine() + SourceLocation.LSP_OFFSET);
-                    callSiteLocation.setStartColumn(range.getStart().getCharacter() + SourceLocation.LSP_OFFSET);
-                    callSiteLocation.setEndLine(range.getEnd().getLine() + SourceLocation.LSP_OFFSET);
-                    callSiteLocation.setEndColumn(range.getEnd().getCharacter() + SourceLocation.LSP_OFFSET);
-                    callerModel.getCallSites().add(callSiteLocation);
-                }
-            }
+            caller.getLocation().map(FileAnalysisPopulator::locationModel).ifPresent(callerModel::setLocation);
+            caller.getCallSites().stream().map(FileAnalysisPopulator::locationModel).forEach(callerModel.getCallSites()::add);
 
             codeUnitModel.getCallers().add(callerModel);
+        }
+    }
+    private static void callerPath(SubmissionContext ctx, CallerModel callerModel, Path callerPath, Path workTreeRealPath) {
+        for (;;) {
+            try {
+                File file = callerPath.toFile();
+                if (file.exists()) {
+                    ctx.getArgs().owner(file).ifPresent(fileSpec -> callerModel.setIsTest(fileSpec.isTestResource(file)));
+                }
+                callerModel.setPath(workTreeRealPath.relativize(callerPath.toRealPath()).toString());
+                return;
+            } catch (IOException err) {
+                ExceptionUtils.wrapAndThrow(err);
+            }
         }
     }
     private static void populateCoverage(JavaCodeBlockInfo javaBlock, CodeUnitModel codeUnitModel) {
@@ -359,7 +306,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             codeUnitModel.setCoverage(buildCoverageModel(javaBlock.getLineCoverage()));
         }
     }
-    private static CoverageModel buildCoverageModel(IntObjectMap<ILine> lineCoverageMap) {
+    private static CoverageModel buildCoverageModel(IntObjectMap<LineCoverage> lineCoverageMap) {
         CodeBlockCoverage cov = CodeBlockCoverage.from(lineCoverageMap);
 
         CoverageModel coverageModel = new CoverageModel();
@@ -375,25 +322,22 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         }
 
         for (int lineNumber : lineCoverageMap.keySet().toSortedArray()) {
-            ILine lineInfo = lineCoverageMap.get(lineNumber);
+            LineCoverage lineInfo = lineCoverageMap.get(lineNumber);
 
             LineCoverageModel lineModel = new LineCoverageModel();
             lineModel.setLine(lineNumber);
-            lineModel.setHits(lineInfo.getInstructionCounter().getCoveredCount());
+            lineModel.setHits(lineInfo.getHits());
+            lineModel.setStatus(switch (lineInfo.getStatus()) {
+                case MISSED -> LineCoverageModel.StatusEnum.MISSED;
+                case PARTIAL -> LineCoverageModel.StatusEnum.PARTIAL;
+                case COVERED -> LineCoverageModel.StatusEnum.COVERED;
+                case EMPTY -> LineCoverageModel.StatusEnum.EMPTY;
+            });
 
-            switch (lineInfo.getStatus()) {
-                case ICounter.NOT_COVERED -> lineModel.setStatus(LineCoverageModel.StatusEnum.MISSED);
-                case ICounter.PARTLY_COVERED -> lineModel.setStatus(LineCoverageModel.StatusEnum.PARTIAL);
-                case ICounter.FULLY_COVERED -> lineModel.setStatus(LineCoverageModel.StatusEnum.COVERED);
-                case ICounter.EMPTY -> lineModel.setStatus(LineCoverageModel.StatusEnum.EMPTY);
-                default -> lineModel.setStatus(LineCoverageModel.StatusEnum.EMPTY);
-            }
-
-            ICounter branchCtr = lineInfo.getBranchCounter();
-            if (branchCtr.getTotalCount() > 0) {
+            if (lineInfo.totalBranches() > 0) {
                 CoverageCounterModel branchModel = new CoverageCounterModel();
-                branchModel.setCovered(branchCtr.getCoveredCount());
-                branchModel.setMissed(branchCtr.getMissedCount());
+                branchModel.setCovered(lineInfo.getCoveredBranches());
+                branchModel.setMissed(lineInfo.getMissedBranches());
                 lineModel.setBranches(branchModel);
             }
 
@@ -558,7 +502,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         }
     }
     private static void populateChangedLineCoverage(SubmissionContext ctx, FileChangeModel fileChangeModel, FileAnalysis fileAnalysis) {
-        IntObjectMap<ILine> lineCoverage = fileAnalysis.getLineCoverage();
+        IntObjectMap<LineCoverage> lineCoverage = fileAnalysis.getLineCoverage();
 
         ChangedLines changed = ChangedLineClassifier.classify(fileAnalysis.getDiffText(), LanguageCapabilities.filterFor(fileChangeModel));
 
@@ -578,10 +522,10 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             });
         }
     }
-    private static CodeBlockCoverage coverageOfLines(Set<Integer> lines, IntObjectMap<ILine> lineCoverage) {
-        MutableIntObjectMap<ILine> submap = new IntObjectHashMap<>();
+    private static CodeBlockCoverage coverageOfLines(Set<Integer> lines, IntObjectMap<LineCoverage> lineCoverage) {
+        MutableIntObjectMap<LineCoverage> submap = new IntObjectHashMap<>();
         for (Integer line : lines) {
-            ILine lineInfo = lineCoverage.get(line);
+            LineCoverage lineInfo = lineCoverage.get(line);
             if (Objects.nonNull(lineInfo)) {
                 submap.put(line, lineInfo);
             }
@@ -620,27 +564,29 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             return SpotbugsPropertiesModel.ConfidenceEnum.LOW;
         }
     }
-    /**
-     * Kinds arrive straight from the language server, whose vocabulary is broader than the submission schema
-     * (26 LSP values against 15 schema values), so every value is mapped explicitly and the switch stays exhaustive.
-     * An unmapped kind aborts the whole run; jdt.ls, for example, reports enum constants that call a changed member
-     * as EnumMember, which did abort runs before it was mapped.
-     */
     @VisibleForTesting
-    public static SymbolKindModel resolveSymbolKind(SymbolKind kind) {
+    public static SymbolKindModel symbolKind(UnitKind kind) {
         return switch (kind) {
-            case Class, Object, TypeParameter -> SymbolKindModel.propertyClass;
-            case Interface -> SymbolKindModel.INTERFACE;
-            case Enum -> SymbolKindModel.ENUM;
-            case EnumMember -> SymbolKindModel.ENUM_MEMBER;
-            case Struct -> SymbolKindModel.RECORD;
-            case Method, Operator -> SymbolKindModel.METHOD;
-            case Constructor -> SymbolKindModel.CONSTRUCTOR;
-            case Function -> SymbolKindModel.FUNCTION;
-            case Field, Property, Variable, Event, Key -> SymbolKindModel.FIELD;
-            case Constant, String, Number, Boolean, Array, Null -> SymbolKindModel.CONSTANT;
-            case Module, Namespace, Package, File -> SymbolKindModel.MODULE;
+            case CLASS -> SymbolKindModel.propertyClass;
+            case INTERFACE -> SymbolKindModel.INTERFACE;
+            case ENUM -> SymbolKindModel.ENUM;
+            case ENUM_MEMBER -> SymbolKindModel.ENUM_MEMBER;
+            case RECORD -> SymbolKindModel.RECORD;
+            case METHOD -> SymbolKindModel.METHOD;
+            case CONSTRUCTOR -> SymbolKindModel.CONSTRUCTOR;
+            case FUNCTION -> SymbolKindModel.FUNCTION;
+            case FIELD -> SymbolKindModel.FIELD;
+            case CONSTANT -> SymbolKindModel.CONSTANT;
+            case MODULE -> SymbolKindModel.MODULE;
         };
+    }
+    private static LocationModel locationModel(SourceLocation location) {
+        LocationModel toReturn = new LocationModel();
+        toReturn.setStartLine(location.getStartLine());
+        toReturn.setStartColumn(location.getStartColumn());
+        toReturn.setEndLine(location.getEndLine());
+        toReturn.setEndColumn(location.getEndColumn());
+        return toReturn;
     }
     private static Path resolveRealPath(Path path) {
         for (;;) {

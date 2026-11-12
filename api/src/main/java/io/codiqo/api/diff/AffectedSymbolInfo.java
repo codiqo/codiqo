@@ -1,27 +1,20 @@
 package io.codiqo.api.diff;
 
 import java.io.File;
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
-import org.eclipse.lsp4j.CallHierarchyIncomingCall;
-import org.eclipse.lsp4j.SymbolKind;
-import org.eclipse.lsp4j.SymbolTag;
-
+import io.codiqo.api.code.Caller;
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.SourceLocation;
-import net.sourceforge.pmd.lang.Language;
+import io.codiqo.api.code.UnitKind;
 
 public interface AffectedSymbolInfo {
     String getName();
     File getFile();
-    Language getLanguage();
     SourceLocation getLocation();
     Optional<CodeBlockInfo> block();
-    SymbolKind getKind();
-    List<CallHierarchyIncomingCall> getIncomingCalls();
-    default List<SymbolTag> getTags() {
-        return Collections.emptyList();
-    }
+    UnitKind getKind();
+    List<Caller> getCallers();
+    boolean isDeprecated();
 }

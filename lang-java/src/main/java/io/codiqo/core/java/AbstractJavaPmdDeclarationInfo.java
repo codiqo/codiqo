@@ -10,7 +10,6 @@ import java.util.stream.Collectors;
 
 import org.eclipse.collections.api.map.primitive.MutableIntObjectMap;
 import org.eclipse.collections.impl.map.mutable.primitive.IntObjectHashMap;
-import org.jacoco.core.analysis.ILine;
 
 import java.util.Objects;
 
@@ -20,6 +19,7 @@ import com.google.common.collect.Lists;
 import edu.umd.cs.findbugs.BugInstance;
 import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.coverage.CodeBlockCoverage;
+import io.codiqo.api.coverage.LineCoverage;
 import io.codiqo.api.metrics.CodeBlockMetrics;
 import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
@@ -57,7 +57,7 @@ public abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInf
     @Builder.Default
     private List<BugInstance> spotbugs = Lists.newArrayList();
     @Builder.Default
-    private MutableIntObjectMap<ILine> lineCoverage = new IntObjectHashMap<>();
+    private MutableIntObjectMap<LineCoverage> lineCoverage = new IntObjectHashMap<>();
 
     private final Supplier<CodeBlockCoverage> coverage = Suppliers.memoize(() -> CodeBlockCoverage.from(lineCoverage));
     private final Supplier<CodeBlockMetrics> metrics = Suppliers.memoize(() -> {
@@ -179,11 +179,11 @@ public abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInf
         spotbugs.add(violation);
     }
     @Override
-    public MutableIntObjectMap<ILine> getLineCoverage() {
+    public MutableIntObjectMap<LineCoverage> getLineCoverage() {
         return lineCoverage;
     }
     @Override
-    public void lineCoverage(int lineNumber, ILine line) {
+    public void lineCoverage(int lineNumber, LineCoverage line) {
         lineCoverage.put(lineNumber, line);
     }
     @Override

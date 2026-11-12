@@ -26,6 +26,7 @@ import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.jdtls.JdtLspProjectImporter;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
+import io.codiqo.lang.spec.LspSymbols;
 import io.codiqo.lang.spec.PmdAffectedSymbolInfo;
 import lombok.RequiredArgsConstructor;
 import net.sourceforge.pmd.lang.java.ast.ASTTypeDeclaration;
@@ -65,12 +66,12 @@ public class JdtIncomingCallsResolver implements IncomingCallsResolver {
 
                             CallHierarchyItem item = new CallHierarchyItem();
                             item.setName(pmdSymbol.getName());
-                            item.setKind(pmdSymbol.getKind());
+                            item.setKind(pmdSymbol.lspKind());
                             item.setUri(block.getFile().toPath().normalize().toUri().toString());
                             item.setDetail(ownerType.getSymbol().getBinaryName());
-                            item.setRange(loc.toLspRange());
-                            item.setSelectionRange(loc.toLspSelectionRange());
-                            item.setTags(pmdSymbol.getTags());
+                            item.setRange(LspSymbols.range(loc));
+                            item.setSelectionRange(LspSymbols.selectionRange(loc));
+                            item.setTags(pmdSymbol.lspTags());
 
                             try {
                                 long lspTimeout = args.getLspQueryTimeout().getSeconds();
@@ -101,7 +102,7 @@ public class JdtIncomingCallsResolver implements IncomingCallsResolver {
                                                 from.getRange().getEnd().getLine(),
                                                 from.getRange().getEnd().getCharacter());
                                     }
-                                    pmdSymbol.getIncomingCalls().addAll(calls);
+                                    pmdSymbol.lspIncomingCalls().addAll(calls);
 
                                     if (CollectionUtils.isNotEmpty(calls)) {
                                         withCallers.incrementAndGet();

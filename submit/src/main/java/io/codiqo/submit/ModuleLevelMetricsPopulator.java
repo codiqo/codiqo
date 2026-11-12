@@ -2,18 +2,17 @@ package io.codiqo.submit;
 
 import java.io.File;
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.Map.Entry;
 import java.util.Optional;
 
 import org.apache.commons.io.FilenameUtils;
-import org.apache.commons.lang3.BooleanUtils;
 import org.eclipse.collections.api.map.primitive.IntObjectMap;
-import org.jacoco.core.analysis.ICounter;
-import org.jacoco.core.analysis.ILine;
 
 import edu.umd.cs.findbugs.BugInstance;
 import edu.umd.cs.findbugs.BugRankCategory;
 import io.codiqo.api.code.CodeBlockInfo;
+import io.codiqo.api.coverage.LineCoverage;
 import io.codiqo.api.metrics.CodeBlockMetrics;
 import io.codiqo.api.metrics.DriverScaler;
 import io.codiqo.client.model.DiagnosticModel;
@@ -25,6 +24,8 @@ import net.sourceforge.pmd.lang.rule.RulePriority;
 import net.sourceforge.pmd.reporting.RuleViolation;
 
 public class ModuleLevelMetricsPopulator implements SubmissionPopulator {
+    private static final EnumSet<LineCoverage.Status> EXECUTED = EnumSet.of(LineCoverage.Status.COVERED, LineCoverage.Status.PARTIAL);
+
     @Override
     public void accept(SubmissionContext ctx) {
         for (Entry<File, Collection<CodeBlockInfo>> entry : ctx.getIndex().getBlocks().asMap().entrySet()) {
@@ -35,23 +36,22 @@ public class ModuleLevelMetricsPopulator implements SubmissionPopulator {
                     if (block instanceof JavaCodeBlockInfo) {
                         JavaCodeBlockInfo javaBlock = (JavaCodeBlockInfo) block;
 
-                        IntObjectMap<ILine> lineCoverage = javaBlock.getLineCoverage();
+                        IntObjectMap<LineCoverage> lineCoverage = javaBlock.getLineCoverage();
                         int coveredLines = 0;
                         int missedLines = 0;
                         int coveredBranches = 0;
                         int missedBranches = 0;
                         boolean hasCoverage = false;
 
-                        for (ILine line : lineCoverage.values()) {
-                            int status = line.getStatus();
-                            if (BooleanUtils.or(new boolean[] { status == ICounter.FULLY_COVERED, status == ICounter.PARTLY_COVERED })) {
+                        for (LineCoverage line : lineCoverage.values()) {
+                            if (EXECUTED.contains(line.getStatus())) {
                                 coveredLines++;
                                 hasCoverage = true;
-                            } else if (status == ICounter.NOT_COVERED) {
+                            } else if (LineCoverage.Status.MISSED == line.getStatus()) {
                                 missedLines++;
                             }
-                            coveredBranches += line.getBranchCounter().getCoveredCount();
-                            missedBranches += line.getBranchCounter().getMissedCount();
+                            coveredBranches += line.getCoveredBranches();
+                            missedBranches += line.getMissedBranches();
                         }
 
                         tracker.addModuleMethod(hasCoverage);

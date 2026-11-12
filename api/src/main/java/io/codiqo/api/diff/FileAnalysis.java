@@ -7,17 +7,17 @@ import java.util.function.Consumer;
 
 import org.eclipse.collections.api.map.primitive.IntObjectMap;
 import org.eclipse.jgit.diff.DiffEntry;
-import org.jacoco.core.analysis.ILine;
 
 import io.codiqo.api.ProjectSpec;
+import io.codiqo.api.SourceLanguage;
 import io.codiqo.api.code.CodeBlockInfo;
-import net.sourceforge.pmd.lang.Language;
+import io.codiqo.api.coverage.LineCoverage;
 
 public interface FileAnalysis extends Consumer<ProjectSpec> {
     String getOldPath();
     String getNewPath();
     File getFile();
-    Language getLanguage();
+    SourceLanguage getLanguage();
     DiffEntry.ChangeType getChangeType();
     String getContentBefore();
     String getContentAfter();
@@ -25,8 +25,8 @@ public interface FileAnalysis extends Consumer<ProjectSpec> {
     Set<AffectedSymbolInfo> getPotentiallyAffectedSymbols();
     Set<CodeBlockInfo> getRemovedCodeBlocks();
     boolean isTestFile();
-    boolean isExtension(Language lang);
+    boolean isExtension(SourceLanguage language);
     Optional<ProjectSpec> project();
-    IntObjectMap<ILine> getLineCoverage();
-    void lineCoverage(int lineNumber, ILine line);
+    IntObjectMap<LineCoverage> getLineCoverage();
+    void lineCoverage(int lineNumber, LineCoverage line);
 }
