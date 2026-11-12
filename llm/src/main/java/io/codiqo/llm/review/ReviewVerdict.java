@@ -4,9 +4,7 @@ import java.io.IOException;
 import java.util.Objects;
 import java.util.Optional;
 
-import org.apache.commons.lang3.BooleanUtils;
-import org.apache.commons.lang3.exception.ExceptionUtils;
-
+import io.codiqo.util.Interrupts;
 import lombok.Value;
 
 /**
@@ -51,11 +49,10 @@ public sealed interface ReviewVerdict permits ReviewVerdict.Succeeded, ReviewVer
     /**
      * A failure no part of the review settled: the relay, the answer server or OpenCode would not start or answer, the
      * trace of a review that succeeded could not be written, or a bug. It is Codiqo's, unless the review was being
-     * stopped: an interrupt surfaces as an I/O error (InterruptedIOException, ClosedByInterruptException) as often as
-     * an InterruptedException, so the thread's flag tells the two apart.
+     * stopped ({@link Interrupts#stopped}).
      */
     static ReviewVerdict unexpected(Exception err, Optional<String> providerErrors) {
-        if (BooleanUtils.or(new boolean[] { Thread.currentThread().isInterrupted(), ExceptionUtils.getRootCause(err) instanceof InterruptedException })) {
+        if (Interrupts.stopped(err)) {
             return new Stopped(err);
         }
         return new CodiqoFailure(withProviderErrors(err, providerErrors));

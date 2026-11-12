@@ -99,7 +99,7 @@ public final class HttpCodiqoServer implements CodiqoServer {
     }
     /** a credential that cannot be resolved is logged like a refused halt: the caller still fails with its own cause */
     @Override
-    public boolean halt(String commitSha, Throwable cause) {
+    public boolean halt(String commitSha, String reason, String detail) {
         CommitIndexApi client;
         try {
             client = commitIndexClient();
@@ -108,7 +108,7 @@ public final class HttpCodiqoServer implements CodiqoServer {
             log.error(err, "project %s could not be halted: %s", projectCode, err.getMessage());
             return false;
         }
-        return ProjectHalts.halt(log, client, apiUrl, projectCode, commitSha, cause, hiding.isHidden());
+        return ProjectHalts.halt(log, client, apiUrl, projectCode, commitSha, reason, detail, hiding.isHidden());
     }
     @Override
     public ReviewTags projectTags() throws Exception {

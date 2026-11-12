@@ -6,8 +6,8 @@ and submit them to Codiqo for scoring.
 ## Commits
 
 **Commit outcome**:
-What one run does with one commit it analysed: the commit is submitted for scoring, excluded, or the project is halted.
-It is decided by the same rules whichever build tool ran the analysis.
+What one run does with one commit it analysed: the commit is submitted for scoring, excluded or deferred, or the
+project is halted. It is decided by the same rules whichever build tool ran the analysis.
 _Avoid_: commit result, commit status
 
 **Build verdict**:
@@ -23,6 +23,11 @@ _Avoid_: skip, ignored commit
 A project that analyses no further commits, after a failure on Codiqo's or the model provider's side, until an
 administrator resumes it.
 _Avoid_: pause, block, stop
+
+**Deferred commit**:
+A commit whose run failed without halting the project: the run was stopped, a tool it needed could not be downloaded,
+or the author's build broke on a run told not to tolerate that. A later run analyses it again.
+_Avoid_: skipped commit, retried commit
 
 **Degraded commit**:
 A commit whose build the author broke, scored from its source and its local review alone, with penalties and no bonus.
