@@ -740,7 +740,7 @@ public class LocalReviewer {
         }
     }
     public static final class ReviewOutcome extends ImmutableTriple<LocalReview, Optional<UnitLabels>, Optional<FindingTriage>> {
-        private ReviewOutcome(LocalReview review, Optional<UnitLabels> labels, Optional<FindingTriage> triage) {
+        public ReviewOutcome(LocalReview review, Optional<UnitLabels> labels, Optional<FindingTriage> triage) {
             super(review, labels, triage);
         }
         public LocalReview getReview() {

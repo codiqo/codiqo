@@ -2,6 +2,7 @@ package io.codiqo.submit;
 
 import java.io.File;
 import java.util.Map;
+import java.util.Optional;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -116,5 +117,9 @@ public class ProjectHalts {
     public String reason(String failure, String providerSummary) {
         String summary = SEPARATOR + providerSummary;
         return StringUtils.abbreviate(failure, Math.max(MIN_ABBREVIATION, REASON_LIMIT - summary.length())) + summary;
+    }
+    /** as above, for a failure the provider's answers may not have accompanied */
+    public String reason(String failure, Optional<String> providerSummary) {
+        return providerSummary.map(summary -> reason(failure, summary)).orElse(failure);
     }
 }

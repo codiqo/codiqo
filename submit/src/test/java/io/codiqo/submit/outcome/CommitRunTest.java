@@ -9,7 +9,9 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -31,9 +33,13 @@ import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.AnalysisExcludeModel;
+import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.ClientInfoModel;
 import io.codiqo.client.model.FileChangeModel;
+import io.codiqo.llm.review.LocalReview;
+import io.codiqo.llm.review.LocalReviewer;
 import io.codiqo.llm.review.ReviewVerdict;
+import io.codiqo.llm.schema.LlmScoringResponse;
 import io.codiqo.submit.CodiqoServer;
 import io.codiqo.submit.CommitBuildFailedException;
 import io.codiqo.submit.OutputSerializer;
@@ -46,13 +52,17 @@ import io.codiqo.util.DownloadFailedException;
 /**
  * A commit's run through its interface, against Codiqo kept in memory and a build scripted per test: the outcome each
  * kind of commit and failure ends in, and what the run sent for it. The full analysis starts the language server, so it
- * is left to the plugins' own runs; every other way through the run is here.
+ * is left to the plugins' own runs; the rest of the run is here.
  */
 class CommitRunTest {
     private static final PersonIdent AUTHOR = new PersonIdent("Author", "author@example.com");
     private static final LogFactory LOGS = clazz -> new NoopLog();
     private static final String BUILD_DETAIL = "[ERROR] A.java:[1,10] cannot find symbol";
     private static final String PROVIDER_SUMMARY = "the LLM provider answered 429 40 times during the review";
+    /** the halt request's limit on its reason (ProjectHalts) */
+    private static final int HALT_REASON_LIMIT = 2000;
+    /** the coordinator's answer as the review keeps it: one reviewer's area of the commit */
+    private static final String COORDINATOR_ANSWER = "{\"tasks\":[{\"paths\":[\"src/main/java/a/A.java\"]}]}";
 
     @TempDir
     Path tempDir;
@@ -166,6 +176,39 @@ class CommitRunTest {
 
         assertInstanceOf(CommitOutcome.Halted.class, outcome);
         assertEquals("local review failed: GET /api/session/ses_1/message failed with 500; " + PROVIDER_SUMMARY, haltReason());
+    }
+    /** a broken commit its review judged is submitted as a degraded commit, with the review's trace beside it */
+    @Test
+    void aBrokenCommitItsReviewJudgedIsSubmittedAsDegraded() throws Exception {
+        LocalReview review = new LocalReview("1a2b3c4d", new LlmScoringResponse.Bugs(), List.of(), Duration.ofSeconds(1), COORDINATOR_ANSWER, new LlmScoringResponse(), 1, List.of(), List.of());
+
+        CommitOutcome outcome = brokenCommitReviewed(new ReviewVerdict.Succeeded(new LocalReviewer.ReviewOutcome(review, Optional.empty(), Optional.empty())));
+
+        assertInstanceOf(CommitOutcome.Submitted.class, outcome, server.halts.toString());
+        assertEquals(1, server.submissions.size());
+        AnalysisSubmissionModel submitted = server.submissions.iterator().next();
+        assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, submitted.getBuildFailure().getCategory());
+        assertTrue(Objects.nonNull(submitted.getLocalReview()), "scored from the review's judgment");
+        assertTrue(server.traces.iterator().next().isPresent(), "with the review's trace");
+        assertTrue(server.exclusions.isEmpty());
+    }
+    /** a failure whose message fills the halt's reason on its own still leaves room for the provider's answers */
+    @Test
+    void aLongFailureOnCodiqosSideKeepsTheProvidersAnswersInTheHalt() throws Exception {
+        String wordy = "opencode answered 500: " + "x".repeat(2100);
+
+        brokenCommitReviewed(ReviewVerdict.unexpected(new IOException(wordy), Optional.of(PROVIDER_SUMMARY)));
+
+        assertTrue(haltReason().length() <= HALT_REASON_LIMIT, "the server refuses a longer reason, and ProjectHalts would cut its end off");
+        assertTrue(haltReason().endsWith("; " + PROVIDER_SUMMARY), haltReason());
+    }
+    /** a review that failed while the run was being stopped halts nothing: someone stopped the run */
+    @Test
+    void aReviewThatFailedAsTheRunWasStoppedHaltsNothing() throws Exception {
+        CommitOutcome outcome = brokenCommitReviewed(new ReviewVerdict.ProviderFailure(new IOException("stream cut", new InterruptedException()), PROVIDER_SUMMARY));
+
+        assertInstanceOf(CommitOutcome.Deferred.class, outcome);
+        assertEquals(List.of(), server.halts);
     }
     @Test
     void aStoppedReviewHaltsNothing() throws Exception {

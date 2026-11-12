@@ -190,8 +190,8 @@ class TurnTest {
 
         ReviewVerdict.CommitFailure failed = assertInstanceOf(ReviewVerdict.CommitFailure.class, ask(CLIENT_TIMEOUT).orElseThrow());
 
-        assertEquals("index out of date", failed.getError().getCause().getCause().getCause().getMessage());
-        assertTrue(failed.getError().getMessage().endsWith("; the LLM provider answered 503 once during the review"), failed.getError().getMessage());
+        assertEquals("index out of date", failed.getError().getCause().getCause().getMessage());
+        assertTrue(failed.getReason().endsWith("; the LLM provider answered 503 once during the review"), failed.getReason());
     }
     /** a session cut off at its step cap says nothing of why: the relay's count during its turn decides */
     @Test
@@ -217,7 +217,7 @@ class TurnTest {
         ReviewVerdict.CommitFailure unanswered = assertInstanceOf(ReviewVerdict.CommitFailure.class, ask(CLIENT_TIMEOUT).orElseThrow());
 
         assertEquals("session ses_coordinator was cut off before it called codiqo_submit_labels, so it gave no answer; the LLM provider answered 503 once during the review",
-                unanswered.getError().getMessage());
+                unanswered.getReason());
     }
     /** a turn that outlives the review timeout is settled like a session cut off, never as Codiqo's failure */
     @Test
