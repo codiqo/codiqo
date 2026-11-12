@@ -37,4 +37,15 @@ jobs:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
-        run: mvn -Prelease clean deploy -DskipTests -Dmaven.repository.credentialScope=id
+        # Central answers 429 when a runner's shared IP sends too many requests, and Maven's default retries (5, 10
+        # and 15 seconds) give up after about 30 seconds. The deferred upload sends one file at a time, so a retry
+        # pauses the whole upload: wait 10, 20, ... 100 seconds instead, and honour a Retry-After of up to 10 minutes.
+        # Maven 3.9 (Resolver 1.9) reads aether.connector.http.*; Maven 3.10 and 4 (Resolver 2) read aether.transport.http.*.
+        run: >-
+          mvn -Prelease clean deploy -DskipTests -Dmaven.repository.credentialScope=id
+          -Daether.connector.http.retryHandler.count=10
+          -Daether.connector.http.retryHandler.interval=10000
+          -Daether.connector.http.retryHandler.intervalMax=600000
+          -Daether.transport.http.retryHandler.count=10
+          -Daether.transport.http.retryHandler.interval=10000
+          -Daether.transport.http.retryHandler.intervalMax=600000
