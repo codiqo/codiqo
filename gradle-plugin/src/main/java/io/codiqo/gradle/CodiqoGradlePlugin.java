@@ -13,6 +13,7 @@ import java.util.regex.Pattern;
 
 import javax.inject.Inject;
 
+import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -76,10 +77,21 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
         project.getGradle().getTaskGraph().whenReady(graph -> {
             CodiqoSubmitAnalysisTask task = (CodiqoSubmitAnalysisTask) project.getTasks().getByName(SUBMIT_TASK);
             if (graph.hasTask(task)) {
-                AnalysisRequest request = GradleModelCollector.collect(project.getRootProject(), ext);
+                Map<String, Throwable> unresolved = Maps.newLinkedHashMap();
+                AnalysisRequest request = GradleModelCollector.collect(project.getRootProject(), ext, unresolved);
                 requireRuntime(request);
                 task.setRequest(request);
                 task.setScheduledTasks(List.copyOf(graph.getAllTasks()));
+                task.setUnresolvedClasspaths(unresolved);
+
+                /**
+                 * A classpath that does not resolve fails the build (BuildFailures), and a failed build is never analysed in
+                 * full, so its tests would run for a coverage nothing reads: every commit of a stretch whose repository is
+                 * unreachable would pay the whole test suite for an exclusion.
+                 */
+                if (MapUtils.isNotEmpty(unresolved)) {
+                    graph.getAllTasks().stream().filter(Test.class::isInstance).forEach(test -> test.onlyIf("codiqo: a classpath did not resolve, so no test result is read", skipped -> false));
+                }
             }
         });
 
