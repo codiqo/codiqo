@@ -60,7 +60,7 @@ class AnalysisEngineReviewTest {
     }
     @Test
     void aCommitWithoutAReviewIsSubmittedAsItIs() throws Exception {
-        assertTrue(AnalysisEngine.judged(new AnalysisRequest(), new RunArgs(), Optional.empty(), context(), LOG));
+        assertTrue(AnalysisEngine.judged(AnalysisEngine.server(request("http://127.0.0.1:1"), LOG), new RunArgs(), Optional.empty(), context(), LOG));
     }
     @Test
     void aFailedReviewLeavesTheCommitUnsubmitted() throws Exception {
@@ -75,23 +75,29 @@ class AnalysisEngineReviewTest {
         });
         server.start();
 
-        AnalysisRequest request = new AnalysisRequest();
-        request.setApiUrl(String.format("http://127.0.0.1:%d", server.getAddress().getPort()));
-        request.setApiKey("test-api-key");
-        request.setConnectTimeoutSeconds(5);
-        request.setReadTimeoutSeconds(5);
+        AnalysisRequest request = request(String.format("http://127.0.0.1:%d", server.getAddress().getPort()));
 
         try (BackgroundReview<ReviewVerdict> failing = BackgroundReview.start(() -> new ReviewVerdict.CommitFailure(new IOException(REVIEW_ERROR)))) {
             Optional<LocalReviewRun> review = Optional.of(LocalReviewRun.of(failing, DefaultLanguageProcessors.reviewLanguages(), LOGS));
             SubmissionContext ctx = context();
 
-            assertFalse(AnalysisEngine.judged(request, ctx.getArgs(), review, ctx, LOG), "excluded, never submitted for the prompt to judge");
+            assertFalse(AnalysisEngine.judged(AnalysisEngine.server(request, LOG), ctx.getArgs(), review, ctx, LOG), "excluded, never submitted for the prompt to judge");
         } finally {
             server.stop(0);
         }
 
         assertEquals(List.of("PATCH /api/v1/analyses/commit/" + SHA + "/exclude"), calls, "the exclusion is reported to the backend");
         assertTrue(Strings.CS.contains(bodies.get(0), "LOCAL_REVIEW_FAILURE"), "as a failed review");
+    }
+    private static AnalysisRequest request(String apiUrl) {
+        AnalysisRequest toReturn = new AnalysisRequest();
+        toReturn.setApiUrl(apiUrl);
+        toReturn.setResourceUrl(RunArgs.DEFAULT_RESOURCE_URL);
+        toReturn.setRootCode("com.example:app");
+        toReturn.setApiKey("test-api-key");
+        toReturn.setConnectTimeoutSeconds(5);
+        toReturn.setReadTimeoutSeconds(5);
+        return toReturn;
     }
     private static SubmissionContext context() {
         RunArgs args = new RunArgs();

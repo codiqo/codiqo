@@ -31,6 +31,7 @@ import com.google.common.collect.Lists;
 import com.sun.net.httpserver.HttpServer;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.logging.Log;
 import io.codiqo.client.model.AnalysisBuildFailureModel;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.AnalysisSubmissionModel;
@@ -43,6 +44,9 @@ import io.codiqo.submit.auth.CredentialStore;
 /** a build-failed commit is routed as on Maven */
 class AnalysisEngineDegradedTest {
     private static final SlfLogFactory LOGS = new SlfLogFactory();
+    private static final Log LOG = LOGS.getLogger(AnalysisEngineDegradedTest.class);
+    /** a call that should never be made fails here rather than reaching Codiqo's own API */
+    private static final String UNREACHABLE_API = "http://127.0.0.1:1";
     private static final String BUILD_FAILURE_DETAIL = "Execution failed for task ':compileJava'.";
 
     @TempDir
@@ -115,7 +119,7 @@ class AnalysisEngineDegradedTest {
         System.setProperty(CredentialStore.HOME_PROPERTY, Files.createDirectory(tempDir.resolve("codiqo-home")).toString());
         try {
             CommitBuildFailedException err = assertThrows(CommitBuildFailedException.class,
-                    () -> AnalysisEngine.analyse(request, args, LOGS, LOGS.getLogger(AnalysisEngineDegradedTest.class)));
+                    () -> AnalysisEngine.analyse(request, AnalysisEngine.server(request, LOG), args, LOGS, LOG));
 
             assertTrue(Strings.CS.contains(err.getMessage(), BUILD_FAILURE_DETAIL), err.getMessage());
         } finally {
@@ -151,7 +155,7 @@ class AnalysisEngineDegradedTest {
         RunArgs args = args(docs);
         args.setSkipOnBuildFailure(false);
         try {
-            AnalysisEngine.analyse(request, args, LOGS, LOGS.getLogger(AnalysisEngineDegradedTest.class));
+            AnalysisEngine.analyse(request, AnalysisEngine.server(request, LOG), args, LOGS, LOG);
         } finally {
             server.stop(0);
         }
@@ -165,6 +169,8 @@ class AnalysisEngineDegradedTest {
         toReturn.setRootPath(":");
         toReturn.setRootCode("com.example:app");
         toReturn.setRootName("app");
+        toReturn.setApiUrl(UNREACHABLE_API);
+        toReturn.setResourceUrl(RunArgs.DEFAULT_RESOURCE_URL);
         toReturn.setBuildFailureDetail(BUILD_FAILURE_DETAIL);
         return toReturn;
     }

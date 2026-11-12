@@ -28,7 +28,6 @@ import io.codiqo.client.ApiClient;
 import io.codiqo.client.ApiException;
 import io.codiqo.client.api.AnalysisApi;
 import io.codiqo.client.model.AnalysisAcceptedModel;
-import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.AnalysisExcludeModel;
 import io.codiqo.client.model.AnalysisResultModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
@@ -40,7 +39,6 @@ import io.codiqo.client.model.DuplicationReportModel;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.FullProjectCoverageModel;
 import io.codiqo.client.model.LocalReviewModel;
-import io.codiqo.client.model.ProjectMetricsModel;
 import io.codiqo.submit.auth.CodiqoApiClients;
 import io.codiqo.submit.auth.CodiqoCredential;
 import lombok.experimental.UtilityClass;
@@ -266,28 +264,19 @@ public class AnalysisSubmitter {
 
         return ApiRetry.call(log, "submitUncommittedAnalysis", apiUrl, () -> client.submitUncommittedAnalysis(submission));
     }
+    /** the exclusion's source is hidden in place before it is sent */
     public static void exclude(
             String apiUrl,
             CodiqoCredential credential,
             long connectTimeoutSeconds,
             long readTimeoutSeconds,
             String commitSha,
-            String reason,
-            AnalysisExcludeCategory category,
-            String detail,
-            List<FileChangeModel> files,
-            ProjectMetricsModel projectMetrics,
+            AnalysisExcludeModel body,
             SourceHiding hiding,
             Log log) throws ApiException {
         AnalysisApi client = buildClient(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds);
-        log.info("excluding commit " + commitSha + " at " + apiUrl + " (reason: " + reason + ", category: " + category + ", files: " + files.size() + ")");
+        log.info("excluding commit " + commitSha + " at " + apiUrl + " (reason: " + body.getReason() + ", category: " + body.getCategory() + ", files: " + body.getFiles().size() + ")");
 
-        AnalysisExcludeModel body = new AnalysisExcludeModel();
-        body.setReason(reason);
-        body.setCategory(category);
-        body.setDetail(detail);
-        body.setFiles(files);
-        body.setProjectMetrics(projectMetrics);
         hiding.hide(body);
 
         ApiRetry.call(log, "excludeAnalysis", apiUrl, () -> {
