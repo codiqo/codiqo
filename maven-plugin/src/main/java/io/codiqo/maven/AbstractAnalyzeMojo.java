@@ -38,7 +38,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 import javax.inject.Inject;
 
@@ -91,7 +90,6 @@ import org.eclipse.aether.resolution.DependencyResult;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.transport.HttpTransport;
 import org.eclipse.jgit.transport.TagOpt;
 
@@ -1393,13 +1391,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             JGit.detectDefaultBranch(args.getGit()).ifPresent(args::setDefaultBranch);
         }
         if (args.getRemoteUrls().isEmpty()) {
-            StoredConfig config = args.getGit().getConfig();
-            if (Objects.nonNull(config)) {
-                Set<String> remotes = config.getSubsections("remote");
-                if (CollectionUtils.isNotEmpty(remotes)) {
-                    args.setRemoteUrls(remotes.stream().map(remote -> config.getString("remote", remote, "url")).collect(Collectors.toSet()));
-                }
-            }
+            args.setRemoteUrls(JGit.detectRemoteUrls(args.getGit()));
         }
     }
     protected void doExecute(RunArgs args) throws Exception {
@@ -1524,7 +1516,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
      */
     protected void doExcludeRevertCommit(RunArgs args, SubmissionContext ctx) throws Exception {
         getLog().warn(String.format("commit %s skipped: revert commit (no LLM scoring or submission)", args.getCommitId()));
-        doExcludeAnalysis(args.getCommitId(), "revert commit (no LLM scoring performed)", AnalysisExcludeCategory.REVERT_COMMIT);
+        doExcludeAnalysis(args.getCommitId(), "revert commit (no LLM scoring performed)", AnalysisExcludeCategory.REVERT_COMMIT, null, ctx.getSubmissionModel().getFiles());
 
         if (args.isExcludeRevertedCommits()) {
             String revertedSha = ctx.getAnalysis().getRevertedCommitId();

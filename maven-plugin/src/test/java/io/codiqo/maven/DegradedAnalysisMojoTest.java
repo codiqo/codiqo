@@ -280,6 +280,7 @@ class DegradedAnalysisMojoTest {
         Exclusion revertExclusion = it.next();
         assertEquals(revert.getName(), revertExclusion.getCommitSha());
         assertEquals(AnalysisExcludeCategory.REVERT_COMMIT, revertExclusion.getCategory());
+        assertTrue(CollectionUtils.isNotEmpty(revertExclusion.getFiles()), "the revert's own files go with its exclusion, as on Gradle");
 
         Exclusion originalExclusion = it.next();
         assertEquals(second.getName(), originalExclusion.getCommitSha());

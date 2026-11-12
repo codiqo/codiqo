@@ -137,10 +137,7 @@ public class AnalysisEngine {
 
         Log log = logFactory.getLogger(AnalysisEngine.class);
         try (Repository git = JGit.openRepository(new File(request.getRootDir()))) {
-            args.setGit(git);
-            JGit.currentBranchOrDefault(git).ifPresent(args::setDefaultBranch);
-            args.setCommitId(resolveCommitId(request, git));
-            args.setHotspotsCommitId(JGit.resolveCommit(git, Optional.ofNullable(request.getHotspotsCommitId()).orElse(Constants.HEAD)));
+            applyRepository(request, args, git);
 
             /**
              * The exclusion gate runs before the ClassGraph scan and the JDT import, so an excluded commit costs a git
@@ -593,6 +590,19 @@ public class AnalysisEngine {
     private static FixCommits fixCommits(AnalysisRequest request, Instant since, Log log) throws Exception {
         return FixCommits.fetch(request.getApiUrl(), credential(request, log), request.getConnectTimeoutSeconds(), request.getReadTimeoutSeconds(),
                 request.getRootCode(), since, log);
+    }
+    /**
+     * What the analysed repository says about the commit: its branch, the commit and the repository's URLs, which the
+     * project model sends so the server can tie the submission to its repository. Without them every Gradle submission
+     * went without repository URLs, which a Maven run of the same commit carries.
+     */
+    @VisibleForTesting
+    public static void applyRepository(AnalysisRequest request, RunArgs args, Repository git) throws Exception {
+        args.setGit(git);
+        JGit.currentBranchOrDefault(git).ifPresent(args::setDefaultBranch);
+        args.setCommitId(resolveCommitId(request, git));
+        args.setHotspotsCommitId(JGit.resolveCommit(git, Optional.ofNullable(request.getHotspotsCommitId()).orElse(Constants.HEAD)));
+        args.setRemoteUrls(JGit.detectRemoteUrls(git));
     }
     private static String resolveCommitId(AnalysisRequest request, Repository git) throws Exception {
         return JGit.resolveCommit(git, Optional.ofNullable(request.getCommitId()).orElse(Constants.HEAD));
