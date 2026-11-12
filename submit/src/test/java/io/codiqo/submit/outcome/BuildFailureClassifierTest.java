@@ -6,6 +6,7 @@ import java.util.Optional;
 import java.util.stream.Stream;
 
 import org.apache.commons.lang3.StringUtils;
+import org.junit.jupiter.api.Named;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -84,7 +85,7 @@ class BuildFailureClassifierTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("failures")
-    void aFailureIsTheEnvironmentsOnlyWhenADownloadFailed(String name, String failureText, AnalysisExcludeCategory expected) {
+    void aFailureIsTheEnvironmentsOnlyWhenADownloadFailed(String failureText, AnalysisExcludeCategory expected) {
         assertEquals(expected, BuildFailureClassifier.category(failureText));
     }
     @Test
@@ -100,26 +101,26 @@ class BuildFailureClassifierTest {
     }
     private static Stream<Arguments> failures() {
         return Stream.of(
-                Arguments.of("an outage page instead of a plugin's download", SPOTLESS_OUTAGE, AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE),
-                Arguments.of("a plugin whose host could not be found",
-                        "[ERROR] Could not download Node.js from https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-x64.tar.gz: java.net.UnknownHostException: nodejs.org",
+                Arguments.of(Named.of("an outage page instead of a plugin's download", SPOTLESS_OUTAGE), AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE),
+                Arguments.of(Named.of("a plugin whose host could not be found",
+                        "[ERROR] Could not download Node.js from https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-x64.tar.gz: java.net.UnknownHostException: nodejs.org"),
                         AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE),
-                Arguments.of("a dependency Gradle could not find", GRADLE_POM_NOT_FOUND, AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE),
-                Arguments.of("a repository answering 503 to Gradle", GRADLE_SERVICE_UNAVAILABLE, AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE),
-                Arguments.of("a web page where Gradle expected a POM", GRADLE_HTML_POM, AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE),
-                Arguments.of("a repository refusing Gradle's connection", GRADLE_CONNECTION_REFUSED, AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE),
-                Arguments.of("a local project Gradle could not match, which names no repository", GRADLE_LOCAL_VARIANT_MISMATCH, AnalysisExcludeCategory.BUILD_FAILURE),
-                Arguments.of("a Maven compile error", "[ERROR] /work/src/main/java/app/Ledger.java:[42,17] cannot find symbol", AnalysisExcludeCategory.BUILD_FAILURE),
-                Arguments.of("a goal a POM misnames, beside Maven's help link",
-                        "[ERROR] Could not find goal 'aply' in plugin com.diffplug.spotless:spotless-maven-plugin:2.44.4\n[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoNotFoundException",
+                Arguments.of(Named.of("a dependency Gradle could not find", GRADLE_POM_NOT_FOUND), AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE),
+                Arguments.of(Named.of("a repository answering 503 to Gradle", GRADLE_SERVICE_UNAVAILABLE), AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE),
+                Arguments.of(Named.of("a web page where Gradle expected a POM", GRADLE_HTML_POM), AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE),
+                Arguments.of(Named.of("a repository refusing Gradle's connection", GRADLE_CONNECTION_REFUSED), AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE),
+                Arguments.of(Named.of("a local project Gradle could not match, which names no repository", GRADLE_LOCAL_VARIANT_MISMATCH), AnalysisExcludeCategory.BUILD_FAILURE),
+                Arguments.of(Named.of("a Maven compile error", "[ERROR] /work/src/main/java/app/Ledger.java:[42,17] cannot find symbol"), AnalysisExcludeCategory.BUILD_FAILURE),
+                Arguments.of(Named.of("a goal a POM misnames, beside Maven's help link",
+                        "[ERROR] Could not find goal 'aply' in plugin com.diffplug.spotless:spotless-maven-plugin:2.44.4\n[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoNotFoundException"),
                         AnalysisExcludeCategory.BUILD_FAILURE),
-                Arguments.of("a Gradle compile error", GRADLE_COMPILE_ERROR, AnalysisExcludeCategory.BUILD_FAILURE),
-                Arguments.of("an annotation processor that threw, which may be the author's own",
-                        ":app:compileJava: Execution failed for task ':app:compileJava'.\njava.lang.IllegalStateException: processor failed on App",
+                Arguments.of(Named.of("a Gradle compile error", GRADLE_COMPILE_ERROR), AnalysisExcludeCategory.BUILD_FAILURE),
+                Arguments.of(Named.of("an annotation processor that threw, which may be the author's own",
+                        ":app:compileJava: Execution failed for task ':app:compileJava'.\njava.lang.IllegalStateException: processor failed on App"),
                         AnalysisExcludeCategory.BUILD_FAILURE),
-                Arguments.of("a URL with no failed fetch",
-                        "[ERROR] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies failed, see https://maven.apache.org/enforcer/",
+                Arguments.of(Named.of("a URL with no failed fetch",
+                        "[ERROR] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies failed, see https://maven.apache.org/enforcer/"),
                         AnalysisExcludeCategory.BUILD_FAILURE),
-                Arguments.of("no text at all", StringUtils.EMPTY, AnalysisExcludeCategory.BUILD_FAILURE));
+                Arguments.of(Named.of("no text at all", StringUtils.EMPTY), AnalysisExcludeCategory.BUILD_FAILURE));
     }
 }
