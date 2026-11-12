@@ -15,6 +15,7 @@ import io.codiqo.client.model.ProjectHaltRequestModel;
 import io.codiqo.llm.review.ReviewProviderException;
 import io.codiqo.llm.review.ReviewTrace;
 import io.codiqo.util.DownloadFailedException;
+import io.codiqo.util.Interrupts;
 import lombok.experimental.UtilityClass;
 
 /**
@@ -38,17 +39,15 @@ public class ProjectHalts {
         return trace.isFile() ? "review trace " + trace.getAbsolutePath() : "no review trace; see the commit's analysis log";
     }
     /**
-     * Whether a failed run leaves the project running. A run that was stopped is not a failure of codiqo's, and the
-     * thread's flag tells it apart: an interrupt often surfaces as an I/O error (ClosedByInterruptException,
-     * InterruptedIOException) whose root cause is not an InterruptedException. A build the author broke with
+     * Whether a failed run leaves the project running. A run that was stopped is not a failure of codiqo's
+     * ({@link Interrupts#stopped}). A build the author broke with
      * skipOnBuildFailure off is the author's failure ({@link CommitBuildFailedException}). A tool that could not be
      * downloaded is the download host's ({@link DownloadFailedException}): it heals on its own, and halting on it held
      * thirteen projects until an administrator resumed each one after download.eclipse.org went down.
      */
     public boolean haltsNothing(Throwable err) {
         return BooleanUtils.or(new boolean[] {
-                Thread.currentThread().isInterrupted(),
-                ExceptionUtils.getRootCause(err) instanceof InterruptedException,
+                Interrupts.stopped(err),
                 ExceptionUtils.indexOfThrowable(err, CommitBuildFailedException.class) >= 0,
                 ExceptionUtils.indexOfThrowable(err, DownloadFailedException.class) >= 0 });
     }
@@ -59,13 +58,8 @@ public class ProjectHalts {
     /**
      * Records the failure as the project's halt, and says whether it was recorded. A halt that cannot be recorded is
      * logged as an error and the caller still fails with the original cause: losing that cause to the halt's own failure
-     * would leave nothing to investigate.
-     */
-    public boolean halt(Log log, CommitIndexApi client, String apiUrl, String projectId, String commitSha, Throwable cause, boolean sourceHidden) {
-        return halt(log, client, apiUrl, projectId, commitSha, reasonOf(cause), ExceptionUtils.getStackTrace(cause), sourceHidden);
-    }
-    /**
-     * As above, for a failure known only by its description: a run killed from outside, which left no exception. The
+     * would leave nothing to investigate. A failure known by its exception halts with {@link #reasonOf} and its stack
+     * trace; one known only by its description is a run killed from outside, which left no exception. The
      * result matters to {@code halt-project}, whose whole job is the halt: a goal that succeeded without recording it
      * would hide from the GitHub Action that the next scheduled run will pay for the same commit's review again.
      */
@@ -110,13 +104,17 @@ public class ProjectHalts {
      * failure is shortened rather than the summary: a failure that fills the reason's limit on its own would cut off
      * exactly the part the banner needs.
      */
-    private String reasonOf(Throwable cause) {
+    public String reasonOf(Throwable cause) {
         String failure = ExceptionUtils.getRootCauseMessage(cause);
         int provider = ExceptionUtils.indexOfType(cause, ReviewProviderException.class);
         if (provider >= 0) {
-            String summary = SEPARATOR + ((ReviewProviderException) ExceptionUtils.getThrowables(cause)[provider]).getProviderSummary();
-            return StringUtils.abbreviate(failure, Math.max(MIN_ABBREVIATION, REASON_LIMIT - summary.length())) + summary;
+            return reason(failure, ((ReviewProviderException) ExceptionUtils.getThrowables(cause)[provider]).getProviderSummary());
         }
         return failure;
+    }
+    /** the failure followed by the provider's failed answers, the failure shortened so the answers fit the reason's limit */
+    public String reason(String failure, String providerSummary) {
+        String summary = SEPARATOR + providerSummary;
+        return StringUtils.abbreviate(failure, Math.max(MIN_ABBREVIATION, REASON_LIMIT - summary.length())) + summary;
     }
 }

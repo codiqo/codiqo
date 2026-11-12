@@ -107,7 +107,7 @@ public class SubmitCommitAnalysisMojo extends AnalyzeCommitMojo {
     protected void doOnFailure(RunArgs args, Exception err) {
         /** a run that fails after its submission was accepted has scored its commit, so it halts nothing */
         if (Objects.nonNull(haltableCommitId) && BooleanUtils.negate(BooleanUtils.or(new boolean[] { ProjectHalts.haltsNothing(err), args.isSubmissionAccepted() }))) {
-            server.halt(haltableCommitId, err);
+            server.halt(haltableCommitId, ProjectHalts.reasonOf(err), ExceptionUtils.getStackTrace(err));
             ProgressStage.abort(args, ExceptionUtils.getRootCauseMessage(err), ProjectHalts.traceOf(args, haltableCommitId));
         }
     }

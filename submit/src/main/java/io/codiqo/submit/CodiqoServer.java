@@ -33,8 +33,14 @@ public interface CodiqoServer {
     AnalysisAcceptedModel submit(AnalysisSubmissionModel submission, Optional<File> reviewTrace) throws Exception;
     AnalysisAcceptedModel submitUncommitted(AnalysisSubmissionModel submission) throws Exception;
     AnalysisResultModel awaitCompletion(UUID analysisId, Duration deadline, Duration pollInterval) throws Exception;
-    /** records the failure as the project's halt, and says whether it was recorded; it never throws ({@link ProjectHalts#halt}) */
-    boolean halt(String commitSha, Throwable cause);
+    /**
+     * Records the failure as the project's halt, and says whether it was recorded; it never throws, so the run still
+     * fails with its own cause ({@link ProjectHalts#halt}).
+     *
+     * @param reason what the halt banner shows ({@link ProjectHalts#reasonOf} for a failure known by its exception)
+     * @param detail what an administrator reads behind it, the failure's stack trace for one
+     */
+    boolean halt(String commitSha, String reason, String detail);
     ReviewTags projectTags() throws Exception;
     /** best-effort: none when they cannot be fetched, or when the project hides its source ({@link PreviousFindings}) */
     List<PreviousFinding> previousFindings(String commitSha);

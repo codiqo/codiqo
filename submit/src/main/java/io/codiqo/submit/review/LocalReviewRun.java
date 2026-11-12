@@ -229,7 +229,7 @@ public final class LocalReviewRun implements AutoCloseable {
         Optional<AnalysisExcludeModel> toReturn = Optional.empty();
         if (verdict instanceof ReviewVerdict.Failed failed) {
             toReturn = Optional.of(switch (failed) {
-                case ReviewVerdict.CommitFailure commit -> excluded(commit, ctx, log);
+                case ReviewVerdict.CommitFailure commit -> exclusion(commit, ctx, log);
                 case ReviewVerdict.ProviderFailure provider ->
                     throw new ReviewProviderException(ReviewVerdict.REVIEW_FAILED + provider.getError().getMessage(), provider.getProviderSummary(), provider.getError());
                 case ReviewVerdict.CodiqoFailure codiqo -> throw new IOException(ReviewVerdict.REVIEW_FAILED + codiqo.getReason(), codiqo.getError());
@@ -247,7 +247,7 @@ public final class LocalReviewRun implements AutoCloseable {
      * a review records: an operator's re-inclusion of a build failure survives a re-analysis only under that category,
      * and the files are what the server stores as the excluded commit's per-file changes.
      */
-    private static AnalysisExcludeModel excluded(ReviewVerdict.CommitFailure failed, SubmissionContext ctx, Log log) {
+    public static AnalysisExcludeModel exclusion(ReviewVerdict.CommitFailure failed, SubmissionContext ctx, Log log) {
         String reason = ReviewVerdict.REVIEW_FAILED + failed.getReason();
         log.error(failed.getError(), "commit %s excluded: %s", ctx.getArgs().getCommitId(), reason);
 
