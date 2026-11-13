@@ -182,12 +182,12 @@ public class JavaLanguageSpec implements LanguageSpec {
     private static final IOFileFilter JUNIT_REPORT_FILTER = FileFilterUtils.and(
             FileFilterUtils.prefixFileFilter(JUNIT_REPORT_PREFIX),
             FileFilterUtils.suffixFileFilter(FilenameUtils.EXTENSION_SEPARATOR_STR + XML_EXTENSION));
+    /** the value the submission's file language carries on the wire for a Java file, and the extensions PMD reads as Java */
+    public static final SourceLanguage LANGUAGE = new SourceLanguage("java", new JavaLanguageModule().getExtensions());
 
     private final Log log;
     private final RunArgs args;
     private final JavaLanguageModule pmdLanguage = new JavaLanguageModule();
-    /** the value the submission's file language carries on the wire for a Java file */
-    private final SourceLanguage sourceLanguage = new SourceLanguage("java", pmdLanguage.getExtensions());
     private final Function<NodeStream<? extends JavaNode>, Collection<JInvocationBlock>> outboundASTconverter = stream -> {
         List<JInvocationBlock> builder = Lists.newArrayList();
         stream.toStream().forEach(node -> {
@@ -239,10 +239,6 @@ public class JavaLanguageSpec implements LanguageSpec {
     @Override
     public Language lang() {
         return pmdLanguage;
-    }
-    @Override
-    public SourceLanguage language() {
-        return sourceLanguage;
     }
     @Override
     public boolean supportsCpd() {
@@ -751,7 +747,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         int linesWithCoverage = 0;
 
         for (FileAnalysis fileAnalysis : analysis) {
-            if (fileAnalysis.isExtension(language())) {
+            if (fileAnalysis.isExtension(LANGUAGE)) {
                 ISourceFileCoverage source = coverages.get(fileAnalysis.getFile());
                 if (Objects.nonNull(source)) {
                     matched++;
@@ -989,10 +985,6 @@ public class JavaLanguageSpec implements LanguageSpec {
         }
 
         return toReturn;
-    }
-    /** the file extensions this language reads, known without building a spec */
-    public static List<String> supportedExtensions() {
-        return JavaLanguageModule.getInstance().getExtensions();
     }
     @VisibleForTesting
     public static boolean expectsCoverage(ProjectSpec project) throws IOException {

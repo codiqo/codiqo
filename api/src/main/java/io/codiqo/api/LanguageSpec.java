@@ -17,7 +17,6 @@ import net.sourceforge.pmd.lang.Language;
 public interface LanguageSpec extends Closeable {
     /** the language as PMD knows it, which its copy-paste detection reads */
     Language lang();
-    SourceLanguage language();
     boolean supportsCpd();
     default void load() {}
     ParsedSources parse(ProjectSpec owner, Collection<File> files) throws IOException;

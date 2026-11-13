@@ -37,7 +37,7 @@ public class JavaReviewLanguage implements ReviewLanguage {
 
     @Override
     public Collection<String> extensions() {
-        return JavaLanguageSpec.supportedExtensions();
+        return JavaLanguageSpec.LANGUAGE.getExtensions();
     }
     @Override
     public String namingRule() {

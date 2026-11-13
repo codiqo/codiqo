@@ -58,6 +58,12 @@
             <groupId>org.eclipse.jgit</groupId>
             <artifactId>org.eclipse.jgit</artifactId>
         </dependency>
+        <!-- compile scope on purpose: Log extends PMD's reporter, so the main code needs it on the compile path, and a
+             direct test scope would take it off; the tests name PMD's Language, which LanguageSpec.lang() returns -->
+        <dependency>
+            <groupId>net.sourceforge.pmd</groupId>
+            <artifactId>pmd-core</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.ow2.asm</groupId>
             <artifactId>asm</artifactId>
