@@ -4,6 +4,7 @@ import java.util.function.Supplier;
 
 import com.google.common.base.Suppliers;
 
+import io.codiqo.api.code.UnitKind;
 import io.codiqo.lang.spec.JavaMethodBlockInfo;
 import lombok.Getter;
 import lombok.Setter;
@@ -28,6 +29,10 @@ public class JavaPmdMethodInfo extends AbstractJavaPmdDeclarationInfo implements
     @Override
     public JMethodSig getGenericSignature() {
         return getMethod().getGenericSignature();
+    }
+    @Override
+    public UnitKind getKind() {
+        return UnitKind.METHOD;
     }
     @Override
     public String getSignature() {

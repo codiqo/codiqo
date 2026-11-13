@@ -1,9 +1,6 @@
 package io.codiqo.lang.spec;
 
 import java.util.Collection;
-import java.util.List;
-
-import org.eclipse.collections.api.map.primitive.IntObjectMap;
 
 import edu.umd.cs.findbugs.BugInstance;
 import io.codiqo.api.code.CodeBlockInfo;
@@ -17,17 +14,12 @@ public interface JavaCodeBlockInfo extends CodeBlockInfo {
     ASTTypeDeclaration getType();
     ASTTypeDeclaration getEnclosingType();
     JMethodSig getGenericSignature();
-    IntObjectMap<LineCoverage> getLineCoverage();
     void lineCoverage(int lineNumber, LineCoverage line);
-    Collection<RuleViolation> getPmdViolations();
     void pmdViolation(RuleViolation violation);
     void spotbug(BugInstance violation);
-    Collection<BugInstance> getSpotbugs();
     Collection<JInvocationBlock> getInvocations();
-    List<String> getModifiers();
 
     ASTExecutableDeclaration getDeclaration();
-    int getArity();
 
     boolean isFinal();
     boolean isStatic();

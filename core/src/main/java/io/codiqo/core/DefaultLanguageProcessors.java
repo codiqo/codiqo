@@ -76,8 +76,6 @@ import io.codiqo.core.diff.GitFileAnalysis;
 import io.codiqo.core.java.JavaLanguageSpec;
 import io.codiqo.core.java.JavaReviewLanguage;
 import io.codiqo.jdtls.LanguageServerJdk;
-import io.codiqo.lang.spec.JavaCodeBlockInfo;
-import io.codiqo.lang.spec.PmdAffectedSymbolInfo;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
 import io.codiqo.util.MemoryReport;
@@ -407,16 +405,13 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
 
                         if (CollectionUtils.isNotEmpty(lines)) {
                             Collection<CodeBlockInfo> fileBlocks = summary.getBlocks().get(gitAnalysis.getFile());
-                            for (CodeBlockInfo next : fileBlocks) {
-                                if (next instanceof JavaCodeBlockInfo block) {
-                                    int startLine = block.getLocation().getStartLine();
-                                    int endLine = block.getLocation().getEndLine();
-                                    boolean isAffected = lines.stream().anyMatch(line -> line >= startLine && line <= endLine);
-                                    if (isAffected) {
-                                        PmdAffectedSymbolInfo symbol = new PmdAffectedSymbolInfo(block);
-                                        gitAnalysis.getPotentiallyAffectedSymbols().add(symbol);
-                                        identified.incrementAndGet();
-                                    }
+                            for (CodeBlockInfo block : fileBlocks) {
+                                int startLine = block.getLocation().getStartLine();
+                                int endLine = block.getLocation().getEndLine();
+                                boolean isAffected = lines.stream().anyMatch(line -> line >= startLine && line <= endLine);
+                                if (isAffected) {
+                                    gitAnalysis.getPotentiallyAffectedSymbols().add(processor.symbol(block));
+                                    identified.incrementAndGet();
                                 }
                             }
                         }
@@ -478,7 +473,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                 int startLine = block.getLocation().getStartLine();
                 int endLine = block.getLocation().getEndLine();
                 if (entry.getValue().stream().anyMatch(line -> line >= startLine && line <= endLine)) {
-                    entry.getKey().getRemovedCodeBlocks().add(block);
+                    entry.getKey().getRemovedSymbols().add(processor.symbol(block));
                     toReturn++;
                 }
             }

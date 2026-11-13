@@ -16,7 +16,6 @@ import com.google.common.collect.Sets;
 
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.SourceLanguage;
-import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.coverage.LineCoverage;
 import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.diff.FileAnalysis;
@@ -44,7 +43,7 @@ public class GitFileAnalysis implements FileAnalysis {
     @ToString.Exclude
     private Set<AffectedSymbolInfo> potentiallyAffectedSymbols = Sets.newLinkedHashSet();
     @ToString.Exclude
-    private Set<CodeBlockInfo> removedCodeBlocks = Sets.newLinkedHashSet();
+    private Set<AffectedSymbolInfo> removedSymbols = Sets.newLinkedHashSet();
     @ToString.Exclude
     private MutableIntObjectMap<LineCoverage> lineCoverage = new IntObjectHashMap<>();
     private boolean testFile;

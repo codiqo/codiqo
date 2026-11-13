@@ -9,7 +9,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.Objects;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FilenameUtils;
@@ -24,19 +23,18 @@ import com.google.common.base.Joiner;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
-import edu.umd.cs.findbugs.BugInstance;
-import edu.umd.cs.findbugs.SourceLineAnnotation;
 import io.codiqo.api.code.CodeBlockInfo;
+import io.codiqo.api.code.Finding;
+import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.coverage.CodeBlockCoverage;
 import io.codiqo.api.cpd.CloneLocations;
 import io.codiqo.api.cpd.CloneLocations.Span;
 import io.codiqo.api.cpd.CopyPasteDetectionSummary;
+import io.codiqo.client.model.DiagnosticModel;
 import io.codiqo.client.model.HotspotFindingKind;
 import io.codiqo.client.model.HotspotFindingModel;
 import io.codiqo.core.java.JavaBinaryFormat;
-import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import lombok.experimental.UtilityClass;
-import net.sourceforge.pmd.reporting.RuleViolation;
 
 /**
  * Collects at most {@link #LIMIT} findings for one hotspot file. Kinds are interleaved in priority order rather than
@@ -62,8 +60,7 @@ public class HotspotFindings {
          */
         List<CodeBlockInfo> uncovered = Lists.newArrayList();
         List<CodeBlockInfo> complex = Lists.newArrayList();
-        Map<RuleViolation, CodeBlockInfo> violations = Maps.newLinkedHashMap();
-        Map<BugInstance, CodeBlockInfo> bugs = Maps.newLinkedHashMap();
+        Map<Finding, CodeBlockInfo> findings = Maps.newLinkedHashMap();
         for (CodeBlockInfo block : blocks) {
             CodeBlockCoverage coverage = block.coverage();
             if (BooleanUtils.and(new boolean[] { coverage.hasCoverageData(), coverage.getMissed() + coverage.getPartial() > 0 })) {
@@ -72,34 +69,20 @@ public class HotspotFindings {
             if (block.metrics().cognitive() > COMPLEX_METHOD_THRESHOLD) {
                 complex.add(block);
             }
-            if (block instanceof JavaCodeBlockInfo java) {
-                java.getPmdViolations().forEach(violation -> violations.merge(violation, block, HotspotFindings::innermost));
-                java.getSpotbugs().forEach(bug -> bugs.merge(bug, block, HotspotFindings::innermost));
-            }
+            block.getFindings().forEach(finding -> findings.merge(finding, block, HotspotFindings::innermost));
         }
 
-        violations.entrySet().stream()
-                .sorted(Comparator.comparingInt((Entry<RuleViolation, CodeBlockInfo> entry) -> entry.getKey().getRule().getPriority().getPriority()))
+        /**
+         * Ranks compare only within one tool, and each tool's findings fill a list of their own, so one stable sort
+         * leaves every list most severe first.
+         */
+        findings.entrySet().stream()
+                .sorted(Comparator.comparingInt((Entry<Finding, CodeBlockInfo> entry) -> entry.getKey().getRank()))
                 .forEach(entry -> {
-                    RuleViolation violation = entry.getKey();
-                    byKind.get(HotspotFindingKind.PMD).add(finding(HotspotFindingKind.PMD, entry.getValue(), violation.getBeginLine(), violation.getEndLine(), violation.getDescription())
-                            .rule(violation.getRule().getName()));
-                });
-
-        bugs.entrySet().stream()
-                .sorted(Comparator.comparingInt((Entry<BugInstance, CodeBlockInfo> entry) -> entry.getKey().getBugRank()))
-                .forEach(entry -> {
-                    BugInstance bug = entry.getKey();
-                    CodeBlockInfo block = entry.getValue();
-                    SourceLineAnnotation line = bug.getPrimarySourceLineAnnotation();
-                    int start = block.getLocation().getStartLine();
-                    int end = block.getLocation().getEndLine();
-                    if (Objects.nonNull(line)) {
-                        start = line.getStartLine();
-                        end = line.getEndLine();
-                    }
-                    byKind.get(HotspotFindingKind.SPOTBUGS).add(finding(HotspotFindingKind.SPOTBUGS, block, start, end, bug.getMessage())
-                            .rule(bug.getBugPattern().getType()));
+                    Finding finding = entry.getKey();
+                    SourceLocation location = finding.getLocation();
+                    HotspotFindingKind kind = kind(finding.getTool());
+                    byKind.get(kind).add(finding(kind, entry.getValue(), location.getStartLine(), location.getEndLine(), finding.getMessage()).rule(finding.getRuleId()));
                 });
 
         uncovered.sort(Comparator.comparingInt((CodeBlockInfo block) -> block.coverage().getMissed() + block.coverage().getPartial()).reversed());
@@ -200,6 +183,13 @@ public class HotspotFindings {
             parameters.add(ClassUtils.getShortClassName(parameter.getClassName()));
         }
         return name + "(" + Joiner.on(", ").join(parameters) + ")";
+    }
+    private static HotspotFindingKind kind(String tool) {
+        return switch (DiagnosticModel.ToolEnum.fromValue(tool)) {
+            case PMD -> HotspotFindingKind.PMD;
+            case SPOTBUGS -> HotspotFindingKind.SPOTBUGS;
+            default -> throw new IllegalArgumentException("no hotspot finding kind for the tool " + tool);
+        };
     }
     private static CodeBlockInfo innermost(CodeBlockInfo current, CodeBlockInfo candidate) {
         if (lineSpan(candidate) < lineSpan(current)) {
