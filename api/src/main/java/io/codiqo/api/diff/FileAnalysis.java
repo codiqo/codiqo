@@ -10,7 +10,6 @@ import org.eclipse.jgit.diff.DiffEntry;
 
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.SourceLanguage;
-import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.coverage.LineCoverage;
 
 public interface FileAnalysis extends Consumer<ProjectSpec> {
@@ -23,7 +22,8 @@ public interface FileAnalysis extends Consumer<ProjectSpec> {
     String getContentAfter();
     String getDiffText();
     Set<AffectedSymbolInfo> getPotentiallyAffectedSymbols();
-    Set<CodeBlockInfo> getRemovedCodeBlocks();
+    /** the units the commit removed from the file, as they were in its previous revision */
+    Set<AffectedSymbolInfo> getRemovedSymbols();
     boolean isTestFile();
     boolean isExtension(SourceLanguage language);
     Optional<ProjectSpec> project();

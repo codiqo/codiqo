@@ -2,19 +2,15 @@ package io.codiqo.submit;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.URI;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
-import java.util.function.Function;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.eclipse.collections.api.map.primitive.IntObjectMap;
 import org.eclipse.collections.api.map.primitive.MutableIntObjectMap;
@@ -25,13 +21,10 @@ import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multimaps;
 
-import edu.umd.cs.findbugs.BugInstance;
-import edu.umd.cs.findbugs.BugRankCategory;
-import edu.umd.cs.findbugs.MethodAnnotation;
-import edu.umd.cs.findbugs.Priorities;
 import io.codiqo.api.code.Caller;
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.CompilerFinding;
+import io.codiqo.api.code.Finding;
 import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.code.UnitKind;
 import io.codiqo.api.coverage.CodeBlockCoverage;
@@ -46,47 +39,17 @@ import io.codiqo.client.model.CoverageCounterModel;
 import io.codiqo.client.model.CoverageModel;
 import io.codiqo.client.model.DiagnosticModel;
 import io.codiqo.client.model.FileChangeModel;
-import io.codiqo.client.model.InvocationModel;
-import io.codiqo.client.model.JavaAnnotationModel;
-import io.codiqo.client.model.JavaInfoModel;
 import io.codiqo.client.model.LineCoverageModel;
 import io.codiqo.client.model.LocationModel;
 import io.codiqo.client.model.MetricsModel;
-import io.codiqo.client.model.PmdPropertiesModel;
-import io.codiqo.client.model.SignatureFormatModel;
-import io.codiqo.client.model.SpotbugsPropertiesModel;
 import io.codiqo.client.model.SymbolKindModel;
 import io.codiqo.lang.config.ConfigFiles;
-import io.codiqo.lang.spec.JInvocationBlock;
-import io.codiqo.lang.spec.JavaCodeBlockInfo;
-import io.codiqo.lang.spec.PmdAffectedSymbolInfo;
 import io.codiqo.llm.lang.LanguageCapabilities;
 import io.codiqo.util.JGit;
 import lombok.RequiredArgsConstructor;
-import net.sourceforge.pmd.lang.java.ast.ASTAnnotation;
-import net.sourceforge.pmd.lang.java.ast.ASTAnonymousClassDeclaration;
-import net.sourceforge.pmd.lang.java.ast.ASTExecutableDeclaration;
-import net.sourceforge.pmd.lang.java.ast.Annotatable;
-import net.sourceforge.pmd.lang.rule.RulePriority;
-import net.sourceforge.pmd.reporting.RuleViolation;
 
 @RequiredArgsConstructor
 public class FileAnalysisPopulator implements SubmissionPopulator {
-    private static final Function<Integer, DiagnosticModel.SeverityEnum> SPOTBUGS_RANK_TO_SEVERITY = rank -> switch (BugRankCategory.getRank(rank)) {
-        case SCARIEST -> DiagnosticModel.SeverityEnum.ERROR;
-        case SCARY -> DiagnosticModel.SeverityEnum.WARNING;
-        case TROUBLING, OF_CONCERN -> DiagnosticModel.SeverityEnum.INFO;
-    };
-    private static final Function<Integer, DiagnosticModel.SeverityEnum> PMD_PRIORITY_MAPPER = priority -> {
-        if (priority == RulePriority.HIGH.getPriority()) {
-            return DiagnosticModel.SeverityEnum.ERROR;
-        } else if (priority == RulePriority.MEDIUM.getPriority()) {
-            return DiagnosticModel.SeverityEnum.WARNING;
-        } else {
-            return DiagnosticModel.SeverityEnum.INFO;
-        }
-    };
-
     @Override
     public void accept(SubmissionContext ctx) {
         Path workTreeRealPath = resolveRealPath(ctx.getWorkTree());
@@ -110,19 +73,10 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             });
 
             for (AffectedSymbolInfo affectedSymbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
-                LocationModel locationModel = locationModel(affectedSymbol.getLocation());
-
-                affectedSymbol.block().ifPresent(block -> {
-                    if (block instanceof JavaCodeBlockInfo javaBlock) {
-                        CodeUnitModel codeUnitModel = createCodeUnitModel(ctx, fileAnalysis, affectedSymbol, javaBlock, locationModel, workTreeRealPath);
-                        fileChangeModel.getCodeUnits().add(codeUnitModel);
-                    }
-                });
+                affectedSymbol.block().ifPresent(block -> fileChangeModel.getCodeUnits().add(createCodeUnitModel(ctx, fileAnalysis, affectedSymbol, block, workTreeRealPath)));
             }
-            for (CodeBlockInfo removed : fileAnalysis.getRemovedCodeBlocks()) {
-                if (removed instanceof JavaCodeBlockInfo javaBlock) {
-                    fileChangeModel.getCodeUnits().add(removedCodeUnitModel(ctx, javaBlock, workTreeRealPath));
-                }
+            for (AffectedSymbolInfo removed : fileAnalysis.getRemovedSymbols()) {
+                removed.block().ifPresent(block -> fileChangeModel.getCodeUnits().add(removedCodeUnitModel(ctx, removed, block, workTreeRealPath)));
             }
 
             List<CompilerFinding> fileFindings = compilerFindings.get(fileChangeModel.getPath());
@@ -185,59 +139,28 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         }
     }
     @VisibleForTesting
-    public static CodeUnitModel removedCodeUnitModel(SubmissionContext ctx, JavaCodeBlockInfo javaBlock, Path workTreeRealPath) {
-        JavaInfoModel infoModel = javaInfo(javaBlock);
-        AffectedSymbolInfo symbol = new PmdAffectedSymbolInfo(javaBlock);
-
-        LocationModel locationModel = locationModel(javaBlock.getLocation());
-
+    public static CodeUnitModel removedCodeUnitModel(SubmissionContext ctx, AffectedSymbolInfo symbol, CodeBlockInfo block, Path workTreeRealPath) {
         CodeUnitModel toReturn = new CodeUnitModel();
         toReturn.setName(symbol.getName());
-        toReturn.setSignature(javaBlock.getSignature());
-        toReturn.setSignatureFormat(SignatureFormatModel.JVM_DESCRIPTOR);
-        toReturn.setModifiers(javaBlock.getModifiers());
+        toReturn.setSignature(block.getSignature());
+        toReturn.setModifiers(block.getModifiers());
         toReturn.setOperation(CodeUnitModel.OperationEnum.DELETE);
-        toReturn.setBodyBefore(javaBlock.getBody());
-        toReturn.setLocation(locationModel);
-        toReturn.setIsTrivial(javaBlock.isTrivial());
-        toReturn.setJavaInfo(infoModel);
+        toReturn.setBodyBefore(block.getBody());
+        toReturn.setLocation(locationModel(symbol.getLocation()));
+        toReturn.setIsTrivial(block.isTrivial());
 
-        populateSymbolInfo(ctx, symbol, toReturn, infoModel, workTreeRealPath);
-        populateTypeInfo(javaBlock, toReturn, infoModel);
+        populateSymbolInfo(ctx, symbol, toReturn, workTreeRealPath);
+        symbol.describe(toReturn);
         return toReturn;
     }
-    private static JavaInfoModel javaInfo(JavaCodeBlockInfo javaBlock) {
-        JavaInfoModel toReturn = new JavaInfoModel();
-        toReturn.setIsAnonymous(javaBlock.getType() instanceof ASTAnonymousClassDeclaration);
-        toReturn.setIsAbstract(javaBlock.isAbstract());
-        toReturn.setIsFinal(javaBlock.isFinal());
-        toReturn.setIsStatic(javaBlock.isStatic());
-        toReturn.setIsSynchronized(javaBlock.isSynchronized());
-        toReturn.setEnclosingClass(javaBlock.getEnclosingType().getSimpleName());
-        if (Objects.nonNull(javaBlock.getType())) {
-            toReturn.setPackageName(javaBlock.getType().getPackageName());
-            toReturn.setClassName(javaBlock.getType().getSimpleName());
-        }
-        return toReturn;
-    }
-    private static CodeUnitModel createCodeUnitModel(
-            SubmissionContext ctx,
-            FileAnalysis fileAnalysis,
-            AffectedSymbolInfo affectedSymbol,
-            JavaCodeBlockInfo javaBlock,
-            LocationModel locationModel,
-            Path workTreeRealPath) {
-        JavaInfoModel infoModel = javaInfo(javaBlock);
-
+    private static CodeUnitModel createCodeUnitModel(SubmissionContext ctx, FileAnalysis fileAnalysis, AffectedSymbolInfo affectedSymbol, CodeBlockInfo block, Path workTreeRealPath) {
         CodeUnitModel codeUnitModel = new CodeUnitModel();
         codeUnitModel.setName(affectedSymbol.getName());
-        codeUnitModel.setBody(javaBlock.getBody());
-        codeUnitModel.setLocation(locationModel);
-        codeUnitModel.setModifiers(javaBlock.getModifiers());
-        codeUnitModel.setSignature(javaBlock.getSignature());
-        codeUnitModel.setSignatureFormat(SignatureFormatModel.JVM_DESCRIPTOR);
-        codeUnitModel.setIsTrivial(javaBlock.isTrivial());
-        codeUnitModel.setJavaInfo(infoModel);
+        codeUnitModel.setBody(block.getBody());
+        codeUnitModel.setLocation(locationModel(affectedSymbol.getLocation()));
+        codeUnitModel.setModifiers(block.getModifiers());
+        codeUnitModel.setSignature(block.getSignature());
+        codeUnitModel.setIsTrivial(block.isTrivial());
 
         codeUnitModel.setOperation(switch (fileAnalysis.getChangeType()) {
             case ADD, COPY -> CodeUnitModel.OperationEnum.NEW;
@@ -245,27 +168,19 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             case MODIFY, RENAME -> CodeUnitModel.OperationEnum.MODIFY;
         });
 
-        populateSymbolInfo(ctx, affectedSymbol, codeUnitModel, infoModel, workTreeRealPath);
+        populateSymbolInfo(ctx, affectedSymbol, codeUnitModel, workTreeRealPath);
 
-        populateCoverage(javaBlock, codeUnitModel);
-        populateMethodCalls(javaBlock, infoModel);
-        populateDiagnostics(javaBlock, codeUnitModel, fileAnalysis.getNewPath());
-        populateTypeInfo(javaBlock, codeUnitModel, infoModel);
-        populateMetrics(ctx, fileAnalysis, javaBlock, codeUnitModel);
-        populateAffectedCoverage(ctx, fileAnalysis, javaBlock);
+        List<Finding> findings = block.getFindings();
+        populateCoverage(block, codeUnitModel);
+        populateDiagnostics(findings, codeUnitModel, fileAnalysis.getNewPath());
+        populateMetrics(ctx, fileAnalysis, block, findings, codeUnitModel);
+        populateAffectedCoverage(ctx, fileAnalysis, block);
 
+        affectedSymbol.describe(codeUnitModel);
         return codeUnitModel;
     }
-    private static void populateSymbolInfo(
-            SubmissionContext ctx,
-            AffectedSymbolInfo symbol,
-            CodeUnitModel codeUnitModel,
-            JavaInfoModel infoModel,
-            Path workTreeRealPath) {
+    private static void populateSymbolInfo(SubmissionContext ctx, AffectedSymbolInfo symbol, CodeUnitModel codeUnitModel, Path workTreeRealPath) {
         codeUnitModel.setKind(symbolKind(symbol.getKind()));
-        if (symbol.isDeprecated()) {
-            infoModel.setIsDeprecated(true);
-        }
 
         /**
          * Deliberately no source body per caller: nothing downstream reads one, and on a high fan-in commit the
@@ -301,9 +216,9 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             }
         }
     }
-    private static void populateCoverage(JavaCodeBlockInfo javaBlock, CodeUnitModel codeUnitModel) {
-        if (javaBlock.coverage().hasCoverageData()) {
-            codeUnitModel.setCoverage(buildCoverageModel(javaBlock.getLineCoverage()));
+    private static void populateCoverage(CodeBlockInfo block, CodeUnitModel codeUnitModel) {
+        if (block.coverage().hasCoverageData()) {
+            codeUnitModel.setCoverage(buildCoverageModel(block.getLineCoverage()));
         }
     }
     private static CoverageModel buildCoverageModel(IntObjectMap<LineCoverage> lineCoverageMap) {
@@ -346,117 +261,15 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
 
         return coverageModel;
     }
-    private static void populateMethodCalls(JavaCodeBlockInfo javaBlock, JavaInfoModel infoModel) {
-        for (JInvocationBlock methodCall : javaBlock.getInvocations()) {
-            InvocationModel methodCallModel = new InvocationModel();
-            methodCallModel.setOwner(methodCall.getOwnerClass());
-            methodCallModel.setName(methodCall.getName());
-            methodCallModel.setDescriptor(methodCall.getMethodDescriptor());
-            methodCallModel.setIsStatic(methodCall.isStatic());
-            methodCallModel.setIsConstructor(methodCall.isConstructor());
-            methodCallModel.setIsMethodReference(methodCall.isMethodReference());
-            methodCallModel.setIsExplicitConstructor(methodCall.isExplicitConstructor());
-            methodCallModel.setIsEnumConstant(methodCall.isEnumConstant());
-            methodCallModel.setInvocationKind(resolveInvocationKind(methodCall));
-            methodCall.targetDescriptor().ifPresent(methodCallModel::setTargetDescriptor);
-            methodCall.targetOwner().ifPresent(methodCallModel::setTargetOwner);
-
-            LocationModel callLocation = new LocationModel();
-            callLocation.setStartLine(methodCall.getBeginLine());
-            callLocation.setStartColumn(methodCall.getBeginColumn());
-            callLocation.setEndLine(methodCall.getEndLine());
-            callLocation.setEndColumn(methodCall.getEndColumn());
-            methodCallModel.setLocation(callLocation);
-
-            methodCallModel.setNameStartLine(methodCall.getNameStartLine());
-            methodCallModel.setNameStartColumn(methodCall.getNameStartColumn());
-
-            methodCall.artifactCoordinate().ifPresent(methodCallModel::setArtifact);
-
-            infoModel.getInvocations().add(methodCallModel);
+    private static void populateDiagnostics(List<Finding> findings, CodeUnitModel codeUnitModel, String filePath) {
+        for (Finding finding : findings) {
+            DiagnosticModel diagnostic = FindingDiagnostics.diagnostic(finding, filePath);
+            finding.describe(diagnostic);
+            codeUnitModel.getDiagnostics().add(diagnostic);
         }
     }
-    private static void populateDiagnostics(JavaCodeBlockInfo javaBlock, CodeUnitModel codeUnitModel, String filePath) {
-        for (BugInstance bug : javaBlock.getSpotbugs()) {
-            DiagnosticModel diagnosticModel = new DiagnosticModel();
-            diagnosticModel.setTool(DiagnosticModel.ToolEnum.SPOTBUGS);
-            diagnosticModel.setRuleId(bug.getBugPattern().getType());
-            diagnosticModel.setMessage(bug.getMessage());
-            diagnosticModel.setCategory(bug.getBugPattern().getCategory());
-            diagnosticModel.setFilePath(filePath);
-            diagnosticModel.setSeverity(SPOTBUGS_RANK_TO_SEVERITY.apply(bug.getBugRank()));
-
-            SpotbugsPropertiesModel spotbugsInfo = new SpotbugsPropertiesModel();
-            spotbugsInfo.setBugCategory(bug.getBugPattern().getCategory());
-            spotbugsInfo.setBugRank(bug.getBugRank());
-            spotbugsInfo.setConfidence(resolveSpotbugsConfidence(bug.getPriority()));
-            MethodAnnotation primaryMethod = bug.getPrimaryMethod();
-            if (Objects.nonNull(primaryMethod)) {
-                spotbugsInfo.setMethodSignature(primaryMethod.getFullMethod(bug.getPrimaryClass()));
-            }
-            diagnosticModel.setSpotbugsInfo(spotbugsInfo);
-
-            Optional.ofNullable(bug.getPrimarySourceLineAnnotation()).ifPresent(srcLine -> {
-                LocationModel diagLocation = new LocationModel();
-                diagLocation.setStartLine(srcLine.getStartLine());
-                diagLocation.setEndLine(srcLine.getEndLine());
-                diagnosticModel.setLocation(diagLocation);
-            });
-
-            int cweid = bug.getBugPattern().getCWEid();
-            if (cweid > 0) {
-                diagnosticModel.setCwe(Lists.newArrayList(List.of("CWE-" + cweid)));
-            }
-
-            codeUnitModel.getDiagnostics().add(diagnosticModel);
-        }
-
-        for (RuleViolation violation : javaBlock.getPmdViolations()) {
-            DiagnosticModel diagnosticModel = new DiagnosticModel();
-            diagnosticModel.setTool(DiagnosticModel.ToolEnum.PMD);
-            diagnosticModel.setRuleId(violation.getRule().getName());
-            diagnosticModel.setMessage(violation.getDescription());
-            diagnosticModel.setCategory(violation.getRule().getRuleSetName());
-            diagnosticModel.setFilePath(filePath);
-            diagnosticModel.setSeverity(PMD_PRIORITY_MAPPER.apply(violation.getRule().getPriority().getPriority()));
-
-            PmdPropertiesModel pmdInfo = new PmdPropertiesModel();
-            pmdInfo.setRuleSet(violation.getRule().getRuleSetName());
-            pmdInfo.setPriority(violation.getRule().getPriority().getPriority());
-            Optional.ofNullable(violation.getRule().getExternalInfoUrl()).ifPresent(url -> {
-                if (StringUtils.isNotEmpty(url)) {
-                    pmdInfo.setExternalInfoUrl(URI.create(url));
-                }
-            });
-            diagnosticModel.setPmdInfo(pmdInfo);
-
-            LocationModel diagLocation = new LocationModel();
-            diagLocation.setStartLine(violation.getBeginLine());
-            diagLocation.setStartColumn(violation.getBeginColumn());
-            diagLocation.setEndLine(violation.getEndLine());
-            diagLocation.setEndColumn(violation.getEndColumn());
-            diagnosticModel.setLocation(diagLocation);
-
-            codeUnitModel.getDiagnostics().add(diagnosticModel);
-        }
-    }
-    private static void populateTypeInfo(JavaCodeBlockInfo javaBlock, CodeUnitModel codeUnitModel, JavaInfoModel infoModel) {
-        ASTExecutableDeclaration declaration = javaBlock.getDeclaration();
-
-        if (javaBlock.getGenericSignature().isConstructor()) {
-            codeUnitModel.setKind(SymbolKindModel.CONSTRUCTOR);
-        } else {
-            codeUnitModel.setKind(SymbolKindModel.METHOD);
-        }
-
-        Optional.ofNullable(declaration.getTypeParameters())
-                .ifPresent(t -> t.forEach(tp -> infoModel.getTypeParameters().add(tp.getName())));
-        Optional.ofNullable(declaration.getThrowsList())
-                .ifPresent(l -> l.forEach(tt -> infoModel.getThrowsTypes().add(tt.getSimpleName())));
-        populateAnnotations(declaration, infoModel);
-    }
-    private static void populateMetrics(SubmissionContext ctx, FileAnalysis fileAnalysis, JavaCodeBlockInfo javaBlock, CodeUnitModel codeUnitModel) {
-        CodeBlockMetrics metrics = javaBlock.metrics();
+    private static void populateMetrics(SubmissionContext ctx, FileAnalysis fileAnalysis, CodeBlockInfo block, List<Finding> findings, CodeUnitModel codeUnitModel) {
+        CodeBlockMetrics metrics = block.metrics();
 
         MetricsModel metricsModel = new MetricsModel();
         metricsModel.setCyclomaticComplexity(metrics.cyclo());
@@ -468,7 +281,7 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
         metricsModel.setFanOut(metrics.fanOut());
         metricsModel.setNpath(metrics.npath());
 
-        metricsModel.setParameterCount(javaBlock.getArity());
+        metricsModel.setParameterCount(block.getArity());
         metricsModel.setNonCommentCodeLines(metrics.nonCommentCodeLines());
         metricsModel.setCommentLines(metrics.commentLines());
         metricsModel.setDeclarationCodeLines(metrics.declarationCodeLines());
@@ -488,12 +301,12 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             tracker.incrementCodeUnits();
             tracker.addStatements(metrics.ncss());
             tracker.addComplexity(metrics.cyclo());
-            tracker.addPmdViolations(javaBlock.getPmdViolations().size());
-            tracker.addSpotbugsIssues(javaBlock.getSpotbugs().size());
+            tracker.addPmdViolations(FindingDiagnostics.count(findings, DiagnosticModel.ToolEnum.PMD));
+            tracker.addSpotbugsIssues(FindingDiagnostics.count(findings, DiagnosticModel.ToolEnum.SPOTBUGS));
         });
     }
-    private static void populateAffectedCoverage(SubmissionContext ctx, FileAnalysis fileAnalysis, JavaCodeBlockInfo javaBlock) {
-        CodeBlockCoverage cov = javaBlock.coverage();
+    private static void populateAffectedCoverage(SubmissionContext ctx, FileAnalysis fileAnalysis, CodeBlockInfo block) {
+        CodeBlockCoverage cov = block.coverage();
         if (cov.hasCoverageData()) {
             fileAnalysis.project().ifPresent(spec -> {
                 ModuleQualityTracker tracker = ctx.trackerFor(spec.getId());
@@ -531,38 +344,6 @@ public class FileAnalysisPopulator implements SubmissionPopulator {
             }
         }
         return CodeBlockCoverage.from(submap);
-    }
-    private static void populateAnnotations(Annotatable declaration, JavaInfoModel infoModel) {
-        for (ASTAnnotation annotation : declaration.getDeclaredAnnotations()) {
-            JavaAnnotationModel annotationModel = new JavaAnnotationModel();
-            annotationModel.setName(annotation.getSimpleName());
-            annotationModel.setQualifiedName(annotation.getTypeMirror().getSymbol().getBinaryName());
-            infoModel.getAnnotations().add(annotationModel);
-        }
-    }
-    private static InvocationModel.InvocationKindEnum resolveInvocationKind(JInvocationBlock call) {
-        if (call.isConstructor()) {
-            return InvocationModel.InvocationKindEnum.INVOKESPECIAL;
-        }
-        if (call.isMethodReference()) {
-            return InvocationModel.InvocationKindEnum.REFERENCE;
-        }
-        if (call.isStatic()) {
-            return InvocationModel.InvocationKindEnum.INVOKESTATIC;
-        }
-        if (call.isInterfaceCall()) {
-            return InvocationModel.InvocationKindEnum.INVOKEINTERFACE;
-        }
-        return InvocationModel.InvocationKindEnum.INVOKEVIRTUAL;
-    }
-    private static SpotbugsPropertiesModel.ConfidenceEnum resolveSpotbugsConfidence(int priority) {
-        if (priority == Priorities.HIGH_PRIORITY) {
-            return SpotbugsPropertiesModel.ConfidenceEnum.HIGH;
-        } else if (priority == Priorities.NORMAL_PRIORITY) {
-            return SpotbugsPropertiesModel.ConfidenceEnum.MEDIUM;
-        } else {
-            return SpotbugsPropertiesModel.ConfidenceEnum.LOW;
-        }
     }
     @VisibleForTesting
     public static SymbolKindModel symbolKind(UnitKind kind) {
