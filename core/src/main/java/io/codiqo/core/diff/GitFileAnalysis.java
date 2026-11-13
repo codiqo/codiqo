@@ -1,6 +1,7 @@
 package io.codiqo.core.diff;
 
 import java.io.File;
+import java.util.Collections;
 import java.util.Optional;
 import java.util.Set;
 
@@ -43,7 +44,9 @@ public class GitFileAnalysis implements FileAnalysis {
     @ToString.Exclude
     private Set<AffectedSymbolInfo> potentiallyAffectedSymbols = Sets.newLinkedHashSet();
     @ToString.Exclude
-    private Set<AffectedSymbolInfo> removedSymbols = Sets.newLinkedHashSet();
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private final Set<AffectedSymbolInfo> removedSymbols = Sets.newLinkedHashSet();
     @ToString.Exclude
     private MutableIntObjectMap<LineCoverage> lineCoverage = new IntObjectHashMap<>();
     private boolean testFile;
@@ -57,6 +60,13 @@ public class GitFileAnalysis implements FileAnalysis {
     @Override
     public void lineCoverage(int lineNumber, LineCoverage line) {
         lineCoverage.put(lineNumber, line);
+    }
+    @Override
+    public Set<AffectedSymbolInfo> getRemovedSymbols() {
+        return Collections.unmodifiableSet(removedSymbols);
+    }
+    public void removedSymbol(AffectedSymbolInfo symbol) {
+        removedSymbols.add(symbol);
     }
     @Override
     public boolean isExtension(SourceLanguage language) {

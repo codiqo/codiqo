@@ -23,12 +23,32 @@ public class StubFinding implements Finding {
                 .build();
     }
     @Override
+    public String getTool() {
+        return tool;
+    }
+    @Override
+    public String getRuleId() {
+        return ruleId;
+    }
+    @Override
     public String getMessage() {
         return ruleId + " found";
     }
     @Override
     public String getCategory() {
         return "category of " + ruleId;
+    }
+    @Override
+    public Severity getSeverity() {
+        return severity;
+    }
+    @Override
+    public SourceLocation getLocation() {
+        return location;
+    }
+    @Override
+    public int getRank() {
+        return rank;
     }
     @Override
     public void describe(DiagnosticModel diagnostic) {}

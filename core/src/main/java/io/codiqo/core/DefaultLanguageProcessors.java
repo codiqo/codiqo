@@ -473,7 +473,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                 int startLine = block.getLocation().getStartLine();
                 int endLine = block.getLocation().getEndLine();
                 if (entry.getValue().stream().anyMatch(line -> line >= startLine && line <= endLine)) {
-                    entry.getKey().getRemovedSymbols().add(processor.symbol(block));
+                    entry.getKey().removedSymbol(processor.symbol(block));
                     toReturn++;
                 }
             }
