@@ -54,7 +54,10 @@ public final class ReviewAnswers implements AutoCloseable {
     /** the argument of {@link #REVIEWS_TOOL} that asks for the reviewers' unit labels instead of their findings */
     public static final String LABELS_ARGUMENT = "unitLabels";
 
-    private static final String SESSION_META = "ai.opencode/sessionID";
+    /** where OpenCode 2.1 names the calling session of an MCP call, the one a scripted agent of a test names too */
+    @VisibleForTesting
+    public static final String SESSION_META = "ai.opencode/sessionID";
+
     private static final String DEFAULT_PROTOCOL = "2025-06-18";
     private static final String JSONRPC_VERSION = "2.0";
     private static final int PARSE_ERROR = -32700;

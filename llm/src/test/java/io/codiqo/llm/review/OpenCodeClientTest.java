@@ -15,7 +15,6 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -118,8 +117,8 @@ class OpenCodeClientTest {
     void theTraceHoldsEverySessionWithItsToolCalls(@TempDir Path directory) throws Exception {
         RunArgs args = new RunArgs();
         args.setReviewTraceDirectory(directory.toFile());
-        try (OpenCodeClient client = new OpenCodeClient(url, PASSWORD, TIMEOUT)) {
-            ReviewTrace.write(args, client, "abcdef0123456789", SESSION, List.of("ses_fork"), new NoopLog());
+        try (OpenCodeSessions sessions = new OpenCodeSessions(new OpenCodeClient(url, PASSWORD, TIMEOUT), directory, TIMEOUT)) {
+            ReviewTrace.write(args, sessions, "abcdef0123456789", SESSION, List.of("ses_fork"), new NoopLog());
         }
 
         JsonNode trace = mapper.readTree(directory.resolve("codiqo-review-trace-abcdef01.json").toFile());
@@ -143,7 +142,7 @@ class OpenCodeClientTest {
             List<List<JsonNode>> turns = client.turns(CONTINUED);
 
             assertEquals(2, turns.size());
-            assertEquals(Optional.empty(), OpenCodeClient.errorOf(turns.iterator().next()), "OpenCode continued the cut answer, so the turn ended well");
+            assertFalse(OpenCodeSessions.endOf(turns.iterator().next()) instanceof TurnEnd.Failed, "OpenCode continued the cut answer, so the turn ended well");
         }
     }
     /** a turn that ended with an error reports it, though an earlier step of it wrote text */
@@ -153,10 +152,9 @@ class OpenCodeClientTest {
         failed.putObject("error").put("type", "provider.timeout").put("message", "no answer in time");
         List<JsonNode> turn = List.of(JSON.objectNode().put("type", "user").put("text", "Review part of commit abc."), assistant(100).put("finish", "tool-calls").put("text", "Step 1."), failed);
 
-        assertEquals("provider.timeout", OpenCodeClient.errorOf(turn).orElseThrow().path("type").asString());
-        assertFalse(OpenCodeClient.stoppedOnItsOwn(turn), "a turn that ended with an error did not stop on its own");
-        assertFalse(OpenCodeClient.stoppedOnItsOwn(turn.subList(0, 2)), "nor did one cut off on a tool call");
-        assertTrue(OpenCodeClient.stoppedOnItsOwn(List.of(turn.getFirst(), assistant(300).put("finish", "stop").put("text", "All checks are done."))));
+        assertEquals(new TurnEnd.Failed("provider.timeout", "no answer in time", false), OpenCodeSessions.endOf(turn), "a turn that ended with an error did not stop on its own");
+        assertEquals(TurnEnd.Ending.CUT_OFF, OpenCodeSessions.endOf(turn.subList(0, 2)), "nor did one cut off on a tool call");
+        assertEquals(TurnEnd.Ending.STOPPED_ON_ITS_OWN, OpenCodeSessions.endOf(List.of(turn.getFirst(), assistant(300).put("finish", "stop").put("text", "All checks are done."))));
     }
     /** the answer server is waited for while OpenCode connects to it, which it lists as pending, before it is listed at all */
     @Test

@@ -49,6 +49,11 @@ How a local review ended: succeeded, failed on the commit, failed on the model p
 stopped. Only a review that failed on the commit excludes it; a provider or Codiqo failure halts the project.
 _Avoid_: review result, review status
 
+**Review session**:
+One agent's conversation within a local review: the coordinator's, a reviewer's, or a labelling or triage fork. Each of
+its turns ends answered, with an error, stopped on its own, cut off, or out of time.
+_Avoid_: OpenCode session, chat
+
 ## Files
 
 **File kind**:

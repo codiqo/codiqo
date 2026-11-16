@@ -223,7 +223,7 @@ class ReviewAnswersTest {
     private JsonNode call(String sessionId, String tool, String arguments) throws Exception {
         ObjectNode params = mapper.createObjectNode().put("name", tool);
         params.set("arguments", mapper.readTree(arguments));
-        params.putObject("_meta").put("ai.opencode/sessionID", sessionId).put("progressToken", 1);
+        params.putObject("_meta").put(ReviewAnswers.SESSION_META, sessionId).put("progressToken", 1);
         return rpc("tools/call", params).path("result");
     }
     private JsonNode rpc(String method, ObjectNode params) throws Exception {

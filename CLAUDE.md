@@ -1706,6 +1706,12 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   build's environment, and the Action redacts its logs only after the submission, so `SecretRedaction` scrubs every
   string of the trace first (the Action's rules: the variables it names, variables named like secrets, raw and
   Base64). The server keeps it 90 days and shows it only to those who may act on the commit.
+- **The review reads no OpenCode record.** `LocalReviewer` drives its review sessions through `ReviewSessions`, which
+  `ReviewAgents` starts from the relay, the answer server and the naming rules: OpenCode's adapter, `OpenCodeSessions`,
+  reads how a turn ended (`TurnEnd`), which turn errors the commit causes (`COMMIT_TURN_ERRORS`), whether a turn ran
+  out of time and which part of a message is a tool's output, and
+  `LocalReviewTest` runs whole reviews with scripted agents (`ScriptedAgents`) through the real answer server and relay.
+  A new OpenCode record format is read in the adapter, never in the review.
 - **The review knows no language.** What it needs from one comes from that language's module through
   `io.codiqo.api.review.ReviewLanguage` (`JavaReviewLanguage` in lang-java, listed by
   `DefaultLanguageProcessors.reviewLanguages()`): the rule telling reviewers how to write a unit's signature (the

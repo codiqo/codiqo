@@ -5,7 +5,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Collection;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 import org.apache.commons.io.FileUtils;
@@ -16,23 +15,20 @@ import com.google.common.collect.Lists;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import lombok.experimental.UtilityClass;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.SerializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * Every session a review ran, written as OpenCode recorded it before the server's home, and with it the session
- * database, is deleted: the coordinator, its reviewer sub-agents and the forks that labelled and triaged, each with its
- * messages in order, every tool call's input, status and output included. It is for reading what the agents did: the
- * submission sends it to the server, which shows it on the commit page; nothing judges by it.
+ * Every session a review ran, written as the agents recorded it before closing them deletes the record (OpenCode's home,
+ * and with it the session database): the coordinator, its reviewer sub-agents and the forks that labelled and triaged,
+ * each with its messages in order, every tool call's input, status and output included. It is for reading what the
+ * agents did: the submission sends it to the server, which shows it on the commit page; nothing judges by it.
  */
 @UtilityClass
 public class ReviewTrace {
     private static final String FILE_PREFIX = "codiqo-review-trace-";
-    /** a tool's output is mostly file contents and command output the repository already holds; the start shows what it was */
-    private static final int MAX_TOOL_OUTPUT_CHARS = 4_000;
     private static final int SHORT_SHA = 8;
     private static final JsonMapper MAPPER = JsonMapper.builder().enable(SerializationFeature.INDENT_OUTPUT).build();
 
@@ -41,26 +37,21 @@ public class ReviewTrace {
      * takes, since a cancelled review is often the one worth reading, and restored afterwards. An earlier run's trace of
      * the same commit is deleted first, so it can never pass for this one's.
      */
-    public void write(RunArgs args, OpenCodeClient client, String sha, String coordinatorId, Collection<String> forkIds, Log log) throws IOException {
+    public void write(RunArgs args, ReviewSessions reviewSessions, String sha, String coordinatorId, Collection<String> forkIds, Log log) throws IOException {
         boolean interrupted = Thread.interrupted();
         try {
             Files.deleteIfExists(file(args, sha).toPath());
 
             /** the sub-agents are listed here rather than taken from the review, which never lists them when it fails */
             List<String> sessionIds = Lists.newArrayList(coordinatorId);
-            client.childUsage(coordinatorId).forEach(child -> sessionIds.add(child.getSessionId()));
+            reviewSessions.children(coordinatorId).forEach(child -> sessionIds.add(child.getSessionId()));
             sessionIds.addAll(forkIds);
 
             ObjectNode trace = MAPPER.createObjectNode();
             trace.put("commit", sha);
             ArrayNode sessions = trace.putArray("sessions");
             for (String sessionId : sessionIds) {
-                ObjectNode session = sessions.addObject();
-                session.set("session", client.session(sessionId));
-                ArrayNode messages = session.putArray("messages");
-                for (JsonNode message : client.messages(sessionId)) {
-                    messages.add(abbreviateToolOutput(message));
-                }
+                sessions.add(reviewSessions.trace(sessionId));
             }
 
             File file = file(args, sha);
@@ -77,26 +68,5 @@ public class ReviewTrace {
     public File file(RunArgs args, String sha) {
         File directory = Optional.ofNullable(args.getReviewTraceDirectory()).orElse(FileUtils.getTempDirectory());
         return new File(directory, FILE_PREFIX + StringUtils.left(sha, SHORT_SHA) + ".json");
-    }
-    private JsonNode abbreviateToolOutput(JsonNode message) {
-        for (JsonNode part : message.path("content")) {
-            if ("tool".equals(part.path("type").asString())) {
-                abbreviate(part.path("state").path("content"));
-            }
-        }
-        return message;
-    }
-    private void abbreviate(JsonNode node) {
-        if (node instanceof ObjectNode object) {
-            for (Map.Entry<String, JsonNode> field : object.properties()) {
-                if (field.getValue().isString()) {
-                    object.put(field.getKey(), StringUtils.abbreviate(field.getValue().asString(), MAX_TOOL_OUTPUT_CHARS));
-                } else {
-                    abbreviate(field.getValue());
-                }
-            }
-        } else if (node instanceof ArrayNode array) {
-            array.forEach(ReviewTrace::abbreviate);
-        }
     }
 }
