@@ -53,8 +53,10 @@ import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.IndexingSummary.IndexingSummaryBuilder;
 import io.codiqo.api.LanguageProcessors;
 import io.codiqo.api.LanguageSpec;
+import io.codiqo.api.LanguageSupport;
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.SourceLanguage;
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.DeclaredType;
 import io.codiqo.api.code.ParsedSources;
@@ -73,9 +75,7 @@ import io.codiqo.api.logging.LogFactory;
 import io.codiqo.api.review.ReviewLanguage;
 import io.codiqo.core.diff.GitDiffHunk;
 import io.codiqo.core.diff.GitFileAnalysis;
-import io.codiqo.core.java.JavaLanguageSpec;
-import io.codiqo.core.java.JavaReviewLanguage;
-import io.codiqo.jdtls.LanguageServerJdk;
+import io.codiqo.core.java.JavaLanguageSupport;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
 import io.codiqo.util.MemoryReport;
@@ -93,18 +93,27 @@ import net.sourceforge.pmd.lang.document.FileId;
 public class DefaultLanguageProcessors implements LanguageProcessors {
     private static final Set<DiffEntry.ChangeType> MODIFIED_IN_PLACE = EnumSet.of(DiffEntry.ChangeType.MODIFY, DiffEntry.ChangeType.RENAME);
     private static final int ORPHAN_SAMPLE_SIZE = 20;
+    /** every language codiqo analyses, each registered once: the registry, the commit exclusions, the review and the runtime check read it */
+    private static final List<LanguageSupport> LANGUAGES = List.of(new JavaLanguageSupport());
 
     private final Log log;
     private final RunArgs args;
-    private final List<LanguageSpec> processors;
+    /** each language's analysis, with the language as its registration declares it: the one source of its extensions and wire value */
+    private final Map<LanguageSpec, SourceLanguage> processors = Maps.newLinkedHashMap();
     private final Set<String> extensions = Sets.newHashSet();
 
     public DefaultLanguageProcessors(LogFactory logFactory, RunArgs args, Fetch fetch) {
+        this(logFactory, args, fetch, LANGUAGES);
+    }
+    @VisibleForTesting
+    public DefaultLanguageProcessors(LogFactory logFactory, RunArgs args, Fetch fetch, List<LanguageSupport> languages) {
         this.log = logFactory.getLogger(getClass());
         this.args = Objects.requireNonNull(args);
-        this.processors = Lists.newArrayList(List.of(new JavaLanguageSpec(logFactory, args, fetch)));
+        for (LanguageSupport language : languages) {
+            processors.put(language.analysis(logFactory, args, fetch), language.language());
+        }
 
-        processors.forEach(processor -> extensions.addAll(processor.language().getExtensions()));
+        processors.values().forEach(language -> extensions.addAll(language.getExtensions()));
     }
     @Override
     public void collectAndCapture(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
@@ -120,12 +129,12 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     }
     @Override
     public Iterator<LanguageSpec> iterator() {
-        return processors.iterator();
+        return processors.keySet().iterator();
     }
     @Override
     public void load() {
         try (ProgressStage stage = ProgressStage.start(args, "language server")) {
-            processors.forEach(LanguageSpec::load);
+            processors.keySet().forEach(LanguageSpec::load);
             stage.succeeded();
         }
     }
@@ -296,9 +305,9 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
                 }
             }
 
-            filesByOwner.entrySet().parallelStream().forEach(group -> processors.forEach(processor -> {
+            filesByOwner.entrySet().parallelStream().forEach(group -> processors.forEach((processor, language) -> {
                 List<File> matching = group.getValue().stream()
-                        .filter(file -> FilenameUtils.isExtension(file.getName(), processor.language().getExtensions()))
+                        .filter(file -> FilenameUtils.isExtension(file.getName(), language.getExtensions()))
                         .toList();
                 if (CollectionUtils.isNotEmpty(matching)) {
                     for (;;) {
@@ -386,13 +395,14 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
         AtomicInteger identified = new AtomicInteger();
         int removed = 0;
 
-        for (LanguageSpec processor : processors) {
+        for (Entry<LanguageSpec, SourceLanguage> registered : processors.entrySet()) {
+            LanguageSpec processor = registered.getKey();
             Map<ProjectSpec, Map<GitFileAnalysis, Set<Integer>>> removalCandidates = Maps.newLinkedHashMap();
 
             for (FileAnalysis it : analysis) {
-                if (it.isExtension(processor.language())) {
+                if (it.isExtension(registered.getValue())) {
                     if (it instanceof GitFileAnalysis gitAnalysis) {
-                        gitAnalysis.setLanguage(processor.language());
+                        gitAnalysis.setLanguage(registered.getValue());
 
                         Set<Integer> lines = Sets.newHashSet();
                         if (Objects.nonNull(gitAnalysis.getStructuredDiff())) {
@@ -440,26 +450,26 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     }
     /**
      * the extensions of the languages a registry loads, known before one is built: a commit that changes none of them
-     * (and no supported config file) is excluded after the build, so the local review is not started for it
+     * (and no supported config file) is excluded before its build, and neither the build nor the local review runs for it
      */
     public static Set<String> supportedExtensions() {
-        return Sets.newHashSet(JavaLanguageSpec.supportedExtensions());
+        return LANGUAGES.stream().flatMap(language -> language.language().getExtensions().stream()).collect(Collectors.toCollection(Sets::newHashSet));
     }
     /** what the local review needs to know about each registered language, known before a registry is built */
     public static List<ReviewLanguage> reviewLanguages() {
-        return List.of(new JavaReviewLanguage());
+        return LANGUAGES.stream().map(LanguageSupport::review).toList();
     }
     /**
-     * Fails when this machine cannot run what the registered languages' full analysis starts: the Java analysis's
-     * language server and the JDK it needs (LanguageServerJdk). Both plugins call it before the commit is built and
-     * before a failed run can halt the project: Maven before it records the commit as one that may halt, Gradle when its
-     * task graph is ready, in the daemon, while only the analysis worker halts. A JDK the server cannot start on is the
-     * machine's to fix, so its refusal fails the run and halts nothing. The language server checks its JDK again as it
-     * starts, after the review, and there a refusal halts the project like any other failure, since the next scheduled
-     * run would pay for the review again.
+     * Fails when this machine cannot run what a registered language's full analysis starts
+     * ({@link LanguageSupport#requireRuntime}). Both plugins call it before the commit is built and before a failed run
+     * can halt the project: Maven before it records the commit as one that may halt, Gradle when its task graph is
+     * ready, in the daemon, while only the analysis worker halts. What the machine lacks is the machine's to fix, so a
+     * refusal here fails the run and halts nothing.
      */
     public static void requireRuntime(RunArgs args) throws IOException {
-        LanguageServerJdk.require(args);
+        for (LanguageSupport language : LANGUAGES) {
+            language.requireRuntime(args);
+        }
     }
     private static int identifyRemoved(LanguageSpec processor, ProjectSpec owner, Map<GitFileAnalysis, Set<Integer>> removedLinesByFile) throws IOException {
         List<PreviousRevision> revisions = removedLinesByFile.keySet().stream()
@@ -546,7 +556,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     @Override
     public void captureCopyPaste(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
         if (BooleanUtils.negate(args.isIgnoreCpd())) {
-            for (LanguageSpec processor : processors) {
+            for (LanguageSpec processor : processors.keySet()) {
                 if (processor.supportsCpd()) {
                     List<Path> files = summary.getTotalFiles().stream()
                             .filter(path -> FilenameUtils.isExtension(path.toFile().getName(), processor.lang().getExtensions()))
@@ -615,21 +625,21 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     @Override
     public void captureViolations(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
         if (BooleanUtils.negate(args.isIgnoreDiagnostics())) {
-            for (LanguageSpec processor : processors) {
+            for (LanguageSpec processor : processors.keySet()) {
                 processor.captureViolations(summary, analysis);
             }
         }
     }
     @Override
     public void captureIncomingCalls(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
-        for (LanguageSpec processor : processors) {
+        for (LanguageSpec processor : processors.keySet()) {
             processor.captureIncomingCalls(summary, analysis);
         }
     }
     @Override
     public void captureCoverage(IndexingSummary summary, CommitAnalysis analysis) throws IOException {
         if (BooleanUtils.negate(args.isIgnoreCoverage())) {
-            for (LanguageSpec processor : processors) {
+            for (LanguageSpec processor : processors.keySet()) {
                 processor.captureCoverage(summary, analysis);
                 for (FileAnalysis fileAnalysis : analysis) {
                     for (AffectedSymbolInfo symbol : fileAnalysis.getPotentiallyAffectedSymbols()) {
@@ -657,7 +667,7 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
     }
     @Override
     public void close() throws IOException {
-        Exception err = IOUtil.closeAll(processors);
+        Exception err = IOUtil.closeAll(processors.keySet());
         if (Objects.nonNull(err)) {
             throw new LanguageTerminationException(err);
         }
