@@ -1,9 +1,11 @@
 package io.codiqo.maven;
 
 import java.io.File;
+import java.time.Duration;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.maven.plugin.AbstractMojo;
+import org.apache.maven.plugin.MojoExecution;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Mojo;
@@ -34,6 +36,13 @@ import io.codiqo.submit.auth.CodiqoCredential;
         aggregator = true,
         requiresProject = false)
 public class SubmitAnalysisFileMojo extends AbstractMojo {
+    /**
+     * How long the server may take to answer the upload, where every other goal waits RunArgs' minute: the goal sends a
+     * whole stored submission in one request, often several times the YAML parser's 3 MB default, and a minute could
+     * fail an upload the server is still storing.
+     */
+    private static final Duration UPLOAD_READ_TIMEOUT = Duration.ofMinutes(5);
+
     @Parameter(property = "codiqo.apiUrl", defaultValue = RunArgs.DEFAULT_API_URL)
     private String apiUrl;
 
@@ -49,11 +58,16 @@ public class SubmitAnalysisFileMojo extends AbstractMojo {
     @Parameter(property = "codiqo.inputFile", required = true)
     private File inputFile;
 
-    @Parameter(property = "codiqo.connectTimeoutSeconds", defaultValue = "30")
-    private long connectTimeoutSeconds;
+    @Parameter(property = "codiqo.connectTimeoutSeconds")
+    private Long connectTimeoutSeconds;
 
-    @Parameter(property = "codiqo.readTimeoutSeconds", defaultValue = "300")
-    private long readTimeoutSeconds;
+    /** unset, the goal waits {@link #UPLOAD_READ_TIMEOUT} for the server's answer rather than RunArgs' minute */
+    @Parameter(property = "codiqo.readTimeoutSeconds")
+    private Long readTimeoutSeconds;
+
+    /** the descriptor Maven runs this goal with, which names the property each setting's parameter reads */
+    @Parameter(defaultValue = "${mojoExecution}", readonly = true, required = true)
+    private MojoExecution mojoExecution;
 
     /** a file written by submit-commit-analysis holds the plain submission; hidden-source mode hides it as it is sent */
     @Parameter(property = "codiqo.sourceHidden")
@@ -64,6 +78,8 @@ public class SubmitAnalysisFileMojo extends AbstractMojo {
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
+        RunArgs args = MojoSettings.runArgs(this, mojoExecution, defaults -> defaults.setReadTimeout(UPLOAD_READ_TIMEOUT));
+
         CodiqoCredential credential = MavenCredentials.resolve(apiKey, authUrl, resourceUrl, getLog());
 
         AnalysisSubmissionModel submission;
@@ -78,8 +94,8 @@ public class SubmitAnalysisFileMojo extends AbstractMojo {
             AnalysisAcceptedModel response = AnalysisSubmitter.submit(
                     apiUrl,
                     credential,
-                    connectTimeoutSeconds,
-                    readTimeoutSeconds,
+                    args.getConnectTimeout().toSeconds(),
+                    args.getReadTimeout().toSeconds(),
                     submission,
                     SourceHiding.of(BooleanUtils.isTrue(sourceHidden), Env.resolve(sourceHashKey)),
                     new MavenMessageReporter(getLog()));

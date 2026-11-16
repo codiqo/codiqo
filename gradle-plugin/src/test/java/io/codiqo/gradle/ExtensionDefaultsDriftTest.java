@@ -7,10 +7,9 @@ import org.junit.jupiter.api.Test;
 import io.codiqo.api.RunArgs;
 
 /**
- * Guards against the Gradle extension defaults silently diverging from the RunArgs field defaults, and from the
- * equivalent mojo @Parameter defaults the Maven side declares. The extension value always overwrites RunArgs, so a
- * divergence makes the same commit behave differently depending on the build tool it was analyzed with. Mirrors
- * MojoDefaultsDriftTest on the Maven side.
+ * Guards against the Gradle extension defaults silently diverging from the RunArgs field defaults, which the Maven
+ * side reads without a default of its own (MojoSettingsTest). The extension value always overwrites RunArgs, so a
+ * divergence makes the same commit behave differently depending on the build tool it was analyzed with.
  */
 class ExtensionDefaultsDriftTest {
     @Test

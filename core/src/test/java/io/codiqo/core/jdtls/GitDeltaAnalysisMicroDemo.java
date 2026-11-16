@@ -1,12 +1,12 @@
 package io.codiqo.core.jdtls;
 
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
-import org.apache.commons.cli.CommandLine;
-import org.apache.commons.cli.CommandLineParser;
-import org.apache.commons.cli.DefaultParser;
-import org.apache.commons.cli.Options;
 import org.slf4j.LoggerFactory;
+
+import com.google.common.collect.Maps;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.LoggerContext;
@@ -14,6 +14,7 @@ import io.codiqo.api.DeltaAnalyzer;
 import io.codiqo.api.IndexingSummary;
 import io.codiqo.api.LanguageProcessors;
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.Settings;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
@@ -26,10 +27,14 @@ public class GitDeltaAnalysisMicroDemo {
     public static void main(String[] args) throws Exception {
         LogFactory logFactory = new SlfLogFactory();
         Log log = logFactory.getLogger(GitDeltaAnalysisMicroDemo.class);
-        Options options = RunArgs.options();
-        CommandLineParser parser = new DefaultParser();
-        CommandLine cmd = parser.parse(options, args);
-        RunArgs run = RunArgs.from(cmd);
+        Map<String, String> given = Maps.newHashMap();
+        for (String name : Settings.names()) {
+            Optional.ofNullable(System.getProperty(name)).ifPresent(value -> given.put(name, value));
+        }
+        RunArgs run = new RunArgs();
+        Settings.bind(run, given);
+        run.setCommitId(System.getProperty("codiqo.commitId"));
+        run.validate();
 
         log.info("running with args: " + run);
 

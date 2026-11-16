@@ -1635,8 +1635,8 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   `Fetch.downloadJdtls` downloads it from the release `jdtls-<version>` on codiqo/codiqo and checks its SHA-256 before
   it enters the cache (a file that differs is a failed download). Upgrading the default means uploading the new
   build, unmodified, to a release of its own (EPL-2.0 permits it; the release notes name the source and the licence)
-  and changing the three constants; `MojoDefaultsDriftTest` and `ExtensionDefaultsDriftTest` keep the Maven and
-  Gradle defaults on that version. Any other `jdtlsVersion`, and the snapshots channel, still come from
+  and changing the three constants; Maven declares no default of its own, and `ExtensionDefaultsDriftTest` keeps the
+  Gradle default on that version. Any other `jdtlsVersion`, and the snapshots channel, still come from
   download.eclipse.org: a pinned milestone already in the download cache (`~/.cache/fetch`, which the action caches)
   is used without asking (`RunArgs.pinnedJdtlsArchiveName`), and `latest.txt` must name exactly one archive
   (`RunArgs.jdtlsArchiveName`).
@@ -1813,8 +1813,12 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   which the relay swaps for its own loopback URL and secret. `ReviewTags` are the tags the project's scored commits
   carry most (`GET /api/v1/projects/{projectId}/tags`, read on the review's thread so the build never waits; 404 or
   405 means none, anything else is retried like a submission and then fails the review), which the coordinator reuses before it coins one. They are model output going into a system
-  prompt, so `ReviewTags.of` keeps only lowercase hyphenated labels. A mojo parameter has no `defaultValue`: it is a nullable wrapper that overrides the `RunArgs`
-  field only when set. Settings with no `RunArgs` instance at hand (the login, the loopback host, the upload batch,
+  prompt, so `ReviewTags.of` keeps only lowercase hyphenated labels. A field a user sets by name carries `@Setting`,
+  which declares that name (and a duration's unit) once; `Settings.bind` sets it from text, and Maven reaches it only
+  through `MojoSettings`, which copies every parameter whose property is a setting's name off the goal's descriptor.
+  A mojo still declares the parameter, for its documentation and `<configuration>`, as a nullable wrapper with no
+  `defaultValue` and no copy of its own (`MojoSettingsTest`); a default only the build knows, such as the trace
+  directory under the build's output, is set on `RunArgs` before the bind. Settings with no `RunArgs` instance at hand (the login, the loopback host, the upload batch,
   the 0-10 score scale and the rounding precision) are `RunArgs` constants. Protocol names (headers, paths, rule ids)
   stay beside the code that speaks the protocol.
 - **The commit's earlier bugs are passed beside `RunArgs` too.** `PreviousFindings` fetches the bugs earlier runs of

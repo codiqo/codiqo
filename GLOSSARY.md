@@ -54,6 +54,13 @@ One agent's conversation within a local review: the coordinator's, a reviewer's,
 its turns ends answered, with an error, stopped on its own, cut off, or out of time.
 _Avoid_: OpenCode session, chat
 
+## Runs
+
+**Setting**:
+A value a user gives a run by name, as a Maven parameter, a Gradle property or the Gradle extension, under the same name
+in each. A setting left unset keeps its default.
+_Avoid_: option, flag, parameter (a Maven parameter is one way to give a setting)
+
 ## Files
 
 **File kind**:
