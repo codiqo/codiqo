@@ -48,3 +48,11 @@ _Avoid_: LLM review, server review
 How a local review ended: succeeded, failed on the commit, failed on the model provider, failed on Codiqo's side, or
 stopped. Only a review that failed on the commit excludes it; a provider or Codiqo failure halts the project.
 _Avoid_: review result, review status
+
+## Files
+
+**File kind**:
+What a changed file is to the rules that read its lines: which of its lines change nothing, whether a re-indent is
+cosmetic, how a call looks on one of its lines, and whether a change to it is scored by its units, by its lines or not
+at all. Every file is of at most one kind, recognised by its whole name before its extension.
+_Avoid_: file type, language (a language is one file kind among others; a build descriptor is another)

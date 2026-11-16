@@ -1,29 +1,21 @@
 package io.codiqo.lang.config;
 
 import java.util.Collection;
-import java.util.List;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
 
-import io.codiqo.api.config.ConfigFileSpec;
-import io.codiqo.api.diff.IneffectiveLineFilter;
+import io.codiqo.lang.config.FileKind.Scoring;
 import lombok.experimental.UtilityClass;
 
+/** The build descriptors codiqo scores by their changed lines: the {@link FileKinds} rows scored by lines. */
 @UtilityClass
 public class ConfigFiles {
-    private static final List<ConfigFileSpec> SPECS = List.of(
-            new PomFileSpec(),
-            new ProtoFileSpec(),
-            new GradleScriptFileSpec(),
-            new GradleBuildConfigFileSpec());
-
     public String describeSupported() {
-        return SPECS.stream().map(ConfigFileSpec::describe).collect(Collectors.joining(", "));
+        return FileKinds.all().stream().filter(kind -> kind.isScoredBy(Scoring.LINES)).map(FileKind::describe).collect(Collectors.joining(", "));
     }
     public boolean isConfigFile(String path) {
-        return SPECS.stream().anyMatch(spec -> spec.matches(path));
+        return FileKinds.of(path).filter(kind -> kind.isScoredBy(Scoring.LINES)).isPresent();
     }
     /**
      * whether a change set is nothing but config descriptors. A change set with no files is not config-only:
@@ -31,8 +23,5 @@ public class ConfigFiles {
      */
     public boolean isConfigOnly(Collection<String> paths) {
         return CollectionUtils.isNotEmpty(paths) && paths.stream().allMatch(ConfigFiles::isConfigFile);
-    }
-    public Optional<IneffectiveLineFilter> filterFor(String path) {
-        return SPECS.stream().filter(spec -> spec.matches(path)).map(ConfigFileSpec::lineFilter).findFirst();
     }
 }

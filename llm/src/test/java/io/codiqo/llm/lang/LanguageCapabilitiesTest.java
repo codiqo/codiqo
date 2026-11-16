@@ -13,6 +13,8 @@ import io.codiqo.api.diff.CommentSyntax;
 import io.codiqo.api.diff.IneffectiveLineFilter;
 import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.FileChangeModel.LanguageEnum;
+import io.codiqo.lang.config.FileKind.Scoring;
+import io.codiqo.lang.config.FileKinds;
 
 class LanguageCapabilitiesTest {
     @Test
@@ -43,6 +45,30 @@ class LanguageCapabilitiesTest {
         assertEquals(cStyle, LanguageCapabilities.filterFor(file("user.proto", null)));
         assertEquals(xml, LanguageCapabilities.filterFor(file("pom.xml", null)));
         assertEquals(IneffectiveLineFilter.NONE, LanguageCapabilities.filterFor(file("application.yaml", null)));
+        assertEquals(IneffectiveLineFilter.NONE, LanguageCapabilities.filterFor(file("web/app.ts", null)), "a kind codiqo does not read filters nothing");
+    }
+    /**
+     * A diff-only submission resolves no language. Its Java files are scored on the server with their comments and
+     * deleted imports counted, and taking Java's filter by the extension would change those degraded scores.
+     */
+    @Test
+    void aSourceFileWithNoResolvedLanguageIsFilteredByNothing() {
+        assertEquals(IneffectiveLineFilter.NONE, LanguageCapabilities.filterFor(file("src/main/java/Foo.java", null)));
+        assertTrue(LanguageCapabilities.kindScoredByUnits(file("src/main/java/Foo.java", null)).isEmpty());
+    }
+    /**
+     * A file of a language scored by units is submitted with its row's wire value as the API's language enum
+     * ({@code FileAnalysisPopulator}), and {@link LanguageEnum#fromValue} throws on a value the enum lacks, which would
+     * fail every submission that changes such a file.
+     */
+    @Test
+    void everyKindScoredByUnitsIsALanguageTheApiNames() {
+        List<String> wireValues = FileKinds.all().stream()
+                .filter(kind -> kind.isScoredBy(Scoring.UNITS))
+                .map(kind -> kind.getLanguage().orElseThrow().getWireId())
+                .toList();
+
+        assertEquals(wireValues, wireValues.stream().map(wire -> LanguageEnum.fromValue(wire).getValue()).toList());
     }
     @Test
     void hasCodeChangesFollowsResolvedLanguage() {

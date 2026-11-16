@@ -550,6 +550,21 @@ class SubmissionToRequestMapperTest {
         assertEquals("java", request.getFileChanges().get(0).getLanguage(),
                 "with no LanguageEnum set, mapper derives language from file extension");
     }
+    /**
+     * A file with no resolved language carries the wire value of the language its path names, not its extension as
+     * written: the scorer compares it with the wire values of the kinds scored by units, and a language whose
+     * extension differs from its wire value would leave such files untracked.
+     */
+    @Test
+    void languageFallsBackToTheWireValueOfTheKindThePathNames() {
+        AnalysisSubmissionModel submission = baseSubmission();
+        submission.getFiles().get(0).setPath("Foo.JAVA");
+        submission.getFiles().get(0).setLanguage(null);
+
+        LlmScoringRequest request = mapper.apply(submission);
+
+        assertEquals("java", request.getFileChanges().get(0).getLanguage());
+    }
     @Test
     void untrackedResourceFilesAreExcludedFromTheRequest() {
         AnalysisSubmissionModel submission = baseSubmission();

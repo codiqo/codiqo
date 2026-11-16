@@ -32,6 +32,7 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.SourceLanguage;
 import io.codiqo.api.diff.EffectiveLineParser.LineKind;
 import io.codiqo.api.diff.EffectiveLineParser;
 import io.codiqo.api.diff.IneffectiveLineFilter;
@@ -58,6 +59,8 @@ import io.codiqo.client.model.LocationModel;
 import io.codiqo.client.model.MetricsModel;
 import io.codiqo.client.model.ProjectQualityModel;
 import io.codiqo.client.model.SymbolKindModel;
+import io.codiqo.lang.config.FileKind;
+import io.codiqo.lang.config.FileKinds;
 import io.codiqo.llm.lang.LanguageCapabilities;
 import io.codiqo.llm.schema.LlmScoringRequest.CallerInfo;
 import io.codiqo.llm.schema.LlmScoringRequest.ChangeSummary;
@@ -879,9 +882,20 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         int classNameStart = Math.max(beforeMethod.lastIndexOf('/'), beforeMethod.lastIndexOf('.'));
         return Optional.of(classNameStart >= 0 ? beforeMethod.substring(classNameStart + 1) : beforeMethod);
     }
+    /**
+     * The language a file is scored in: the one the analysis resolved, else the wire value of the language its path
+     * names, else its extension. Whether a file is tracked, and the degraded scorer, compare this value with the wire
+     * values of the kinds scored by units, and a diff-only submission resolves no language: a language whose
+     * extension differs from its wire value ({@code ts} and {@code typescript}) would otherwise leave such a file
+     * untracked once it is scored by units.
+     */
     private static String mapLanguage(FileChangeModel file) {
         if (Objects.nonNull(file.getLanguage())) {
             return file.getLanguage().getValue();
+        }
+        Optional<String> named = FileKinds.of(file.getPath()).flatMap(FileKind::getLanguage).map(SourceLanguage::getWireId);
+        if (named.isPresent()) {
+            return named.get();
         }
         String extension = FilenameUtils.getExtension(file.getPath());
         return StringUtils.isNotEmpty(extension) ? extension : null;

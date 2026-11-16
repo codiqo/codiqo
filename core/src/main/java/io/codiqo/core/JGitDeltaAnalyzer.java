@@ -45,7 +45,6 @@ import com.google.common.collect.Lists;
 import io.codiqo.api.DeltaAnalyzer;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.diff.CommitAnalysis;
-import io.codiqo.api.diff.DiffWhitespacePolicy;
 import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.api.diff.FileRevisionInfo;
 import io.codiqo.api.logging.Log;
@@ -55,6 +54,8 @@ import io.codiqo.core.diff.GitDiffHunk;
 import io.codiqo.core.diff.GitFileAnalysis;
 import io.codiqo.core.diff.GitFileRevisionInfo;
 import io.codiqo.core.diff.GitStructuredDiff;
+import io.codiqo.lang.config.FileKind;
+import io.codiqo.lang.config.FileKinds;
 import io.codiqo.util.JGit;
 
 public class JGitDeltaAnalyzer implements DeltaAnalyzer {
@@ -150,7 +151,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         return Optional.empty();
     }
     private static void applyWhitespacePolicy(DiffFormatter formatter, String path) {
-        formatter.setDiffComparator(DiffWhitespacePolicy.whitespaceInsensitive(path)
+        formatter.setDiffComparator(FileKinds.of(path).filter(FileKind::isReindentCosmetic).isPresent()
                 ? RawTextComparator.WS_IGNORE_LEADING
                 : RawTextComparator.DEFAULT);
     }

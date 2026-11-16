@@ -15,6 +15,7 @@ import java.util.Optional;
 import java.util.regex.Matcher;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.junit.jupiter.api.Test;
@@ -25,11 +26,12 @@ import org.snakeyaml.engine.v2.api.LoadSettings;
 import com.google.common.collect.HashMultiset;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multiset;
+import com.google.common.collect.Streams;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.diff.CallShape;
 import io.codiqo.api.diff.CommentSyntax;
 import io.codiqo.api.diff.IneffectiveLineFilter;
-import io.codiqo.api.diff.JavaInvocationCounter;
 import io.codiqo.api.logging.Log;
 import io.codiqo.client.ApiClient;
 import io.codiqo.client.model.AnalysisExcludeModel;
@@ -63,6 +65,8 @@ import io.codiqo.client.model.ModuleModel;
 import io.codiqo.client.model.ProjectModel;
 import io.codiqo.client.model.RiskDimensionsModel;
 import io.codiqo.client.model.SymbolKindModel;
+import io.codiqo.lang.config.FileKind;
+import io.codiqo.lang.config.FileKinds;
 import io.codiqo.llm.MovedLineDetector;
 import io.codiqo.llm.PromptBuilder.PromptContext;
 import io.codiqo.llm.SubmissionToRequestMapper;
@@ -76,6 +80,7 @@ import tools.jackson.dataformat.yaml.YAMLMapper;
 
 class SourceHidingTest {
     private static final String KEY = "0123456789abcdef0123456789abcdef-test-key";
+    private static final CallShape JAVA_CALLS = FileKinds.ofLanguage(FileKinds.JAVA.getWireId()).orElseThrow().getCalls();
     private static final String RETRY = "src/main/java/com/acme/billing/RetryPolicy.java";
     private static final String CLIENT = "src/main/java/com/acme/billing/PaymentClient.java";
     private static final String TEST = "src/test/java/com/acme/billing/RetryPolicyTest.java";
@@ -226,6 +231,33 @@ class SourceHidingTest {
         assertEquals(4, StringUtils.countMatches(hiding.path("a/b/c/d/E.java"), '/'));
         assertTrue(hiding.path("a/b/E.java").startsWith(StringUtils.substringBeforeLast(hiding.path("a/b/F.java"), "/")), "siblings share their directory");
     }
+    /**
+     * The scorer picks a file's kind, and with it the line filter, the call shape and whether the file is tracked, from
+     * the hidden path, so every name, compound suffix and extension a kind is recognised by must leave the hidden path
+     * of the same kind as the plain one: a kind recognised by its whole name whose name were hashed would score the
+     * hidden submission differently from the plain one.
+     */
+    @Test
+    void aHiddenPathKeepsItsFileKind() {
+        SourceHiding hiding = SourceHiding.of(true, Optional.of(KEY));
+
+        for (FileKind kind : FileKinds.all()) {
+            Streams.concat(kind.getNames().stream(), kind.getSuffixes().stream().map(suffix -> "libs" + suffix), kind.getExtensions().stream().map(extension -> "Foo" + FilenameUtils.EXTENSION_SEPARATOR_STR + extension))
+                    .map(name -> "module/src/" + name)
+                    .forEach(path -> assertEquals(FileKinds.of(path), FileKinds.of(hiding.path(path)), path));
+        }
+    }
+    /**
+     * A hidden diff hashes every {@link MovedLineDetector#WORD_TOKEN} token except the words the scorer reads by name.
+     * A word read by name that is not one whole token (an import prefix such as {@code #include}) would be hashed with
+     * the rest, and the hidden diff's deleted imports and calls would count differently from the plain one's.
+     */
+    @Test
+    void everyWordReadByNameIsOneToken() {
+        FileKinds.all().stream()
+                .flatMap(kind -> kind.getWordsReadByName().stream())
+                .forEach(word -> assertTrue(MovedLineDetector.WORD_TOKEN.matcher(word).matches(), word));
+    }
     @Test
     void theOtherRequestsLoseTheirSourceToo() {
         SourceHiding hiding = SourceHiding.of(true, Optional.of(KEY));
@@ -288,7 +320,7 @@ class SourceHidingTest {
         for (int i = 0; i < lines.size(); i++) {
             String original = lines.get(i);
             String masked = hidden[4 + i].substring(1);
-            assertEquals(JavaInvocationCounter.countInLine(original), JavaInvocationCounter.countInLine(masked), original);
+            assertEquals(JAVA_CALLS.countInLine(original), JAVA_CALLS.countInLine(masked), original);
             assertEquals(CommentSyntax.C_STYLE.isCommentLine(original.trim()), CommentSyntax.C_STYLE.isCommentLine(masked.trim()), original);
             assertEquals(tokens(original).size(), tokens(masked).size(), original);
             assertEquals(original.trim().startsWith(IneffectiveLineFilter.IMPORT_PREFIX), masked.trim().startsWith(IneffectiveLineFilter.IMPORT_PREFIX), original);

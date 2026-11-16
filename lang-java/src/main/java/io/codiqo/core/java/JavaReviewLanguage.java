@@ -16,6 +16,7 @@ import com.google.common.collect.Lists;
 
 import io.codiqo.api.review.ReviewLanguage;
 import io.codiqo.api.review.UnitName;
+import io.codiqo.lang.config.FileKinds;
 
 /**
  * How a Java unit is named in a local review. A reviewer writes {@code Class.Nested.method(Types)}; the index names a
@@ -37,7 +38,7 @@ public class JavaReviewLanguage implements ReviewLanguage {
 
     @Override
     public Collection<String> extensions() {
-        return JavaLanguageSpec.LANGUAGE.getExtensions();
+        return FileKinds.JAVA.getExtensions();
     }
     @Override
     public String namingRule() {

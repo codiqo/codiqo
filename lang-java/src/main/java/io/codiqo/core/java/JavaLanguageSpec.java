@@ -90,7 +90,6 @@ import io.codiqo.api.JvmProjectSpec;
 import io.codiqo.api.LanguageSpec;
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
-import io.codiqo.api.SourceLanguage;
 import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.DeclaredType;
 import io.codiqo.api.code.ParsedSources;
@@ -106,6 +105,7 @@ import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.jdtls.JdtLspProjectImporter;
+import io.codiqo.lang.config.FileKinds;
 import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.lang.spec.PmdAffectedSymbolInfo;
@@ -182,8 +182,6 @@ public class JavaLanguageSpec implements LanguageSpec {
     private static final IOFileFilter JUNIT_REPORT_FILTER = FileFilterUtils.and(
             FileFilterUtils.prefixFileFilter(JUNIT_REPORT_PREFIX),
             FileFilterUtils.suffixFileFilter(FilenameUtils.EXTENSION_SEPARATOR_STR + XML_EXTENSION));
-    /** the value the submission's file language carries on the wire for a Java file, and the extensions PMD reads as Java */
-    public static final SourceLanguage LANGUAGE = new SourceLanguage("java", new JavaLanguageModule().getExtensions());
 
     private final Log log;
     private final RunArgs args;
@@ -747,7 +745,7 @@ public class JavaLanguageSpec implements LanguageSpec {
         int linesWithCoverage = 0;
 
         for (FileAnalysis fileAnalysis : analysis) {
-            if (fileAnalysis.isExtension(LANGUAGE)) {
+            if (fileAnalysis.isExtension(FileKinds.JAVA)) {
                 ISourceFileCoverage source = coverages.get(fileAnalysis.getFile());
                 if (Objects.nonNull(source)) {
                     matched++;

@@ -61,10 +61,13 @@ class ConfigFilesTest {
     }
     @Test
     void mapsFilterPerConfigKind() {
-        assertEquals(Optional.of(new IneffectiveLineFilter(CommentSyntax.XML, null)), ConfigFiles.filterFor("pom.xml"));
-        assertEquals(Optional.of(new IneffectiveLineFilter(CommentSyntax.C_STYLE, IneffectiveLineFilter.IMPORT_PREFIX)), ConfigFiles.filterFor("user.proto"));
-        assertEquals(Optional.of(new IneffectiveLineFilter(CommentSyntax.C_STYLE, null)), ConfigFiles.filterFor("build.gradle"));
-        assertEquals(Optional.of(new IneffectiveLineFilter(CommentSyntax.HASH, null)), ConfigFiles.filterFor("gradle/libs.versions.toml"));
-        assertEquals(Optional.empty(), ConfigFiles.filterFor("codiqo-analyze.yml"));
+        assertEquals(Optional.of(new IneffectiveLineFilter(CommentSyntax.XML, null)), filterFor("pom.xml"));
+        assertEquals(Optional.of(new IneffectiveLineFilter(CommentSyntax.C_STYLE, IneffectiveLineFilter.IMPORT_PREFIX)), filterFor("user.proto"));
+        assertEquals(Optional.of(new IneffectiveLineFilter(CommentSyntax.C_STYLE, null)), filterFor("build.gradle"));
+        assertEquals(Optional.of(new IneffectiveLineFilter(CommentSyntax.HASH, null)), filterFor("gradle/libs.versions.toml"));
+        assertEquals(Optional.empty(), filterFor("codiqo-analyze.yml"));
+    }
+    private static Optional<IneffectiveLineFilter> filterFor(String path) {
+        return FileKinds.of(path).map(FileKind::getLineFilter);
     }
 }

@@ -16,13 +16,13 @@ class ConfigFilesDescribeTest {
                 ConfigFiles.describeSupported());
     }
     @Test
-    void eachSpecRendersItsOwnMatchingRule() {
-        assertEquals("pom.xml", new PomFileSpec().describe());
-        assertEquals("*.proto", new ProtoFileSpec().describe());
-        assertEquals("*.gradle, *.gradle.kts", new GradleScriptFileSpec().describe());
-        assertEquals("gradle.properties, gradle-wrapper.properties, *.versions.toml", new GradleBuildConfigFileSpec().describe());
+    void eachKindRendersItsOwnMatchingRule() {
+        assertEquals("pom.xml", FileKinds.of("pom.xml").orElseThrow().describe());
+        assertEquals("*.proto", FileKinds.of("user.proto").orElseThrow().describe());
+        assertEquals("*.gradle, *.gradle.kts", FileKinds.of("build.gradle").orElseThrow().describe());
+        assertEquals("gradle.properties, gradle-wrapper.properties, *.versions.toml", FileKinds.of("gradle.properties").orElseThrow().describe());
     }
-    /** the description has to name everything isConfigFile accepts, so adding a spec without describe() fails here */
+    /** the description has to name everything isConfigFile accepts, so a kind whose describe() leaves a rule out fails here */
     @Test
     void theDescriptionAccountsForEveryKindIsConfigFileAccepts() {
         String described = ConfigFiles.describeSupported();

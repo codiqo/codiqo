@@ -1134,6 +1134,28 @@ class FinalScoreCalculatorTest {
         LlmScoringResponse.VolumeScore vs = response.getEffortBreakdown().getVolumeScore();
         assertEquals(1.116667, vs.getBlockEffortSum(), 0.005);
     }
+    /**
+     * The moved calls are counted with the call shape of the file's kind. The same commit as
+     * movedInvocationsDiscountBillingAndDestinationBlocks, in a file of a kind with no call shape, keeps both blocks'
+     * drivers whole and only the uniform file factor applies.
+     */
+    @Test
+    void aKindWithoutACallShapeDiscountsNoMovedCalls() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
+        CodeBlockEffort billed = invocationBlock("main.go", "billed", Operation.MODIFY, 4, 6.0, 8.0, 1, 20, 20);
+        CodeBlockEffort destination = invocationBlock("main.go", "destination", Operation.MODIFY, 2, 6.0, 4.0, 25, 35, 11);
+        PreComputedScores preComputed = scoresWithBlocks("main.go", billed, destination);
+        LlmScoringRequest request = requestWithFileChangeAndDiff("main.go", 1, 1, MOVE_DIFF);
+        LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("main.go").build());
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList(List.of("M1")));
+        response.setBlockCategories(List.of(routine("main.go", "billed()"), routine("main.go", "destination()")));
+
+        calculator.apply(response, preComputed, request);
+
+        LlmScoringResponse.VolumeScore vs = response.getEffortBreakdown().getVolumeScore();
+        assertEquals((20.0 / 3.0 + 16.0 / 3.0) * 0.125, vs.getBlockEffortSum(), 0.005);
+    }
     @Test
     void movedLinesOutsideBlockSpansKeepUniformFileFactorOnly() {
         RunArgs args = new RunArgs();
