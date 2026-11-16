@@ -1,6 +1,7 @@
 package io.codiqo.api.diff;
 
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Predicate;
 
 import org.apache.commons.lang3.BooleanUtils;
@@ -14,9 +15,8 @@ import lombok.RequiredArgsConstructor;
  * with it — e.g. {@code import } — is ineffective when deleted). Blank lines are always ineffective
  * and handled by callers.
  *
- * <p>This type is the generic mechanism only; which file maps to which filter is decided by the
- * language modules (e.g. {@code lang-config} for pom/proto, {@code LanguageCapabilities} for Java),
- * not here. {@link #NONE} filters nothing beyond blanks and is the default.
+ * <p>This type is the generic mechanism only; which file maps to which filter is decided by the file-kind table
+ * ({@code FileKinds} in lang-config), not here. {@link #NONE} filters nothing beyond blanks and is the default.
  */
 @RequiredArgsConstructor
 @EqualsAndHashCode
@@ -27,6 +27,13 @@ public class IneffectiveLineFilter {
     private final CommentSyntax commentSyntax;
     private final String importPrefix;
 
+    /**
+     * The prefix a deleted import line begins with, when the file kind has imports. A hidden-source diff
+     * ({@code SourceHiding}) leaves its word readable, since a hashed import would count as a changed line.
+     */
+    public Optional<String> getImportPrefix() {
+        return Optional.ofNullable(importPrefix);
+    }
     public boolean isNone() {
         return equals(NONE);
     }

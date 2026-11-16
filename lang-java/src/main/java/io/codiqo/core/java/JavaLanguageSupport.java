@@ -9,13 +9,14 @@ import io.codiqo.api.SourceLanguage;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.api.review.ReviewLanguage;
 import io.codiqo.jdtls.LanguageServerJdk;
+import io.codiqo.lang.config.FileKinds;
 import io.codiqo.util.Fetch;
 
 /** Java as codiqo registers it: PMD, SpotBugs, JaCoCo and the Eclipse JDT language server behind {@link JavaLanguageSpec}. */
 public class JavaLanguageSupport implements LanguageSupport {
     @Override
     public SourceLanguage language() {
-        return JavaLanguageSpec.LANGUAGE;
+        return FileKinds.JAVA;
     }
     @Override
     public ReviewLanguage review() {

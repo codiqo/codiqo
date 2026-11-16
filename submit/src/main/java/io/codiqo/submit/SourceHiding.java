@@ -28,8 +28,8 @@ import com.google.common.collect.Lists;
 import com.google.common.hash.HashFunction;
 import com.google.common.hash.Hashing;
 
+import io.codiqo.api.diff.CallShape;
 import io.codiqo.api.diff.IneffectiveLineFilter;
-import io.codiqo.api.diff.JavaInvocationCounter;
 import io.codiqo.client.model.AnalysisExcludeModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.BugModel;
@@ -51,6 +51,7 @@ import io.codiqo.client.model.RiskDimensionsModel;
 import io.codiqo.client.model.StaticAnalysisFindingModel;
 import io.codiqo.client.model.StaticAnalysisReviewModel;
 import io.codiqo.lang.config.ConfigFiles;
+import io.codiqo.lang.config.FileKinds;
 import io.codiqo.llm.MovedLineDetector;
 
 /**
@@ -154,14 +155,13 @@ public final class SourceHiding {
     private static final CharSequence[] BLOCK_COMMENT_ENDS = { "*/", "-->" };
 
     /**
-     * The words the scorer reads by name in a diff line: a deleted import is ineffective ({@link IneffectiveLineFilter})
-     * and a control-flow keyword followed by a parenthesis is no call ({@link JavaInvocationCounter}). Hashed, an import
-     * would count as a changed line and an {@code if (} as an invocation.
+     * The words the scorer reads by name in a diff line, those of every file kind: a deleted import is ineffective
+     * ({@link IneffectiveLineFilter}) and a control-flow keyword followed by a parenthesis is no call
+     * ({@link CallShape}). Hashed, an import would count as a changed line and an {@code if (} as an invocation.
      */
-    private static final Set<String> READABLE_WORDS = ImmutableSet.<String> builder()
-            .add(StringUtils.trim(IneffectiveLineFilter.IMPORT_PREFIX))
-            .addAll(JavaInvocationCounter.CONTROL_FLOW_KEYWORDS)
-            .build();
+    private static final Set<String> READABLE_WORDS = FileKinds.all().stream()
+            .flatMap(kind -> kind.getWordsReadByName().stream())
+            .collect(ImmutableSet.toImmutableSet());
 
     private final Optional<HashFunction> hmac;
 

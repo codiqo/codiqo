@@ -72,10 +72,10 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 - **Name by capability, not by language.** Prefer `requiresLineFiltering`, `isStructuredLanguage`, `hasJvmTypes` over `isJava` whenever the underlying logic isn't Java-exclusive. A predicate that happens to return true only for Java today, but conceptually applies to Kotlin/Scala tomorrow, must not be named after Java.
 - **Avoid hard-coded language branches in shared code.** Don't sprinkle `if (isJava)` through general modules — push the language-specific behavior behind a capability check (`file.getLanguage().requiresLineFiltering()`) or into the language-specific module.
-- **Keep language-specific code in language-specific modules.** Java-only logic belongs in `lang-java/` (e.g., bytecode parsing, JDT integration, PMD rules). Shared modules (`api/`, `llm/`, `maven-plugin/`) should treat language as data, not as a hardcoded assumption.
+- **Keep language-specific code in language-specific modules.** Java-only logic belongs in `lang-java/` (e.g., bytecode parsing, JDT integration, PMD rules). Shared modules (`api/`, `llm/`, `maven-plugin/`) should treat language as data, not as a hardcoded assumption. The one exception is a language's row in `FileKinds` (`lang-config`): the rules that read a file's lines (its wire value, extensions, comment and import filter, whether a re-indent is cosmetic, its call shape, how it is scored), which the server scores with and reads without the language modules.
 - **Question every Java reference.** When you write `Java`, `java`, or `.java` in a name, type, or string in shared code, stop and ask: "Would this same logic apply to Kotlin or JavaScript?" If yes, rename or abstract before committing.
 - **Bad:** `boolean isJava = isJavaFile(file);` used to gate line-filtering.
-- **Good:** `boolean requiresLineFiltering = LanguageCapabilities.requiresLineFiltering(file);` — the predicate names the capability, and the per-language answer lives in one place (a `LanguageCapabilities` `@UtilityClass`, since `LanguageEnum` is generated from OpenAPI and can't host instance methods).
+- **Good:** `boolean requiresLineFiltering = LanguageCapabilities.requiresLineFiltering(file);` — the predicate names the capability, and the per-language answer lives in one place: the file kind's row in `FileKinds`, which `LanguageCapabilities` reads (a `@UtilityClass`, since `LanguageEnum` is generated from OpenAPI and can't host instance methods).
 
 ## Build Facts Come From the Build Tool
 
@@ -1856,7 +1856,7 @@ so a halt is recorded even when the key cannot be read.
   `MovedLineDetector.WORD_TOKEN` token becomes a keyed hash of the same kind, a literal keeps its quotes with its
   content hidden like a line (the invocation count matches call shapes inside literals; content with no token
   is hashed into private-use characters unless it holds a block comment's end), and only the words the scorer
-  reads by name stay (`import`, `JavaInvocationCounter.CONTROL_FLOW_KEYWORDS`). Non-ASCII runs become private-use
+  reads by name stay (each `FileKinds` row's words: `import` and Java's control-flow keywords). Non-ASCII runs become private-use
   characters, whitespace of any script stays, and a `$` followed by a digit stays digit-led (no new call shape). Line counts, comment and import filtering, moved lines and invocation counts are then unchanged, and the
   server can score it again.
 - **Kept:** the commit's metadata and message (skip detection reads it), project and module coordinates, dependencies,

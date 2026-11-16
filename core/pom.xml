@@ -65,6 +65,11 @@
             <artifactId>codiqo-lang-java</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>codiqo-lang-config</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <!-- -->
         <!-- provided -->
         <!-- -->

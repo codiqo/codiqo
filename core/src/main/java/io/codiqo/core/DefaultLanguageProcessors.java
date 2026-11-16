@@ -453,7 +453,12 @@ public class DefaultLanguageProcessors implements LanguageProcessors {
      * (and no supported config file) is excluded before its build, and neither the build nor the local review runs for it
      */
     public static Set<String> supportedExtensions() {
-        return LANGUAGES.stream().flatMap(language -> language.language().getExtensions().stream()).collect(Collectors.toCollection(Sets::newHashSet));
+        return supportedLanguages().stream().flatMap(language -> language.getExtensions().stream()).collect(Collectors.toCollection(Sets::newHashSet));
+    }
+    /** the registered languages, as each declares itself: its wire value and the extensions written in it */
+    @VisibleForTesting
+    public static List<SourceLanguage> supportedLanguages() {
+        return LANGUAGES.stream().map(LanguageSupport::language).toList();
     }
     /** what the local review needs to know about each registered language, known before a registry is built */
     public static List<ReviewLanguage> reviewLanguages() {

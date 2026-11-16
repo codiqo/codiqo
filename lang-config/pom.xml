@@ -9,7 +9,7 @@
     </parent>
     <artifactId>codiqo-lang-config</artifactId>
     <name>Codiqo Config Language Support</name>
-    <description>Config-file analysis support (pom.xml, .proto, Gradle build scripts and version catalogs): path detection and line-filtering profiles.</description>
+    <description>The one table of file kinds (Java, the build descriptors pom.xml, .proto, Gradle build scripts and version catalogs, and the languages codiqo does not read yet): how a file is recognised, which of its lines change nothing, whether a re-indent is cosmetic, how a call looks and how a change is scored.</description>
     <dependencies>
         <dependency>
             <groupId>commons-io</groupId>

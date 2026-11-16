@@ -29,9 +29,11 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
-import io.codiqo.api.diff.JavaInvocationCounter;
+import io.codiqo.api.diff.CallShape;
 import io.codiqo.api.logging.Log;
 import io.codiqo.api.metrics.DriverScore;
+import io.codiqo.lang.config.FileKind;
+import io.codiqo.lang.config.FileKinds;
 import io.codiqo.llm.MovedLineDetector.MoveCandidate;
 import io.codiqo.llm.VolumeScoreCalculator.CodeBlockEffort;
 import io.codiqo.llm.VolumeScoreCalculator.FileEffort;
@@ -403,6 +405,18 @@ public class FinalScoreCalculator {
             }
 
             UnifiedDiffLines diffLines = UnifiedDiffLines.parse(fc.getDiff(), fc.getLineFilter());
+            /**
+             * The file's kind as the request names it: the kind of its language, which SubmissionToRequestMapper.mapLanguage
+             * sets for every file whose path names a kind's language, else the one its path names, for a request built
+             * without a language. A block's moved calls are counted with that kind's call shape, and a kind without one
+             * counts none. They lower only the invocations the block was billed (movedFactor), and only the units of a
+             * language scored by units are billed any, their deleted lines counted with the same kind's shape by
+             * EffectiveChangePopulator: a block of any other file, a degraded commit's included, has none to lower.
+             */
+            CallShape calls = FileKinds.ofLanguage(fc.getLanguage())
+                    .or(() -> FileKinds.of(fc.getPath()))
+                    .map(FileKind::getCalls)
+                    .orElse(CallShape.NONE);
 
             int[] movedInvocations = new int[blocks.size()];
             for (Integer line : CollectionUtils.emptyIfNull(entry.getMovedDeleted())) {
@@ -416,7 +430,7 @@ public class FinalScoreCalculator {
                 if (Objects.nonNull(anchor) && Objects.nonNull(content)) {
                     int idx = innermostBlockForLine(blocks, anchor, 1, true);
                     if (idx >= 0) {
-                        movedInvocations[idx] += JavaInvocationCounter.countInLine(content);
+                        movedInvocations[idx] += calls.countInLine(content);
                     }
                 }
             }
@@ -425,7 +439,7 @@ public class FinalScoreCalculator {
                 if (Objects.nonNull(content)) {
                     int idx = innermostBlockForLine(blocks, line, 0, false);
                     if (idx >= 0) {
-                        movedInvocations[idx] += JavaInvocationCounter.countInLine(content);
+                        movedInvocations[idx] += calls.countInLine(content);
                     }
                 }
             }
@@ -876,7 +890,7 @@ public class FinalScoreCalculator {
      * exactly this ratio — the operation-specific denominator cancels out. Both sides of the ratio go
      * through {@link DriverScore#weightedSum}, so each component carries the weight the driver gives it:
      * a MODIFY block with ten changed lines and ten wholly moved calls at k_I = 1 keeps 0.71 of its
-     * driver, where an unweighted sum would keep 0.56. The moved share is recounted by regex ({@link JavaInvocationCounter}) — identical to how the
+     * driver, where an unweighted sum would keep 0.56. The moved share is recounted by the file kind's {@link CallShape} — identical to how the
      * deleted side was billed, an approximation of the AST count on the added side — and clamped at
      * the block's whole scaled invocation term.
      */

@@ -111,7 +111,7 @@ class EffectiveChangePopulatorTest {
         assertEquals(3, unit.getEffectiveInvocationsChanged());
     }
     @Test
-    void countsDeletedInvocationsOnAnchoredLinesViaJavaInvocationCounter() {
+    void countsDeletedInvocationsOnAnchoredLinesByTheJavaCallShape() {
         String diff = Joiner.on(StringUtils.LF).join(
                 "diff --git a/A.java b/A.java",
                 "--- a/A.java",

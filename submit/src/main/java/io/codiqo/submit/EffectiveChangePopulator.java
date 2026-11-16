@@ -17,9 +17,9 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 
+import io.codiqo.api.diff.CallShape;
 import io.codiqo.api.diff.EffectiveLineParser;
 import io.codiqo.api.diff.IneffectiveLineFilter;
-import io.codiqo.api.diff.JavaInvocationCounter;
 import io.codiqo.api.diff.NestedBlockRanges;
 import io.codiqo.client.model.CodeUnitModel;
 import io.codiqo.client.model.CodeUnitModel.OperationEnum;
@@ -27,6 +27,7 @@ import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.LocationModel;
 import io.codiqo.client.model.MetricsModel;
 import io.codiqo.client.model.SymbolKindModel;
+import io.codiqo.lang.config.FileKind;
 import io.codiqo.llm.lang.LanguageCapabilities;
 
 public class EffectiveChangePopulator implements SubmissionPopulator {
@@ -40,6 +41,7 @@ public class EffectiveChangePopulator implements SubmissionPopulator {
                 continue;
             }
             IneffectiveLineFilter filter = LanguageCapabilities.filterFor(file);
+            CallShape calls = LanguageCapabilities.kindScoredByUnits(file).map(FileKind::getCalls).orElse(CallShape.NONE);
             Predicate<String> addedIneffective = filter.commentFilter();
             Predicate<String> deletedIneffective = filter.commentOrImportFilter();
             boolean trackDeleted = BooleanUtils.negate(filter.isNone());
@@ -109,10 +111,10 @@ public class EffectiveChangePopulator implements SubmissionPopulator {
                      * added invocations come from the AST list where same-type fluent chains collapse to one,
                      * while deleted invocations are regex-counted per call — so a chain rewrite counts the two
                      * sides at different granularities. Bounded to delete+add rewrites; the regex path cannot
-                     * resolve types to match the collapse (see JavaInvocationCounter).
+                     * resolve types to match the collapse (see CallShape).
                      */
                     int addedInvocations = countInvocationsInChangedRange(invocationLines, effectiveAddedLines, startLine, endLine, nestedRanges);
-                    int deletedInvocations = countDeletedInvocationsInRange(effectiveDeletedContents, startLine, endLine, nestedRanges);
+                    int deletedInvocations = countDeletedInvocationsInRange(effectiveDeletedContents, startLine, endLine, nestedRanges, calls);
                     codeUnit.setEffectiveInvocationsChanged(addedInvocations + deletedInvocations);
                 }
             }
@@ -171,7 +173,7 @@ public class EffectiveChangePopulator implements SubmissionPopulator {
         }
         return count;
     }
-    private static int countDeletedInvocationsInRange(Map<Integer, List<String>> deletedContents, int startLine, int endLine, List<int[]> nestedRanges) {
+    private static int countDeletedInvocationsInRange(Map<Integer, List<String>> deletedContents, int startLine, int endLine, List<int[]> nestedRanges, CallShape calls) {
         int count = 0;
         for (Entry<Integer, List<String>> entry : deletedContents.entrySet()) {
             int anchor = entry.getKey();
@@ -179,7 +181,7 @@ public class EffectiveChangePopulator implements SubmissionPopulator {
                 continue;
             }
             for (String content : entry.getValue()) {
-                count += JavaInvocationCounter.countInLine(content);
+                count += calls.countInLine(content);
             }
         }
         return count;
