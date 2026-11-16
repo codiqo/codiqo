@@ -47,7 +47,6 @@ public class OpenCodeClient implements Closeable {
     public static final int PAGE = 100;
     public static final String ASSISTANT = "assistant";
     public static final String USER_MESSAGE = "user";
-    public static final String STOP = "stop";
     public static final String MCP_CONNECTED = "connected";
 
     /** what OpenCode lists an MCP server as while it connects; a server not listed at all has not been started yet */
@@ -217,21 +216,6 @@ public class OpenCodeClient implements Closeable {
             toReturn.addPathSegment(segment);
         }
         return toReturn.build();
-    }
-    /** whether the turn's last assistant message ended on its own ({@code finish} "stop"), not on a tool call, an error or a cap */
-    public static boolean stoppedOnItsOwn(List<JsonNode> turn) {
-        return Lists.reverse(turn).stream()
-                .filter(message -> ASSISTANT.equals(message.path("type").asString()))
-                .findFirst()
-                .filter(message -> STOP.equals(message.path("finish").asString()))
-                .isPresent();
-    }
-    public static Optional<JsonNode> errorOf(List<JsonNode> turn) {
-        return Lists.reverse(turn).stream()
-                .filter(message -> ASSISTANT.equals(message.path("type").asString()))
-                .findFirst()
-                .map(message -> message.path("error"))
-                .filter(JsonNode::isObject);
     }
     /** without an id every later call goes to {@code /api/session//...} and fails with a 404 that names nothing */
     private static String sessionId(JsonNode answer, String what) throws IOException {
