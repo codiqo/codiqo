@@ -100,6 +100,7 @@ import io.codiqo.api.code.TypeReference;
 import io.codiqo.api.coverage.CoverageExclusionReason;
 import io.codiqo.api.coverage.ExcludedCoverageClass;
 import io.codiqo.api.coverage.LineCoverage;
+import io.codiqo.api.diff.AffectedSymbolInfo;
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.diff.FileAnalysis;
 import io.codiqo.api.logging.Log;
@@ -107,6 +108,7 @@ import io.codiqo.api.logging.LogFactory;
 import io.codiqo.jdtls.JdtLspProjectImporter;
 import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
+import io.codiqo.lang.spec.PmdAffectedSymbolInfo;
 import io.codiqo.util.Fetch;
 import lombok.EqualsAndHashCode;
 import lombok.Value;
@@ -290,6 +292,11 @@ public class JavaLanguageSpec implements LanguageSpec {
         }
 
         return new ParsedSources(List.copyOf(blocks), Set.copyOf(parsedFiles), List.copyOf(types), List.copyOf(references));
+    }
+    /** every block this language parses is a {@link JavaCodeBlockInfo} */
+    @Override
+    public AffectedSymbolInfo symbol(CodeBlockInfo block) {
+        return new PmdAffectedSymbolInfo((JavaCodeBlockInfo) block);
     }
     @Override
     public Multimap<File, CodeBlockInfo> parseRemoved(ProjectSpec owner, Collection<PreviousRevision> revisions) throws IOException {

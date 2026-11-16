@@ -50,7 +50,7 @@ class DefaultLanguageProcessorsRemovedUnitsTest {
 
         identify(file, Set.of());
 
-        assertEquals(Set.of(), file.getRemovedCodeBlocks(), "an empty block list for an unparsed file is not proof of removal");
+        assertEquals(Set.of(), file.getRemovedSymbols(), "an empty block list for an unparsed file is not proof of removal");
     }
     @Test
     void aParsedFileThatNowHasNoCodeUnitsReportsItsRemovals() throws Exception {
@@ -61,7 +61,7 @@ class DefaultLanguageProcessorsRemovedUnitsTest {
 
         assertEquals(
                 Set.of("com/example/Sample.retained()V"),
-                file.getRemovedCodeBlocks().stream().map(CodeBlockInfo::getSignature).collect(Collectors.toSet()));
+                file.getRemovedSymbols().stream().flatMap(symbol -> symbol.block().stream()).map(CodeBlockInfo::getSignature).collect(Collectors.toSet()));
     }
     private GitFileAnalysis editedFile() {
         GitDiffHunk hunk = new GitDiffHunk();

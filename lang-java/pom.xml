@@ -92,6 +92,11 @@
             <artifactId>codiqo-api</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>codiqo-openapi</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <!-- embedded as a resource (see the build below), not loaded on this classpath; declared so the reactor builds it first -->
         <dependency>
             <groupId>${project.groupId}</groupId>

@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.code.CodeBlockInfo;
 import io.codiqo.api.code.PreviousRevision;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.CodeUnitModel;
@@ -25,7 +27,6 @@ import io.codiqo.client.model.FileChangeModel;
 import io.codiqo.client.model.LocationModel;
 import io.codiqo.client.model.SymbolKindModel;
 import io.codiqo.core.java.JavaLanguageSpec;
-import io.codiqo.lang.spec.JavaCodeBlockInfo;
 import io.codiqo.util.Fetch;
 
 class RemovedCodeUnitTest {
@@ -68,12 +69,16 @@ class RemovedCodeUnitTest {
         Files.writeString(source, after);
 
         Map<String, CodeUnitModel> byName;
+        CodeUnitModel modified = new CodeUnitModel();
+        modified.setOperation(CodeUnitModel.OperationEnum.MODIFY);
         RunArgs args = new RunArgs();
         try (Fetch fetch = new Fetch(args); JavaLanguageSpec spec = new JavaLanguageSpec(StubAnalysis.LOGS, args, fetch)) {
             SubmissionContext ctx = SubmissionContext.builder().build();
-            byName = spec.parseRemoved(mock(ProjectSpec.class), List.of(new PreviousRevision(source.toFile(), "Shrinking.java", before))).values().stream()
-                    .map(block -> FileAnalysisPopulator.removedCodeUnitModel(ctx, (JavaCodeBlockInfo) block, workTree))
+            Collection<CodeBlockInfo> removed = spec.parseRemoved(mock(ProjectSpec.class), List.of(new PreviousRevision(source.toFile(), "Shrinking.java", before))).values();
+            byName = removed.stream()
+                    .map(block -> FileAnalysisPopulator.removedCodeUnitModel(ctx, spec.symbol(block), block, workTree))
                     .collect(Collectors.toMap(CodeUnitModel::getName, Function.identity()));
+            spec.symbol(removed.iterator().next()).describe(modified);
         }
 
         assertEquals(Set.of("foo(int)", "foo(String)", "Shrinking(int)"), byName.keySet());
@@ -82,6 +87,9 @@ class RemovedCodeUnitTest {
         assertEquals(List.of("IOException"), byName.get("foo(int)").getJavaInfo().getThrowsTypes());
         assertEquals(SymbolKindModel.METHOD, byName.get("foo(String)").getKind());
         assertEquals(SymbolKindModel.CONSTRUCTOR, byName.get("Shrinking(int)").getKind());
+
+        assertEquals(1, modified.getJavaInfo().getInvocations().size(), "the same body, still in the code, lists its println");
+        assertEquals(List.of(), byName.values().stream().flatMap(unit -> unit.getJavaInfo().getInvocations().stream()).toList(), "a removed unit calls nothing any more");
     }
     @Test
     void aRemovedUnitTakesNoDuplicationFromTheNewTree() {

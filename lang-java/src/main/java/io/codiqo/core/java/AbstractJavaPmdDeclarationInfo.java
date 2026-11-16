@@ -7,6 +7,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.eclipse.collections.api.map.primitive.MutableIntObjectMap;
 import org.eclipse.collections.impl.map.mutable.primitive.IntObjectHashMap;
@@ -17,12 +18,16 @@ import com.google.common.base.Suppliers;
 import com.google.common.collect.Lists;
 
 import edu.umd.cs.findbugs.BugInstance;
+import io.codiqo.api.code.Finding;
 import io.codiqo.api.code.SourceLocation;
 import io.codiqo.api.coverage.CodeBlockCoverage;
 import io.codiqo.api.coverage.LineCoverage;
 import io.codiqo.api.metrics.CodeBlockMetrics;
 import io.codiqo.lang.spec.JInvocationBlock;
 import io.codiqo.lang.spec.JavaCodeBlockInfo;
+import io.codiqo.lang.spec.PmdFinding;
+import io.codiqo.lang.spec.SpotBugsFinding;
+import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
@@ -53,8 +58,10 @@ public abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInf
     @Builder.Default
     private Collection<JInvocationBlock> invocations = Lists.newArrayList();
     @Builder.Default
+    @Getter(AccessLevel.NONE)
     private List<RuleViolation> pmdViolations = Lists.newArrayList();
     @Builder.Default
+    @Getter(AccessLevel.NONE)
     private List<BugInstance> spotbugs = Lists.newArrayList();
     @Builder.Default
     private MutableIntObjectMap<LineCoverage> lineCoverage = new IntObjectHashMap<>();
@@ -150,6 +157,19 @@ public abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInf
         };
     });
 
+    @Override
+    public String getDisplaySignature() {
+        return PrettyPrintingUtil.displaySignature(node);
+    }
+    @Override
+    public String getDeclaringType() {
+        return enclosingType.getBinaryName();
+    }
+    /** SpotBugs' bugs first, then PMD's violations, each in the order its tool reported them */
+    @Override
+    public List<Finding> getFindings() {
+        return Stream.concat(spotbugs.stream().map(SpotBugsFinding::new), pmdViolations.stream().map(PmdFinding::new)).collect(Collectors.toList());
+    }
     @Override
     public List<String> getModifiers() {
         return node.getModifiers().getEffectiveModifiers().stream().map(JModifier::getToken).collect(Collectors.toList());
