@@ -8,14 +8,17 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
 import io.netty.handler.codec.http.HttpHeaderNames;
@@ -30,15 +33,19 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * The few routes of the OpenCode v2 HTTP API a review needs, checked against OpenCode 2.0.20's own OpenAPI document.
+ * The few routes of the OpenCode v2 HTTP API a review needs, checked against the OpenAPI documents of OpenCode 2.0.20,
+ * 2.2.7 and 2.3.0.
  *
- * <p>The wait route is still under {@code /api/experimental/} in that version and blocks until the session is idle,
- * which for a coordinator includes every foreground sub-agent it started; a pinned OpenCode version keeps it stable.
+ * <p>The wait route is still under {@code /api/experimental/} and blocks until the session's own run is idle. Up to
+ * OpenCode 2.2 that included every sub-agent a coordinator started in the foreground; from 2.3 every sub-agent runs in
+ * the background, so the route listing the running sessions tells when they are done ({@code OpenCodeSessions}). It has
+ * the same answer in 2.2.7 and 2.3.0.
  */
 public class OpenCodeClient implements Closeable {
     public static final String ORDER_OLDEST_FIRST = "asc";
@@ -56,12 +63,30 @@ public class OpenCodeClient implements Closeable {
     private final OkHttpClient http;
     private final HttpUrl base;
     private final String authorization;
-    private final JsonMapper mapper = JsonMapper.builder().build();
+    private final JsonMapper mapper;
+    /** a client made by {@link #within} shares this one's connections and threads, which only their owner closes */
+    private final boolean owner;
 
     public OpenCodeClient(String url, String password, Duration timeout) {
-        this.base = HttpUrl.parse(url);
-        this.authorization = Credentials.basic(USER, password);
-        this.http = new OkHttpClient.Builder().readTimeout(timeout).callTimeout(timeout).build();
+        this(HttpUrl.parse(url), Credentials.basic(USER, password), new OkHttpClient.Builder().readTimeout(timeout).callTimeout(timeout).build(),
+                JsonMapper.builder().build(), true);
+    }
+    private OpenCodeClient(HttpUrl base, String authorization, OkHttpClient http, JsonMapper mapper, boolean owner) {
+        this.base = Objects.requireNonNull(base);
+        this.authorization = Objects.requireNonNull(authorization);
+        this.http = Objects.requireNonNull(http);
+        this.mapper = Objects.requireNonNull(mapper);
+        this.owner = owner;
+    }
+    /**
+     * The same client with its timeouts shortened to {@code limit}, never lengthened: the client's own still end a call to
+     * an OpenCode that stopped answering sooner. It shares this one's connections, and closing it closes nothing.
+     */
+    public OpenCodeClient within(Duration limit) {
+        return new OpenCodeClient(base, authorization, http.newBuilder()
+                .callTimeout(shorter(limit, http.callTimeoutMillis()))
+                .readTimeout(shorter(limit, http.readTimeoutMillis()))
+                .build(), mapper, false);
     }
     public String createSession(Path directory, String agent, String title) throws IOException {
         ObjectNode body = mapper.createObjectNode();
@@ -78,8 +103,18 @@ public class OpenCodeClient implements Closeable {
         body.put("text", text);
         post(path("api", "session", sessionId, "prompt"), body);
     }
+    /** blocks until the session's own run is idle; a session already idle answers at once */
     public void awaitIdle(String sessionId) throws IOException {
         post(path("api", "experimental", "session", sessionId, "wait"), mapper.createObjectNode());
+    }
+    /** every session of the server running right now, its children included */
+    public Set<String> activeSessions() throws IOException {
+        JsonNode data = get(path("api", "session", "active")).path("data");
+        if (data.isObject()) {
+            return Sets.newHashSet(data.propertyNames());
+        }
+        /** read as nothing running, any other answer would end every coordinator turn after its first response */
+        throw new IOException("GET /api/session/active answered without its data object: " + StringUtils.abbreviate(data.toString(), RunArgs.REVIEW_ANSWER_PREVIEW));
     }
     /**
      * Waits until OpenCode has connected to the named MCP server. OpenCode 2.1.1 lists the server about a second after it
@@ -104,6 +139,19 @@ public class OpenCodeClient implements Closeable {
             }
         }
         throw new IOException("OpenCode did not connect to the MCP server " + server + " within " + timeout + ": " + status.map(JsonNode::toString).orElse("not listed"));
+    }
+    /**
+     * Fails unless OpenCode lists the sessions running right now, which tells when a sub-agent running in the background
+     * is done (OpenCode 2.2.7 and 2.3.0 do): checked before any agent is paid for, where a review on an OpenCode without the
+     * route would fail only after its coordinator's first response.
+     */
+    public void requireBackgroundRoutes() throws IOException {
+        try {
+            activeSessions();
+        } catch (IOException err) {
+            throw new IOException("OpenCode could not list its running sessions (" + err.getMessage() + "); the review needs GET /api/session/active "
+                    + "to wait for its subagents, which OpenCode 2.2.7 and later serve", err);
+        }
     }
     public SessionUsage usage(String sessionId) throws IOException {
         return toUsage(session(sessionId));
@@ -150,8 +198,10 @@ public class OpenCodeClient implements Closeable {
     }
     @Override
     public void close() {
-        http.dispatcher().executorService().shutdown();
-        http.connectionPool().evictAll();
+        if (owner) {
+            http.dispatcher().executorService().shutdown();
+            http.connectionPool().evictAll();
+        }
     }
     private JsonNode post(HttpUrl url, JsonNode body) throws IOException {
         return execute(new Request.Builder().url(url).post(RequestBody.create(mapper.writeValueAsString(body), JSON)));
@@ -193,7 +243,12 @@ public class OpenCodeClient implements Closeable {
         ResponseBody body = response.body();
         String text = Objects.isNull(body) ? StringUtils.EMPTY : body.string();
         if (response.isSuccessful()) {
-            return StringUtils.isBlank(text) ? mapper.createObjectNode() : mapper.readTree(text);
+            try {
+                return StringUtils.isBlank(text) ? mapper.createObjectNode() : mapper.readTree(text);
+            } catch (JacksonException err) {
+                throw new IOException(response.request().method() + " " + response.request().url().encodedPath() + " answered with something other than JSON: "
+                        + err.getOriginalMessage(), err);
+            }
         }
         throw new IOException(response.request().method() + " " + response.request().url().encodedPath() + " failed with " + response.code() + ": " + text);
     }
@@ -216,6 +271,17 @@ public class OpenCodeClient implements Closeable {
             toReturn.addPathSegment(segment);
         }
         return toReturn.build();
+    }
+    /** an interruptible pause between two reads of OpenCode's state */
+    public static void sleep(Duration duration) throws InterruptedIOException {
+        try {
+            Thread.sleep(duration);
+        } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
+            InterruptedIOException toThrow = new InterruptedIOException("interrupted while waiting for OpenCode");
+            toThrow.initCause(err);
+            throw toThrow;
+        }
     }
     /** without an id every later call goes to {@code /api/session//...} and fails with a 404 that names nothing */
     private static String sessionId(JsonNode answer, String what) throws IOException {
@@ -244,14 +310,8 @@ public class OpenCodeClient implements Closeable {
                 tokens.path("output").asLong(),
                 tokens.path("reasoning").asLong());
     }
-    private static void sleep(Duration duration) throws InterruptedIOException {
-        try {
-            Thread.sleep(duration);
-        } catch (InterruptedException err) {
-            Thread.currentThread().interrupt();
-            InterruptedIOException toThrow = new InterruptedIOException("interrupted while waiting for OpenCode");
-            toThrow.initCause(err);
-            throw toThrow;
-        }
+    /** the shorter of the limit and the client's own timeout, which OkHttp keeps as 0 when there is none */
+    private static Duration shorter(Duration limit, int ownMillis) {
+        return ownMillis > 0 ? ObjectUtils.min(limit, Duration.ofMillis(ownMillis)) : limit;
     }
 }

@@ -34,6 +34,8 @@ public enum AnswerTool {
 
     /** what a reviewer is asked to report a defect with; LOW is the scoring prompt's, never asked of the review */
     public static final EnumSet<LlmScoringResponse.Confidence> REPORTED_CONFIDENCE = EnumSet.of(LlmScoringResponse.Confidence.HIGH, LlmScoringResponse.Confidence.MEDIUM);
+    /** the bug lists of a review and of the coordinator's answer, by severity: both carry the same bug schema */
+    public static final List<String> SEVERITIES = List.of("blocking", "major", "minor");
     /** the dimensions the coordinator scores, as its prompt lists them; the scoring response's testingCoverage is not asked for */
     public static final List<String> QUALITY_DIMENSIONS = List.of("architectureImpact", "concurrencyRisk", "integrationSurface", "dataIntegrity",
             "securitySensitivity", "scalabilityImpact", "observability", "resilience", "performance");
@@ -211,7 +213,7 @@ public enum AnswerTool {
         bugProperties.set("suggestedFileFix", string());
         required(bug, "type", "title", "description", "file", "line", "confidence");
 
-        for (String severity : List.of("blocking", "major", "minor")) {
+        for (String severity : SEVERITIES) {
             properties.set(severity, arrayOf(bug.deepCopy()));
         }
     }

@@ -16,6 +16,7 @@ import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -63,6 +64,8 @@ class TurnTest {
     private boolean endless;
     /** the provider fails while the turn runs, not before it */
     private boolean providerFailsDuringTurn;
+    /** a prompt was sent whose turn has not run yet */
+    private volatile boolean turnPending;
 
     @BeforeEach
     void start() throws IOException {
@@ -176,7 +179,7 @@ class TurnTest {
     }
     /** a turn asked under the review timeout of the arguments, OpenCode answering within the client's own timeout */
     private Optional<ReviewVerdict> ask(RunArgs args, Duration clientTimeout) throws IOException {
-        try (OpenCodeSessions sessions = new OpenCodeSessions(new OpenCodeClient(url, "pw", clientTimeout), Path.of("."), args.getReviewTimeout())) {
+        try (OpenCodeSessions sessions = new OpenCodeSessions(new OpenCodeClient(url, "pw", clientTimeout), Path.of("."), args.getReviewTimeout(), NoopLog.INSTANCE)) {
             return reviewer(args).ask(sessions, answers, relay, SESSION, PROMPT, AnswerTool.LABELS);
         }
     }
@@ -192,18 +195,25 @@ class TurnTest {
         String body = "{}";
         if (route.equals("POST /api/session/" + SESSION + "/prompt")) {
             prompts.add(mapper.readTree(exchange.getRequestBody().readAllBytes()).path("text").asString());
+            turnPending = true;
         } else if (route.equals("POST /api/experimental/session/" + SESSION + "/wait")) {
             awaitTurn();
         } else if (route.equals("GET /api/session/" + SESSION + "/message")) {
             body = messages(error);
+        } else if (route.equals("GET /api/session/active")) {
+            body = "{\"data\":{}}";
         }
         respond(exchange, HttpResponseStatus.OK.code(), body);
     }
-    /** the turn as the test sets it up: the provider failing during it, and a turn that does not end */
+    /**
+     * The turn as the test sets it up: the provider failing during it, and a turn that does not end. Only the first wait
+     * after a prompt runs the turn: a wait on a session already idle returns at once, as OpenCode's does.
+     */
     private void awaitTurn() throws IOException {
-        if (providerFailsDuringTurn) {
+        if (BooleanUtils.and(new boolean[] { turnPending, providerFailsDuringTurn })) {
             providerFails();
         }
+        turnPending = false;
         if (endless) {
             awaitTurnEnd();
         }

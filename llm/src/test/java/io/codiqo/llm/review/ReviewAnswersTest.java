@@ -9,8 +9,15 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.junit.jupiter.api.AfterEach;
@@ -18,6 +25,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import com.google.common.base.Joiner;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.NoopLog;
@@ -33,6 +42,8 @@ import tools.jackson.databind.node.ObjectNode;
 class ReviewAnswersTest {
     private static final String REVIEW = """
             {"blocking":[],"major":[],"minor":[],"unitLabels":[],"observations":["adds a cancel endpoint"],"notChecked":[]}""";
+    /** a review timeout short enough for a test to wait it out */
+    private static final Duration SHORT_REVIEW = Duration.ofMillis(300);
     private static final String OTHER_REVIEW = """
             {"blocking":[],"major":[],"minor":[],"unitLabels":[{"file":"a/Refunds.java","signature":"refund(Order)","category":"ROUTINE","reason":"adds a guard"}],
              "observations":["adds a refund endpoint"],"notChecked":[]}""";
@@ -86,6 +97,67 @@ class ReviewAnswersTest {
         assertTrue(text(second).contains("already accepted"), second.toString());
         assertEquals(List.of("adds a cancel endpoint"), answers.accepted("ses_r1", LocalReviewer.ReviewerAnswer.class).orElseThrow().getParsed().getObservations());
         assertEquals(Optional.empty(), answers.refusal("ses_r1"));
+    }
+    /**
+     * Reviews submitted at the same moment are each taken without waiting on another session's: a check that locked the
+     * other slots while holding its own deadlocked two reviewers that answered together, until the review timed out.
+     */
+    @Test
+    void reviewsSubmittedTogetherAreAllTaken() throws Exception {
+        int reviewers = 8;
+        ExecutorService pool = Executors.newFixedThreadPool(reviewers);
+        try {
+            CountDownLatch start = new CountDownLatch(1);
+            List<Future<JsonNode>> calls = Lists.newArrayList();
+            for (int i = 0; i < reviewers; i++) {
+                String session = "ses_r" + i;
+                calls.add(pool.submit(() -> {
+                    start.await();
+                    return call(session, "submit_review", REVIEW);
+                }));
+            }
+            start.countDown();
+
+            for (Future<JsonNode> call : calls) {
+                assertFalse(call.get(10, TimeUnit.SECONDS).path("isError").asBoolean());
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+    /** a review submitted after the coordinator's answer is one the answer left out, its bugs with it */
+    @Test
+    void aReviewAfterTheAnswerIsCountedAsLeftOut() throws Exception {
+        answers.expect("ses_coordinator", AnswerTool.ANSWER, arguments -> arguments);
+        call("ses_r1", "submit_review", REVIEW);
+        call("ses_coordinator", ReviewAnswers.REVIEWS_TOOL, "{}");
+        assertFalse(call("ses_coordinator", "submit_answer", "{}").path("isError").asBoolean());
+        assertEquals(0, answers.reviewsAfterAnswer("ses_coordinator").size());
+
+        call("ses_r2", "submit_review", OTHER_REVIEW);
+
+        assertEquals(1, answers.reviewsAfterAnswer("ses_coordinator").size());
+    }
+    /**
+     * An answer waits inside its call for a sub-agent that runs without having reviewed, at most the review timeout, after
+     * which it is turned away without counting against its attempts: the one attempt here still takes the next answer.
+     */
+    @Test
+    void anAnswerWaitsForARunningReviewerAtMostTheReviewTimeout() throws Exception {
+        RunArgs args = new RunArgs();
+        args.setReviewAnswerAttempts(1);
+        args.setReviewTimeout(SHORT_REVIEW);
+        answers.close();
+        answers = ReviewAnswers.start(args, new NoopLog());
+        answers.expect("ses_coordinator", AnswerTool.ANSWER, arguments -> arguments);
+        Set<String> running = Sets.newConcurrentHashSet(List.of("ses_r1"));
+        answers.watchReviewers(sessionId -> running);
+
+        JsonNode turnedAway = call("ses_coordinator", "submit_answer", "{}");
+        assertTrue(text(turnedAway).contains("[ses_r1] are still reviewing after " + SHORT_REVIEW), text(turnedAway));
+
+        running.clear();
+        assertFalse(call("ses_coordinator", "submit_answer", "{}").path("isError").asBoolean());
     }
     /** a refused call says what is wrong, and a corrected call in the same turn is the answer */
     @Test

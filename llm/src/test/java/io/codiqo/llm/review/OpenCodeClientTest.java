@@ -117,7 +117,7 @@ class OpenCodeClientTest {
     void theTraceHoldsEverySessionWithItsToolCalls(@TempDir Path directory) throws Exception {
         RunArgs args = new RunArgs();
         args.setReviewTraceDirectory(directory.toFile());
-        try (OpenCodeSessions sessions = new OpenCodeSessions(new OpenCodeClient(url, PASSWORD, TIMEOUT), directory, TIMEOUT)) {
+        try (OpenCodeSessions sessions = new OpenCodeSessions(new OpenCodeClient(url, PASSWORD, TIMEOUT), directory, TIMEOUT, NoopLog.INSTANCE)) {
             ReviewTrace.write(args, sessions, "abcdef0123456789", SESSION, List.of("ses_fork"), new NoopLog());
         }
 
