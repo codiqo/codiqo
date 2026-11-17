@@ -407,7 +407,7 @@ public class RunArgs {
     private Duration testTimeout = Duration.ofMinutes(30);
 
     /**
-     * Per-test-method timeout, injected as a JUnit 5 {@code timeout.default} on a separate thread. Unset derives
+     * Per-test-method timeout, injected as a JUnit 5 {@code timeout.testable.method.default} on a separate thread. Unset derives
      * {@link #testTimeout} / 2 in {@link #validate()}; any value — derived or explicit — is then hard-capped at
      * {@link #PER_TEST_TIMEOUT_MAX}, and zero or negative leaves the feature off.
      *
