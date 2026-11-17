@@ -90,8 +90,7 @@ public class GitFileAnalysis implements FileAnalysis {
     }
     @Override
     public boolean equals(Object o) {
-        GitFileAnalysis that = (GitFileAnalysis) o;
-        return new EqualsBuilder()
+        return o instanceof GitFileAnalysis that && new EqualsBuilder()
                 .append(file, that.file)
                 .append(changeType, that.changeType)
                 .append(diffText, that.diffText)

@@ -6,6 +6,7 @@ import org.apache.commons.lang3.StringUtils;
 
 import lombok.EqualsAndHashCode;
 import lombok.RequiredArgsConstructor;
+import lombok.ToString;
 
 /**
  * Comment grammar for a single trimmed line: an optional line-comment prefix, the block-comment delimiters, and the
@@ -17,6 +18,7 @@ import lombok.RequiredArgsConstructor;
  */
 @RequiredArgsConstructor
 @EqualsAndHashCode
+@ToString
 public class CommentSyntax {
     public static final CommentSyntax C_STYLE = new CommentSyntax("//", "/*", "*/", "*");
     public static final CommentSyntax XML = new CommentSyntax(null, "<!--", "-->", null);

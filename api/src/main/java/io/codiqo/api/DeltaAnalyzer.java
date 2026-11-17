@@ -7,7 +7,6 @@ import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.DiffFormatter;
 import org.eclipse.jgit.revwalk.RevCommit;
-import org.eclipse.jgit.treewalk.CanonicalTreeParser;
 
 import io.codiqo.api.diff.CommitAnalysis;
 import io.codiqo.api.diff.FileAnalysis;
@@ -22,7 +21,6 @@ public interface DeltaAnalyzer {
     Optional<FileAnalysis> analyzeFileDiff(DiffEntry diff, DiffFormatter formatter, Optional<RevCommit> parent, RevCommit current) throws Exception;
     Optional<FileAnalysis> analyzeUncommittedFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit headCommit) throws Exception;
     Optional<FileAnalysis> analyzeUntrackedFile(String filePath) throws Exception;
-    Optional<FileAnalysis> analyzeUncommittedFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit headCommit, CanonicalTreeParser oldTree) throws Exception;
 
     Optional<String> fileContentFromCommit(RevCommit commit, String filePath) throws Exception;
     Optional<String> fileContentFromWorkingTree(String filePath) throws Exception;

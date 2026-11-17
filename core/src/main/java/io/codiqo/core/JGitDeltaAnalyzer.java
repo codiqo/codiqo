@@ -270,7 +270,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
                     log.log(Level.DEBUG, "analyzing uncommitted changes with " + diffs.size() + " diffs");
 
                     for (DiffEntry diff : diffs) {
-                        analyzeUncommittedFileDiff(diff, formatter, headCommit, oldTree).ifPresent(toReturn.getFiles()::add);
+                        analyzeUncommittedFileDiff(diff, formatter, headCommit).ifPresent(toReturn.getFiles()::add);
                     }
                 }
             }
@@ -311,15 +311,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         return toReturn;
     }
     @Override
-    public Optional<FileAnalysis> analyzeUncommittedFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit headCommit) throws Exception {
-        try (ObjectReader reader = args.getGit().newObjectReader()) {
-            CanonicalTreeParser oldTree = new CanonicalTreeParser();
-            oldTree.reset(reader, headCommit.getTree().getId());
-            return analyzeUncommittedFileDiff(diff, formatter, headCommit, oldTree);
-        }
-    }
-    @Override
-    public Optional<FileAnalysis> analyzeUncommittedFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit head, CanonicalTreeParser old) throws Exception {
+    public Optional<FileAnalysis> analyzeUncommittedFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit head) throws Exception {
         FileHeader fileHeader = formatter.toFileHeader(diff);
         if (fileHeader.getPatchType() == FileHeader.PatchType.UNIFIED) {
             String path = JGit.effectivePath(diff);

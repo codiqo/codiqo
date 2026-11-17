@@ -79,9 +79,12 @@ public final class OpenAIClientFactory {
             return Collections.emptyList();
         }
         /**
-         * no @Override: ExecutorService.close() is a JDK19+ AutoCloseable default, absent under the JDK17 compile
-         * target; the method still overrides it at runtime on JDK19+, so the no-op shutdown guard holds either way
+         * A no-op, like {@link #shutdown()}: the delegate is shared and outlives the client. ExecutorService's default
+         * close(), which Guava's ForwardingExecutorService does not override, calls shutdown() and then loops on
+         * awaitTermination until the executor terminates; that call reaches the shared delegate, which never
+         * terminates, so a close() of this wrapper would never return.
          */
+        @Override
         public void close() {}
     }
 }

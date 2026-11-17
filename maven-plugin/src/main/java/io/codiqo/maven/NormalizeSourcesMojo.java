@@ -203,7 +203,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
                 if (dryRun) {
                     getLog().info(String.format(Locale.ROOT, "dry run complete — %d file(s) written, review with 'git diff' and reset with 'git checkout .'", results.size()));
                 } else {
-                    commitChanges(repo, results, baseDir);
+                    commitChanges(repo, results);
                 }
             }
         } catch (MojoFailureException err) {
@@ -340,7 +340,7 @@ public class NormalizeSourcesMojo extends AbstractMojo {
             getLog().info("rewritten: " + target);
         }
     }
-    private void commitChanges(Repository repo, List<Result> results, Path baseDir) throws Exception {
+    private void commitChanges(Repository repo, List<Result> results) throws Exception {
         try (Git git = Git.wrap(repo)) {
             for (Result result : results) {
                 String relativePath = result.getAfter().getSourcePath().toString();

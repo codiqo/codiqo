@@ -6,6 +6,7 @@ import java.util.regex.Pattern;
 
 import lombok.AccessLevel;
 import lombok.RequiredArgsConstructor;
+import lombok.ToString;
 
 /**
  * How a call looks on one raw source line, for the lines no AST is available for: deleted lines and lines a commit
@@ -16,6 +17,7 @@ import lombok.RequiredArgsConstructor;
  * <p>A file kind decides which shape its lines have ({@code FileKinds} in lang-config); this type is only the counter.
  */
 @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
+@ToString
 public class CallShape {
     private static final Pattern IDENTIFIER_THEN_PARENTHESIS = Pattern.compile("\\b([A-Za-z_$][\\w$]*)\\s*\\(");
     /**

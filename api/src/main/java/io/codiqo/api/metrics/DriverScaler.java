@@ -10,11 +10,13 @@ import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import lombok.ToString;
 import lombok.experimental.Accessors;
 
 @Getter
 @Accessors(fluent = true)
 @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
+@ToString
 public final class DriverScaler {
     public static final DriverScaler EMPTY = new DriverScaler(0, DimensionStats.ZERO, DimensionStats.ZERO, DimensionStats.ZERO, 0.0, 0.0);
 
@@ -76,6 +78,7 @@ public final class DriverScaler {
     @Getter
     @Accessors(fluent = true)
     @Builder
+    @ToString
     public static final class DimensionStats {
         public static final DimensionStats ZERO = new DimensionStats(0, 0.0, 0.0, 0.0, 0.0, 0);
 
