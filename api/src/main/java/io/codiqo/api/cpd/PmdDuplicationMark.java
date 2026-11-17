@@ -26,7 +26,7 @@ public class PmdDuplicationMark implements DuplicateMark {
     }
     @Override
     public boolean equals(Object obj) {
-        return mark.equals(((PmdDuplicationMark) obj).mark);
+        return obj instanceof PmdDuplicationMark other && mark.equals(other.mark);
     }
     @Override
     public String toString() {

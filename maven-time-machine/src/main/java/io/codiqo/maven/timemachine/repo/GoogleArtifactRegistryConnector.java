@@ -132,7 +132,7 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
     public List<SnapshotVersion> listDeploys(RepositorySystemSession session, Artifact artifact, RemoteRepository repo) {
         GoogleArtifactRegistryLocation location = GoogleArtifactRegistryLocation.parse(repo);
         String resourcePrefix = snapshotFolderResourcePrefix(location, artifact);
-        return deploysByResource.computeIfAbsent(resourcePrefix, key -> fetchDeploys(location, artifact, repo, key));
+        return deploysByResource.computeIfAbsent(resourcePrefix, key -> fetchDeploys(location, artifact, key));
     }
     @Override
     @PreDestroy
@@ -146,7 +146,7 @@ public class GoogleArtifactRegistryConnector implements SnapshotConnector, Close
             }
         }
     }
-    private List<SnapshotVersion> fetchDeploys(GoogleArtifactRegistryLocation location, Artifact artifact, RemoteRepository repo, String resourcePrefix) {
+    private List<SnapshotVersion> fetchDeploys(GoogleArtifactRegistryLocation location, Artifact artifact, String resourcePrefix) {
         for (;;) {
             try {
                 Pattern filenamePattern = snapshotFilenamePattern(artifact);

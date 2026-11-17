@@ -8,6 +8,7 @@ import org.apache.commons.lang3.BooleanUtils;
 
 import lombok.EqualsAndHashCode;
 import lombok.RequiredArgsConstructor;
+import lombok.ToString;
 
 /**
  * Per-file rule for diff lines that carry no scoreable change, so reformatting and boilerplate don't
@@ -20,6 +21,7 @@ import lombok.RequiredArgsConstructor;
  */
 @RequiredArgsConstructor
 @EqualsAndHashCode
+@ToString
 public class IneffectiveLineFilter {
     public static final String IMPORT_PREFIX = "import ";
     public static final IneffectiveLineFilter NONE = new IneffectiveLineFilter(CommentSyntax.NONE, null);

@@ -233,7 +233,7 @@ public abstract class AbstractJavaPmdDeclarationInfo implements JavaCodeBlockInf
     }
     @Override
     public boolean equals(Object other) {
-        return Objects.equals(node, ((AbstractJavaPmdDeclarationInfo) other).node);
+        return other instanceof AbstractJavaPmdDeclarationInfo that && Objects.equals(node, that.node);
     }
     @Override
     public String toString() {

@@ -1,6 +1,7 @@
 package io.codiqo.core.java;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
@@ -82,6 +83,17 @@ class AbstractJavaPmdDeclarationInfoTest {
     @Test
     void multiStatementConstructorIsNotTrivial() throws Exception {
         assertFalse(parseConstructor("class C { int a; int b; C(int a, int b) { this.a = a; this.b = b; } }").isTrivial());
+    }
+    /**
+     * Object.equals answers false for null and for a value of another type. A collection that holds a declaration
+     * beside another kind of value relies on it: a cast without a type check throws there instead of answering.
+     */
+    @Test
+    void aDeclarationIsNeverEqualToNullOrAnotherType() throws Exception {
+        CodeBlockInfo method = parseMethod("class C { int answer() { return 42; } }");
+
+        assertNotEquals(method, (Object) null);
+        assertNotEquals(method, "answer");
     }
     private static CodeBlockInfo parseMethod(String source) throws Exception {
         return wrap(find(source, ASTMethodDeclaration.class));
