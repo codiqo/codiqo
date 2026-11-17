@@ -1,5 +1,7 @@
 package io.codiqo.maven;
 
+import static java.util.function.Predicate.not;
+
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
@@ -118,7 +120,14 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
          * cannot start on would fail the goal only after the review had been paid for.
          */
         DefaultLanguageProcessors.requireRuntime(args);
+        requireIdentity(args);
         try (ClassGraphSpec scan = scanProjects(args, reactors)) {
+            /**
+             * One commit object of the working tree, which the analysis reads as it reads any commit and the review
+             * reads with git, so both judge the same snapshot. Diffed against HEAD by the commit path, a rename is a
+             * rename, a re-indent is cosmetic and an untracked file counts only when the run includes untracked files.
+             */
+            args.setCommitId(WorkingTreeCommit.create(args.getGit(), args.isIncludeUntracked()));
             startReview(args);
             Optional<SubmissionContext> analysed = analyse(args);
             if (analysed.isPresent()) {
@@ -131,14 +140,24 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
         }
     }
     /**
+     * The server attributes an uncommitted analysis to the developer by the commit's author address, and refuses one it
+     * cannot map. A submitted run whose git has no identity at all therefore fails here, before the review is paid
+     * for; an address git has that the organization never mapped is still refused by the server, after the review.
+     */
+    private void requireIdentity(RunArgs args) throws Exception {
+        if (BooleanUtils.and(new boolean[] { submit, BooleanUtils.negate(WorkingTreeCommit.hasIdentity(args.getGit())) })) {
+            throw new MojoFailureException("git has no identity to attribute the uncommitted changes to: set user.email to the address "
+                    + "Codiqo knows you by (git config user.email), or run with -Dcodiqo.submit=false to keep the analysis local");
+        }
+    }
+    /**
      * The changes are reviewed as a commit object of the working tree, beside the analysis, so a developer's work in
      * progress is judged the way a submitted commit is. Only a submitted run is reviewed: the review spends the
      * organization's LLM budget through the proxy, which a local run has no reason to.
      */
     private void startReview(RunArgs args) throws Exception {
         if (BooleanUtils.and(new boolean[] { submit, args.isReviewEnabled() })) {
-            Path workTree = args.getGit().getWorkTree().toPath();
-            String sha = WorkingTreeCommit.create(workTree, args.isIncludeUntracked());
+            String sha = args.getCommitId();
             if (CommitExclusions.hasAnalyzableFile(JGit.changedFileNames(args.getGit(), sha), DefaultLanguageProcessors.supportedExtensions())) {
                 /**
                  * Here, while the developer is at the terminal: the review asks for the project's tags on its own
@@ -148,7 +167,7 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
                 credential();
                 reviewRun = LocalReviewRun.start(
                         args,
-                        workTree,
+                        args.getGit().getWorkTree().toPath(),
                         sha,
                         server.reviewEndpoint(args),
                         LocalReviewGuidance.read(args, getLog()),
@@ -183,6 +202,11 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
                 registry.load();
                 getLog().info(MemoryReport.snapshot("after language server load"));
                 CommitAnalysis analysis = new JGitDeltaAnalyzer(logFactory, args).analyze();
+                /**
+                 * No branch contains the working tree's commit, which nothing references: the changes are on the branch
+                 * checked out, and on none at a detached HEAD, where git names the commit in place of a branch.
+                 */
+                Optional.ofNullable(args.getGit().getBranch()).filter(not(JGit::isDetachedHead)).ifPresent(analysis.getBranches()::add);
 
                 Optional<Exclusion> excluded = CommitExclusions.afterDelta(analysis, registry.extensions());
                 if (excluded.isEmpty()) {

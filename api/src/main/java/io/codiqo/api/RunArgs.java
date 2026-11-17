@@ -46,6 +46,7 @@ import io.codiqo.util.DownloadFailedException;
 import io.codiqo.util.Fetch;
 import io.codiqo.util.JGit;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import lombok.ToString;
 import net.sourceforge.pmd.lang.rule.RulePriority;
 import okhttp3.HttpUrl;
@@ -67,16 +68,21 @@ import okhttp3.HttpUrl;
  * <li><i>Report presentation</i> — thresholds that only pick a band or badge in the HTML report.</li>
  * </ul>
  *
- * <p><b>Persistence and replay.</b> Non-transient fields are mirrored onto the submission's scoring config by
- * {@code ScoringConfigs}, persisted by the backend, and restored on server-side replay — so a re-score reproduces
- * the offline numbers even after server defaults move. {@code transient} marks a field as local to this process: it
- * never travels with the submission. {@code DRIVER_SCORE.md} is the canonical derivation of the volume-scoring knobs
- * and worth reading before tuning any of them.
+ * <p><b>Persistence and replay.</b> The fields the submission's scoring config has a property for are mirrored onto it
+ * by {@code ScoringConfigs}, persisted by the backend, and restored on server-side replay, so a re-score reproduces
+ * the offline numbers for them even after server defaults move. Every other non-transient field is a setting of the
+ * client's run the server never reads, a scoring parameter the server always takes from its compiled default (the
+ * scoring config has no property for it, so a re-score takes the current default), or a setting each side reads from
+ * its own value; {@code ScoringConfigsTest} lists them, so a new field is either sent or left out on purpose.
+ * {@code transient} marks a field the submission never carries: run state, settings local to the run (the review's),
+ * a policy the server keeps in its own configuration ({@link #honorSkipRequests}), and the credential, endpoint and
+ * model the server sets for each call. {@code DRIVER_SCORE.md} is the canonical derivation of the volume-scoring knobs and worth
+ * reading before tuning any of them.
  *
  * <p><b>Settings.</b> A field a user may set by name carries {@link Setting}, which declares that name, and
  * {@link Settings} binds text given under it; Maven's parameters and Gradle's properties and extension reach RunArgs
- * only that way, so the field initialiser is their default and neither plugin declares one of its own. Every other field is run state the plugins fill in, or a
- * scoring parameter only the server's scoring configuration sets.
+ * only that way, so the field initialiser is their default and neither plugin declares one of its own. Every other
+ * field is run state the plugins fill in, or a scoring parameter only the server's scoring configuration sets.
  */
 @Data
 public class RunArgs {
@@ -166,9 +172,9 @@ public class RunArgs {
     private static final int JDTLS_LATEST_PREVIEW = 120;
 
     /**
-     * The commit under analysis, or blank for an uncommitted-changes run against the working tree. Blank disables
-     * every path that needs a reproducible checkout: no forked build, no time machine, and no build-failure
-     * degradation — those all gate on a commit being present.
+     * The commit under analysis. An uncommitted-changes run names a commit of the working tree (the Maven plugin's
+     * {@code WorkingTreeCommit}), which the analysis reads like any commit; it builds nothing, so the forked build and
+     * the time machine, which gate on a commit being present, are never reached from it.
      */
     @Nullable
     private String commitId;
@@ -499,19 +505,24 @@ public class RunArgs {
 
     /**
      * API key for the OpenAI-compatible LLM endpoint. Excluded from the generated toString: {@code @Data} would
-     * otherwise publish the key into any log line that prints these args.
+     * otherwise publish the key into any log line that prints these args. Transient, with the model and base URL
+     * below: the server sets all three itself for each call, and a credential must never reach a submission. Still
+     * part of equality, so two runs against different keys or endpoints never compare equal.
      */
     @ToString.Exclude
+    @EqualsAndHashCode.Include
     @Nullable
-    private String llmApiKey = System.getProperty("ollama.apiKey");
+    private transient String llmApiKey = System.getProperty("ollama.apiKey");
 
     /** Model id of a JSON completion; the server sets each purpose's own model from {@link LlmModelUsageIntent}. */
+    @EqualsAndHashCode.Include
     @Nullable
-    private String llmModel = System.getProperty("ollama.model", LlmModel.DEEPSEEK_V4_1_FLASH.id());
+    private transient String llmModel = System.getProperty("ollama.model", LlmModel.DEEPSEEK_V4_1_FLASH.id());
 
-    /** Base URL of the OpenAI-compatible endpoint. Unset falls back to the SDK's own default rather than to a codiqo default. */
+    /** Base URL of the OpenAI-compatible endpoint: {@code ollama.url}, else Ollama's cloud endpoint. */
+    @EqualsAndHashCode.Include
     @Nullable
-    private String llmBaseUrl = System.getProperty("ollama.url", "https://ollama.com/v1");
+    private transient String llmBaseUrl = System.getProperty("ollama.url", "https://ollama.com/v1");
 
     /**
      * Sampling temperature, sent both top-level and inside Ollama's native {@code options}. Zero is deliberate:
@@ -1729,9 +1740,9 @@ public class RunArgs {
     }
     public boolean isHotspotsCommit() {
         /**
-         * An uncommitted-changes run has no commit, so both ids can be null there. The explicit null check keeps
-         * null from matching null: a plain Objects.equals would treat a working-tree run as the hotspots commit and
-         * rank hotspots for code that was never committed.
+         * Only a run told which commit is the tip ranks hotspots: the explicit null check keeps null from matching
+         * null, so a run with neither id, which a plain Objects.equals would match, never ranks them. An
+         * uncommitted-changes run names a commit of the working tree, which no hotspots tip is.
          */
         return hotspotsEnabled && Objects.nonNull(hotspotsCommitId) && hotspotsCommitId.equals(commitId);
     }

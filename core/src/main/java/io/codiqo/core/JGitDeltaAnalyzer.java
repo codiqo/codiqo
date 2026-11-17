@@ -3,27 +3,20 @@ package io.codiqo.core;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.util.Date;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.io.FileUtils;
-import org.apache.commons.lang3.RandomStringUtils;
-import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.Validate;
 import org.apache.commons.lang3.mutable.MutableInt;
-import org.eclipse.jgit.api.Git;
-import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.DiffFormatter;
 import org.eclipse.jgit.diff.Edit;
 import org.eclipse.jgit.diff.RawTextComparator;
-import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectLoader;
 import org.eclipse.jgit.lib.ObjectReader;
@@ -34,7 +27,6 @@ import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.treewalk.AbstractTreeIterator;
 import org.eclipse.jgit.treewalk.CanonicalTreeParser;
 import org.eclipse.jgit.treewalk.EmptyTreeIterator;
-import org.eclipse.jgit.treewalk.FileTreeIterator;
 import org.eclipse.jgit.treewalk.TreeWalk;
 import org.eclipse.jgit.treewalk.filter.PathFilter;
 import org.eclipse.jgit.util.io.DisabledOutputStream;
@@ -71,19 +63,15 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         this.log = logFactory.getLogger(getClass());
         this.args = Objects.requireNonNull(args);
     }
+    /**
+     * The run's commit, {@link RunArgs#getCommitId()}. Uncommitted changes are analysed as a commit of the working tree
+     * too (the Maven plugin's {@code WorkingTreeCommit}), so every rule that reads a commit's diff reads theirs.
+     */
     @Override
     public CommitAnalysis analyze() throws Exception {
-        if (StringUtils.isNotEmpty(args.getCommitId())) {
-            ObjectId commit = args.getGit().resolve(args.getCommitId());
-            try (RevWalk revWalk = new RevWalk(args.getGit())) {
-                RevCommit revCommit = revWalk.parseCommit(commit);
-                return analyzeCommit(revCommit);
-            }
-        }
-
-        try (Git git = Git.wrap(args.getGit())) {
-            Status status = git.status().call();
-            return analyzeUncommitted(status);
+        Validate.notBlank(args.getCommitId(), "the run names no commit to analyse; uncommitted changes are analysed as a commit of the working tree");
+        try (RevWalk revWalk = new RevWalk(args.getGit())) {
+            return analyzeCommit(revWalk.parseCommit(args.getGit().resolve(args.getCommitId())));
         }
     }
     @Override
@@ -137,15 +125,6 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
                 byte[] bytes = loader.getBytes();
                 return Optional.of(new String(bytes, StandardCharsets.UTF_8));
             }
-        }
-
-        return Optional.empty();
-    }
-    @Override
-    public Optional<String> fileContentFromWorkingTree(String filePath) throws Exception {
-        Path path = args.getGit().getWorkTree().toPath().resolve(filePath);
-        if (Files.exists(path) && Files.isRegularFile(path)) {
-            return Optional.of(FileUtils.readFileToString(path.toFile(), StandardCharsets.UTF_8));
         }
 
         return Optional.empty();
@@ -218,8 +197,15 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
 
                     List<DiffEntry> diffs = formatter.scan(oldTree, newTree);
                     log.log(Level.DEBUG, "analyzing commit: " + commit.getName() + " with " + diffs);
+                    /**
+                     * A submodule's entry is a pointer to a commit of another repository, which has no lines here: read
+                     * as a file, its id is no object of this repository and the read throws MissingObjectException.
+                     * A commit that moves a submodule, or a working tree with a nested clone, otherwise fails its run.
+                     */
                     for (DiffEntry diff : diffs) {
-                        analyzeFileDiff(diff, formatter, parent, fullCommit).ifPresent(toReturn.getFiles()::add);
+                        if (BooleanUtils.and(new boolean[] { FileMode.GITLINK != diff.getOldMode(), FileMode.GITLINK != diff.getNewMode() })) {
+                            analyzeFileDiff(diff, formatter, parent, fullCommit).ifPresent(toReturn.getFiles()::add);
+                        }
                     }
 
                     toReturn.setFilesChanged(toReturn.getFiles().size());
@@ -228,213 +214,6 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         }
 
         return toReturn;
-    }
-    @Override
-    public CommitAnalysis analyzeUncommitted(Status status) throws Exception {
-        GitCommitAnalysis toReturn = new GitCommitAnalysis();
-
-        toReturn.setCommitId(RandomStringUtils.insecure().nextAlphanumeric(getClass().getName().length()));
-        toReturn.setMessage("Uncommitted changes analysis at " + LocalDateTime.now().toString() + " by " + System.getProperty("user.name"));
-
-        toReturn.setAuthor(System.getProperty("user.name"));
-        toReturn.setAuthorTimestamp(new Date());
-
-        toReturn.setCommitter(toReturn.getAuthor());
-        toReturn.setCommitTimestamp(toReturn.getAuthorTimestamp());
-
-        toReturn.setMergeCommit(false);
-        toReturn.getBranches().add(args.getGit().getBranch());
-
-        ObjectId headId = args.getGit().resolve(Constants.HEAD);
-        if (Objects.isNull(headId)) {
-            return analyzeUncommittedNoHead(status);
-        }
-
-        toReturn.getParentIds().add(headId.getName());
-
-        try (RevWalk walk = new RevWalk(args.getGit())) {
-            try (ObjectReader reader = args.getGit().newObjectReader()) {
-                RevCommit headCommit = walk.parseCommit(headId);
-
-                CanonicalTreeParser oldTree = new CanonicalTreeParser();
-                oldTree.reset(reader, headCommit.getTree().getId());
-
-                FileTreeIterator workingTree = new FileTreeIterator(args.getGit());
-
-                try (DiffFormatter formatter = new DiffFormatter(DisabledOutputStream.INSTANCE)) {
-                    formatter.setRepository(args.getGit());
-                    formatter.setDetectRenames(true);
-
-                    List<DiffEntry> diffs = formatter.scan(oldTree, workingTree);
-
-                    log.log(Level.DEBUG, "analyzing uncommitted changes with " + diffs.size() + " diffs");
-
-                    for (DiffEntry diff : diffs) {
-                        analyzeUncommittedFileDiff(diff, formatter, headCommit).ifPresent(toReturn.getFiles()::add);
-                    }
-                }
-            }
-        }
-
-        if (args.isIncludeUntracked()) {
-            for (String untrackedFile : status.getUntracked()) {
-                analyzeUntrackedFile(untrackedFile).ifPresent(fileAnalysis -> toReturn.getFiles().add(fileAnalysis));
-            }
-        }
-
-        toReturn.setFilesChanged(toReturn.getFiles().size());
-        return toReturn;
-    }
-    @Override
-    public CommitAnalysis analyzeUncommittedNoHead(Status status) throws Exception {
-        GitCommitAnalysis toReturn = new GitCommitAnalysis();
-
-        toReturn.setCommitId(RandomStringUtils.insecure().nextAlphanumeric(getClass().getName().length()));
-        toReturn.setMessage("Initial uncommitted changes (no commits yet)");
-        toReturn.setAuthor(System.getProperty("user.name"));
-        toReturn.setAuthorTimestamp(new Date());
-        toReturn.setCommitter(toReturn.getAuthor());
-        toReturn.setCommitTimestamp(toReturn.getAuthorTimestamp());
-        toReturn.setMergeCommit(false);
-
-        for (String addedFile : status.getAdded()) {
-            analyzeUntrackedFile(addedFile).ifPresent(fileAnalysis -> toReturn.getFiles().add(fileAnalysis));
-        }
-
-        if (args.isIncludeUntracked()) {
-            for (String untrackedFile : status.getUntracked()) {
-                analyzeUntrackedFile(untrackedFile).ifPresent(fileAnalysis -> toReturn.getFiles().add(fileAnalysis));
-            }
-        }
-
-        toReturn.setFilesChanged(toReturn.getFiles().size());
-        return toReturn;
-    }
-    @Override
-    public Optional<FileAnalysis> analyzeUncommittedFileDiff(DiffEntry diff, DiffFormatter formatter, RevCommit head) throws Exception {
-        FileHeader fileHeader = formatter.toFileHeader(diff);
-        if (fileHeader.getPatchType() == FileHeader.PatchType.UNIFIED) {
-            String path = JGit.effectivePath(diff);
-            File destination = args.getGit().getWorkTree().toPath().resolve(path).toFile();
-            GitFileAnalysis toReturn = new GitFileAnalysis();
-
-            args.owner(destination).ifPresent(project -> {
-                toReturn.accept(project);
-                toReturn.setTestFile(project.isTestResource(destination));
-            });
-
-            toReturn.setOldPath(diff.getOldPath());
-            toReturn.setNewPath(diff.getNewPath());
-            toReturn.setFile(destination);
-            toReturn.setChangeType(diff.getChangeType());
-
-            if (JGit.hasContentBefore(diff.getChangeType())) {
-                fileContentFromCommit(head, diff.getOldPath()).ifPresent(toReturn::setContentBefore);
-            }
-
-            if (JGit.hasContentAfter(diff.getChangeType())) {
-                fileContentFromWorkingTree(diff.getNewPath()).ifPresent(toReturn::setContentAfter);
-            }
-
-            try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-                try (Git git = Git.wrap(args.getGit())) {
-                    try (ObjectReader reader = args.getGit().newObjectReader()) {
-                        CanonicalTreeParser oldTreeIter = new CanonicalTreeParser();
-                        oldTreeIter.reset(reader, head.getTree().getId());
-
-                        git.diff()
-                                .setOldTree(oldTreeIter)
-                                .setNewTree(new FileTreeIterator(args.getGit()))
-                                .setPathFilter(PathFilter.create(path))
-                                .setContextLines(args.getDiffContextLines())
-                                .setOutputStream(output)
-                                .call();
-                    }
-                }
-                toReturn.setDiffText(output.toString(StandardCharsets.UTF_8));
-            }
-
-            GitStructuredDiff structuredDiff = new GitStructuredDiff();
-            structuredDiff.setOldPath(diff.getOldPath());
-            structuredDiff.setNewPath(diff.getNewPath());
-            structuredDiff.setChangeType(diff.getChangeType());
-            toReturn.setStructuredDiff(structuredDiff);
-
-            for (Edit edit : fileHeader.toEditList()) {
-                GitDiffHunk hunk = new GitDiffHunk();
-                hunk.setOldStartLine(edit.getBeginA());
-                hunk.setOldEndLine(edit.getEndA());
-                hunk.setNewStartLine(edit.getBeginB());
-                hunk.setNewEndLine(edit.getEndB());
-                hunk.setType(edit.getType());
-                structuredDiff.getHunks().add(hunk);
-            }
-
-            return Optional.of(toReturn);
-        }
-        return Optional.empty();
-    }
-    @Override
-    public Optional<FileAnalysis> analyzeUntrackedFile(String filePath) throws Exception {
-        File destination = args.getGit().getWorkTree().toPath().resolve(filePath).toFile();
-        if (destination.exists() && destination.isFile()) {
-            GitFileAnalysis toReturn = new GitFileAnalysis();
-
-            args.owner(destination).ifPresent(project -> {
-                toReturn.accept(project);
-                toReturn.setTestFile(project.isTestResource(destination));
-            });
-
-            toReturn.setNewPath(args.getGit().getWorkTree().toPath().relativize(destination.toPath()).normalize().toString());
-            toReturn.setFile(destination);
-            toReturn.setChangeType(DiffEntry.ChangeType.ADD);
-
-            try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-                try (DiffFormatter formatter = new DiffFormatter(output)) {
-                    formatter.setRepository(args.getGit());
-                    formatter.setContext(args.getDiffContextLines());
-                    formatter.setPathFilter(PathFilter.create(filePath));
-                    applyWhitespacePolicy(formatter, filePath);
-
-                    FileTreeIterator workingTreeIter = new FileTreeIterator(args.getGit());
-                    List<DiffEntry> entries = formatter.scan(new EmptyTreeIterator(), workingTreeIter);
-
-                    if (CollectionUtils.isNotEmpty(entries)) {
-                        DiffEntry diff = entries.iterator().next();
-                        FileHeader fileHeader = formatter.toFileHeader(diff);
-                        if (fileHeader.getPatchType() == FileHeader.PatchType.UNIFIED) {
-                            formatter.format(diff);
-                            output.flush();
-                            toReturn.setDiffText(output.toString(StandardCharsets.UTF_8.name()));
-
-                            GitStructuredDiff structuredDiff = new GitStructuredDiff();
-                            structuredDiff.setOldPath(diff.getOldPath());
-                            structuredDiff.setNewPath(diff.getNewPath());
-                            structuredDiff.setChangeType(diff.getChangeType());
-                            toReturn.setStructuredDiff(structuredDiff);
-
-                            for (Edit edit : fileHeader.toEditList()) {
-                                GitDiffHunk hunk = new GitDiffHunk();
-                                hunk.setOldStartLine(edit.getBeginA());
-                                hunk.setOldEndLine(edit.getEndA());
-                                hunk.setNewStartLine(edit.getBeginB());
-                                hunk.setNewEndLine(edit.getEndB());
-                                hunk.setType(edit.getType());
-                                structuredDiff.getHunks().add(hunk);
-                            }
-                        } else {
-                            return Optional.empty();
-                        }
-                    }
-                }
-            }
-
-            toReturn.setContentAfter(FileUtils.readFileToString(destination, StandardCharsets.UTF_8));
-            toReturn.setContentBefore(null);
-
-            return Optional.of(toReturn);
-        }
-        return Optional.empty();
     }
     @Override
     public Optional<FileAnalysis> analyzeFileDiff(DiffEntry diff, DiffFormatter formatter, Optional<RevCommit> parent, RevCommit current) throws Exception {
