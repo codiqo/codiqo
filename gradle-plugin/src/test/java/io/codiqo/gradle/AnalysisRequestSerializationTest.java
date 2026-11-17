@@ -28,6 +28,7 @@ class AnalysisRequestSerializationTest {
 
         assertEquals(request, restored);
         assertEquals("8g", restored.getAnalysisMaxHeap());
+        assertEquals(request.getSettings(), restored.getSettings(), "the settings reach the worker as they were given");
         assertEquals(1, restored.getModules().size());
         assertEquals(List.of("/p/src/main/java"), restored.getModules().iterator().next().getCompileSourceRoots());
         DependencyData dependency = restored.getModules().iterator().next().getDependencies().iterator().next();
@@ -69,14 +70,11 @@ class AnalysisRequestSerializationTest {
         toReturn.setRootName("app");
         toReturn.setGradleVersion("9.4.1");
         toReturn.setCommitId("abc123");
-        toReturn.setOutputDirectory("/p/build/codiqo");
-        toReturn.setJavaHome("/jdk");
         toReturn.setAnalysisMaxHeap("8g");
-        toReturn.setExcludeProjects(":docs");
-        toReturn.setExcludePaths("**/generated/**");
-        toReturn.setJdtlsVersion("1.60.0");
-        toReturn.setImportTimeoutMinutes(15);
-        toReturn.setLspQueryTimeoutSeconds(30);
+        toReturn.getSettings().put("codiqo.outputDirectory", "/p/build/codiqo");
+        toReturn.getSettings().put("codiqo.javaHome", "/jdk");
+        toReturn.getSettings().put("codiqo.excludeProjects", ":docs");
+        toReturn.getSettings().put("codiqo.importTimeoutMinutes", "15");
         toReturn.setBuildFailureDetail(":app:compileJava: Execution failed for task ':app:compileJava'.");
         toReturn.setBuildFailureCategory(AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE);
         toReturn.setCompilerCrash("App.java:4: error: An unhandled exception was thrown by the Error Prone static analysis plugin.");

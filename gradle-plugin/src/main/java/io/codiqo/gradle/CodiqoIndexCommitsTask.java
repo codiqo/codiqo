@@ -11,7 +11,6 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
-import java.util.Set;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
@@ -46,7 +45,6 @@ import io.codiqo.util.JGit;
  */
 public class CodiqoIndexCommitsTask extends DefaultTask {
     private static final int DEFAULT_MISSING_ANALYSES_LIMIT = 1024;
-    private static final Set<String> BOOLEAN_VALUES = Set.of("true", "false");
     private static final String INDEX_OUTPUT_RELATIVE_PATH = "codiqo/indexed-commits.txt";
 
     @TaskAction
@@ -58,26 +56,15 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
         String commitWindow = prop("codiqo.commitWindow", ext.getCommitWindow());
         Date cutoff = Date.from(LocalDate.now(ZoneOffset.UTC).minus(Period.parse(commitWindow)).atStartOfDay(ZoneOffset.UTC).toInstant());
 
-        RunArgs filter = new RunArgs();
-        Optional.ofNullable(prop("codiqo.includeAuthorEmails", null)).ifPresent(filter::setIncludeAuthorEmails);
-        Optional.ofNullable(prop("codiqo.excludeAuthorEmails", null)).ifPresent(filter::setExcludeAuthorEmails);
         /**
-         * CommitIndexer applies this alongside the author filters; leaving it unset made the task index every branch
-         * while silently accepting -Pcodiqo.includeBranches, defeating the point of filtering before the build
+         * The commits are chosen by the same settings the analysis reads (branches, author emails, first parent), from
+         * the extension as well as -P, so the index never lists a commit the analysis would then filter out.
          */
-        Optional.ofNullable(prop("codiqo.includeBranches", null)).ifPresent(filter::setIncludeBranches);
-
-        String firstParentValue = prop("codiqo.firstParentOnly", "true");
-        if (BOOLEAN_VALUES.contains(firstParentValue.toLowerCase(Locale.ROOT))) {
-            filter.setFirstParentOnly(Boolean.parseBoolean(firstParentValue));
-        } else {
-            getLogger().warn("codiqo: unrecognized codiqo.firstParentOnly='" + firstParentValue + "'; defaulting to first-parent");
-            filter.setFirstParentOnly(true);
-        }
+        RunArgs args = GradleSettings.runArgs(GradleSettings.of(getProject(), ext));
 
         try (Repository repo = JGit.openRepository(root.getProjectDir())) {
             String branch = resolveBranch(repo);
-            List<CommitModel> commits = CommitIndexer.extractCommits(repo, filter, indexRef, cutoff, branch);
+            List<CommitModel> commits = CommitIndexer.extractCommits(repo, args, indexRef, cutoff, branch);
 
             long merges = commits.stream().filter(commit -> Boolean.TRUE.equals(commit.getIsMerge())).count();
             long reverts = commits.stream().filter(commit -> Boolean.TRUE.equals(commit.getIsRevert())).count();
@@ -87,12 +74,10 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
 
             File outputFile = resolveOutputFile(root, ext);
             FileUtils.forceMkdir(outputFile.getParentFile());
-            FileUtils.writeLines(outputFile, StandardCharsets.UTF_8.name(), resolveShas(root, ext, repo, filter, branch, commits));
+            FileUtils.writeLines(outputFile, StandardCharsets.UTF_8.name(), resolveShas(root, ext, repo, args, branch, commits));
             getLogger().lifecycle("codiqo: wrote the commit list to " + outputFile.getAbsolutePath());
 
-            filter.setJdtlsVersion(prop("codiqo.jdtlsVersion", ext.getJdtlsVersion()));
-            filter.setJdtlsUseSnapshot(Boolean.parseBoolean(prop("codiqo.jdtlsUseSnapshot", String.valueOf(ext.isJdtlsUseSnapshot()))));
-            filter.writeIndexMetadata(resolveMetadataFile(root, ext).toPath());
+            args.writeIndexMetadata(resolveMetadataFile(root, ext).toPath());
         }
     }
     /**
@@ -103,7 +88,7 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
             Project root,
             CodiqoExtension ext,
             Repository repo,
-            RunArgs filter,
+            RunArgs args,
             String branch,
             List<CommitModel> commits) throws Exception {
         Optional<CodiqoCredential> credential = resolveCredential(ext);
@@ -117,9 +102,7 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
         getLogger().lifecycle("codiqo: indexing " + commits.size() + " commits for " + projectId + " at " + apiUrl);
 
         Log log = new SlfLogFactory().getLogger(CodiqoIndexCommitsTask.class);
-        CommitIndexApi client = CommitIndexPublisher.buildClient(apiUrl, credential.get(),
-                longProp("codiqo.connectTimeoutSeconds", ext.getConnectTimeoutSeconds()),
-                longProp("codiqo.readTimeoutSeconds", ext.getReadTimeoutSeconds()));
+        CommitIndexApi client = CommitIndexPublisher.buildClient(apiUrl, credential.get(), args.getConnectTimeout().toSeconds(), args.getReadTimeout().toSeconds());
 
         ProjectModel metadata = new ProjectModel();
         metadata.setCode(projectId);
@@ -140,7 +123,7 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
                 branch,
                 missingAnalysesLimit(),
                 repo,
-                filter,
+                args,
                 RunArgs.INDEX_BATCH_SIZE);
         if (BooleanUtils.or(new boolean[]{
                 selection.getSkippedMissingCommitCount() > 0,
@@ -193,8 +176,5 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
     }
     private String prop(String name, String fallback) {
         return Optional.ofNullable(getProject().findProperty(name)).map(Object::toString).orElse(fallback);
-    }
-    private long longProp(String name, long fallback) {
-        return Optional.ofNullable(getProject().findProperty(name)).map(Object::toString).map(Long::parseLong).orElse(fallback);
     }
 }

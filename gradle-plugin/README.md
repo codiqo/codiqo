@@ -56,11 +56,18 @@ Pick the test task(s) of the module that **owns the changed files** — changed-
 attributed per module, so running an unrelated module's tests yields a correct but useless
 `0 files affected matched`.
 
-Config overrides (project properties, or a `codiqo { … }` extension block): `-Pcodiqo.commitId`,
+Every setting the Maven goals take is a project property of the same name here, or the `codiqo { … }`
+property named after it in camel case (`codiqo.review.timeoutMinutes` is `reviewTimeoutMinutes`); a `-P`
+property wins over the block, and a setting left unset keeps its default. A blank `-P` property counts as
+unset, as an unset CI variable passes it; to clear a text setting such as `excludeAuthorEmails`, set it to
+`''` in the block. A value its setting cannot read fails the build naming the setting: before any task runs
+for `codiqoSubmitAnalysis`, and as `codiqoIndexCommits` starts. The ones about Maven's own fork
+(`codiqo.buildTimeoutMinutes`, `codiqo.mavenHome`, `codiqo.timeMachineEnabled`) are read but change nothing
+on Gradle. Among them: `-Pcodiqo.commitId`,
 `-Pcodiqo.outputDirectory`, `-Pcodiqo.javaHome`, `-Pcodiqo.ignoreCoverage`, `-Pcodiqo.ignoreCpd`,
 `-Pcodiqo.ignoreDiagnostics`, `-Pcodiqo.ignoreComplexity`, `-Pcodiqo.hotspots`, `-Pcodiqo.hotspotsCommitId`, `-Pcodiqo.testTimeoutMinutes`,
 `-Pcodiqo.perTestTimeoutMinutes`, `-Pcodiqo.importTimeoutMinutes`, `-Pcodiqo.lspQueryTimeoutSeconds`,
-`-Pcodiqo.jdtlsVersion` (default `1.63.0`), `-Pcodiqo.jdtUseSharedIndex`, `-Pcodiqo.jdtLombokAgent`, `-Pcodiqo.failOnUninstrumentedModule`,
+`-Pcodiqo.jdtlsVersion`, `-Pcodiqo.jdtUseSharedIndex`, `-Pcodiqo.jdtLombokAgent`, `-Pcodiqo.failOnUninstrumentedModule`,
 `-Pcodiqo.analysisMaxHeap`, `-Pcodiqo.skipOnBuildFailure`,
 `-Pcodiqo.firstParentOnly`, `-Pcodiqo.excludeRevertedCommits`, `-Pcodiqo.includeBranches`,
 `-Pcodiqo.include/excludeAuthorEmails`, `-Pcodiqo.testTimeoutMinutes`,

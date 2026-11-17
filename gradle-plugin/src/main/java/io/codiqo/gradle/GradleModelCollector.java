@@ -69,76 +69,38 @@ public class GradleModelCollector {
         request.setGradleVersion(root.getGradle().getGradleVersion());
 
         request.setCommitId(stringProp(root, "codiqo.commitId", null));
-        request.setOutputDirectory(resolveOutputDirectory(root, ext));
-        request.setJavaHome(resolveJavaHome(root, ext));
-        request.setJdtlsJavaHome(stringProp(root, "codiqo.jdtlsJavaHome", ext.getJdtlsJavaHome()));
         request.setAnalysisMaxHeap(stringProp(root, "codiqo.analysisMaxHeap", ext.getAnalysisMaxHeap()));
-        request.setBuildProgressFile(stringProp(root, "codiqo.buildProgressFile", null));
 
         request.setApiUrl(stringProp(root, "codiqo.apiUrl", ext.getApiUrl()));
         resolveApiKey(root, ext).ifPresent(request::setApiKey);
         request.setAuthUrl(stringProp(root, "codiqo.authUrl", ext.getAuthUrl()));
         request.setResourceUrl(stringProp(root, "codiqo.resourceUrl", ext.getResourceUrl()));
-        request.setConnectTimeoutSeconds(longProp(root, "codiqo.connectTimeoutSeconds", ext.getConnectTimeoutSeconds()));
-        request.setReadTimeoutSeconds(longProp(root, "codiqo.readTimeoutSeconds", ext.getReadTimeoutSeconds()));
 
-        request.setSkipOnBuildFailure(boolProp(root, "codiqo.skipOnBuildFailure", ext.isSkipOnBuildFailure()));
-
-        request.setSourceHidden(boolProp(root, "codiqo.sourceHidden", ext.isSourceHidden()));
+        request.setSourceHidden(GradleSettings.flag(root, "codiqo.sourceHidden", ext.isSourceHidden()));
         /** only a hidden run reads the key: a plain run must not fail on a key it never uses */
         if (request.isSourceHidden()) {
             resolveSourceHashKey(root, ext).ifPresent(request::setSourceHashKey);
         }
 
-        request.setReview(boolProp(root, "codiqo.review", ext.isReview()));
-        request.setReviewExecutable(stringProp(root, "codiqo.review.executable", ext.getReviewExecutable()));
-        request.setReviewBaseUrl(stringProp(root, "codiqo.review.baseUrl", ext.getReviewBaseUrl()));
-        request.setReviewCoordinatorModel(stringProp(root, "codiqo.review.coordinatorModel", ext.getReviewCoordinatorModel()));
-        request.setReviewReviewerModel(stringProp(root, "codiqo.review.reviewerModel", ext.getReviewReviewerModel()));
-        request.setReviewTimeoutMinutes(stringProp(root, "codiqo.review.timeoutMinutes", ext.getReviewTimeoutMinutes()));
-        request.setReviewTemperature(stringProp(root, "codiqo.review.temperature", ext.getReviewTemperature()));
-        request.setReviewTopP(stringProp(root, "codiqo.review.topP", ext.getReviewTopP()));
-        request.setReviewRelayRetries(stringProp(root, "codiqo.review.relayRetries", ext.getReviewRelayRetries()));
-        request.setReviewRelayTimeoutSeconds(stringProp(root, "codiqo.review.relayTimeoutSeconds", ext.getReviewRelayTimeoutSeconds()));
-        request.setReviewTraceDirectory(stringProp(root, "codiqo.review.traceDirectory", ext.getReviewTraceDirectory()));
+        /**
+         * The fork needs a JDK and the analysis a directory before the worker starts, and only the daemon knows the
+         * defaults: the JDK running the build and the build's own output directory.
+         */
+        Map<String, String> settings = GradleSettings.of(root, ext);
+        settings.put(GradleSettings.JAVA_HOME, StringUtils.defaultIfBlank(settings.get(GradleSettings.JAVA_HOME), System.getProperty("java.home")));
+        settings.put(GradleSettings.OUTPUT_DIRECTORY, StringUtils.defaultIfBlank(settings.get(GradleSettings.OUTPUT_DIRECTORY),
+                new File(root.getLayout().getBuildDirectory().getAsFile().get(), CODIQO_OUTPUT_DIR).getAbsolutePath()));
+        RunArgs args = GradleSettings.runArgs(settings);
+        request.setSettings(settings);
 
-        request.setFirstParentOnly(boolProp(root, "codiqo.firstParentOnly", ext.isFirstParentOnly()));
-        request.setExcludeRevertedCommits(boolProp(root, "codiqo.excludeRevertedCommits", ext.isExcludeRevertedCommits()));
-        request.setIncludeBranches(stringProp(root, "codiqo.includeBranches", ext.getIncludeBranches()));
-        request.setIncludeAuthorEmails(stringProp(root, "codiqo.includeAuthorEmails", ext.getIncludeAuthorEmails()));
-        request.setExcludeAuthorEmails(stringProp(root, "codiqo.excludeAuthorEmails", ext.getExcludeAuthorEmails()));
-
-        request.setIgnoreCoverage(boolProp(root, "codiqo.ignoreCoverage", ext.isIgnoreCoverage()));
-        request.setIgnoreCpd(boolProp(root, "codiqo.ignoreCpd", ext.isIgnoreCpd()));
-        request.setExcludeProjects(stringProp(root, "codiqo.excludeProjects", ext.getExcludeProjects()));
-        request.setExcludePaths(stringProp(root, "codiqo.excludePaths", ext.getExcludePaths()));
-        request.setIgnoreDiagnostics(boolProp(root, "codiqo.ignoreDiagnostics", ext.isIgnoreDiagnostics()));
-        request.setIgnoreComplexity(boolProp(root, "codiqo.ignoreComplexity", ext.isIgnoreComplexity()));
-        request.setHotspots(boolProp(root, "codiqo.hotspots", ext.isHotspots()));
-        request.setHotspotsCommitId(stringProp(root, "codiqo.hotspotsCommitId", null));
-        request.setFailOnJdtlsError(boolProp(root, "codiqo.failOnJdtlsError", ext.isFailOnJdtlsError()));
-        request.setFailOnUninstrumentedModule(boolProp(root, "codiqo.failOnUninstrumentedModule", ext.isFailOnUninstrumentedModule()));
-        request.setTestFailureHoldShare(stringProp(root, "codiqo.testFailureHoldShare", ext.getTestFailureHoldShare()));
-        request.setTestFailureHoldMinTests(stringProp(root, "codiqo.testFailureHoldMinTests", ext.getTestFailureHoldMinTests()));
-
-        request.setJdtlsVersion(stringProp(root, "codiqo.jdtlsVersion", ext.getJdtlsVersion()));
-        request.setJdtlsUseSnapshot(boolProp(root, "codiqo.jdtlsUseSnapshot", ext.isJdtlsUseSnapshot()));
-        request.setJdtUseSharedIndex(boolProp(root, "codiqo.jdtUseSharedIndex", ext.isJdtUseSharedIndex()));
-        request.setJdtIncludeDecompiledSources(boolProp(root, "codiqo.jdtIncludeDecompiledSources", ext.isJdtIncludeDecompiledSources()));
-        request.setJdtLombokAgent(boolProp(root, "codiqo.jdtLombokAgent", ext.isJdtLombokAgent()));
-        if (request.isJdtLombokAgent()) {
+        if (args.isJdtLombokAgent()) {
             resolveLombokAgent(root, request);
         }
-        request.setImportTimeoutMinutes(longProp(root, "codiqo.importTimeoutMinutes", ext.getImportTimeoutMinutes()));
-        request.setLspQueryTimeoutSeconds(longProp(root, "codiqo.lspQueryTimeoutSeconds", ext.getLspQueryTimeoutSeconds()));
-
-        RunArgs exclusions = new RunArgs();
-        exclusions.setExcludeProjects(request.getExcludeProjects());
         for (Project project : root.getAllprojects()) {
             Map<String, Throwable> moduleUnresolved = Maps.newLinkedHashMap();
             collectModule(project, moduleUnresolved).ifPresent(request.getModules()::add);
             /** a module the run excludes is left out of the analysis, so a classpath of its that does not resolve fails nothing */
-            if (BooleanUtils.negate(exclusions.isExcludedProject(String.valueOf(project.getGroup()), project.getName()))) {
+            if (BooleanUtils.negate(args.isExcludedProject(String.valueOf(project.getGroup()), project.getName()))) {
                 unresolved.putAll(moduleUnresolved);
             }
         }
@@ -302,20 +264,6 @@ public class GradleModelCollector {
         return Optional.of(Env.resolve(configured).orElseThrow(() -> new GradleException(
                 "codiqo.sourceHashKey is set to '" + configured + "' but resolves to nothing — export that variable, or pass the key directly")));
     }
-    private static String resolveJavaHome(Project root, CodiqoExtension ext) {
-        String javaHome = stringProp(root, "codiqo.javaHome", ext.getJavaHome());
-        if (StringUtils.isNotBlank(javaHome)) {
-            return javaHome;
-        }
-        return System.getProperty("java.home");
-    }
-    private static String resolveOutputDirectory(Project root, CodiqoExtension ext) {
-        String outputDirectory = stringProp(root, "codiqo.outputDirectory", ext.getOutputDirectory());
-        if (StringUtils.isNotBlank(outputDirectory)) {
-            return outputDirectory;
-        }
-        return new File(root.getLayout().getBuildDirectory().getAsFile().get(), CODIQO_OUTPUT_DIR).getAbsolutePath();
-    }
     private static String stringProp(Project project, String name, String fallback) {
         return Optional.ofNullable(project.findProperty(name)).map(Object::toString).orElse(fallback);
     }
@@ -359,11 +307,5 @@ public class GradleModelCollector {
                 ExceptionUtils.wrapAndThrow(err);
             }
         }
-    }
-    private static boolean boolProp(Project project, String name, boolean fallback) {
-        return Optional.ofNullable(project.findProperty(name)).map(Object::toString).map(Boolean::parseBoolean).orElse(fallback);
-    }
-    private static long longProp(Project project, String name, long fallback) {
-        return Optional.ofNullable(project.findProperty(name)).map(Object::toString).map(Long::parseLong).orElse(fallback);
     }
 }

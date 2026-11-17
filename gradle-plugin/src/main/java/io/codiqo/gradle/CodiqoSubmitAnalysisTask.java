@@ -95,7 +95,7 @@ public abstract class CodiqoSubmitAnalysisTask extends DefaultTask {
                 request.getAnalysisMaxHeap(), classpath.size());
 
         getExecOperations().javaexec(spec -> {
-            spec.setExecutable(javaExecutable(request.getJavaHome()));
+            spec.setExecutable(javaExecutable(new File(request.getSettings().get(GradleSettings.JAVA_HOME))));
             spec.setClasspath(getObjectFactory().fileCollection().from(classpath));
             spec.getMainClass().set(CodiqoAnalysisWorkerMain.class.getName());
             spec.setMaxHeapSize(request.getAnalysisMaxHeap());
@@ -139,9 +139,9 @@ public abstract class CodiqoSubmitAnalysisTask extends DefaultTask {
                         + "Apply the plugin through the codiqo init script rather than the plugins {} block.",
                 loader.getClass().getName()));
     }
-    private static String javaExecutable(String javaHome) {
+    private static String javaExecutable(File javaHome) {
         String java = SystemUtils.IS_OS_WINDOWS ? "java.exe" : "java";
-        return Paths.get(javaHome).normalize().resolve("bin").resolve(java).toFile().getAbsolutePath();
+        return javaHome.toPath().normalize().resolve("bin").resolve(java).toFile().getAbsolutePath();
     }
     private boolean hasNoStoredLogin() throws IOException {
         return CodiqoCredentials.resolve(null, request.getAuthUrl(), request.getResourceUrl(), false, new GradleLifecycleLog(getLogger())).isEmpty();

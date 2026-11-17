@@ -32,7 +32,7 @@ import lombok.experimental.UtilityClass;
  */
 @UtilityClass
 public class Settings {
-    private static final String PREFIX = "codiqo.";
+    public static final String PREFIX = "codiqo.";
     /**
      * How a setting's text becomes its value, by the field's type with primitives boxed. A list is comma-separated, as
      * every list setting has always been given; a {@link Duration} is read as a whole number of its {@link Setting#unit()}.
@@ -56,20 +56,26 @@ public class Settings {
         return StringUtils.defaultIfEmpty(field.getAnnotation(Setting.class).name(), PREFIX + field.getName());
     }
     /**
-     * Sets each setting named in {@code values} on {@code args} from its text; a setting left out keeps the value
-     * {@code args} has, and so does a list setting given no entry: an empty {@code codiqo.pmdRules} would run PMD
-     * with no rule at all, report nothing and earn the clean bonus, and Maven has always read a blank list as unset. A
-     * name no setting has is refused rather than skipped, since an adapter that passes one has a setting's name wrong
-     * and the user's value would be lost without a word, and so is a value its setting cannot read, naming the setting.
-     * The caller then calls {@link RunArgs#validate()}.
+     * Sets each setting named in {@code values} on {@code args} from its text, read without the space around it; a
+     * setting left out keeps the value {@code args} has. So does one given blank text, unless it is text itself: a
+     * blank path, number, switch or duration names nothing (a CI variable that was not set, passed on as
+     * {@code -Pcodiqo.javaHome=}), while an empty text is a value of its own ({@code codiqo.excludeAuthorEmails=}
+     * excludes nobody). A list setting given no entry keeps its value too: an empty {@code codiqo.pmdRules} would run
+     * PMD with no rule at all, report nothing and earn the clean bonus. A name no setting has is refused rather than
+     * skipped, since an adapter that passes one has a setting's name wrong and the user's value would be lost without
+     * a word, and so is a value its setting cannot read, naming the setting. The caller then calls
+     * {@link RunArgs#validate()}.
      */
     public void bind(RunArgs args, Map<String, String> values) {
         for (Map.Entry<String, String> entry : values.entrySet()) {
             Field field = Optional.ofNullable(BY_NAME.get(entry.getKey()))
                     .orElseThrow(() -> new IllegalArgumentException("no setting is named " + entry.getKey()));
-            Object value = parse(entry.getKey(), field, Objects.requireNonNull(entry.getValue(), entry.getKey()));
-            if (isGiven(value)) {
-                write(args, field, value);
+            String text = StringUtils.trim(Objects.requireNonNull(entry.getValue(), entry.getKey()));
+            if (BooleanUtils.or(new boolean[] { String.class == field.getType(), StringUtils.isNotEmpty(text) })) {
+                Object value = parse(entry.getKey(), field, text);
+                if (isGiven(value)) {
+                    write(args, field, value);
+                }
             }
         }
     }
@@ -85,7 +91,7 @@ public class Settings {
             throw new IllegalArgumentException(String.format("%s=%s cannot be read as %s", name, value, expected), err);
         }
     }
-    /** a list with no entry, from blank text or separators alone, is no value given */
+    /** a list with no entry, from separators alone, is no value given */
     private boolean isGiven(Object value) {
         if (value instanceof List<?> list) {
             return CollectionUtils.isNotEmpty(list);

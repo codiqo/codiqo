@@ -74,8 +74,8 @@ import okhttp3.HttpUrl;
  * and worth reading before tuning any of them.
  *
  * <p><b>Settings.</b> A field a user may set by name carries {@link Setting}, which declares that name, and
- * {@link Settings} binds text given under it; Maven's parameters reach RunArgs only that way, so the field initialiser
- * is their default and the mojos declare none of their own. Every other field is run state the plugins fill in, or a
+ * {@link Settings} binds text given under it; Maven's parameters and Gradle's properties and extension reach RunArgs
+ * only that way, so the field initialiser is their default and neither plugin declares one of its own. Every other field is run state the plugins fill in, or a
  * scoring parameter only the server's scoring configuration sets.
  */
 @Data
@@ -814,8 +814,7 @@ public class RunArgs {
      * addresses vary too much to name one by one — {@code dependabot[bot]@...} and
      * {@code java-team-github-bot@google.com} share nothing but the word. The pattern matches anywhere in the
      * address, so a human whose address happens to carry those three letters ({@code abbott@example.com}) is caught
-     * with them; override the value, or set it empty to exclude nobody, when that happens. Every entry point reads
-     * this default: the mojos and the Gradle tasks leave their own parameter unset.
+     * with them; override the value, or set it empty to exclude nobody, when that happens.
      */
     @Nullable
     @Setting

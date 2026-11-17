@@ -7,12 +7,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import javax.inject.Inject;
 
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -50,6 +52,8 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
 
     private static final Pattern AGENT_ARTIFACT_VERSION = Pattern.compile("^(\\d+\\.\\d+\\.\\d+)");
     private static final String PROGRESS_SERVICE = "codiqoBuildProgress";
+    @VisibleForTesting
+    public static final Set<String> TEST_TIMEOUTS = Set.of("codiqo.testTimeoutMinutes", "codiqo.perTestTimeoutMinutes");
 
     @Inject
     protected abstract BuildEventsListenerRegistry getEventsListenerRegistry();
@@ -97,6 +101,8 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
 
         Optional.ofNullable(project.findProperty("codiqo.buildProgressFile"))
                 .map(Object::toString)
+                .map(StringUtils::trim)
+                .filter(StringUtils::isNotEmpty)
                 .ifPresent(path -> trackBuildProgress(project, new File(path)));
 
         project.getRootProject().getAllprojects().forEach(module -> module.getPluginManager()
@@ -110,16 +116,19 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
          * the race.
          */
         project.getGradle().getTaskGraph().whenReady(graph -> {
-            RunArgs timeouts = resolveTimeouts(
-                    longProp(project, "codiqo.testTimeoutMinutes", ext.getTestTimeoutMinutes()),
-                    perTestTimeoutMinutes(project, ext));
-            graph.getAllTasks().stream()
-                    .filter(Test.class::isInstance)
-                    .map(Test.class::cast)
-                    .forEach(test -> {
-                        ownJacoco(test);
-                        ownTestExecution(test, timeouts, boolProp(project, "codiqo.ignoreTestFailures", ext.isIgnoreTestFailures()));
-                    });
+            List<Test> tests = graph.getAllTasks().stream().filter(Test.class::isInstance).map(Test.class::cast).toList();
+            /**
+             * Only the two timeouts, and only for a build that tests: a plain test build of a project whose init.d applies
+             * the plugin must not fail on a review setting it never uses. The analysis build checks all of them.
+             */
+            if (CollectionUtils.isNotEmpty(tests)) {
+                RunArgs timeouts = GradleSettings.runArgs(Maps.filterKeys(GradleSettings.of(project, ext), TEST_TIMEOUTS::contains));
+                boolean ignoreTestFailures = GradleSettings.flag(project, "codiqo.ignoreTestFailures", ext.isIgnoreTestFailures());
+                for (Test test : tests) {
+                    ownJacoco(test);
+                    ownTestExecution(test, timeouts, ignoreTestFailures);
+                }
+            }
         });
     }
     /**
@@ -154,13 +163,8 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
      * checks the JDK and language server the worker would start.
      */
     private static void requireRuntime(AnalysisRequest request) {
-        RunArgs args = new RunArgs();
-        args.setJavaHome(new File(request.getJavaHome()));
-        Optional.ofNullable(request.getJdtlsJavaHome()).filter(StringUtils::isNotBlank).map(File::new).ifPresent(args::setJdtlsJavaHome);
-        args.setJdtlsVersion(request.getJdtlsVersion());
-        args.setJdtlsUseSnapshot(request.isJdtlsUseSnapshot());
         try {
-            DefaultLanguageProcessors.requireRuntime(args);
+            DefaultLanguageProcessors.requireRuntime(GradleSettings.runArgs(request.getSettings()));
         } catch (IOException err) {
             /**
              * Rethrown as it is, not wrapped: Gradle heads its failure report with the thrown exception, and the wrapper
@@ -274,18 +278,6 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
         test.getReports().getJunitXml().getRequired().set(true);
     }
     /**
-     * RunArgs owns the derivation (an unset per-test timeout becomes testTimeout/2, capped) so the Gradle daemon and
-     * the analysis worker cannot disagree about the envelope they are enforcing.
-     */
-    @VisibleForTesting
-    public static RunArgs resolveTimeouts(long testTimeoutMinutes, Long perTestTimeoutMinutes) {
-        RunArgs toReturn = new RunArgs();
-        toReturn.setTestTimeout(Duration.ofMinutes(testTimeoutMinutes));
-        Optional.ofNullable(perTestTimeoutMinutes).ifPresent(minutes -> toReturn.setPerTestTimeout(Duration.ofMinutes(minutes)));
-        toReturn.validate();
-        return toReturn;
-    }
-    /**
      * every task in the build except the codiqo analysis task itself, since naming itself would be a cycle.
      */
     private static List<Task> tasksToFollow(Project project) {
@@ -298,22 +290,5 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
             }
         }
         return toReturn;
-    }
-    /**
-     * -P overrides are read here as well as in GradleModelCollector, because the timeouts are applied to the Test
-     * tasks in the daemon rather than travelling to the worker in the request. Reading only the extension made every
-     * documented -Pcodiqo.testTimeoutMinutes silently inert, including the ones codiqo-action passes.
-     */
-    private static Long perTestTimeoutMinutes(Project project, CodiqoExtension ext) {
-        return Optional.ofNullable(project.findProperty("codiqo.perTestTimeoutMinutes"))
-                .map(Object::toString)
-                .map(Long::parseLong)
-                .orElse(ext.getPerTestTimeoutMinutes());
-    }
-    private static long longProp(Project project, String name, long fallback) {
-        return Optional.ofNullable(project.findProperty(name)).map(Object::toString).map(Long::parseLong).orElse(fallback);
-    }
-    private static boolean boolProp(Project project, String name, boolean fallback) {
-        return Optional.ofNullable(project.findProperty(name)).map(Object::toString).map(Boolean::parseBoolean).orElse(fallback);
     }
 }

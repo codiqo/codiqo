@@ -82,7 +82,7 @@ public final class GradleCommitBuild implements CommitBuild {
             throw new IllegalStateException(request.getLombokAgentError());
         }
 
-        if (BooleanUtils.negate(request.isIgnoreCoverage())) {
+        if (BooleanUtils.negate(args.isIgnoreCoverage())) {
             for (ModuleData module : request.getModules()) {
                 mergeCoverageParts(module, log);
             }
@@ -95,7 +95,7 @@ public final class GradleCommitBuild implements CommitBuild {
     /** the tests ran in Gradle's build; their reports are read only when the run measures coverage */
     @Override
     public BuildVerdict test() {
-        if (request.isIgnoreCoverage()) {
+        if (args.isIgnoreCoverage()) {
             return BuildVerdict.passed(Optional.empty());
         }
         List<File> reports = request.getModules().stream().flatMap(module -> module.getTestReportDirectories().stream()).map(File::new).distinct().toList();

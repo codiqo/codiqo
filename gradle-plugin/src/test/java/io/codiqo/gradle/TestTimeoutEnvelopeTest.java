@@ -3,6 +3,7 @@ package io.codiqo.gradle;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.time.Duration;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
@@ -15,7 +16,7 @@ import io.codiqo.api.RunArgs;
 class TestTimeoutEnvelopeTest {
     @Test
     void unsetPerTestTimeoutIsDerivedFromTheTaskTimeout() {
-        RunArgs timeouts = CodiqoGradlePlugin.resolveTimeouts(10, null);
+        RunArgs timeouts = GradleSettings.runArgs(Map.of("codiqo.testTimeoutMinutes", "10"));
 
         assertEquals(Duration.ofMinutes(10), timeouts.getTestTimeout());
         assertEquals(Duration.ofMinutes(5), timeouts.getPerTestTimeout());
@@ -23,16 +24,19 @@ class TestTimeoutEnvelopeTest {
     @Test
     void explicitPerTestTimeoutOverridesTheDerivation() {
         CodiqoExtension ext = new CodiqoExtension();
-        ext.setTestTimeoutMinutes(30);
+        ext.setTestTimeoutMinutes(30L);
         ext.setPerTestTimeoutMinutes(2L);
 
-        assertEquals(Duration.ofMinutes(2), CodiqoGradlePlugin.resolveTimeouts(ext.getTestTimeoutMinutes(), ext.getPerTestTimeoutMinutes()).getPerTestTimeout());
+        assertEquals(Duration.ofMinutes(2), timeouts(ext).getPerTestTimeout());
     }
     @Test
     void perTestTimeoutIsCappedAtTheRunArgsCeiling() {
         CodiqoExtension ext = new CodiqoExtension();
-        ext.setTestTimeoutMinutes(120);
+        ext.setTestTimeoutMinutes(120L);
 
-        assertEquals(RunArgs.PER_TEST_TIMEOUT_MAX, CodiqoGradlePlugin.resolveTimeouts(ext.getTestTimeoutMinutes(), ext.getPerTestTimeoutMinutes()).getPerTestTimeout());
+        assertEquals(RunArgs.PER_TEST_TIMEOUT_MAX, timeouts(ext).getPerTestTimeout());
+    }
+    private static RunArgs timeouts(CodiqoExtension ext) {
+        return GradleSettings.runArgs(GradleSettings.of(unset -> null, ext));
     }
 }
