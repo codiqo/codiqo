@@ -1,6 +1,7 @@
 package io.codiqo.api;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -97,6 +98,30 @@ class SettingsTest {
         Settings.bind(args, Map.of("codiqo.excludeAuthorEmails", StringUtils.EMPTY));
 
         assertEquals(StringUtils.EMPTY, args.getExcludeAuthorEmails());
+    }
+    /** a CI variable that was not set reaches the run as blank text, which names no path, number or switch */
+    @Test
+    void blankTextOfASettingThatIsNotTextKeepsItsDefault() {
+        RunArgs args = new RunArgs();
+
+        Settings.bind(args, Map.of(
+                "codiqo.outputDirectory", StringUtils.SPACE,
+                "codiqo.testTimeoutMinutes", StringUtils.EMPTY,
+                "codiqo.review", StringUtils.EMPTY));
+
+        assertNull(args.getOutputDirectory());
+        assertEquals(new RunArgs().getTestTimeout(), args.getTestTimeout());
+        assertTrue(args.isReviewEnabled());
+    }
+    /** a properties file keeps the space after a value, which would make a number unreadable */
+    @Test
+    void aValueIsReadWithoutTheSpaceAroundIt() {
+        RunArgs args = new RunArgs();
+
+        Settings.bind(args, Map.of("codiqo.testFailureHoldMinTests", "20 ", "codiqo.review.baseUrl", " http://127.0.0.1:11434/v1 "));
+
+        assertEquals(20, args.getTestFailureHoldMinTests());
+        assertEquals("http://127.0.0.1:11434/v1", args.getReviewBaseUrl());
     }
     /** read as Boolean.parseBoolean reads it, the misspelt switch would turn the review off */
     @Test

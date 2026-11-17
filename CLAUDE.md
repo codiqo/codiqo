@@ -1635,8 +1635,7 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   `Fetch.downloadJdtls` downloads it from the release `jdtls-<version>` on codiqo/codiqo and checks its SHA-256 before
   it enters the cache (a file that differs is a failed download). Upgrading the default means uploading the new
   build, unmodified, to a release of its own (EPL-2.0 permits it; the release notes name the source and the licence)
-  and changing the three constants; Maven declares no default of its own, and `ExtensionDefaultsDriftTest` keeps the
-  Gradle default on that version. Any other `jdtlsVersion`, and the snapshots channel, still come from
+  and changing the three constants; neither plugin declares a default of its own. Any other `jdtlsVersion`, and the snapshots channel, still come from
   download.eclipse.org: a pinned milestone already in the download cache (`~/.cache/fetch`, which the action caches)
   is used without asking (`RunArgs.pinnedJdtlsArchiveName`), and `latest.txt` must name exactly one archive
   (`RunArgs.jdtlsArchiveName`).
@@ -1818,7 +1817,11 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   through `MojoSettings`, which copies every parameter whose property is a setting's name off the goal's descriptor.
   A mojo still declares the parameter, for its documentation and `<configuration>`, as a nullable wrapper with no
   `defaultValue` and no copy of its own (`MojoSettingsTest`); a default only the build knows, such as the trace
-  directory under the build's output, is set on `RunArgs` before the bind. Settings with no `RunArgs` instance at hand (the login, the loopback host, the upload batch,
+  directory under the build's output, is set on `RunArgs` before the bind. Gradle reaches the same names through
+  `GradleSettings`: a `-P` property of the setting's name, else the `codiqo { }` property named after it without
+  `codiqo.` in camel case (`review.timeoutMinutes` is `reviewTimeoutMinutes`), which has no default either
+  (`GradleSettingsTest`). The daemon binds and validates them before the build, and they travel to the analysis worker
+  as `AnalysisRequest.settings`, a name-to-text map the worker binds itself. Settings with no `RunArgs` instance at hand (the login, the loopback host, the upload batch,
   the 0-10 score scale and the rounding precision) are `RunArgs` constants. Protocol names (headers, paths, rule ids)
   stay beside the code that speaks the protocol.
 - **The commit's earlier bugs are passed beside `RunArgs` too.** `PreviousFindings` fetches the bugs earlier runs of

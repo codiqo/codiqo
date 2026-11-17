@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 
@@ -86,7 +87,7 @@ class AnalysisEngineDegradedTest {
         try {
             assumeFalse(Files.isReadable(unreadable), "a user who can read any directory cannot make the index fail");
 
-            AnalysisSubmissionModel submission = AnalysisEngine.commitRun(request, AnalysisEngine.server(request, LOG), args, LOGS)
+            AnalysisSubmissionModel submission = AnalysisEngine.commitRun(request, AnalysisEngine.server(request, args, LOG), args, LOGS)
                     .degradedSubmission(new BuildVerdict.Failed("build failed", AnalysisExcludeCategory.BUILD_FAILURE, BUILD_FAILURE_DETAIL, false))
                     .getSubmissionModel();
 
@@ -121,7 +122,7 @@ class AnalysisEngineDegradedTest {
         String home = System.getProperty(CredentialStore.HOME_PROPERTY);
         System.setProperty(CredentialStore.HOME_PROPERTY, Files.createDirectory(tempDir.resolve("codiqo-home")).toString());
         try {
-            CommitOutcome.Deferred deferred = assertInstanceOf(CommitOutcome.Deferred.class, AnalysisEngine.commitRun(request, AnalysisEngine.server(request, LOG), args, LOGS).run());
+            CommitOutcome.Deferred deferred = assertInstanceOf(CommitOutcome.Deferred.class, AnalysisEngine.commitRun(request, AnalysisEngine.server(request, args, LOG), args, LOGS).run());
 
             CommitBuildFailedException err = assertInstanceOf(CommitBuildFailedException.class, deferred.getCause());
             assertTrue(Strings.CS.contains(err.getMessage(), BUILD_FAILURE_DETAIL), err.getMessage());
@@ -153,12 +154,10 @@ class AnalysisEngineDegradedTest {
         AnalysisRequest request = request();
         request.setApiUrl(String.format("http://127.0.0.1:%d", server.getAddress().getPort()));
         request.setApiKey("test-api-key");
-        request.setConnectTimeoutSeconds(5);
-        request.setReadTimeoutSeconds(5);
         RunArgs args = args(docs);
         args.setSkipOnBuildFailure(false);
         try {
-            assertInstanceOf(CommitOutcome.Excluded.class, AnalysisEngine.commitRun(request, AnalysisEngine.server(request, LOG), args, LOGS).run());
+            assertInstanceOf(CommitOutcome.Excluded.class, AnalysisEngine.commitRun(request, AnalysisEngine.server(request, args, LOG), args, LOGS).run());
         } finally {
             server.stop(0);
         }
@@ -188,12 +187,10 @@ class AnalysisEngineDegradedTest {
         AnalysisRequest request = request();
         request.setApiUrl(String.format("http://127.0.0.1:%d", server.getAddress().getPort()));
         request.setApiKey("test-api-key");
-        request.setConnectTimeoutSeconds(5);
-        request.setReadTimeoutSeconds(5);
         RunArgs args = args(broken);
         args.setReviewEnabled(false);
         try {
-            assertInstanceOf(CommitOutcome.Excluded.class, AnalysisEngine.commitRun(request, AnalysisEngine.server(request, LOG), args, LOGS).run());
+            assertInstanceOf(CommitOutcome.Excluded.class, AnalysisEngine.commitRun(request, AnalysisEngine.server(request, args, LOG), args, LOGS).run());
         } finally {
             server.stop(0);
         }
@@ -222,10 +219,9 @@ class AnalysisEngineDegradedTest {
         request.setBuildFailureCategory(AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE);
         request.setApiUrl(String.format("http://127.0.0.1:%d", server.getAddress().getPort()));
         request.setApiKey("test-api-key");
-        request.setConnectTimeoutSeconds(5);
-        request.setReadTimeoutSeconds(5);
         try {
-            assertInstanceOf(CommitOutcome.Excluded.class, AnalysisEngine.commitRun(request, AnalysisEngine.server(request, LOG), args(commit), LOGS).run());
+            RunArgs args = args(commit);
+            assertInstanceOf(CommitOutcome.Excluded.class, AnalysisEngine.commitRun(request, AnalysisEngine.server(request, args, LOG), args, LOGS).run());
         } finally {
             server.stop(0);
         }
@@ -242,7 +238,8 @@ class AnalysisEngineDegradedTest {
         AnalysisRequest request = request();
         request.setCompilerCrash("App.java:4: error: An unhandled exception was thrown by the Error Prone static analysis plugin.");
 
-        CommitOutcome.Halted halted = assertInstanceOf(CommitOutcome.Halted.class, AnalysisEngine.commitRun(request, AnalysisEngine.server(request, LOG), args(commit), LOGS).run());
+        RunArgs args = args(commit);
+        CommitOutcome.Halted halted = assertInstanceOf(CommitOutcome.Halted.class, AnalysisEngine.commitRun(request, AnalysisEngine.server(request, args, LOG), args, LOGS).run());
 
         assertTrue(Strings.CS.contains(halted.getCause().getMessage(), "An unhandled exception was thrown by the Error Prone static analysis plugin"), halted.getCause().getMessage());
     }
@@ -262,6 +259,8 @@ class AnalysisEngineDegradedTest {
         toReturn.setGit(repository);
         toReturn.setCommitId(commit.getName());
         toReturn.setReviewEnabled(false);
+        toReturn.setConnectTimeout(Duration.ofSeconds(5));
+        toReturn.setReadTimeout(Duration.ofSeconds(5));
         return toReturn;
     }
     private RevCommit commit(String path, String content) throws Exception {

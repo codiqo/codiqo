@@ -4,6 +4,11 @@ import io.codiqo.api.RunArgs;
 import lombok.Getter;
 import lombok.Setter;
 
+/**
+ * The {@code codiqo { }} block. A property named after a setting ({@link GradleSettings}) has no default: one left
+ * unset keeps the {@link RunArgs} default, and a {@code -P} property of the setting's name wins over it. The others are
+ * the plugin's own: the login, the forked JVM's heap, the index window and the test tasks' failure handling.
+ */
 @Getter
 @Setter
 public class CodiqoExtension {
@@ -12,8 +17,8 @@ public class CodiqoExtension {
     /** where the browser login ({@code codiqoLogin}) signs in; a run without {@code apiKey} uses that login */
     private String authUrl = RunArgs.DEFAULT_AUTH_URL;
     private String resourceUrl = RunArgs.DEFAULT_RESOURCE_URL;
-    private long connectTimeoutSeconds = 30;
-    private long readTimeoutSeconds = 60;
+    private Long connectTimeoutSeconds;
+    private Long readTimeoutSeconds;
 
     private String javaHome;
     private String jdtlsJavaHome;
@@ -32,7 +37,7 @@ public class CodiqoExtension {
     /** where the resolved language-server version lands for the job's cache key; the GitHub Action reads it */
     private String indexMetadataFile;
 
-    private boolean skipOnBuildFailure = true;
+    private Boolean skipOnBuildFailure;
 
     /**
      * Hidden-source mode, as on Maven: nothing sent to Codiqo carries source code, and identifiers are hashed with
@@ -43,9 +48,9 @@ public class CodiqoExtension {
 
     /**
      * Local mode, as on Maven: OpenCode agents review and assess every analysed commit next to the analysis, and the
-     * server scores it from that assessment alone. Each review setting left unset keeps its {@link RunArgs} default.
+     * server scores it from that assessment alone.
      */
-    private boolean review = true;
+    private Boolean review;
     private String reviewExecutable;
     private String reviewBaseUrl;
     private String reviewCoordinatorModel;
@@ -58,35 +63,35 @@ public class CodiqoExtension {
     /** where the review's trace of every session and tool call goes; unset, the analysis's output directory */
     private String reviewTraceDirectory;
 
-    private boolean firstParentOnly = true;
-    private boolean excludeRevertedCommits = true;
+    private Boolean firstParentOnly;
+    private Boolean excludeRevertedCommits;
     private String includeBranches;
     private String includeAuthorEmails;
-    private String excludeAuthorEmails = "*bot*";
+    private String excludeAuthorEmails;
 
-    private boolean ignoreCoverage;
-    private boolean ignoreCpd;
+    private Boolean ignoreCoverage;
+    private Boolean ignoreCpd;
     private String excludeProjects;
     private String excludePaths;
-    private boolean ignoreDiagnostics;
-    private boolean ignoreComplexity;
-    private boolean hotspots = true;
+    private Boolean ignoreDiagnostics;
+    private Boolean ignoreComplexity;
+    private Boolean hotspots;
 
-    private long testTimeoutMinutes = 30;
+    private Long testTimeoutMinutes;
     private Long perTestTimeoutMinutes;
     private boolean ignoreTestFailures = true;
 
-    private String jdtlsVersion = "1.63.0";
-    private boolean jdtlsUseSnapshot;
-    private boolean jdtUseSharedIndex = true;
-    private boolean jdtIncludeDecompiledSources;
-    private boolean jdtLombokAgent = true;
-    private long importTimeoutMinutes = 15;
-    private long lspQueryTimeoutSeconds = 30;
+    private String jdtlsVersion;
+    private Boolean jdtlsUseSnapshot;
+    private Boolean jdtUseSharedIndex;
+    private Boolean jdtIncludeDecompiledSources;
+    private Boolean jdtLombokAgent;
+    private Long importTimeoutMinutes;
+    private Long lspQueryTimeoutSeconds;
 
-    private boolean failOnJdtlsError;
-    private boolean failOnUninstrumentedModule = true;
-    /** unset keeps RunArgs' threshold; 1 or more turns the check off for a project whose tests need what CI lacks */
+    private Boolean failOnJdtlsError;
+    private Boolean failOnUninstrumentedModule;
+    /** 1 or more turns the check off for a project whose tests need what CI lacks */
     private String testFailureHoldShare;
     private String testFailureHoldMinTests;
 }
