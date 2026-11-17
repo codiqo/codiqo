@@ -20,7 +20,7 @@ class RunArgsHotspotsCommitTest {
         assertFalse(args.isHotspotsCommit());
     }
     @Test
-    void anUncommittedChangesRunIsNeverTheHotspotsCommit() {
+    void aRunWithNeitherIdIsNeverTheHotspotsCommit() {
         assertFalse(new RunArgs().isHotspotsCommit());
     }
 }

@@ -37,7 +37,7 @@ class WorkingTreeCommitTest {
             write("build/Out.java", "class Out {}\n");
             Status before = git.status().call();
 
-            String sha = WorkingTreeCommit.create(workTree, true);
+            String sha = WorkingTreeCommit.create(git.getRepository(), true);
 
             try (RevWalk walk = new RevWalk(git.getRepository())) {
                 RevCommit snapshot = walk.parseCommit(ObjectId.fromString(sha));
@@ -60,7 +60,7 @@ class WorkingTreeCommitTest {
             git.commit().setMessage("first").setAuthor("dev", "dev@example.test").setCommitter("dev", "dev@example.test").call();
             write("Bar.java", "class Bar {}\n");
 
-            String sha = WorkingTreeCommit.create(workTree, false);
+            String sha = WorkingTreeCommit.create(git.getRepository(), false);
 
             try (RevWalk walk = new RevWalk(git.getRepository())) {
                 assertFalse(paths(git, walk.parseCommit(ObjectId.fromString(sha))).contains("Bar.java"));

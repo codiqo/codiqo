@@ -1584,10 +1584,14 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   stays the author's. Each cause a resolve failure bundles, nested ones included, is classified on its own.
   `submit-commit-analysis` runs the
   same `CommitRun`, with Maven's two-phase fork and time-machine ladder behind `MavenCommitBuild`.
-- **Uncommitted changes are reviewed too** (`analyze-uncommitted-changes`, when it submits): `WorkingTreeCommit` makes a
-  commit object of the working tree through a throwaway index (untracked files as the analysis reads them, `.gitignore`
-  respected; the developer's index, files, branches and stash untouched), and `LocalReviewRun`, which runs the review of
-  a submitted commit as well, reviews it beside the analysis. A review that fails fails the goal and sends nothing.
+- **Uncommitted changes are a commit too** (`analyze-uncommitted-changes`): `WorkingTreeCommit` makes a commit object
+  of the working tree through a throwaway copy of the developer's index (a staged new file included, untracked files as
+  the run includes them, `.gitignore` respected; the developer's index, files, branches and stash untouched), authored
+  by the developer's git identity, which the server attributes an uncommitted analysis by, with HEAD as its parent, or
+  none in a repository with no commit yet. The analysis reads it through the commit path like any commit, so renames,
+  re-indents and line filters follow the same rules; never diff the working tree on a path of its own. When the goal
+  submits, `LocalReviewRun`, which runs the review of a submitted commit as well, reviews the same commit beside the
+  analysis. A review that fails fails the goal and sends nothing.
 - **A build the author broke does not exclude a commit whose review started** (`CommitRun`, `BuildVerdict.isAuthors`):
   with `codiqo.skipOnBuildFailure` on (the default; off, a failed build fails the run), a `BUILD_FAILURE` that is not a
   timeout goes the degraded path (there is no other way to score a failed build), as a source-only submission carrying

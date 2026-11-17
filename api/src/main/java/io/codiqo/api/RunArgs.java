@@ -166,9 +166,9 @@ public class RunArgs {
     private static final int JDTLS_LATEST_PREVIEW = 120;
 
     /**
-     * The commit under analysis, or blank for an uncommitted-changes run against the working tree. Blank disables
-     * every path that needs a reproducible checkout: no forked build, no time machine, and no build-failure
-     * degradation — those all gate on a commit being present.
+     * The commit under analysis. An uncommitted-changes run names a commit of the working tree (the Maven plugin's
+     * {@code WorkingTreeCommit}), which the analysis reads like any commit; it builds nothing, so the forked build and
+     * the time machine, which gate on a commit being present, are never reached from it.
      */
     @Nullable
     private String commitId;
@@ -1729,9 +1729,9 @@ public class RunArgs {
     }
     public boolean isHotspotsCommit() {
         /**
-         * An uncommitted-changes run has no commit, so both ids can be null there. The explicit null check keeps
-         * null from matching null: a plain Objects.equals would treat a working-tree run as the hotspots commit and
-         * rank hotspots for code that was never committed.
+         * Only a run told which commit is the tip ranks hotspots: the explicit null check keeps null from matching
+         * null, so a run with neither id, which a plain Objects.equals would match, never ranks them. An
+         * uncommitted-changes run names a commit of the working tree, which no hotspots tip is.
          */
         return hotspotsEnabled && Objects.nonNull(hotspotsCommitId) && hotspotsCommitId.equals(commitId);
     }
