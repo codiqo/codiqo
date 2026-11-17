@@ -2,7 +2,6 @@ package io.codiqo.maven;
 
 import java.io.File;
 import java.io.IOException;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -15,6 +14,7 @@ import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.maven.plugin.AbstractMojo;
+import org.apache.maven.plugin.MojoExecution;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
@@ -90,6 +90,13 @@ public class ReviewCommitMojo extends AbstractMojo {
     @Parameter(property = "codiqo.review.timeoutMinutes")
     private Integer timeoutMinutes;
 
+    /** the review agents' sampling, which the relay sets on every call; a direct endpoint's model may want its own */
+    @Parameter(property = "codiqo.review.temperature")
+    private Double temperature;
+
+    @Parameter(property = "codiqo.review.topP")
+    private Double topP;
+
     /** retries of a call through the relay, to the Codiqo proxy or a direct endpoint, that failed on the way (network error, timeout, 429 or 5xx) */
     @Parameter(property = "codiqo.review.relayRetries")
     private Integer relayRetries;
@@ -117,6 +124,10 @@ public class ReviewCommitMojo extends AbstractMojo {
     @Parameter(property = "codiqo.review.submission")
     private File submission;
 
+    /** the descriptor Maven runs this goal with, which names the property each setting's parameter reads */
+    @Parameter(defaultValue = "${mojoExecution}", readonly = true, required = true)
+    private MojoExecution mojoExecution;
+
     @Parameter(property = "codiqo.apiKey")
     private String apiKey;
 
@@ -128,15 +139,7 @@ public class ReviewCommitMojo extends AbstractMojo {
 
     @Override
     public void execute() throws MojoExecutionException {
-        RunArgs args = new RunArgs();
-        args.setReviewTraceDirectory(Optional.ofNullable(traceDirectory).orElse(output.getAbsoluteFile().getParentFile()));
-        Optional.ofNullable(executable).ifPresent(args::setReviewExecutable);
-        Optional.ofNullable(baseUrl).ifPresent(args::setReviewBaseUrl);
-        Optional.ofNullable(coordinatorModel).ifPresent(args::setReviewCoordinatorModel);
-        Optional.ofNullable(reviewerModel).ifPresent(args::setReviewReviewerModel);
-        Optional.ofNullable(timeoutMinutes).ifPresent(minutes -> args.setReviewTimeout(Duration.ofMinutes(minutes)));
-        Optional.ofNullable(relayRetries).ifPresent(args::setReviewRelayRetries);
-        Optional.ofNullable(relayTimeoutSeconds).ifPresent(seconds -> args.setReviewRelayRequestTimeout(Duration.ofSeconds(seconds)));
+        RunArgs args = MojoSettings.runArgs(this, mojoExecution, defaults -> defaults.setReviewTraceDirectory(output.getAbsoluteFile().getParentFile()));
 
         ReviewEndpoint endpoint = new ReviewEndpoint(args.getReviewBaseUrl(), null, null);
         if (endpoint.isProxiedBy(resourceUrl)) {

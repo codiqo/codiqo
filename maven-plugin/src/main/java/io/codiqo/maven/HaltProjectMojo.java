@@ -9,6 +9,7 @@ import java.util.Objects;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.maven.plugin.AbstractMojo;
+import org.apache.maven.plugin.MojoExecution;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
@@ -61,11 +62,15 @@ public class HaltProjectMojo extends AbstractMojo {
     @Parameter(property = "codiqo.haltLogFile")
     private File logFile;
 
-    @Parameter(property = "codiqo.connectTimeoutSeconds", defaultValue = "30")
-    private long connectTimeoutSeconds;
+    @Parameter(property = "codiqo.connectTimeoutSeconds")
+    private Long connectTimeoutSeconds;
 
-    @Parameter(property = "codiqo.readTimeoutSeconds", defaultValue = "60")
-    private long readTimeoutSeconds;
+    @Parameter(property = "codiqo.readTimeoutSeconds")
+    private Long readTimeoutSeconds;
+
+    /** the descriptor Maven runs this goal with, which names the property each setting's parameter reads */
+    @Parameter(defaultValue = "${mojoExecution}", readonly = true, required = true)
+    private MojoExecution mojoExecution;
 
     /** hidden-source mode drops the log tail, a build log quoting the code it compiled, and needs no key to do it */
     @Parameter(property = "codiqo.sourceHidden")
@@ -73,10 +78,16 @@ public class HaltProjectMojo extends AbstractMojo {
 
     @Override
     public void execute() throws MojoExecutionException {
+        RunArgs args = MojoSettings.runArgs(this, mojoExecution);
+
         try (Repository repo = JGit.openRepository(project.getBasedir())) {
             boolean halted = ProjectHalts.halt(
                     new MavenMessageReporter(getLog()),
-                    CommitIndexPublisher.buildClient(apiUrl, MavenCredentials.resolve(apiKey, authUrl, resourceUrl, getLog()), connectTimeoutSeconds, readTimeoutSeconds),
+                    CommitIndexPublisher.buildClient(
+                            apiUrl,
+                            MavenCredentials.resolve(apiKey, authUrl, resourceUrl, getLog()),
+                            args.getConnectTimeout().toSeconds(),
+                            args.getReadTimeout().toSeconds()),
                     apiUrl,
                     project.getGroupId() + ":" + project.getArtifactId(),
                     JGit.resolveCommit(repo, commitId),

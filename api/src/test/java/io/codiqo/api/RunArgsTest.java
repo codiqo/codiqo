@@ -2,7 +2,6 @@ package io.codiqo.api;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -11,35 +10,14 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
-import org.apache.commons.cli.CommandLine;
-import org.apache.commons.cli.DefaultParser;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import net.sourceforge.pmd.lang.rule.RulePriority;
 
-class RunArgsCliTest {
-    @Test
-    void optionsParseWithNoArguments() throws Exception {
-        // static constants must not surface as (required) CLI options
-        CommandLine cmd = new DefaultParser().parse(RunArgs.options(), new String[0]);
-        assertNotNull(cmd);
-        assertFalse(cmd.hasOption("default-api-url"));
-    }
-    @Test
-    void boxedNumericOptionsAreApplied() throws Exception {
-        CommandLine cmd = new DefaultParser().parse(RunArgs.options(), new String[]{
-                "--llm-max-retries", "5",
-                "--llm-max-tokens", "1024",
-                "--llm-temperature", "0.5"});
-
-        RunArgs args = RunArgs.from(cmd);
-
-        assertEquals((short) 5, args.getLlmMaxRetries());
-        assertEquals(1024, args.getLlmMaxTokens());
-        assertEquals(0.5, args.getLlmTemperature(), 0.001);
-    }
+class RunArgsTest {
     @Test
     void perTestTimeoutDerivesHalfOfTestTimeoutWhenUnset() {
         RunArgs args = new RunArgs();
@@ -111,18 +89,14 @@ class RunArgsCliTest {
         assertTrue(err.getMessage().contains("MEDIUM_HIGH"));
     }
     @Test
-    void perTestTimeoutHonorsExplicitValue() throws Exception {
-        CommandLine cmd = new DefaultParser().parse(RunArgs.options(), new String[]{"--per-test-timeout", "PT3M"});
-
-        RunArgs args = RunArgs.from(cmd);
+    void perTestTimeoutHonorsExplicitValue() {
+        RunArgs args = boundWith("codiqo.perTestTimeoutMinutes", "3");
 
         assertEquals(Duration.ofMinutes(3), args.getPerTestTimeout());
     }
     @Test
-    void perTestTimeoutZeroStaysDisabledAndIsNotDerived() throws Exception {
-        CommandLine cmd = new DefaultParser().parse(RunArgs.options(), new String[]{"--per-test-timeout", "PT0S"});
-
-        RunArgs args = RunArgs.from(cmd);
+    void perTestTimeoutZeroStaysDisabledAndIsNotDerived() {
+        RunArgs args = boundWith("codiqo.perTestTimeoutMinutes", "0");
 
         assertEquals(Duration.ZERO, args.getPerTestTimeout());
     }
@@ -136,12 +110,17 @@ class RunArgsCliTest {
         assertEquals(Duration.ofMinutes(15), args.getPerTestTimeout());
     }
     @Test
-    void perTestTimeoutExplicitValueAboveCapIsClamped() throws Exception {
-        CommandLine cmd = new DefaultParser().parse(RunArgs.options(), new String[]{"--per-test-timeout", "PT40M"});
-
-        RunArgs args = RunArgs.from(cmd);
+    void perTestTimeoutExplicitValueAboveCapIsClamped() {
+        RunArgs args = boundWith("codiqo.perTestTimeoutMinutes", "40");
 
         assertEquals(Duration.ofMinutes(15), args.getPerTestTimeout());
+    }
+    /** StringUtils.abbreviate throws below a width of 4, so a smaller limit would crash the capture of a build failure */
+    @Test
+    void aBuildErrorCaptureLimitBelowTheShortestAbbreviationIsRaisedToIt() {
+        RunArgs args = boundWith("codiqo.buildErrorCaptureLimit", "1");
+
+        assertEquals(4, args.getBuildErrorCaptureLimit());
     }
     @Test
     void jdtlsBaseUrlDefaultsToVersionedMilestones() {
@@ -188,6 +167,12 @@ class RunArgsCliTest {
         args.writeIndexMetadata(file);
 
         assertEquals(List.of("jdtlsVersion=1.58.0"), nonCommentLines(file));
+    }
+    private static RunArgs boundWith(String name, String value) {
+        RunArgs toReturn = new RunArgs();
+        Settings.bind(toReturn, Map.of(name, value));
+        toReturn.validate();
+        return toReturn;
     }
     private static List<String> nonCommentLines(Path file) throws Exception {
         return Files.readAllLines(file).stream().filter(line -> !line.startsWith("#")).toList();

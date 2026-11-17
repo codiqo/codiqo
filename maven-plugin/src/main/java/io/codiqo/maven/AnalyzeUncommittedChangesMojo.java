@@ -58,8 +58,8 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
     /** short enough that an interactive run feels responsive, long enough not to hammer the API while scoring runs */
     private static final Duration POLL_INTERVAL = Duration.ofSeconds(3);
 
-    @Parameter(property = "codiqo.include.untracked", defaultValue = "true")
-    private boolean includeUntracked;
+    @Parameter(property = "codiqo.include.untracked")
+    private Boolean includeUntracked;
 
     @Parameter(property = "codiqo.apiUrl", defaultValue = RunArgs.DEFAULT_API_URL)
     private String apiUrl;
@@ -101,15 +101,12 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
     protected void doPrepare(RunArgs args) throws Exception {
         super.doPrepare(args);
 
-        args.setIncludeUntracked(includeUntracked);
-        applyReviewSettings(args);
-
         server = new HttpCodiqoServer(
                 apiUrl,
                 resourceUrl,
                 this::credential,
-                connectTimeoutSeconds,
-                readTimeoutSeconds,
+                args.getConnectTimeout().toSeconds(),
+                args.getReadTimeout().toSeconds(),
                 project.getGroupId() + ":" + project.getArtifactId(),
                 sourceHiding(),
                 new MavenMessageReporter(getLog()));
@@ -141,7 +138,7 @@ public class AnalyzeUncommittedChangesMojo extends AbstractAnalyzeMojo {
     private void startReview(RunArgs args) throws Exception {
         if (BooleanUtils.and(new boolean[] { submit, args.isReviewEnabled() })) {
             Path workTree = args.getGit().getWorkTree().toPath();
-            String sha = WorkingTreeCommit.create(workTree, includeUntracked);
+            String sha = WorkingTreeCommit.create(workTree, args.isIncludeUntracked());
             if (CommitExclusions.hasAnalyzableFile(JGit.changedFileNames(args.getGit(), sha), DefaultLanguageProcessors.supportedExtensions())) {
                 /**
                  * Here, while the developer is at the terminal: the review asks for the project's tags on its own

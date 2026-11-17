@@ -73,8 +73,8 @@ public class SubmitCommitAnalysisMojo extends AbstractAnalyzeMojo {
     @Parameter(property = "codiqo.commitId", required = true)
     private String commitId;
 
-    @Parameter(property = "codiqo.firstParentOnly", defaultValue = "true")
-    private boolean firstParentOnly;
+    @Parameter(property = "codiqo.firstParentOnly")
+    private Boolean firstParentOnly;
 
     @Parameter(property = "codiqo.apiUrl", defaultValue = RunArgs.DEFAULT_API_URL)
     private String apiUrl;
@@ -100,21 +100,19 @@ public class SubmitCommitAnalysisMojo extends AbstractAnalyzeMojo {
 
         requireResolvableCommit(args, commitId);
         args.setCommitId(JGit.resolveCommit(args.getGit(), commitId));
-        args.setFirstParentOnly(firstParentOnly);
         /**
          * Resolved here, against the user's repository: once the clone checks the analyzed commit out, HEAD means that
          * commit itself, so resolving later would rank hotspots at the analyzed commit instead of the run's tip.
          */
         args.setHotspotsCommitId(JGit.resolveCommit(args.getGit(), StringUtils.defaultIfBlank(args.getHotspotsCommitId(), Constants.HEAD)));
-        applyReviewSettings(args);
 
         /** the project is the root POM's {@code groupId:artifactId}, the code its submissions name it by */
         server = new HttpCodiqoServer(
                 apiUrl,
                 resourceUrl,
                 () -> MavenCredentials.resolve(apiKey, authUrl, resourceUrl, getLog()),
-                connectTimeoutSeconds,
-                readTimeoutSeconds,
+                args.getConnectTimeout().toSeconds(),
+                args.getReadTimeout().toSeconds(),
                 project.getGroupId() + ":" + project.getArtifactId(),
                 sourceHiding(),
                 new MavenMessageReporter(getLog()));

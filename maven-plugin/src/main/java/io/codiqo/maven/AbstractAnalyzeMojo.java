@@ -59,6 +59,7 @@ import org.apache.maven.artifact.ArtifactUtils;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.AbstractMojo;
+import org.apache.maven.plugin.MojoExecution;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Parameter;
@@ -175,11 +176,10 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     private static final long FORK_EXIT_GRACE_SECONDS = 120L;
 
     /**
-     * The build-error capture limit is passed to StringUtils.abbreviate, which throws IllegalArgumentException for a
-     * width below 4 (the shortest abbreviation is "a..."). The configured limit is clamped to this floor so a small
-     * codiqo.buildErrorCaptureLimit cannot turn the capture of a build failure into a crash of its own.
+     * The directory in the build's output where the plugin writes what it leaves behind, the review's trace among
+     * them: Maven names the build's output directory, so the default comes from the project rather than from RunArgs.
      */
-    private static final int MIN_ABBREVIATE_WIDTH = 4;
+    private static final String CODIQO_BUILD_DIRECTORY = "codiqo";
 
     private Collection<File> timeMachineExtensionJars;
     private Collection<File> coverageInjectorJars;
@@ -210,14 +210,18 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     @Parameter(defaultValue = "${project.remotePluginRepositories}", readonly = true)
     protected List<RemoteRepository> remotePluginRepos;
 
+    /** the descriptor Maven runs this goal with, which names the property each setting's parameter reads */
+    @Parameter(defaultValue = "${mojoExecution}", readonly = true, required = true)
+    private MojoExecution mojoExecution;
+
     @Parameter(property = "codiqo.javaHome")
-    protected File javaHome;
+    private File javaHome;
 
     @Parameter(property = "codiqo.jdtlsJavaHome")
-    protected File jdtlsJavaHome;
+    private File jdtlsJavaHome;
 
     @Parameter(property = "codiqo.mavenHome")
-    protected File mavenHome;
+    private File mavenHome;
 
     /**
      * MAVEN_OPTS for the forked per-commit build. Unset, the fork inherits this JVM's MAVEN_OPTS, so the analysis heap
@@ -230,91 +234,91 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     @Parameter(property = "codiqo.preferYaml", defaultValue = "true")
     protected boolean preferYaml;
 
-    @Parameter(property = "codiqo.buildTimeoutMinutes", defaultValue = "45")
-    protected long buildTimeoutMinutes;
+    @Parameter(property = "codiqo.buildTimeoutMinutes")
+    private Long buildTimeoutMinutes;
 
     /**
      * a file the forked build's event spy appends one line to per reactor module started and finished, for a watcher
      * outside the build to report progress from. the caller owns the file; unset, nothing is written.
      */
     @Parameter(property = "codiqo.buildProgressFile")
-    protected File buildProgressFile;
+    private File buildProgressFile;
 
-    @Parameter(property = "codiqo.testTimeoutMinutes", defaultValue = "30")
-    protected long testTimeoutMinutes;
+    @Parameter(property = "codiqo.testTimeoutMinutes")
+    private Long testTimeoutMinutes;
 
     @Parameter(property = "codiqo.perTestTimeoutMinutes")
-    protected Long perTestTimeoutMinutes;
+    private Long perTestTimeoutMinutes;
 
-    @Parameter(property = "codiqo.importTimeoutMinutes", defaultValue = "15")
-    protected long importTimeoutMinutes;
+    @Parameter(property = "codiqo.importTimeoutMinutes")
+    private Long importTimeoutMinutes;
 
-    @Parameter(property = "codiqo.lspQueryTimeoutSeconds", defaultValue = "30")
-    protected long lspQueryTimeoutSeconds;
+    @Parameter(property = "codiqo.lspQueryTimeoutSeconds")
+    private Long lspQueryTimeoutSeconds;
 
-    @Parameter(property = "codiqo.connectTimeoutSeconds", defaultValue = "30")
-    protected long connectTimeoutSeconds;
+    @Parameter(property = "codiqo.connectTimeoutSeconds")
+    private Long connectTimeoutSeconds;
 
-    @Parameter(property = "codiqo.readTimeoutSeconds", defaultValue = "60")
-    protected long readTimeoutSeconds;
+    @Parameter(property = "codiqo.readTimeoutSeconds")
+    private Long readTimeoutSeconds;
 
-    @Parameter(property = "codiqo.maxRequests", defaultValue = "256")
-    protected int maxRequests;
+    @Parameter(property = "codiqo.maxRequests")
+    private Integer maxRequests;
 
-    @Parameter(property = "codiqo.maxRequestsPerHost", defaultValue = "128")
-    protected int maxRequestsPerHost;
+    @Parameter(property = "codiqo.maxRequestsPerHost")
+    private Integer maxRequestsPerHost;
 
-    @Parameter(property = "codiqo.cpdMinimumTileSize", defaultValue = "64")
-    protected int cpdMinimumTileSize;
+    @Parameter(property = "codiqo.cpdMinimumTileSize")
+    private Integer cpdMinimumTileSize;
 
-    @Parameter(property = "codiqo.cpdIgnoreIdentifiers", defaultValue = "true")
-    protected boolean cpdIgnoreIdentifiers;
+    @Parameter(property = "codiqo.cpdIgnoreIdentifiers")
+    private Boolean cpdIgnoreIdentifiers;
 
-    @Parameter(property = "codiqo.diffContextLines", defaultValue = "10")
-    protected int diffContextLines;
+    @Parameter(property = "codiqo.diffContextLines")
+    private Integer diffContextLines;
 
-    @Parameter(property = "codiqo.jdtlsVersion", defaultValue = "1.63.0")
-    protected String jdtlsVersion;
+    @Parameter(property = "codiqo.jdtlsVersion")
+    private String jdtlsVersion;
 
-    @Parameter(property = "codiqo.jdtlsUseSnapshot", defaultValue = "false")
-    protected boolean jdtlsUseSnapshot;
+    @Parameter(property = "codiqo.jdtlsUseSnapshot")
+    private Boolean jdtlsUseSnapshot;
 
-    @Parameter(property = "codiqo.dumpAnalysis", defaultValue = "true")
-    protected boolean dumpAnalysis;
+    @Parameter(property = "codiqo.dumpAnalysis")
+    private Boolean dumpAnalysis;
 
-    @Parameter(property = "codiqo.ignoreCoverage", defaultValue = "false")
-    protected boolean ignoreCoverage;
+    @Parameter(property = "codiqo.ignoreCoverage")
+    private Boolean ignoreCoverage;
 
-    @Parameter(property = "codiqo.failOnUninstrumentedModule", defaultValue = "true")
-    protected boolean failOnUninstrumentedModule;
+    @Parameter(property = "codiqo.failOnUninstrumentedModule")
+    private Boolean failOnUninstrumentedModule;
 
     /** overrides RunArgs.testFailureHoldShare when set; 1 or more turns the check off for a project whose tests need what CI lacks */
     @Parameter(property = "codiqo.testFailureHoldShare")
-    protected Double testFailureHoldShare;
+    private Double testFailureHoldShare;
 
     @Parameter(property = "codiqo.testFailureHoldMinTests")
-    protected Integer testFailureHoldMinTests;
+    private Integer testFailureHoldMinTests;
 
-    @Parameter(property = "codiqo.ignoreCpd", defaultValue = "false")
-    protected boolean ignoreCpd;
+    @Parameter(property = "codiqo.ignoreCpd")
+    private Boolean ignoreCpd;
 
-    @Parameter(property = "codiqo.ignoreDiagnostics", defaultValue = "false")
-    protected boolean ignoreDiagnostics;
+    @Parameter(property = "codiqo.ignoreDiagnostics")
+    private Boolean ignoreDiagnostics;
 
-    @Parameter(property = "codiqo.ignoreComplexity", defaultValue = "false")
-    protected boolean ignoreComplexity;
+    @Parameter(property = "codiqo.ignoreComplexity")
+    private Boolean ignoreComplexity;
 
-    @Parameter(property = "codiqo.hotspots", defaultValue = "true")
-    protected boolean hotspots;
+    @Parameter(property = "codiqo.hotspots")
+    private Boolean hotspots;
 
     @Parameter(property = "codiqo.hotspotsCommitId")
-    protected String hotspotsCommitId;
+    private String hotspotsCommitId;
 
-    @Parameter(property = "codiqo.failOnJdtlsError", defaultValue = "false")
-    protected boolean failOnJdtlsError;
+    @Parameter(property = "codiqo.failOnJdtlsError")
+    private Boolean failOnJdtlsError;
 
-    @Parameter(property = "codiqo.skipOnBuildFailure", defaultValue = "true")
-    protected boolean skipOnBuildFailure;
+    @Parameter(property = "codiqo.skipOnBuildFailure")
+    private Boolean skipOnBuildFailure;
 
     /**
      * Hidden-source mode: nothing sent to Codiqo carries source code, and identifiers are hashed with
@@ -372,101 +376,97 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     private Integer reviewRelayTimeoutSeconds;
 
     /** where the review's trace of every session and tool call goes */
-    @Parameter(property = "codiqo.review.traceDirectory", defaultValue = "${project.build.directory}/codiqo")
+    @Parameter(property = "codiqo.review.traceDirectory")
     private File reviewTraceDirectory;
 
-    @Parameter(property = "codiqo.excludeRevertedCommits", defaultValue = "true")
-    protected boolean excludeRevertedCommits;
+    @Parameter(property = "codiqo.excludeRevertedCommits")
+    private Boolean excludeRevertedCommits;
 
-    @Parameter(property = "codiqo.buildErrorCaptureLimit", defaultValue = "8192")
-    protected int buildErrorCaptureLimit;
+    @Parameter(property = "codiqo.buildErrorCaptureLimit")
+    private Integer buildErrorCaptureLimit;
 
-    @Parameter(property = "codiqo.pmdMinPriority", defaultValue = "high")
-    protected String pmdMinPriority;
+    @Parameter(property = "codiqo.pmdMinPriority")
+    private String pmdMinPriority;
 
     @Parameter(property = "codiqo.pmdRules")
-    protected String pmdRules;
+    private String pmdRules;
 
-    @Parameter(property = "codiqo.spotbugsPriorityThreshold", defaultValue = "1")
-    protected int spotbugsPriorityThreshold;
+    @Parameter(property = "codiqo.spotbugsPriorityThreshold")
+    private Integer spotbugsPriorityThreshold;
 
     @Parameter(property = "codiqo.spotbugsOmitVisitors")
-    protected String spotbugsOmitVisitors;
+    private String spotbugsOmitVisitors;
 
-    @Parameter(property = "codiqo.llm.temperature", defaultValue = "0.0")
-    protected double llmTemperature;
+    @Parameter(property = "codiqo.llm.temperature")
+    private Double llmTemperature;
 
     @Parameter(property = "codiqo.llm.conventionFiles")
-    protected String llmConventionFiles;
+    private String llmConventionFiles;
 
-    @Parameter(property = "codiqo.llm.autoDiscoveryAgentInstructions", defaultValue = "true")
-    protected boolean autoDiscoveryAgentInstructions;
+    @Parameter(property = "codiqo.llm.autoDiscoveryAgentInstructions")
+    private Boolean autoDiscoveryAgentInstructions;
 
-    /**
-     * Maximum characters of convention files sent to the LLM. The default of -1 marks "unset" and keeps the RunArgs
-     * default; only a value of 0 or more is forwarded. 0 is a real setting that disables instruction loading, so it
-     * must not double as the "unset" marker or an explicit 0 would be swallowed.
-     */
-    @Parameter(property = "codiqo.llm.conventionFilesMaxChars", defaultValue = "-1")
-    protected int llmConventionFilesMaxChars;
+    /** maximum characters of convention files sent to the LLM; 0 disables instruction loading */
+    @Parameter(property = "codiqo.llm.conventionFilesMaxChars")
+    private Integer llmConventionFilesMaxChars;
 
-    @Parameter(property = "codiqo.llm.seed", defaultValue = "42")
-    protected Integer llmSeed;
+    @Parameter(property = "codiqo.llm.seed")
+    private Integer llmSeed;
 
     @Parameter(property = "codiqo.outputDirectory")
-    protected File outputDirectory;
+    private File outputDirectory;
 
     @Parameter(property = "codiqo.includeBranches")
-    protected String includeBranches;
+    private String includeBranches;
 
     @Parameter(property = "codiqo.includeAuthorEmails")
-    protected String includeAuthorEmails;
+    private String includeAuthorEmails;
 
     @Parameter(property = "codiqo.excludeAuthorEmails")
-    protected String excludeAuthorEmails;
+    private String excludeAuthorEmails;
 
     @Parameter(property = "codiqo.excludeProjects")
-    protected String excludeProjects;
+    private String excludeProjects;
 
     @Parameter(property = "codiqo.excludePaths")
-    protected String excludePaths;
+    private String excludePaths;
 
-    @Parameter(property = "codiqo.jdtUseSharedIndex", defaultValue = "true")
-    protected boolean jdtUseSharedIndex;
+    @Parameter(property = "codiqo.jdtUseSharedIndex")
+    private Boolean jdtUseSharedIndex;
 
-    @Parameter(property = "codiqo.jdtIncludeDecompiledSources", defaultValue = "false")
-    protected boolean jdtIncludeDecompiledSources;
+    @Parameter(property = "codiqo.jdtIncludeDecompiledSources")
+    private Boolean jdtIncludeDecompiledSources;
 
     @Parameter(property = "codiqo.jdtLombokAgent")
-    protected Boolean jdtLombokAgent;
+    private Boolean jdtLombokAgent;
 
     @Parameter(property = "codiqo.jdtDebugPort")
-    protected Integer jdtDebugPort;
+    private Integer jdtDebugPort;
 
     @Parameter(property = "codiqo.jdtSourceExclusions",
             defaultValue = "org.scala-lang, org.apache.kafka, org.apache.pekko, org.apache.spark, org.apache.flink, com.typesafe.akka, com.typesafe, io.gatling, com.lightbend.lagom, com.twitter, org.json4s, org.scalactic, org.scalatest, org.jetbrains.kotlin, org.jetbrains.kotlinx, com.squareup.okhttp3, com.squareup.okio, org.junit.jupiter, org.springframework")
     protected String jdtSourceExclusions;
 
-    @Parameter(property = "codiqo.driverScoreCapMultiplier", defaultValue = "2.5")
-    protected double driverScoreCapMultiplier;
+    @Parameter(property = "codiqo.driverScoreCapMultiplier")
+    private Double driverScoreCapMultiplier;
 
-    @Parameter(property = "codiqo.driverFactorMaxDeviation", defaultValue = "0.75")
-    protected double driverFactorMaxDeviation;
+    @Parameter(property = "codiqo.driverFactorMaxDeviation")
+    private Double driverFactorMaxDeviation;
 
-    @Parameter(property = "codiqo.driverScoreCapDryRun", defaultValue = "false")
-    protected boolean driverScoreCapDryRun;
+    @Parameter(property = "codiqo.driverScoreCapDryRun")
+    private Boolean driverScoreCapDryRun;
 
-    @Parameter(property = "codiqo.timeMachineEnabled", defaultValue = "true")
-    protected boolean timeMachineEnabled;
+    @Parameter(property = "codiqo.timeMachineEnabled")
+    private Boolean timeMachineEnabled;
 
-    @Parameter(property = "codiqo.moveDetectionEnabled", defaultValue = "true")
-    protected boolean moveDetectionEnabled;
+    @Parameter(property = "codiqo.moveDetectionEnabled")
+    private Boolean moveDetectionEnabled;
 
-    @Parameter(property = "codiqo.moveSimilarityThreshold", defaultValue = "0.95")
-    protected double moveSimilarityThreshold;
+    @Parameter(property = "codiqo.moveSimilarityThreshold")
+    private Double moveSimilarityThreshold;
 
-    @Parameter(property = "codiqo.movedLineCoefficient", defaultValue = "0.25")
-    protected double movedLineCoefficient;
+    @Parameter(property = "codiqo.movedLineCoefficient")
+    private Double movedLineCoefficient;
 
     @Override
     @SuppressWarnings("deprecation")
@@ -501,77 +501,10 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     }
     @Override
     public final void execute() throws MojoExecutionException, MojoFailureException {
-        RunArgs args = new RunArgs();
-        Optional.ofNullable(javaHome).ifPresent(args::setJavaHome);
-        Optional.ofNullable(jdtlsJavaHome).ifPresent(args::setJdtlsJavaHome);
-        Optional.ofNullable(mavenHome).ifPresent(args::setMavenHome);
-        args.setBuildTimeout(Duration.ofMinutes(buildTimeoutMinutes));
-        args.setBuildProgressFile(buildProgressFile);
-        args.setTestTimeout(Duration.ofMinutes(testTimeoutMinutes));
-        Optional.ofNullable(perTestTimeoutMinutes).ifPresent(minutes -> args.setPerTestTimeout(Duration.ofMinutes(minutes)));
-        args.setImportTimeout(Duration.ofMinutes(importTimeoutMinutes));
-        args.setLspQueryTimeout(Duration.ofSeconds(lspQueryTimeoutSeconds));
-        args.setConnectTimeout(Duration.ofSeconds(connectTimeoutSeconds));
-        args.setReadTimeout(Duration.ofSeconds(readTimeoutSeconds));
-        args.setMaxRequests(maxRequests);
-        args.setMaxRequestsPerHost(maxRequestsPerHost);
-        args.setCpdMinimumTileSize(cpdMinimumTileSize);
-        args.setCpdIgnoreIdentifiers(cpdIgnoreIdentifiers);
-        args.setDiffContextLines(diffContextLines);
-        args.setJdtlsVersion(jdtlsVersion);
-        args.setJdtlsUseSnapshot(jdtlsUseSnapshot);
-        args.setDumpAnalysis(dumpAnalysis);
-        args.setIgnoreCoverage(ignoreCoverage);
-        args.setFailOnUninstrumentedModule(failOnUninstrumentedModule);
-        Optional.ofNullable(testFailureHoldShare).ifPresent(args::setTestFailureHoldShare);
-        Optional.ofNullable(testFailureHoldMinTests).ifPresent(args::setTestFailureHoldMinTests);
-        args.setIgnoreCpd(ignoreCpd);
-        args.setIgnoreDiagnostics(ignoreDiagnostics);
-        args.setIgnoreComplexity(ignoreComplexity);
-        args.setHotspotsEnabled(hotspots);
-        args.setHotspotsCommitId(hotspotsCommitId);
-        args.setFailOnJdtlsError(failOnJdtlsError);
-        args.setSkipOnBuildFailure(skipOnBuildFailure);
-        args.setExcludeRevertedCommits(excludeRevertedCommits);
-        args.setBuildErrorCaptureLimit(Math.max(MIN_ABBREVIATE_WIDTH, buildErrorCaptureLimit));
-        args.setPmdMinPriority(pmdMinPriority);
-        if (StringUtils.isNotBlank(pmdRules)) {
-            args.setPmdRules(Splitter.on(',').trimResults().omitEmptyStrings().splitToList(pmdRules));
-        }
-        args.setSpotbugsPriorityThreshold(spotbugsPriorityThreshold);
-        Optional.ofNullable(spotbugsOmitVisitors).ifPresent(args::setSpotbugsOmitVisitors);
-        args.setLlmTemperature(llmTemperature);
-        if (StringUtils.isNotBlank(llmConventionFiles)) {
-            args.setLlmConventionFiles(Splitter.on(',').trimResults().omitEmptyStrings().splitToList(llmConventionFiles));
-        }
-        args.setAutoDiscoveryAgentInstructions(autoDiscoveryAgentInstructions);
-        if (llmConventionFilesMaxChars >= 0) {
-            args.setLlmConventionFilesMaxChars(llmConventionFilesMaxChars);
-        }
-        args.setLlmSeed(llmSeed);
-        Optional.ofNullable(outputDirectory).ifPresent(args::setOutputDirectory);
-        Optional.ofNullable(includeBranches).ifPresent(args::setIncludeBranches);
-        Optional.ofNullable(includeAuthorEmails).ifPresent(args::setIncludeAuthorEmails);
-        Optional.ofNullable(excludeAuthorEmails).ifPresent(args::setExcludeAuthorEmails);
-        Optional.ofNullable(excludeProjects).ifPresent(args::setExcludeProjects);
-        Optional.ofNullable(excludePaths).ifPresent(args::setExcludePaths);
-        args.setBuildTool(BuildTool.MAVEN);
-        args.setJdtUseSharedIndex(jdtUseSharedIndex);
-        args.setJdtIncludeDecompiledSources(jdtIncludeDecompiledSources);
-        Optional.ofNullable(jdtLombokAgent).ifPresent(args::setJdtLombokAgent);
-        args.setJdtDebugPort(jdtDebugPort);
-
-        args.setDriverScoreCapMultiplier(driverScoreCapMultiplier);
-        args.setDriverFactorMaxDeviation(driverFactorMaxDeviation);
-        args.setDriverScoreCapDryRun(driverScoreCapDryRun);
-
-        args.setTimeMachineEnabled(timeMachineEnabled);
-
-        args.setMoveDetectionEnabled(moveDetectionEnabled);
-        args.setMoveSimilarityThreshold(moveSimilarityThreshold);
-        args.setMovedLineCoefficient(movedLineCoefficient);
-
-        args.validate();
+        RunArgs args = MojoSettings.runArgs(this, mojoExecution, defaults -> {
+            defaults.setBuildTool(BuildTool.MAVEN);
+            defaults.setReviewTraceDirectory(new File(project.getBuild().getDirectory(), CODIQO_BUILD_DIRECTORY));
+        });
         try (InputStream stream = getClass().getClassLoader().getResourceAsStream("codiqo.versions")) {
             if (Objects.isNull(stream)) {
                 throw new MojoExecutionException("resource not found on plugin classpath: codiqo.versions");
@@ -596,7 +529,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                 getLog().debug("build-failure eventspy resolution failed", err);
             }
 
-            if (BooleanUtils.negate(ignoreCoverage)) {
+            if (BooleanUtils.negate(args.isIgnoreCoverage())) {
                 /**
                  * agent resolution is best-effort: apply() sneaky-throws on an unresolvable artifact (offline build,
                  * private mirror without the runtime classifier), so catch it here and leave the jar null — coverage
@@ -828,11 +761,11 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         }
         request.setBatchMode(true);
         request.setThreads(String.valueOf(mavenSession.getRequest().getDegreeOfConcurrency()));
-        if (Objects.nonNull(javaHome)) {
-            request.setJavaHome(javaHome);
+        if (Objects.nonNull(args.getJavaHome())) {
+            request.setJavaHome(args.getJavaHome());
         }
-        if (Objects.nonNull(mavenHome)) {
-            request.setMavenHome(mavenHome);
+        if (Objects.nonNull(args.getMavenHome())) {
+            request.setMavenHome(args.getMavenHome());
         }
         applyForkMavenOpts(request, forkMavenOpts);
 
@@ -861,8 +794,8 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             reportFile.deleteOnExit();
             args.setBuildFailureReportFile(reportFile);
             props.setProperty(BuildFailureConfig.PROP_REPORT_FILE, reportFile.getAbsolutePath());
-            if (Objects.nonNull(buildProgressFile)) {
-                props.setProperty(BuildProgressConfig.PROP_PROGRESS_FILE, buildProgressFile.getAbsolutePath());
+            if (Objects.nonNull(args.getBuildProgressFile())) {
+                props.setProperty(BuildProgressConfig.PROP_PROGRESS_FILE, args.getBuildProgressFile().getAbsolutePath());
             }
         }
 
@@ -1395,20 +1328,6 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     }
     protected SourceHiding sourceHiding() {
         return hiding;
-    }
-    /** every review setting left unset keeps its {@link RunArgs} default; the review runs only where a goal starts it */
-    protected void applyReviewSettings(RunArgs args) {
-        Optional.ofNullable(review).ifPresent(args::setReviewEnabled);
-        Optional.ofNullable(reviewTraceDirectory).ifPresent(args::setReviewTraceDirectory);
-        Optional.ofNullable(reviewExecutable).ifPresent(args::setReviewExecutable);
-        Optional.ofNullable(reviewBaseUrl).ifPresent(args::setReviewBaseUrl);
-        Optional.ofNullable(reviewCoordinatorModel).ifPresent(args::setReviewCoordinatorModel);
-        Optional.ofNullable(reviewReviewerModel).ifPresent(args::setReviewReviewerModel);
-        Optional.ofNullable(reviewTimeoutMinutes).ifPresent(minutes -> args.setReviewTimeout(Duration.ofMinutes(minutes)));
-        Optional.ofNullable(reviewTemperature).ifPresent(args::setReviewTemperature);
-        Optional.ofNullable(reviewTopP).ifPresent(args::setReviewTopP);
-        Optional.ofNullable(reviewRelayRetries).ifPresent(args::setReviewRelayRetries);
-        Optional.ofNullable(reviewRelayTimeoutSeconds).ifPresent(seconds -> args.setReviewRelayRequestTimeout(Duration.ofSeconds(seconds)));
     }
     @SuppressWarnings("deprecation")
     protected void purgeNonJavaSourceJars(RunArgs args) throws IOException {

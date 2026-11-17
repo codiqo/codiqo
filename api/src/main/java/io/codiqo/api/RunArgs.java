@@ -4,8 +4,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
@@ -13,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
 import java.time.Duration;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
@@ -25,10 +24,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
-import org.apache.commons.cli.CommandLine;
-import org.apache.commons.cli.Option;
-import org.apache.commons.cli.Option.Builder;
-import org.apache.commons.cli.Options;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.IOCase;
@@ -41,7 +36,6 @@ import org.eclipse.jgit.annotations.Nullable;
 import org.eclipse.jgit.lib.Repository;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.CaseFormat;
 import com.google.common.base.Splitter;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -59,8 +53,7 @@ import okhttp3.HttpUrl;
 /**
  * Every tunable input to one analysis run: what to analyze, how to build it, which analyzers to run, what to send
  * the LLM, and every coefficient of the scoring model. One instance is assembled per commit — by the Maven mojo,
- * the Gradle plugin, the CLI ({@link #from(CommandLine)}) or the backend's replay builder — and threaded through
- * the whole pipeline.
+ * the Gradle plugin or the backend's replay builder — and threaded through the whole pipeline.
  *
  * <p><b>Four kinds of field live here and they behave very differently:</b>
  * <ul>
@@ -77,14 +70,13 @@ import okhttp3.HttpUrl;
  * <p><b>Persistence and replay.</b> Non-transient fields are mirrored onto the submission's scoring config by
  * {@code ScoringConfigs}, persisted by the backend, and restored on server-side replay — so a re-score reproduces
  * the offline numbers even after server defaults move. {@code transient} marks a field as local to this process: it
- * is excluded from the generated CLI and never travels with the submission. {@code DRIVER_SCORE.md} is the canonical
- * derivation of the volume-scoring knobs and worth reading before tuning any of them.
+ * never travels with the submission. {@code DRIVER_SCORE.md} is the canonical derivation of the volume-scoring knobs
+ * and worth reading before tuning any of them.
  *
- * <p><b>CLI generation.</b> {@link #options()} reflects over the non-transient, non-static fields and derives one
- * {@code --kebab-case} option per field; {@link #from(CommandLine)} parses them back and calls {@link #validate()}.
- * Every option is optional — the field initialiser above is its default — and a {@code boolean} field becomes a
- * valueless flag, so a boolean that defaults to {@code true} cannot be switched off from the command line. A field
- * whose type {@code from} cannot parse is a hard error rather than a silently ignored flag.
+ * <p><b>Settings.</b> A field a user may set by name carries {@link Setting}, which declares that name, and
+ * {@link Settings} binds text given under it; Maven's parameters reach RunArgs only that way, so the field initialiser
+ * is their default and the mojos declare none of their own. Every other field is run state the plugins fill in, or a
+ * scoring parameter only the server's scoring configuration sets.
  */
 @Data
 public class RunArgs {
@@ -145,6 +137,12 @@ public class RunArgs {
     public static final int DEFAULT_CONVENTION_FILES_MAX_CHARS = 128 * 1024;
     public static final int DEFAULT_SEED = 42;
     public static final Duration PER_TEST_TIMEOUT_MAX = Duration.ofMinutes(15);
+    /**
+     * The least {@link #buildErrorCaptureLimit}: the limit is passed to StringUtils.abbreviate, which throws
+     * IllegalArgumentException for a width below 4 (the shortest abbreviation is "a..."), so a smaller
+     * codiqo.buildErrorCaptureLimit would turn the capture of a build failure into a crash of its own.
+     */
+    private static final int MIN_ABBREVIATE_WIDTH = 4;
     public static final Map<String, String> JDTLS_CONFIG = Map.of(
             "osx-x86_64", "config_mac",
             "osx-aarch_64", "config_mac_arm",
@@ -181,6 +179,7 @@ public class RunArgs {
      * {@link #effectiveJdtlsVersion()}, so moving this forces a full re-index of every dependency jar.
      */
     @Nullable
+    @Setting
     private String jdtlsVersion = JDTLS_MIRRORED_VERSION;
 
     /**
@@ -188,6 +187,7 @@ public class RunArgs {
      * so {@link #jdtlsVersion} is then ignored and the concrete build is whatever {@code latest.txt} names at run
      * time — which also means the shared-index key changes underneath you as upstream publishes.
      */
+    @Setting
     private boolean jdtlsUseSnapshot = false;
 
     /**
@@ -208,6 +208,7 @@ public class RunArgs {
      * prompt tokens.
      */
     @Nullable
+    @Setting
     private String pmdMinPriority = RulePriority.HIGH.name();
 
     /**
@@ -216,6 +217,7 @@ public class RunArgs {
      * violations, so it flagged a legitimate test convention as error severity.
      */
     @Nullable
+    @Setting
     private List<String> pmdRules = Lists.newArrayList(
             "category/java/bestpractices.xml",
             "codiqo/pmd/java-codestyle.xml",
@@ -231,6 +233,7 @@ public class RunArgs {
      * that maps to severity and drives the penalty tables — this knob decides what SpotBugs reports at all.
      */
     @Nullable
+    @Setting
     private Integer spotbugsPriorityThreshold = Priorities.HIGH_PRIORITY;
 
     /**
@@ -238,12 +241,14 @@ public class RunArgs {
      * detector that crashes or is pathologically slow on a given codebase.
      */
     @Nullable
+    @Setting
     private String spotbugsOmitVisitors;
 
     /**
      * Treat untracked working-tree files as additions. Only meaningful for an uncommitted-changes run — a commit
      * analysis reads its file set from the diff, where nothing is untracked by construction.
      */
+    @Setting(name = "codiqo.include.untracked")
     private boolean includeUntracked = true;
 
     /**
@@ -258,6 +263,7 @@ public class RunArgs {
      * temp file otherwise. This is exactly the payload the backend would receive, so it is the artefact to diff when
      * a score changes unexpectedly between runs.
      */
+    @Setting
     private boolean dumpAnalysis = true;
 
     /**
@@ -268,6 +274,7 @@ public class RunArgs {
      * payload, so the model has no coverage row to apply. Compare {@link #failOnUninstrumentedModule}, which exists
      * to stop coverage going missing by accident on a run that did want it.
      */
+    @Setting
     private boolean ignoreCoverage = false;
 
     /**
@@ -275,30 +282,36 @@ public class RunArgs {
      * failure mode it catches is silent: an agent that never attached looks identical to a genuinely untested
      * commit, and the commit then scores as small and clean rather than as a broken measurement.
      */
+    @Setting
     private boolean failOnUninstrumentedModule = true;
 
     /** Skip cyclomatic / cognitive complexity capture. Complexity is an input to the model's difficulty judgment, not a score term of its own. */
+    @Setting
     private boolean ignoreComplexity = false;
 
     /**
      * Skip PMD CPD duplication detection. Also suppresses the {@link #cpdCleanBonus}: uncollected duplication data
      * is not evidence of clean code, so it must not earn the reward for having none.
      */
+    @Setting
     private boolean ignoreCpd = false;
 
     /**
      * Skip PMD and SpotBugs entirely. Also suppresses {@link #staticAnalysisCleanBonus}, for the same reason
      * {@link #ignoreCpd} suppresses the CPD bonus.
      */
+    @Setting
     private boolean ignoreDiagnostics = false;
 
     /** Rank the most important classes and the hotspots, for the {@link #hotspotsCommitId} commit only. */
+    @Setting(name = "codiqo.hotspots")
     private boolean hotspotsEnabled = true;
 
     /**
      * The tip the run started on. A caller that checks out every commit before analysing it (codiqo-action's Gradle
      * loop) must pass it, because by then HEAD is the analysed commit itself.
      */
+    @Setting
     private String hotspotsCommitId;
 
     /**
@@ -307,6 +320,7 @@ public class RunArgs {
      * missing caller list is indistinguishable from a symbol that genuinely has no callers, and blast radius is
      * then under-reported rather than reported as unknown.
      */
+    @Setting
     private boolean failOnJdtlsError = false;
 
     /**
@@ -318,6 +332,7 @@ public class RunArgs {
      * failure it is. A commit whose local review started is scored from that review instead, from a source-only
      * submission rather than the wreckage.
      */
+    @Setting
     private boolean skipOnBuildFailure = true;
 
     /**
@@ -325,20 +340,21 @@ public class RunArgs {
      * counting toward effort on both ends. A reverted original outside the indexing window is simply not known to
      * the backend and is left alone.
      */
+    @Setting
     private boolean excludeRevertedCommits = true;
 
     /**
-     * Transient so the reflective CLI builder skips it: this is a server-side policy read from the scoring
-     * config, and the engine has no consumer for it. Left non-transient it generates a
-     * {@code --honor-skip-requests} option that is accepted, never transmitted, and silently ignored.
+     * A server-side policy read from the scoring config, which the engine has no consumer for: transient, so it never
+     * travels with the submission, and no {@link Setting}, so no plugin offers a value that would be ignored.
      */
     private transient boolean honorSkipRequests = true;
 
     /**
      * Character ceiling on captured build diagnostics — forked build stdout/stderr, the build-failure report file,
      * and abbreviated stack traces. Bounds what a runaway build log can push into the failure detail that gets
-     * persisted.
+     * persisted. {@link #validate()} raises a smaller limit to 4, the least StringUtils.abbreviate takes.
      */
+    @Setting
     private int buildErrorCaptureLimit = 8 * 1024;
 
     /**
@@ -346,6 +362,7 @@ public class RunArgs {
      * means the JDK running codiqo.
      */
     @Nullable
+    @Setting
     private transient File javaHome;
 
     /**
@@ -354,10 +371,12 @@ public class RunArgs {
      * without this setting such a project could not be analysed at all. Unset means javaHome.
      */
     @Nullable
+    @Setting
     private transient File jdtlsJavaHome;
 
     /** Maven installation used to invoke the forked build. Unset lets the invoker resolve one from the environment. */
     @Nullable
+    @Setting
     private transient File mavenHome;
 
     /** Gradle installation for the Gradle path. Currently carried but unread — the Gradle plugin runs in the daemon's own distribution. */
@@ -379,10 +398,12 @@ public class RunArgs {
      * into a lost commit instead of a recorded failure.
      */
     @Nullable
+    @Setting(name = "codiqo.buildTimeoutMinutes", unit = ChronoUnit.MINUTES)
     private Duration buildTimeout = Duration.ofMinutes(45);
 
     /** Ceiling on the whole Surefire fork, passed through as {@code -Dsurefire.timeout}. One hung test still burns the entire budget — {@link #perTestTimeout} is what bounds a single test. */
     @Nullable
+    @Setting(name = "codiqo.testTimeoutMinutes", unit = ChronoUnit.MINUTES)
     private Duration testTimeout = Duration.ofMinutes(30);
 
     /**
@@ -394,39 +415,48 @@ public class RunArgs {
      * extension resolves — an unresolvable injector downgrades to a warning rather than failing the analysis.
      */
     @Nullable
+    @Setting(name = "codiqo.perTestTimeoutMinutes", unit = ChronoUnit.MINUTES)
     private Duration perTestTimeout;
 
     /** How long to wait for the language server to hand over an imported project. A large multi-module reactor is the case that needs headroom here. */
     @Nullable
+    @Setting(name = "codiqo.importTimeoutMinutes", unit = ChronoUnit.MINUTES)
     private Duration importTimeout = Duration.ofMinutes(15);
 
     /** Per-query timeout on a single call-hierarchy request. Interacts with {@link #failOnJdtlsError}: a timeout is one of the errors that flag decides how to treat. */
     @Nullable
+    @Setting(name = "codiqo.lspQueryTimeoutSeconds", unit = ChronoUnit.SECONDS)
     private Duration lspQueryTimeout = Duration.ofSeconds(30);
 
     /** Connect timeout for codiqo's own HTTP client (tool downloads, backend calls). Not the LLM client, which uses {@link #llmReadTimeout}. */
     @Nullable
+    @Setting(name = "codiqo.connectTimeoutSeconds", unit = ChronoUnit.SECONDS)
     private Duration connectTimeout = Duration.ofSeconds(30);
 
     /** Read timeout for codiqo's own HTTP client, reused as the JGit transport timeout when a commit has to be fetched before it can be resolved. */
     @Nullable
+    @Setting(name = "codiqo.readTimeoutSeconds", unit = ChronoUnit.SECONDS)
     private Duration readTimeout = Duration.ofMinutes(1);
 
+    @Setting
     private int maxRequests = 256;
 
     /** OkHttp dispatcher ceiling on in-flight requests per host — the one that actually binds, since a run talks to few hosts. */
+    @Setting
     private int maxRequestsPerHost = 128;
 
     /**
      * Minimum duplicated token run CPD will report. Lowering it finds shorter clones and grows the clone set
      * quickly, which feeds both {@link #cpdIntroducedThreshold} and the prompt payload.
      */
+    @Setting
     private int cpdMinimumTileSize = 64;
 
     /**
      * CPD replaces every identifier (variables, methods and types alike; PMD has no finer setting) with one placeholder,
      * so renamed copies still match. Turning it off reports only clones that keep their names.
      */
+    @Setting
     private boolean cpdIgnoreIdentifiers = true;
 
     /**
@@ -434,6 +464,7 @@ public class RunArgs {
      * changed line and to pair deletions with additions, and context is what lets it recognise a pair as one
      * in-place edit rather than a delete plus an unrelated add.
      */
+    @Setting
     private int diffContextLines = 10;
 
     /**
@@ -489,6 +520,7 @@ public class RunArgs {
      * kept narrow enough that a borderline block flipping one tier barely moves the score.
      */
     @Nullable
+    @Setting(name = "codiqo.llm.temperature")
     private Double llmTemperature = 0.0;
 
     /** Nucleus-sampling cut-off, sent alongside {@link #llmTemperature} through the same two channels. */
@@ -523,6 +555,7 @@ public class RunArgs {
      * other number. Combines with {@link #autoDiscoveryAgentInstructions}.
      */
     @Nullable
+    @Setting(name = "codiqo.llm.conventionFiles")
     private List<String> llmConventionFiles = Lists.newArrayList();
 
     /**
@@ -531,6 +564,7 @@ public class RunArgs {
      * that documents its idioms should not have them reported as defects. Costs prompt tokens only when
      * such a file exists, and the prompt bars the content from moving any score.
      */
+    @Setting(name = "codiqo.llm.autoDiscoveryAgentInstructions")
     private boolean autoDiscoveryAgentInstructions = true;
 
     /**
@@ -538,10 +572,12 @@ public class RunArgs {
      * text: a truncated rule set silently changes which findings the model suppresses, so the ceiling is
      * raised deliberately. Zero disables instruction loading entirely.
      */
+    @Setting(name = "codiqo.llm.conventionFilesMaxChars")
     private int llmConventionFilesMaxChars = DEFAULT_CONVENTION_FILES_MAX_CHARS;
 
     /** Sampling seed, sent with {@link #llmTemperature} for reproducibility. Fixed rather than random so two runs of the same commit differ as little as the provider allows. */
     @Nullable
+    @Setting(name = "codiqo.llm.seed")
     private Integer llmSeed = DEFAULT_SEED;
 
     /**
@@ -560,20 +596,26 @@ public class RunArgs {
      * with the submission. The defaults are the pairing measured on real commits: a 270-file commit reviewed for about
      * $0.50-0.60 and a mid-size one for about $0.15-0.30. On by default: the review is how a commit is judged.
      */
+    @Setting(name = "codiqo.review")
     private transient boolean reviewEnabled = true;
 
     /** Local review: where the trace of every session goes, {@code codiqo-review-trace-<sha>.json}; unset writes it to the temp directory, whose path is logged. */
     @Nullable
+    @Setting(name = "codiqo.review.traceDirectory")
     private transient File reviewTraceDirectory;
 
+    @Setting(name = "codiqo.review.executable")
     private transient String reviewExecutable = "opencode";
 
     /** Local review: the OpenAI-compatible endpoint the agents call; the backend's proxy, or {@link #DEFAULT_LOCAL_LLM_URL}. */
+    @Setting(name = "codiqo.review.baseUrl")
     private transient String reviewBaseUrl = DEFAULT_LLM_PROXY_URL;
 
     /** Local review: the coordinator's model, which plans the review and writes the commit-level answer. */
+    @Setting(name = "codiqo.review.coordinatorModel")
     private transient String reviewCoordinatorModel = LlmModelUsageIntent.LOCAL_REVIEW_COORDINATOR.model().id();
 
+    @Setting(name = "codiqo.review.reviewerModel")
     private transient String reviewReviewerModel = LlmModelUsageIntent.LOCAL_REVIEW_SUB_AGENT.model().id();
 
     /**
@@ -606,9 +648,11 @@ public class RunArgs {
      * what the model cards of both review models, GLM-5.3 and GLM-5.3-Flash, evaluate their agentic benchmarks with. No
      * seed goes with it: a fixed seed over a nearly identical context draws the same tokens again.
      */
+    @Setting(name = "codiqo.review.temperature")
     private transient double reviewTemperature = 1.0;
 
     /** Local review: the agents' nucleus-sampling cut-off, set beside {@link #reviewTemperature}; 0.95 as both review models' cards use for their tool-using evaluation. */
+    @Setting(name = "codiqo.review.topP")
     private transient double reviewTopP = 0.95;
 
     /** Local review: reviewer tasks the coordinator may start, each a parallel sub-agent session. */
@@ -646,6 +690,7 @@ public class RunArgs {
      * step. A provider slowing down multiplies that (one rate-limited day took the 90th percentile from 28 to 88
      * minutes), so the limit is 150.
      */
+    @Setting(name = "codiqo.review.timeoutMinutes", unit = ChronoUnit.MINUTES)
     private transient Duration reviewTimeout = Duration.ofMinutes(150);
 
     private transient Duration reviewStartupTimeout = Duration.ofSeconds(60);
@@ -654,6 +699,7 @@ public class RunArgs {
      * Local review: retries of the relay's refresh of the Codiqo credential. Calls to the model are never retried by the
      * relay: OpenCode retries them itself, and retries stacked on its own are how one review answered "429 132 times".
      */
+    @Setting(name = "codiqo.review.relayRetries")
     private transient int reviewRelayRetries = 3;
 
     /**
@@ -675,6 +721,7 @@ public class RunArgs {
      * as long as it streams. A direct endpoint, such as a local Ollama daemon evaluating a long prompt before its first
      * token, is given the whole {@link #reviewTimeout} instead.
      */
+    @Setting(name = "codiqo.review.relayTimeoutSeconds", unit = ChronoUnit.SECONDS)
     private transient Duration reviewRelayRequestTimeout = Duration.ofMinutes(5);
 
     /** Local review: wait before the relay's first retry, doubled for each one after; a {@code Retry-After} answer wins. */
@@ -684,6 +731,7 @@ public class RunArgs {
 
     /** Directory for the submission dump, the HTML report and the result YAML. Unset writes them to temp files, whose paths are logged. */
     @Nullable
+    @Setting
     private transient File outputDirectory;
 
     /** Sidecar directory where the time-machine extension records which snapshot timestamp each dependency resolved to. Owned by the mojo: recreated per attempt and deleted when the run leaves time-machine mode. */
@@ -717,6 +765,7 @@ public class RunArgs {
 
     /** File module and analysis-stage progress is appended to, for a watcher outside the build; unset writes nothing. */
     @Nullable
+    @Setting
     private transient File buildProgressFile;
 
     /**
@@ -732,9 +781,11 @@ public class RunArgs {
      * share (a test bootstrap, a fixture) or an environment the analysis cannot rebuild (a backdated commit whose
      * database, service or certificate is gone), and only a person can tell which.
      */
+    @Setting
     private double testFailureHoldShare = 0.75;
 
     /** Below this many executed tests a failed share proves nothing about the environment, so it never holds. */
+    @Setting
     private int testFailureHoldMinTests = 20;
 
     /**
@@ -742,6 +793,7 @@ public class RunArgs {
      * Applied at indexing time as well as analysis time, because a commit this rejects is not worth a build.
      */
     @Nullable
+    @Setting
     private String includeBranches;
 
     /**
@@ -751,6 +803,7 @@ public class RunArgs {
      * developer's work.
      */
     @Nullable
+    @Setting
     private String includeAuthorEmails;
 
     /**
@@ -765,6 +818,7 @@ public class RunArgs {
      * this default: the mojos and the Gradle tasks leave their own parameter unset.
      */
     @Nullable
+    @Setting
     private String excludeAuthorEmails = "*bot*";
 
     /**
@@ -777,6 +831,7 @@ public class RunArgs {
      * tree to match against its own copy.
      */
     @Nullable
+    @Setting
     private String excludeProjects;
 
     /**
@@ -795,6 +850,7 @@ public class RunArgs {
      * that. A file the commit touched still appears as a change; it simply contributes no code units.
      */
     @Nullable
+    @Setting
     private String excludePaths;
 
     /** Compiled form of {@link #excludePaths}, derived once on first use — RunArgs is assembled, then read. */
@@ -813,6 +869,7 @@ public class RunArgs {
      * Index only the first-parent (mainline) history, dropping commits that arrived as merged-in feature-branch
      * work. On by default so a PR is counted once, at the merge node, rather than once per intermediate commit.
      */
+    @Setting
     private boolean firstParentOnly = true;
 
     /**
@@ -937,6 +994,7 @@ public class RunArgs {
      * is more permissive. Outlier protection deliberately lives here, on the sum, rather than per block: clipping
      * individual blocks would also strip the honest contributions of the well-sized blocks beside an outlier.
      */
+    @Setting
     private double driverScoreCapMultiplier = 2.5;
 
     /**
@@ -948,6 +1006,7 @@ public class RunArgs {
      * those stay raw so the project's real style survives. False positives are expected; raise it for a codebase
      * whose blocks legitimately diverge from their own median.
      */
+    @Setting
     private double driverFactorMaxDeviation = 0.75;
 
     /**
@@ -956,6 +1015,7 @@ public class RunArgs {
      * {@link #driverScoreCapMultiplier} against real traffic, and for replaying history under new abuse detection
      * without rewriting the scores it produced. Replay must honour the persisted flag verbatim or volume diverges.
      */
+    @Setting
     private boolean driverScoreCapDryRun = false;
 
     /**
@@ -1073,6 +1133,7 @@ public class RunArgs {
      * {@link #movedLineCoefficient} instead of full weight. Relocating code is not writing it. Must match the
      * offline plugin's value on replay, since it changes per-block driver scores.
      */
+    @Setting
     private boolean moveDetectionEnabled = true;
 
     /**
@@ -1081,6 +1142,7 @@ public class RunArgs {
      * {@link #timeMachineTargetOffset} outward along a back-off ladder before falling back to latest; disabled, only
      * the latest-snapshot build runs and no snapshot metadata is emitted.
      */
+    @Setting
     private boolean timeMachineEnabled = true;
 
     /**
@@ -1089,6 +1151,7 @@ public class RunArgs {
      * so genuine moves score 1.0 under containment while symmetric metrics drop below 0.95; switching to a
      * symmetric metric would stop such moves matching and charge them at full weight.
      */
+    @Setting
     private double moveSimilarityThreshold = 0.95;
 
     /**
@@ -1096,6 +1159,7 @@ public class RunArgs {
      * exactly what an in-file one does. Applied as a per-block factor that scales the driver score as well as
      * effort, because moved lines are a volume correction rather than a difficulty judgment.
      */
+    @Setting
     private double movedLineCoefficient = 0.25;
 
     /**
@@ -1362,9 +1426,11 @@ public class RunArgs {
      * {@link #effectiveJdtlsVersion()}. The saving is large and the coupling is real: the index is keyed by
      * absolute jar path, which is why {@link #localRepositoryDir} is stable per project rather than per commit.
      */
+    @Setting
     private boolean jdtUseSharedIndex = true;
 
     /** Let JDT decompile class files to answer reference queries for dependencies with no source jar. Off by default — decompiled callers are outside the analyzed project and cost import time. */
+    @Setting
     private boolean jdtIncludeDecompiledSources = false;
 
     /**
@@ -1377,10 +1443,12 @@ public class RunArgs {
      * and JDT threw "rExpression.descriptor is null" (an unguarded dereference added for
      * eclipse-jdt/eclipse.jdt.core#5214), which fails the run while {@link #failOnJdtlsError} holds.
      */
+    @Setting
     private boolean jdtLombokAgent = true;
 
     /** Debug port for the language-server JVM, attached with {@code suspend=y} so it waits for a debugger. Development only: set it and the analysis blocks until something connects. */
     @Nullable
+    @Setting
     private transient Integer jdtDebugPort;
 
     public HttpUrl.Builder jdtlsBaseUrl() {
@@ -1443,8 +1511,8 @@ public class RunArgs {
     }
     /**
      * The shared-index directory for the resolved language-server version, created on demand. Creating it in a
-     * static initialiser failed the whole class on a read-only or absent home directory — including {@link
-     * #options()} for {@code --help} and every config-only path that never starts a language server.
+     * static initialiser failed the whole class on a read-only or absent home directory, every config-only path that
+     * never starts a language server included.
      */
     public Path sharedIndexDir() throws IOException {
         return Files.createDirectories(JDT_SHARED_INDEX.resolve(effectiveJdtlsVersion()));
@@ -1641,6 +1709,7 @@ public class RunArgs {
         this.deleteRewardMaxQuantileUnits = Math.max(0.0, requireFinite(this.deleteRewardMaxQuantileUnits, "deleteRewardMaxQuantileUnits"));
         this.llmMaxRetries = (short) Math.max(1, this.llmMaxRetries);
         this.llmConventionFilesMaxChars = Math.max(0, this.llmConventionFilesMaxChars);
+        this.buildErrorCaptureLimit = Math.max(MIN_ABBREVIATE_WIDTH, this.buildErrorCaptureLimit);
     }
     /**
      * Resolves the spellings people actually write — the constant name, the hyphenated "medium-high", and PMD's own
@@ -1659,25 +1728,6 @@ public class RunArgs {
                         value,
                         Arrays.stream(RulePriority.values()).map(RulePriority::name).toList())));
     }
-    public static Options options() {
-        Options toReturn = new Options();
-        Field[] fields = RunArgs.class.getDeclaredFields();
-        for (Field field : fields) {
-            field.setAccessible(true);
-            if (Modifier.isTransient(field.getModifiers()) || Modifier.isStatic(field.getModifiers())) {
-                continue;
-            }
-            String kebab = toKebabCase(field.getName());
-            Builder builder = Option.builder().longOpt(kebab);
-            if (field.getType().equals(boolean.class)) {
-                builder = builder.hasArg(false);
-            } else {
-                builder = builder.hasArg();
-            }
-            toReturn.addOption(builder.get());
-        }
-        return toReturn;
-    }
     public boolean isHotspotsCommit() {
         /**
          * An uncommitted-changes run has no commit, so both ids can be null there. The explicit null check keeps
@@ -1686,58 +1736,7 @@ public class RunArgs {
          */
         return hotspotsEnabled && Objects.nonNull(hotspotsCommitId) && hotspotsCommitId.equals(commitId);
     }
-    public static RunArgs from(CommandLine cmd) throws Exception {
-        RunArgs toReturn = new RunArgs();
-        Field[] fields = RunArgs.class.getDeclaredFields();
-        for (Field field : fields) {
-            field.setAccessible(true);
-            if (Modifier.isTransient(field.getModifiers()) || Modifier.isStatic(field.getModifiers())) {
-                continue;
-            }
-            String kebab = toKebabCase(field.getName());
-            if (cmd.hasOption(kebab)) {
-                if (field.getType().equals(boolean.class)) {
-                    field.set(toReturn, true);
-                    continue;
-                }
-                String value = cmd.getOptionValue(kebab);
-                if (field.getType().equals(String.class)) {
-                    field.set(toReturn, value);
-                } else if (field.getType().equals(int.class) || field.getType().equals(Integer.class)) {
-                    field.set(toReturn, Integer.parseInt(value));
-                } else if (field.getType().equals(double.class) || field.getType().equals(Double.class)) {
-                    field.set(toReturn, Double.parseDouble(value));
-                } else if (field.getType().equals(Short.class)) {
-                    field.set(toReturn, Short.parseShort(value));
-                } else if (field.getType().equals(Duration.class)) {
-                    field.set(toReturn, Duration.parse(value));
-                } else if (field.getType().equals(File.class)) {
-                    field.set(toReturn, new File(value));
-                } else if (field.getType().equals(Repository.class)) {
-                    field.set(toReturn, JGit.openRepository(new File(value)));
-                } else if (field.getType().equals(List.class)) {
-                    field.set(toReturn, Splitter.on(',').trimResults().omitEmptyStrings().splitToList(value));
-                } else {
-                    /**
-                     * options() advertises a flag for every non-transient field, so a type this parser does not
-                     * know would be accepted on the command line and then dropped — the run continuing on the
-                     * default with no signal at all. Fail here instead: the mismatch is a defect in this method,
-                     * not in the user's invocation.
-                     */
-                    throw new IllegalArgumentException(String.format(
-                            "no CLI parser for --%s of type %s; add one to RunArgs.from or mark the field transient",
-                            kebab,
-                            field.getType().getName()));
-                }
-            }
-        }
-        toReturn.validate();
-        return toReturn;
-    }
     public static HttpUrl.Builder loopbackUrl(int port) {
         return new HttpUrl.Builder().scheme("http").host(LOOPBACK_HOST).port(port);
-    }
-    private static String toKebabCase(String camel) {
-        return CaseFormat.LOWER_CAMEL.to(CaseFormat.LOWER_HYPHEN, camel);
     }
 }

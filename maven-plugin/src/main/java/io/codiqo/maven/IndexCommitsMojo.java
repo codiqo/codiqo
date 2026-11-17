@@ -18,6 +18,7 @@ import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.maven.model.Scm;
 import org.apache.maven.plugin.AbstractMojo;
+import org.apache.maven.plugin.MojoExecution;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Mojo;
@@ -85,21 +86,24 @@ public class IndexCommitsMojo extends AbstractMojo {
     @Parameter(property = "codiqo.missingAnalysesLimit", defaultValue = "1024")
     private int missingAnalysesLimit;
 
-    @Parameter(property = "codiqo.connectTimeoutSeconds", defaultValue = "30")
-    private long connectTimeoutSeconds;
+    @Parameter(property = "codiqo.connectTimeoutSeconds")
+    private Long connectTimeoutSeconds;
 
-    @Parameter(property = "codiqo.readTimeoutSeconds", defaultValue = "60")
-    private long readTimeoutSeconds;
+    @Parameter(property = "codiqo.readTimeoutSeconds")
+    private Long readTimeoutSeconds;
 
-    @Parameter(property = "codiqo.firstParentOnly", defaultValue = "true")
-    private boolean firstParentOnly;
+    @Parameter(property = "codiqo.firstParentOnly")
+    private Boolean firstParentOnly;
 
-    /** nullable, like the analysis goals': unset keeps the {@link RunArgs} default */
     @Parameter(property = "codiqo.jdtlsVersion")
     private String jdtlsVersion;
 
-    @Parameter(property = "codiqo.jdtlsUseSnapshot", defaultValue = "false")
-    private boolean jdtlsUseSnapshot;
+    @Parameter(property = "codiqo.jdtlsUseSnapshot")
+    private Boolean jdtlsUseSnapshot;
+
+    /** the descriptor Maven runs this goal with, which names the property each setting's parameter reads */
+    @Parameter(defaultValue = "${mojoExecution}", readonly = true, required = true)
+    private MojoExecution mojoExecution;
 
     /**
      * Where the resolved language-server version lands for the job's cache key; the GitHub Action
@@ -118,20 +122,14 @@ public class IndexCommitsMojo extends AbstractMojo {
             String resolvedBranch = resolveBranch(repo);
             getLog().info("using branch: " + resolvedBranch);
 
-            RunArgs args = new RunArgs();
-            Optional.ofNullable(includeBranches).ifPresent(args::setIncludeBranches);
-            Optional.ofNullable(includeAuthorEmails).ifPresent(args::setIncludeAuthorEmails);
-            Optional.ofNullable(excludeAuthorEmails).ifPresent(args::setExcludeAuthorEmails);
-            args.setFirstParentOnly(firstParentOnly);
-            Optional.ofNullable(jdtlsVersion).ifPresent(args::setJdtlsVersion);
-            args.setJdtlsUseSnapshot(jdtlsUseSnapshot);
+            RunArgs args = MojoSettings.runArgs(this, mojoExecution);
 
             Date cutoff = Date.from(LocalDate.now(ZoneOffset.UTC).minus(Period.parse(commitWindow)).atStartOfDay(ZoneOffset.UTC).toInstant());
             List<CommitModel> commits = CommitIndexer.extractCommits(repo, args, indexRef, cutoff, resolvedBranch);
             getLog().info("extracted " + commits.size() + " commits since " + cutoff + " (window=" + commitWindow
-                    + ", selection=" + (firstParentOnly ? "first-parent/mainline" : "all-commits") + ")");
+                    + ", selection=" + (args.isFirstParentOnly() ? "first-parent/mainline" : "all-commits") + ")");
 
-            CommitIndexApi client = CommitIndexPublisher.buildClient(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds);
+            CommitIndexApi client = CommitIndexPublisher.buildClient(apiUrl, credential, args.getConnectTimeout().toSeconds(), args.getReadTimeout().toSeconds());
             getLog().info("connecting to " + apiUrl);
 
             Log log = new MavenMessageReporter(getLog());
