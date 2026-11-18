@@ -5,7 +5,7 @@
 // customized destinationFile, or disabled tasks — never affects what the analysis reads.
 //
 // Codiqo also owns test execution: every Test task is capped with the same envelope the Maven fork imposes
-// (task timeout + JUnit per-test timeout in SEPARATE_THREAD mode) and has ignoreFailures set, so a red test
+// (task timeout + JUnit per-test timeout on the test's own thread, SAME_THREAD) and has ignoreFailures set, so a red test
 // cannot abort the build before codiqoSubmitAnalysis runs. --continue is required for the same reason: a test
 // task that hits its TIMEOUT still fails, and only --continue carries the build through to the analysis.
 //

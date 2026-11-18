@@ -26,9 +26,9 @@ class JUnitTimeoutInjectorTest {
     private static final String MAVEN_PLUGINS = "org.apache.maven.plugins";
 
     private static final long TIMEOUT_SECONDS = 900L;
-    private static final String TESTABLE_METHOD_ARG = "-Djunit.jupiter.execution.timeout.testable.method.default=900";
-    private static final String THREAD_MODE_ARG = "-Djunit.jupiter.execution.timeout.thread.mode.default=SEPARATE_THREAD";
-    private static final String DEFAULT_KEY_ARG = "-Djunit.jupiter.execution.timeout.default=";
+    private static final String DEFAULT_ARG = "-Djunit.jupiter.execution.timeout.default=900";
+    private static final String THREAD_MODE_ARG = "-Djunit.jupiter.execution.timeout.thread.mode.default=SAME_THREAD";
+    private static final String TESTABLE_METHOD_KEY_ARG = "-Djunit.jupiter.execution.timeout.testable.method.default=";
 
     @AfterEach
     void clearTimeoutProperty() {
@@ -44,10 +44,10 @@ class JUnitTimeoutInjectorTest {
         runInjector(build, TIMEOUT_SECONDS);
 
         String argLine = argLine(surefire);
-        assertTrue(argLine.contains(TESTABLE_METHOD_ARG), "surefire argLine must carry the per-test timeout for test methods");
-        assertTrue(argLine.contains(THREAD_MODE_ARG), "surefire argLine must carry SEPARATE_THREAD so hung tests are interrupted");
-        assertFalse(argLine.contains(DEFAULT_KEY_ARG),
-                "lifecycle methods must stay on the extension's thread, so the timeout covers test methods only");
+        assertTrue(argLine.contains(DEFAULT_ARG), "surefire argLine must carry the per-test timeout for test and lifecycle methods");
+        assertTrue(argLine.contains(THREAD_MODE_ARG), "surefire argLine must keep tests on their own thread, where Spring's test transactions live");
+        assertFalse(argLine.contains(TESTABLE_METHOD_KEY_ARG),
+                "codiqo sets only the general key, so a project's own test-method timeout, which is more specific, still wins");
     }
 
     @Test
@@ -59,8 +59,8 @@ class JUnitTimeoutInjectorTest {
 
         runInjector(build, TIMEOUT_SECONDS);
 
-        assertTrue(argLine(failsafe).contains(TESTABLE_METHOD_ARG), "declared failsafe must also receive the timeout args");
-        assertFalse(argLine(failsafe).contains(DEFAULT_KEY_ARG), "failsafe must time test methods only, as surefire does");
+        assertTrue(argLine(failsafe).contains(DEFAULT_ARG), "declared failsafe must also receive the timeout args");
+        assertFalse(argLine(failsafe).contains(TESTABLE_METHOD_KEY_ARG), "failsafe must leave a project's own test-method timeout alone, as surefire does");
     }
 
     @Test
@@ -86,7 +86,7 @@ class JUnitTimeoutInjectorTest {
 
         String argLine = argLine(surefire);
         assertTrue(argLine.startsWith("-Xmx1g "), "the project's existing argLine must be preserved");
-        assertTrue(argLine.contains(TESTABLE_METHOD_ARG), "the timeout args must be appended after the existing argLine");
+        assertTrue(argLine.contains(DEFAULT_ARG), "the timeout args must be appended after the existing argLine");
     }
 
     @Test
@@ -111,12 +111,12 @@ class JUnitTimeoutInjectorTest {
 
         runInjector(build, TIMEOUT_SECONDS);
 
-        assertTrue(argLine(surefire).contains(TESTABLE_METHOD_ARG), "plugin-level argLine must receive the timeout args");
+        assertTrue(argLine(surefire).contains(DEFAULT_ARG), "plugin-level argLine must receive the timeout args");
 
         Xpp3Dom executionConfig = (Xpp3Dom) surefire.getExecutions().get(0).getConfiguration();
         String executionArgLine = executionConfig.getChild("argLine").getValue();
-        assertTrue(executionArgLine.contains(TESTABLE_METHOD_ARG), "an execution that overrides argLine must also receive the timeout args");
-        assertFalse(executionArgLine.contains(DEFAULT_KEY_ARG), "an execution that overrides argLine must time test methods only");
+        assertTrue(executionArgLine.contains(DEFAULT_ARG), "an execution that overrides argLine must also receive the timeout args");
+        assertFalse(executionArgLine.contains(TESTABLE_METHOD_KEY_ARG), "an execution that overrides argLine must leave a project's own test-method timeout alone");
         assertTrue(executionArgLine.contains("-Dfoo=bar"), "the original execution argLine must be preserved");
     }
 
@@ -130,7 +130,7 @@ class JUnitTimeoutInjectorTest {
                 .filter(p -> SUREFIRE.equals(p.getArtifactId()))
                 .findFirst()
                 .orElseThrow();
-        assertTrue(argLine(surefire).contains(TESTABLE_METHOD_ARG), "a module with no test plugin must get a fabricated surefire carrying the timeout args");
+        assertTrue(argLine(surefire).contains(DEFAULT_ARG), "a module with no test plugin must get a fabricated surefire carrying the timeout args");
         assertFalse(build.getPlugins().stream().anyMatch(p -> FAILSAFE.equals(p.getArtifactId())), "failsafe must not be fabricated");
     }
 

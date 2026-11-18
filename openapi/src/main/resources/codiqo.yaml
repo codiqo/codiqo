@@ -873,8 +873,10 @@ components:
         heldReason:
           description: |
             Present when so many executed tests failed that the run cannot tell the commit's own failures from an
-            environment the analysis could not rebuild. The server scores the commit as usual and holds it out of every
-            figure, as UNHEALTHY_TEST_RUN with this reason, until someone who may include the commit accepts the score.
+            environment the analysis could not rebuild, or when a test JVM ended before its tests finished (the test-run
+            timeout or a crash), so the counts and coverage cover only the tests that completed; the reason then names
+            where the tests were last seen. The server scores the commit as usual and holds it out of every figure, as
+            UNHEALTHY_TEST_RUN with this reason, until someone who may include the commit accepts the score.
           type: string
 
     AnalysisBuildFailureModel:
@@ -4482,7 +4484,7 @@ components:
           description: ISO-8601 duration — whole-fork test-process timeout passed to Surefire
         perTestTimeout:
           type: string
-          description: ISO-8601 duration — per-test-method default timeout injected as JUnit 5 configuration (SEPARATE_THREAD) into the fork's Surefire/Failsafe
+          description: ISO-8601 duration — per-test-method default timeout injected as JUnit 5 configuration (SAME_THREAD) into the fork's Surefire/Failsafe
         importTimeout:
           type: string
           description: ISO-8601 duration

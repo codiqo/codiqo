@@ -70,7 +70,7 @@ class BuildBackoffTimeoutTest {
             this.outcomes = Queues.newArrayDeque(outcomes);
         }
         @Override
-        protected InvocationRequest invocationRequest(RunArgs args, boolean timeMachineRequested, Duration targetOffset, BuildPhase phase) {
+        protected InvocationRequest invocationRequest(RunArgs args, boolean timeMachineRequested, Duration targetOffset, BuildPhase phase, Duration deadline) {
             return new DefaultInvocationRequest();
         }
         @Override

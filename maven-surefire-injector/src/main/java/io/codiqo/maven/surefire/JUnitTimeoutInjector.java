@@ -18,28 +18,30 @@ import org.codehaus.plexus.util.xml.Xpp3Dom;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * core extension that caps every JUnit 5/6 test with a default per-test timeout so a single hanging test does not
- * consume the whole-fork budget and abort the module's analysis. the timeout is delivered as JUnit Platform
- * configuration parameters passed as {@code -D} system properties on the surefire/failsafe {@code argLine} of every
- * non-pom reactor module — JUnit reads configuration parameters from JVM system properties, so this reaches the launcher
- * even in JUnit 6. (the {@code <properties><configurationParameters>} element is NOT usable here: a lifecycle
- * participant that adds it at runtime is silently dropped by surefire's mojo configurator, whereas argLine — the same
- * channel the JaCoCo agent injector uses — is honored.) with SEPARATE_THREAD mode a hung test (I/O, lock, sleep, an
- * un-timed HTTP call) is preemptively interrupted and reported as a FAILURE, which the fork's
- * -Dmaven.test.failure.ignore=true tolerates, so the build proceeds. it runs inside the codiqo-forked build (loaded via
- * maven.ext.class.path); the codiqo plugin supplies the timeout through
- * {@link SurefireInjectorConfig#PROP_PER_TEST_TIMEOUT_SECONDS}; the extension stays inert when that property is absent
- * or non-positive. JUnit 4 and TestNG have no equivalent global default and simply ignore the unknown -D; a pure CPU
- * spin is only reaped by the whole-fork surefire.timeout backstop.
+ * core extension that caps every JUnit 5/6 test with a default timeout so a single hanging test does not consume the
+ * whole-fork budget and abort the module's analysis. the timeout is delivered as JUnit Platform configuration
+ * parameters passed as {@code -D} system properties on the surefire/failsafe {@code argLine} of every non-pom reactor
+ * module — JUnit reads configuration parameters from JVM system properties, so this reaches the launcher even in JUnit
+ * 6. (the {@code <properties><configurationParameters>} element is NOT usable here: a lifecycle participant that adds it
+ * at runtime is silently dropped by surefire's mojo configurator, whereas argLine — the same channel the JaCoCo agent
+ * injector uses — is honored.) it runs inside the codiqo-forked build (loaded via maven.ext.class.path); the codiqo
+ * plugin supplies the timeout through {@link SurefireInjectorConfig#PROP_PER_TEST_TIMEOUT_SECONDS}; the extension stays
+ * inert when that property is absent or non-positive. JUnit 4 and TestNG have no equivalent global default and simply
+ * ignore the unknown -D.
  *
- * <p>The timeout covers test methods only ({@code timeout.testable.method.default}), so codiqo times no lifecycle
- * method: under SEPARATE_THREAD a timed {@code @BeforeAll} or {@code @BeforeEach} runs on another thread than the extension
- * that prepared it, so state an extension keeps in a ThreadLocal is gone. An extension that starts an embedded broker
- * keeps it that way, and on one project with {@code timeout.default} 69 of its 1,347 tests failed on a null broker that pass
- * without codiqo; covering test methods only left 5, which read the broker inside the test method.
- * The thread mode is still global, so a lifecycle method the project times itself ({@code @Timeout},
- * {@code timeout.default} or {@code timeout.lifecycle.method.default}) does move to another thread under codiqo.
- * {@code codiqo.perTestTimeoutMinutes=0} turns the per-test timeout off for such a project.
+ * <p>The timeout is {@code timeout.default}, so test and lifecycle methods are timed alike, and they run on the test
+ * framework's own thread ({@code SAME_THREAD}). On a thread of the timeout's own ({@code SEPARATE_THREAD}) the state
+ * Spring's test support and other extensions keep per thread was gone: a {@code @DataJpaTest} test ran outside its
+ * transaction and committed a row the next test then found, {@code @WithMockUser}'s user was missing, and an embedded
+ * broker an extension started that way was null in 69 of one project's 1,347 tests that pass without codiqo. At the
+ * timeout JUnit interrupts the test, which ends a sleep, a lock wait or a {@code Future.get} and fails the test, and the
+ * fork's {@code -Dmaven.test.failure.ignore=true} tolerates that. A test stuck in something that ignores an interrupt
+ * (a blocking socket read, a monitor deadlock, a CPU spin) runs on until the whole-fork {@code surefire.timeout} kills
+ * the test JVM: the test agent the coverage injector attaches keeps that JVM's coverage and names the test
+ * ({@code TestRecords}), and the commit is scored with its score held. A {@code -D} system property overrides the
+ * project's {@code junit-platform.properties}, so a project's own {@code timeout.default} and thread mode are replaced;
+ * its own {@code timeout.testable.method.default} or {@code timeout.lifecycle.method.default} is more specific and
+ * still wins. {@code codiqo.perTestTimeoutMinutes=0} turns the per-test timeout off.
  */
 @Slf4j
 @Singleton
@@ -49,9 +51,9 @@ public class JUnitTimeoutInjector extends AbstractMavenLifecycleParticipant {
     private static final String ARG_LINE = "argLine";
     private static final String POM_PACKAGING = "pom";
 
-    private static final String TIMEOUT_TESTABLE_METHOD_KEY = "junit.jupiter.execution.timeout.testable.method.default";
+    private static final String TIMEOUT_DEFAULT_KEY = "junit.jupiter.execution.timeout.default";
     private static final String TIMEOUT_THREAD_MODE_KEY = "junit.jupiter.execution.timeout.thread.mode.default";
-    private static final String SEPARATE_THREAD = "SEPARATE_THREAD";
+    private static final String SAME_THREAD = "SAME_THREAD";
 
     @Override
     public void afterProjectsRead(MavenSession session) {
@@ -74,7 +76,7 @@ public class JUnitTimeoutInjector extends AbstractMavenLifecycleParticipant {
         SurefirePlugins.findDeclared(project, SurefirePlugins.FAILSAFE_ARTIFACT_ID)
                 .ifPresent(failsafe -> injectArgLine(failsafe, timeoutArgs, argLineProperty));
 
-        log.info("[codiqo] injected JUnit per-test timeout into {} ({}s, SEPARATE_THREAD)", project.getArtifactId(), timeoutSeconds);
+        log.info("[codiqo] injected JUnit per-test timeout into {} ({}s, SAME_THREAD)", project.getArtifactId(), timeoutSeconds);
     }
     private static void injectArgLine(Plugin plugin, String timeoutArgs, String argLineProperty) {
         /**
@@ -115,7 +117,7 @@ public class JUnitTimeoutInjector extends AbstractMavenLifecycleParticipant {
         argLine.setValue(StringUtils.isBlank(base) ? timeoutArgs : base + " " + timeoutArgs);
     }
     private static String timeoutArgs(long timeoutSeconds) {
-        return "-D" + TIMEOUT_TESTABLE_METHOD_KEY + "=" + timeoutSeconds + " -D" + TIMEOUT_THREAD_MODE_KEY + "=" + SEPARATE_THREAD;
+        return "-D" + TIMEOUT_DEFAULT_KEY + "=" + timeoutSeconds + " -D" + TIMEOUT_THREAD_MODE_KEY + "=" + SAME_THREAD;
     }
     private static Plugin resolveSurefire(MavenProject project) {
         Optional<Plugin> declared = SurefirePlugins.findDeclared(project, SurefirePlugins.SUREFIRE_ARTIFACT_ID);

@@ -1598,7 +1598,7 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   `buildFailure` and the review's assessment, since the reviewers read the code through git. The server scores it by
   rules as a degraded commit (penalties only, no bonus) and counts the failed build as a blocking finding when it
   alerts. A dependency that could not be resolved or a build that timed out is the environment's failure and stays
-  excluded, and so is a build plugin whose own download failed (`BuildFailureClassifier`, which both plugins apply: the
+  excluded (a test run that reached the deadline after its tests started is scored instead, see the held test runs below), and so is a build plugin whose own download failed (`BuildFailureClassifier`, which both plugins apply: the
   failure names a URL and shows a connection error, an HTML page where content was expected, as Spotless did fetching
   the Eclipse formatter from download.eclipse.org's outage page, or Gradle's words for a fetch that failed). A review that fails on such a commit excludes it under its build failure when it failed on the commit, files and
   metrics included, not as `LOCAL_REVIEW_FAILURE`: the server keeps an operator's re-inclusion of a build failure only
@@ -1624,7 +1624,15 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   carries `TestRuns.heldReason`, and the server stores the scored commit excluded as `UNHEALTHY_TEST_RUN` until someone
   who may include it accepts the score in codiqo-web. `codiqo.testFailureHoldShare` / `codiqo.testFailureHoldMinTests`
   (Gradle `-P`, action inputs `test-failure-hold-share` / `-min-tests`) override them, and a share of 1 or more turns the
-  check off. A run that
+  check off. A test JVM that ended before its tests finished is held the same way (`TestRecords.cutOff`): the per-test
+  timeout is JUnit's `timeout.default` on the test's own thread (`SAME_THREAD`, so Spring's test transactions and mock
+  users stay where they were set up), a test stuck in something that ignores the interrupt runs until the test-run
+  timeout kills its JVM, and codiqo's test agent (`codiqo-test-agent`, attached ahead of JaCoCo on both plugins) has by
+  then written that JVM's coverage and recorded where its tests were, which the held reason names. surefire's limit is
+  capped below the build's deadline (`forkTimeoutSeconds`), so surefire usually ends that JVM and the build finishes; a
+  test run the deadline still kills after its tests started is scored from what it wrote and held the same way
+  (`BuildOutcome.TestsCutShort`). Hidden-source mode drops where the tests were last seen, and a hold share of 1 or more
+  turns this hold off too. A run that
   fails after the server accepted its submission has scored its commit and halts nothing. A review that failed on the
   provider or on Codiqo's side halts under the review verdict's reason, the provider's failed answers kept whole at its
   end. One commit's run, its halt window included, is `CommitRun` on both plugins.

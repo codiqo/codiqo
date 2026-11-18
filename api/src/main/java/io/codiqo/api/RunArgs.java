@@ -160,6 +160,12 @@ public class RunArgs {
     public static final int DEFAULT_SEED = 42;
     public static final Duration PER_TEST_TIMEOUT_MAX = Duration.ofMinutes(15);
     /**
+     * How often the test agent in every test JVM writes JaCoCo's coverage and records the test threads
+     * ({@link io.codiqo.api.testing.TestRecords}). A test JVM killed by {@link #testTimeout} keeps the coverage written
+     * up to its last record, so a minute is the most coverage such a kill can cost; the writes append only what changed.
+     */
+    public static final Duration TEST_RECORD_INTERVAL = Duration.ofMinutes(1);
+    /**
      * The least {@link #buildErrorCaptureLimit}: the limit is passed to StringUtils.abbreviate, which throws
      * IllegalArgumentException for a width below 4 (the shortest abbreviation is "a..."), so a smaller
      * codiqo.buildErrorCaptureLimit would turn the capture of a build failure into a crash of its own.
@@ -423,13 +429,17 @@ public class RunArgs {
     @Setting(name = "codiqo.buildTimeoutMinutes", unit = ChronoUnit.MINUTES)
     private Duration buildTimeout = Duration.ofMinutes(45);
 
-    /** Ceiling on the whole Surefire fork, passed through as {@code -Dsurefire.timeout}. One hung test still burns the entire budget — {@link #perTestTimeout} is what bounds a single test. */
+    /**
+     * Ceiling on the whole Surefire fork, passed through as {@code -Dsurefire.timeout}, and on a Gradle Test task. It is
+     * what bounds a test stuck in something that ignores {@link #perTestTimeout}'s interrupt (a blocking socket read, a
+     * monitor deadlock): such a test holds its test JVM until this kills it, and the tests after it in that JVM do not run.
+     */
     @Nullable
     @Setting(name = "codiqo.testTimeoutMinutes", unit = ChronoUnit.MINUTES)
     private Duration testTimeout = Duration.ofMinutes(30);
 
     /**
-     * Per-test-method timeout, injected as a JUnit 5 {@code timeout.testable.method.default} on a separate thread. Unset derives
+     * Per-test-method timeout, injected as a JUnit 5 {@code timeout.default} on the test's own thread. Unset derives
      * {@link #testTimeout} / 2 in {@link #validate()}; any value — derived or explicit — is then hard-capped at
      * {@link #PER_TEST_TIMEOUT_MAX}, and zero or negative leaves the feature off.
      *

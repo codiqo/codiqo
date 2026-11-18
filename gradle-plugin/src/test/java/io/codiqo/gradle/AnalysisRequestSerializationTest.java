@@ -60,6 +60,7 @@ class AnalysisRequestSerializationTest {
         module.getCompileSourceRoots().add("/p/src/main/java");
         module.getTestCompileSourceRoots().add("/p/src/test/java");
         module.getTestReportDirectories().add("/p/build/test-results/test");
+        module.getTestRecordDirectories().add("/p/build/tmp/test/codiqo-test-records");
         module.getCompileClasspathElements().add("/repo/commons-lang3-3.20.0.jar");
         module.getTestClasspathElements().add("/repo/junit-jupiter.jar");
         module.getDependencies().add(dependency);
