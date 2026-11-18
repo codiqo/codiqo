@@ -270,8 +270,8 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
          * that prepared it, so state an extension keeps in a ThreadLocal is gone. An extension that starts an embedded broker
          * keeps it that way, and on one project with {@code timeout.default} 69 of its 1,347 tests failed on a null broker that pass
          * without codiqo; covering test methods only left 5, which read the broker inside the test method.
-         * The thread mode is still global, so a lifecycle method the project times itself ({@code @Timeout}, or
-         * {@code timeout.lifecycle.method.default}) does move to another thread under codiqo.
+         * The thread mode is still global, so a lifecycle method the project times itself ({@code @Timeout},
+         * {@code timeout.default} or {@code timeout.lifecycle.method.default}) does move to another thread under codiqo.
          * {@code codiqo.perTestTimeoutMinutes=0} turns the per-test timeout off for such a project.
          */
         if (timeouts.getPerTestTimeout().compareTo(Duration.ZERO) > 0) {

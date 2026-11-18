@@ -28,6 +28,7 @@ class JUnitTimeoutInjectorTest {
     private static final long TIMEOUT_SECONDS = 900L;
     private static final String TESTABLE_METHOD_ARG = "-Djunit.jupiter.execution.timeout.testable.method.default=900";
     private static final String THREAD_MODE_ARG = "-Djunit.jupiter.execution.timeout.thread.mode.default=SEPARATE_THREAD";
+    private static final String DEFAULT_KEY_ARG = "-Djunit.jupiter.execution.timeout.default=";
 
     @AfterEach
     void clearTimeoutProperty() {
@@ -45,7 +46,7 @@ class JUnitTimeoutInjectorTest {
         String argLine = argLine(surefire);
         assertTrue(argLine.contains(TESTABLE_METHOD_ARG), "surefire argLine must carry the per-test timeout for test methods");
         assertTrue(argLine.contains(THREAD_MODE_ARG), "surefire argLine must carry SEPARATE_THREAD so hung tests are interrupted");
-        assertFalse(argLine.contains("-Djunit.jupiter.execution.timeout.default="),
+        assertFalse(argLine.contains(DEFAULT_KEY_ARG),
                 "lifecycle methods must stay on the extension's thread, so the timeout covers test methods only");
     }
 
@@ -59,6 +60,7 @@ class JUnitTimeoutInjectorTest {
         runInjector(build, TIMEOUT_SECONDS);
 
         assertTrue(argLine(failsafe).contains(TESTABLE_METHOD_ARG), "declared failsafe must also receive the timeout args");
+        assertFalse(argLine(failsafe).contains(DEFAULT_KEY_ARG), "failsafe must time test methods only, as surefire does");
     }
 
     @Test
@@ -114,6 +116,7 @@ class JUnitTimeoutInjectorTest {
         Xpp3Dom executionConfig = (Xpp3Dom) surefire.getExecutions().get(0).getConfiguration();
         String executionArgLine = executionConfig.getChild("argLine").getValue();
         assertTrue(executionArgLine.contains(TESTABLE_METHOD_ARG), "an execution that overrides argLine must also receive the timeout args");
+        assertFalse(executionArgLine.contains(DEFAULT_KEY_ARG), "an execution that overrides argLine must time test methods only");
         assertTrue(executionArgLine.contains("-Dfoo=bar"), "the original execution argLine must be preserved");
     }
 
