@@ -66,6 +66,16 @@ public class TestRuns {
                 .build();
     }
     /**
+     * The run with the reason the build gave for stopping it before its tests finished (the build's deadline), ahead of
+     * what any test JVM's record says, so the held reason says both what cut the run short and where the tests were.
+     */
+    public TestRun cutShort(TestRun run, String reason) {
+        String toReturn = run.getCutOff()
+                .map(records -> reason + ". " + records)
+                .orElse(reason + ", so the test counts and coverage cover only the tests that completed");
+        return run.toBuilder().cutOff(Optional.of(toReturn)).build();
+    }
+    /**
      * Why the commit's score is held, when most executed tests failed. Such a run cannot tell a commit that broke a
      * shared test fixture from an environment the analysis could not rebuild, so the commit is reviewed and scored as
      * usual and the server holds the score out of every figure until someone accepts it. Holding, not halting: a halt

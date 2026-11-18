@@ -1113,6 +1113,13 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             }
             if (timedOut) {
                 String reason = "fork build timed out after " + timeout;
+                if (BuildPhase.TESTS == phase) {
+                    getLog().warn(reason + "; the commit is scored from the tests that finished");
+                    return new ForkRun(
+                            new BuildOutcome.TestsCutShort(TimeMachineSupport.withHostPinning(args, getLog(), () -> projectBuilder.build(rootPom, buildingRequest)),
+                                    "the test run reached the build's deadline (" + timeout + ")"),
+                            took.getDuration());
+                }
                 if (args.isSkipOnBuildFailure()) {
                     getLog().warn(reason + ", skipping with category " + AnalysisExcludeCategory.BUILD_FAILURE);
                     return new ForkRun(skipped(args, reason, AnalysisExcludeCategory.BUILD_FAILURE, true, sysout, syserr), took.getDuration());
@@ -1564,6 +1571,25 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         @Value
         final class Proceeded implements BuildOutcome {
             ProjectBuildingResult result;
+        }
+        /**
+         * The test run reached the build's deadline after a compile run that passed, so every module's classes exist,
+         * and the reports, coverage and test records written before the deadline are read as a test run cut short.
+         * Excluded as a timeout, a commit whose own test hangs where an interrupt cannot reach it was never scored: the
+         * same test hangs on every run, and the commit cannot be changed.
+         */
+        final class TestsCutShort extends ImmutablePair<ProjectBuildingResult, String> implements BuildOutcome {
+            private static final long serialVersionUID = 1L;
+
+            public TestsCutShort(ProjectBuildingResult result, String reason) {
+                super(result, reason);
+            }
+            public ProjectBuildingResult getResult() {
+                return getLeft();
+            }
+            public String getReason() {
+                return getRight();
+            }
         }
     }
     /**

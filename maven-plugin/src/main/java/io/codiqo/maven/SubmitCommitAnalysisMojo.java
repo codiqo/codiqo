@@ -39,6 +39,7 @@ import com.google.common.collect.Lists;
 import io.codiqo.api.ClassGraphSpec;
 import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.testing.TestRun;
 import io.codiqo.api.testing.TestRuns;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.core.DefaultLanguageProcessors;
@@ -343,7 +344,14 @@ public class SubmitCommitAnalysisMojo extends AbstractAnalyzeMojo {
                 return failed(skipped);
             }
 
-            ProjectBuildingResult result = ((BuildOutcome.Proceeded) tested.getOutcome()).getResult();
+            ProjectBuildingResult result;
+            Optional<String> cutShort = Optional.empty();
+            if (tested.getOutcome() instanceof BuildOutcome.TestsCutShort deadline) {
+                result = deadline.getResult();
+                cutShort = Optional.of(deadline.getReason());
+            } else {
+                result = ((BuildOutcome.Proceeded) tested.getOutcome()).getResult();
+            }
             Optional<BuildOutcome.Skipped> modules = buildAndCollectModules(result.getProject(), args.getGit().getWorkTree(), buildingRequest, args, reactors);
             if (modules.isPresent()) {
                 return failed(modules.get());
@@ -352,12 +360,11 @@ public class SubmitCommitAnalysisMojo extends AbstractAnalyzeMojo {
             if (args.isIgnoreCoverage()) {
                 return BuildVerdict.passed(Optional.of(tested.getTook()));
             }
-            return BuildVerdict.tested(
-                    TestRuns.read(
-                            reactors.stream().flatMap(reactor -> TestReportDirectories.resolve(reactor).stream()).distinct().toList(),
-                            Optional.ofNullable(testRecordDirectory).map(List::of).orElse(List.of()),
-                            new MavenMessageReporter(log)),
-                    Optional.of(tested.getTook()));
+            TestRun run = TestRuns.read(
+                    reactors.stream().flatMap(reactor -> TestReportDirectories.resolve(reactor).stream()).distinct().toList(),
+                    Optional.ofNullable(testRecordDirectory).map(List::of).orElse(List.of()),
+                    new MavenMessageReporter(log));
+            return BuildVerdict.tested(cutShort.map(reason -> TestRuns.cutShort(run, reason)).orElse(run), Optional.of(tested.getTook()));
         }
         /**
          * The reactor's modules as the host model built them, scanned into one class graph. The clone's POMs are relaxed

@@ -30,6 +30,7 @@ import com.google.common.hash.Hashing;
 
 import io.codiqo.api.diff.CallShape;
 import io.codiqo.api.diff.IneffectiveLineFilter;
+import io.codiqo.api.testing.TestRecords;
 import io.codiqo.client.model.AnalysisExcludeModel;
 import io.codiqo.client.model.AnalysisSubmissionModel;
 import io.codiqo.client.model.BugModel;
@@ -191,6 +192,7 @@ public final class SourceHiding {
             CollectionUtils.emptyIfNull(submission.getExcludedCoverageClasses()).forEach(excluded -> replace(excluded::getClassName, excluded::setClassName, this::id));
             if (Objects.nonNull(submission.getTestRun())) {
                 replace(submission.getTestRun()::getSkippedTests, submission.getTestRun()::setSkippedTests, this::ids);
+                replace(submission.getTestRun()::getHeldReason, submission.getTestRun()::setHeldReason, TestRecords::withoutLastSeen);
             }
             if (Objects.nonNull(submission.getBuildFailure())) {
                 submission.getBuildFailure().setDetail(null);

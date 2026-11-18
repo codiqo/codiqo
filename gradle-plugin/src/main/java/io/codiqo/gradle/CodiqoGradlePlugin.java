@@ -123,6 +123,14 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
              * Only the two timeouts, and only for a build that tests: a plain test build of a project whose init.d applies
              * the plugin must not fail on a review setting it never uses. The analysis build checks all of them.
              */
+            /**
+             * Every Test task's record directory is emptied, not only those of the tasks this build runs: the collector
+             * reads the directories of all of them, and a record an earlier build of the same checkout left for a task
+             * that does not run now (an integrationTest) would hold every later commit.
+             */
+            project.getRootProject().getAllprojects().forEach(module -> module.getTasks().withType(Test.class)
+                    .forEach(test -> FileUtils.deleteQuietly(GradleBuildSupport.testRecordDir(test))));
+
             if (CollectionUtils.isNotEmpty(tests)) {
                 RunArgs timeouts = GradleSettings.runArgs(Maps.filterKeys(GradleSettings.of(project, ext), TEST_TIMEOUTS::contains));
                 boolean ignoreTestFailures = GradleSettings.flag(project, "codiqo.ignoreTestFailures", ext.isIgnoreTestFailures());
@@ -269,8 +277,9 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
          * failure, which the ignoreFailures above tolerates. One stuck in something that ignores an interrupt (a blocking
          * socket read, a monitor deadlock, a CPU spin) runs until the task timeout kills the test JVM, and the test agent
          * below keeps that JVM's coverage and names the test. JUnit 4 and TestNG have no equivalent global default and
-         * ignore the unknown properties. A project's own {@code timeout.testable.method.default} is more specific and still
-         * wins; {@code codiqo.perTestTimeoutMinutes=0} turns the per-test timeout off.
+         * ignore the unknown properties. A project's own {@code timeout.default} and thread mode are replaced, as a system
+         * property overrides {@code junit-platform.properties}; its own {@code timeout.testable.method.default} is more
+         * specific and still wins. {@code codiqo.perTestTimeoutMinutes=0} turns the per-test timeout off.
          */
         if (timeouts.getPerTestTimeout().compareTo(Duration.ZERO) > 0) {
             test.systemProperty(TIMEOUT_DEFAULT_KEY, timeouts.getPerTestTimeout().getSeconds());
@@ -279,13 +288,9 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
 
         /**
          * codiqo's test agent writes JaCoCo's coverage while the tests run and records the test threads, so a test JVM the
-         * task timeout kills keeps its coverage and names the test that never finished (TestRecords). The directory is
-         * emptied first: the agent deletes its record when the JVM exits normally, so a record left by an earlier build of
-         * the same checkout would otherwise read as this build's.
+         * task timeout ends keeps its coverage and names the test that never finished (TestRecords).
          */
-        File records = GradleBuildSupport.testRecordDir(test);
-        FileUtils.deleteQuietly(records);
-        TestRecords.jvmArgument(records).ifPresent(test::jvmArgs);
+        TestRecords.jvmArgument(GradleBuildSupport.testRecordDir(test)).ifPresent(test::jvmArgs);
 
         /**
          * the JUnit XML is the analysis's only evidence that this task forked and ran something — it is what

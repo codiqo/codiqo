@@ -38,9 +38,10 @@ import lombok.extern.slf4j.Slf4j;
  * fork's {@code -Dmaven.test.failure.ignore=true} tolerates that. A test stuck in something that ignores an interrupt
  * (a blocking socket read, a monitor deadlock, a CPU spin) runs on until the whole-fork {@code surefire.timeout} kills
  * the test JVM: the test agent the coverage injector attaches keeps that JVM's coverage and names the test
- * ({@code TestRecords}), and the commit is scored with its score held. A project's own
- * {@code timeout.testable.method.default} or {@code timeout.lifecycle.method.default} is more specific and still wins;
- * {@code codiqo.perTestTimeoutMinutes=0} turns the per-test timeout off.
+ * ({@code TestRecords}), and the commit is scored with its score held. A {@code -D} system property overrides the
+ * project's {@code junit-platform.properties}, so a project's own {@code timeout.default} and thread mode are replaced;
+ * its own {@code timeout.testable.method.default} or {@code timeout.lifecycle.method.default} is more specific and
+ * still wins. {@code codiqo.perTestTimeoutMinutes=0} turns the per-test timeout off.
  */
 @Slf4j
 @Singleton

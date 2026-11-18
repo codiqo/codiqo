@@ -1,5 +1,6 @@
 package io.codiqo.gradle;
 
+import java.io.EOFException;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
@@ -211,7 +212,17 @@ public final class GradleCommitBuild implements CommitBuild {
             ExecFileLoader loader = new ExecFileLoader();
             long oldestPart = Long.MAX_VALUE;
             for (File part : parts) {
-                loader.load(part);
+                /**
+                 * codiqo's test agent has JaCoCo append to the part while the tests run (TestRecords), so a test JVM
+                 * killed in the middle of such a write leaves the part ending inside a block. JaCoCo hands every block to
+                 * the loader as it reads it, so the blocks before the cut are kept, as JacocoExecFiles keeps them on the
+                 * analysis side, which this plugin compiles without.
+                 */
+                try {
+                    loader.load(part);
+                } catch (EOFException err) {
+                    log.warn("%s ends inside a block, cut by the test JVM's kill: the coverage before the cut is kept", part);
+                }
                 oldestPart = Math.min(oldestPart, part.lastModified());
             }
             loader.save(merged, false);

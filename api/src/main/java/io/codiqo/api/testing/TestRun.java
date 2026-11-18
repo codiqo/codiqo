@@ -14,7 +14,7 @@ import lombok.Value;
  * written by any JUnit-reporting runner, so the same reading serves Maven's surefire and failsafe and Gradle's test task.
  */
 @Value
-@Builder
+@Builder(toBuilder = true)
 public class TestRun {
     int tests;
     int failures;

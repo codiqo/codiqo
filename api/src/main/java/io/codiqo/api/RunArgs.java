@@ -429,7 +429,11 @@ public class RunArgs {
     @Setting(name = "codiqo.buildTimeoutMinutes", unit = ChronoUnit.MINUTES)
     private Duration buildTimeout = Duration.ofMinutes(45);
 
-    /** Ceiling on the whole Surefire fork, passed through as {@code -Dsurefire.timeout}. One hung test still burns the entire budget — {@link #perTestTimeout} is what bounds a single test. */
+    /**
+     * Ceiling on the whole Surefire fork, passed through as {@code -Dsurefire.timeout}, and on a Gradle Test task. It is
+     * what bounds a test stuck in something that ignores {@link #perTestTimeout}'s interrupt (a blocking socket read, a
+     * monitor deadlock): such a test holds its test JVM until this kills it, and the tests after it in that JVM do not run.
+     */
     @Nullable
     @Setting(name = "codiqo.testTimeoutMinutes", unit = ChronoUnit.MINUTES)
     private Duration testTimeout = Duration.ofMinutes(30);

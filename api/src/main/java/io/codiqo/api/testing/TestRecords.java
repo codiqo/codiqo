@@ -6,13 +6,16 @@ import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.jar.JarFile;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.filefilter.FileFilterUtils;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.filefilter.IOFileFilter;
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import com.google.common.base.Joiner;
@@ -43,6 +46,9 @@ import lombok.experimental.UtilityClass;
 public class TestRecords {
     /** how many test threads the reason names; a fork killed in the middle of a parallel run can hold many */
     private static final int MAX_NAMED = 5;
+    /** where the reason starts naming code, which hidden-source mode leaves out ({@link #withoutLastSeen}) */
+    private static final String LAST_SEEN = "; the tests were last seen in ";
+    private static final String PREMAIN_CLASS = "Premain-Class";
     private static final IOFileFilter RECORDS = FileFilterUtils.and(
             FileFilterUtils.prefixFileFilter(TestAgent.RECORD_PREFIX),
             FileFilterUtils.suffixFileFilter(TestAgent.RECORD_SUFFIX));
@@ -54,7 +60,7 @@ public class TestRecords {
      */
     public Optional<String> jvmArgument(File directory) {
         File jar = agentJar();
-        if (jar.isFile()) {
+        if (isAgent(jar)) {
             return Optional.of("-javaagent:" + jar.getAbsolutePath() + "=" + TestAgent.argument(directory.getAbsolutePath(), RunArgs.TEST_RECORD_INTERVAL.getSeconds()));
         }
         return Optional.empty();
@@ -77,21 +83,29 @@ public class TestRecords {
         }
 
         if (ended > 0) {
-            String where = "no thread was running a test when it was last recorded";
+            String where = "; no thread was running a test when it was last recorded";
             if (CollectionUtils.isNotEmpty(lastSeen)) {
-                where = "the tests were last seen in " + Joiner.on("; ").join(lastSeen.stream().limit(MAX_NAMED).toList());
+                where = LAST_SEEN + Joiner.on("; ").join(lastSeen.stream().limit(MAX_NAMED).toList());
             }
             return Optional.of(String.format("test JVMs that ended before their tests finished, as the test-run timeout or a crash ends one: %d. The test counts "
-                    + "and coverage cover only the tests that completed; %s", ended, where));
+                    + "and coverage cover only the tests that completed%s", ended, where));
         }
         return Optional.empty();
+    }
+    /**
+     * The reason without the classes, methods, files and threads it names: in hidden-source mode every identifier is
+     * hashed before it leaves the run, and a hash of a stack frame would tell nobody where the test hung. A reason that
+     * names none comes back unchanged.
+     */
+    public String withoutLastSeen(String reason) {
+        return StringUtils.substringBefore(reason, LAST_SEEN);
     }
     private static List<String> threads(File record, Log log) {
         List<String> toReturn = Lists.newArrayList();
         try {
             for (String line : FileUtils.readLines(record, StandardCharsets.UTF_8)) {
-                List<String> fields = Splitter.on(TestAgent.FIELD_SEPARATOR).limit(3).splitToList(line);
-                if (fields.size() == 3) {
+                List<String> fields = Splitter.on(TestAgent.FIELD_SEPARATOR).limit(TestAgent.FIELDS).splitToList(line);
+                if (fields.size() == TestAgent.FIELDS) {
                     String invoked = fields.get(1);
                     String top = fields.get(2);
                     String thread = fields.iterator().next();
@@ -106,6 +120,17 @@ public class TestRecords {
             log.warn("test record %s could not be read: %s", record, err.getMessage());
         }
         return toReturn;
+    }
+    /** a jar whose manifest names the agent's entry point: a class directory, or a jar some tool rewrote, starts no agent */
+    private static boolean isAgent(File jar) {
+        if (jar.isFile()) {
+            try (JarFile file = new JarFile(jar)) {
+                return Objects.nonNull(file.getManifest()) && TestAgent.class.getName().equals(file.getManifest().getMainAttributes().getValue(PREMAIN_CLASS));
+            } catch (IOException err) {
+                return false;
+            }
+        }
+        return false;
     }
     private static File agentJar() {
         for (;;) {

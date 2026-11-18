@@ -525,7 +525,9 @@ public class JavaLanguageSpec implements LanguageSpec {
                  * module.
                  */
                 if (BooleanUtils.negate(loadedExecs.containsKey(file))) {
-                    loader.load(file);
+                    if (BooleanUtils.negate(JacocoExecFiles.load(loader, file))) {
+                        log.warn("%s ends inside a block, cut by the test JVM's kill: the coverage before the cut is kept", file);
+                    }
                     loadedExecs.put(file, readExecContents(file));
                 }
                 if (project.getOutputDirectory().exists()) {
@@ -1155,7 +1157,7 @@ public class JavaLanguageSpec implements LanguageSpec {
      */
     private static LoadedExec readExecContents(File file) throws IOException {
         ExecFileLoader toRead = new ExecFileLoader();
-        toRead.load(file);
+        JacocoExecFiles.load(toRead, file);
         return new LoadedExec(file, executionDataClassNames(toRead));
     }
     /**

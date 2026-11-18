@@ -162,7 +162,7 @@ public class JacocoAgentInjector extends AbstractMavenLifecycleParticipant {
     private static String withTestAgent(String jacocoAgent) {
         String testAgent = StringUtils.trimToEmpty(System.getProperty(CoverageInjectorConfig.PROP_TEST_AGENT));
         if (StringUtils.isNotEmpty(testAgent)) {
-            return org.codehaus.plexus.util.StringUtils.quoteAndEscape(testAgent, '"') + " " + jacocoAgent;
+            return org.codehaus.plexus.util.StringUtils.quoteAndEscape(testAgent, '"') + StringUtils.SPACE + jacocoAgent;
         }
         return jacocoAgent;
     }
