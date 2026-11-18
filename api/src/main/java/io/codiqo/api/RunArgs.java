@@ -124,6 +124,22 @@ public class RunArgs {
     public static final long REVIEW_TRACE_MAX_BYTES = 16L * 1024 * 1024;
     /** how much of a rejected review answer an error or a warning quotes: enough to tell prose from broken JSON */
     public static final int REVIEW_ANSWER_PREVIEW = 512;
+    /**
+     * The pause between two looks at a review's OpenCode sessions: between the two that must both find the review quiet,
+     * and before a look that failed is tried again. OpenCode 2.2 put a report in the inbox and woke its parent right after
+     * its sub-agent stopped running, so a short pause covers that.
+     */
+    public static final Duration REVIEW_POLL = Duration.ofMillis(250);
+    /** how many looks at a review's OpenCode sessions in a row may fail before the review does: OpenCode runs beside it */
+    public static final int REVIEW_LOOK_ATTEMPTS = 3;
+    /** the limit of one look at a review's OpenCode sessions, a quick listing that a healthy server answers at once */
+    public static final Duration REVIEW_LOOK_TIMEOUT = Duration.ofSeconds(30);
+    /**
+     * The pause between two looks of a coordinator's answer held while its reviewers work. Such a hold lasts as long as a
+     * reviewer does, minutes or an hour, and each look lists the coordinator's sub-agents and OpenCode's running sessions,
+     * so it looks once a second rather than at {@link #REVIEW_POLL}; a second more before the answer is read costs nothing.
+     */
+    public static final Duration REVIEW_HOLD_POLL = Duration.ofSeconds(1);
 
     public static final int SCORE_PRECISION = 2;
     /** the 0-10 scale of the quality dimensions, the architecture impact and the senior-review score */

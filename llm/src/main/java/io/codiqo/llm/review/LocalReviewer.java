@@ -159,7 +159,7 @@ public class LocalReviewer {
         long failuresBefore = relay.providerFailures();
         sessions.prompt(sessionId, prompt);
         promptedRelay.compareAndSet(null, relay);
-        if (sessions.awaitTurn(sessionId)) {
+        if (sessions.awaitTurn(sessionId, () -> settled(answers, sessionId))) {
             Optional<ReviewVerdict> toReturn = failureOf(sessions, answers, relay, sessionId, tool);
             if (toReturn.isEmpty() && answers.accepted(sessionId, Object.class).isEmpty()) {
                 toReturn = Optional.of(unansweredTurn("session " + sessionId + " was cut off before it called " + tool.getOpenCodeName() + ", so it gave no answer", relay, failuresBefore));
@@ -191,6 +191,7 @@ public class LocalReviewer {
         try (ReviewSessions sessions = agents.start(workTree, new ReviewEndpoint(relay.getUrl(), relay.getSecret(), null), answers.endpoint(), namingRules)) {
             String sessionId = sessions.createSession(OpenCodeReviewConfig.COORDINATOR, "codiqo review " + StringUtils.left(sha, SHORT_SHA));
             answers.expect(sessionId, AnswerTool.ANSWER, LocalReviewer::readCoordinatorAnswer);
+            answers.watchReviewers(sessions::runningSubagents);
             List<String> forkIds = Lists.newArrayList();
             ReviewVerdict toReturn;
             try {
@@ -245,6 +246,9 @@ public class LocalReviewer {
         if (toReturn instanceof ReviewVerdict.Succeeded labelled && findings.isPresent()) {
             toReturn = triage(sessions, answers, relay, sessionId, forkIds, labelled.getOutcome(), awaitBuild(findings.get(), "static-analysis findings"));
         }
+        if (toReturn instanceof ReviewVerdict.Succeeded) {
+            toReturn = lateReviews(answers, relay, sessionId).orElse(toReturn);
+        }
         return toReturn;
     }
     private ReviewVerdict coordinate(ReviewSessions sessions, ReviewAnswers answers, LlmRelay relay, String sessionId, String sha, StopWatch watch) throws IOException {
@@ -268,6 +272,10 @@ public class LocalReviewer {
                     .map(SessionUsage::getSessionId)
                     .toList();
             failed = settleReviewers(sessions, answers, relay, reviewerIds);
+            if (failed.isPresent()) {
+                return failed.get();
+            }
+            failed = lateReviews(answers, relay, sessionId);
             if (failed.isPresent()) {
                 return failed.get();
             }
@@ -530,13 +538,57 @@ public class LocalReviewer {
                 }
                 yield Optional.of(ReviewVerdict.providerFailure(err, relay.providerErrors()));
             }
-            case TurnEnd.Ending ending -> refusalOf(answers, relay, sessionId, tool).or(() -> switch (ending) {
+            case TurnEnd.Ending ending -> uncounted(answers, relay, sessionId).or(() -> refusalOf(answers, relay, sessionId, tool)).or(() -> switch (ending) {
                 case STOPPED_ON_ITS_OWN -> Optional.of(ReviewVerdict.commitFailure(
                         new IOException("session " + sessionId + " ended its turn without calling " + tool.getOpenCodeName() + ", so it gave no answer"),
                         relay.providerErrors()));
                 case CUT_OFF -> Optional.empty();
             });
         };
+    }
+    /**
+     * A session whose turn ended without an answer after its last answer call was turned away because OpenCode could not
+     * say whether its subagents were still reviewing: it failed on Codiqo's side of the review, since the answer the agent
+     * gave was never read, whether the turn then stopped or was cut off at its step cap. Without this, a turn the agent
+     * ended on its own after that refusal would be the commit's failure and exclude the commit. A turn that ended with an
+     * error is settled by that error instead, which names a failing provider, and one that ran out of time is unanswered
+     * as any other: the refusal did not end it. Empty for every other session, which its answer or a refusal settles.
+     */
+    private static Optional<ReviewVerdict> uncounted(ReviewAnswers answers, LlmRelay relay, String sessionId) {
+        if (settled(answers, sessionId)) {
+            return Optional.empty();
+        }
+        return answers.reviewerCountFailure(sessionId).<ReviewVerdict>map(failed -> new ReviewVerdict.CodiqoFailure(new IOException("session " + sessionId
+                + "'s answer was turned away because OpenCode could not say whether its subagents were still reviewing", failed), relay.providerErrors()));
+    }
+    /**
+     * Only the coordinator's answer carries bugs, so a review with bugs submitted after it would have them left out without
+     * a word: the review fails on what the commit's agents did instead. Such a review comes from a subagent started in the
+     * same response as the answer, from one a later run of the coordinator started after it was woken once more, or from
+     * one a labelling or triage fork started, which runs with the coordinator's permissions; it is checked once the
+     * coordinator's turn ended and again after the forks' turns. A late review without bugs loses nothing the review
+     * reads: a reviewer of the coordinator still has its labels and observations collected with the others.
+     */
+    private static Optional<ReviewVerdict> lateReviews(ReviewAnswers answers, LlmRelay relay, String sessionId) {
+        long late = answers.reviewsAfterAnswer(sessionId).stream()
+                .filter(review -> AnswerTool.SEVERITIES.stream().anyMatch(severity -> review.path(severity).size() > 0))
+                .count();
+        if (late > 0) {
+            return Optional.of(ReviewVerdict.commitFailure(new IOException(late + " reviewer reviews with bugs were submitted after the coordinator's answer, "
+                    + "so their bugs were not merged"), relay.providerErrors()));
+        }
+        return Optional.empty();
+    }
+    /**
+     * Whether the session's answer was taken, or could not be read on Codiqo's side: once nothing of the turn runs, waiting
+     * longer changes neither, and {@link #failureOf} settles both.
+     */
+    private static boolean settled(ReviewAnswers answers, String sessionId) {
+        try {
+            return answers.accepted(sessionId, Object.class).isPresent();
+        } catch (IllegalStateException err) {
+            return true;
+        }
     }
     /** a refused answer, which the agent never corrected within its turn, is the commit's failure */
     private static Optional<ReviewVerdict> refusalOf(ReviewAnswers answers, LlmRelay relay, String sessionId, AnswerTool tool) {

@@ -1758,11 +1758,36 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   `codemode: false`, as the review's does (checked on 2.1.1 and 2.1.2). The review waits until OpenCode lists the server
   as connected (`OpenCodeClient.awaitMcpConnected`, `GET /api/mcp`) before it starts, so a server OpenCode cannot reach
   costs nothing. The shared `answer-rules` close every answered prompt, the labelling and triage turns' included.
-- **The coordinator never starts a subagent in the background.** OpenCode's subagent tool takes `background`, and its
-  result for one tells the model to end its response; a headless review ends with that turn, so the subagent's report
-  is never read. In 1 of 48 reviews GLM-5.3 started a second, background "verification" subagent after its reviewer had
-  reported, then ended on "Once it reports, I will … give the final JSON". OpenCode 2.1.2 has no setting that turns the
-  parameter off, so the prompt forbids it and any subagent started after the reviewers reported.
+- **A review lasts until every reviewer has reported, in the foreground or the background.** OpenCode 2.3 runs every
+  subagent in the background (its tool has no `background` input any more): the call returns at once and tells the
+  model to end its response, and each reviewer's report, put in the coordinator's inbox, wakes it for a new run. Its
+  wait route covers one session's own run, and no route waits for a session's tree, so `OpenCodeSessions.awaitTurn`
+  waits until no session of the tree is running (`GET /api/session/active`), looked at twice with the session unchanged:
+  a reviewer stays running until its report is in the inbox and the coordinator woken, which makes it running in turn.
+  Once the session answered, the first look with nothing running ends it. The job and inbox routes are not read: a job
+  row or report OpenCode failed to deliver would hold the turn to its timeout. On 2.3.0 a review that trusted the wait
+  failed in 27 s, the coordinator having ended its first response, and every commit would have been excluded.
+  Only the coordinator's answer carries bugs, so `ReviewAnswers` holds that answer inside its call (OpenCode allows an
+  MCP call 12 hours) while a subagent it started still runs without having submitted a review
+  (`ReviewSessions.runningSubagents`), polled every `RunArgs.REVIEW_HOLD_POLL` for at most `reviewTimeout` from when the
+  answer was asked for, so never past the coordinator's turn; the answer then meets the usual refusal of one given
+  before every review was read. A subagent that already submitted is not waited for. Running out of that time, or
+  OpenCode unable to say which subagents run, turns the answer away without counting against its attempts; a
+  coordinator whose turn then stopped or was cut off without being taken is Codiqo's failure, while a turn that ended
+  with an error is settled by it (it names the provider) and one that ran out of time is unanswered. A review with bugs
+  submitted after the coordinator's answer, checked after its turn and again after the forks', fails the review rather
+  than lose them; one without bugs loses nothing, its labels and observations being collected with the others. OpenCode delivers a report to a coordinator busy in that call without waiting
+  for it (the run coordinator's `wake` only marks the busy run), so the hold cannot wait on itself. The prompt forbids
+  setting a subagent call's `background` option, which OpenCode 2.2.7 still offers and where a report reaches the
+  inbox only after its subagent stopped running, asks the coordinator to end each response at once until every reviewer
+  has reported, and every agent never to run a shell
+  command in the background, whose result would come after its turn (the shell tool takes `background` on 2.2.7 and
+  2.3.0, and such a command is not waited for). OpenCode 2.3 starts the step count again from 1 at each report that
+  arrives as a message of its own, so the step cap bounds each response and `reviewTimeout` the whole review.
+  `OpenCodeClient.requireBackgroundRoutes` refuses an OpenCode without the route before any agent runs.
+  The same code runs OpenCode 2.2, whose subagents ran in the foreground inside the coordinator's run. Start no further
+  subagent once the reviewers reported: in 1 of 48 reviews GLM-5.3 started a second "verification" subagent after its
+  reviewer had reported.
 - **A wrong answer is refused within its turn, never repaired.** OpenCode checks a call's arguments against its tool's
   schema (`AnswerTool.inputSchema`, which requires what the prompt asks for), and `ReviewAnswers` then runs the review's
   own readers on them: `LocalReviewer.readCoordinatorAnswer` (findings, assessment, and a work split with areas and
@@ -1787,7 +1812,9 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   economically, stop calling tools `STEPS_RESERVED_FOR_ANSWER` (8) before the cap, and never end on a plan. The
   coordinator also starts every reviewer before it reads any code: one that reviewed production files itself first
   reached its cap of 40 while checking the reports. The time limits follow the caps: `reviewTimeout` is 150 minutes
-  (about 65 for a healthy provider at the caps' stop steps), and codiqo-action raises the per-commit deadline to the
+  (about 65 for a healthy provider at the caps' stop steps; on OpenCode 2.3 each report starts the coordinator's count
+  again, but a response a report starts before the last one ends at once, so its own steps still add up to about one
+  cap), and codiqo-action raises the per-commit deadline to the
   review limit plus 30 minutes for the follow-ups, 180 by default (`REVIEW_PLUGIN_DEFAULT_MINUTES`); change them
   together, or the outer deadline kills the analysis before the review can time out on its own. The reviewer's whole answer format is stated once, at the end of
   its prompt (`ANSWER FORMAT`), and overrides any format a task describes, so the coordinator's task prompts name paths and purpose, never an answer

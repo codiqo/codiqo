@@ -10,10 +10,14 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Path;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.function.BooleanSupplier;
+import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -46,13 +50,16 @@ class ScriptedAgents implements ReviewAgents {
     final List<String> prompts = Lists.newArrayList();
 
     private final Deque<Step> steps;
-    private final Map<String, Session> sessions = Maps.newLinkedHashMap();
+    /** read by the answer server's threads too, when a coordinator's answer looks at its running sub-agents */
+    private final Map<String, Session> sessions = Collections.synchronizedMap(Maps.newLinkedHashMap());
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final HttpClient http = HttpClient.newHttpClient();
     private ReviewEndpoint model;
     private ReviewAnswers.Endpoint answers;
     private boolean closed;
     private int nextId;
+    /** the next look at the running reviewers fails, as a call to OpenCode that could not be answered */
+    private volatile boolean reviewersUncountable;
 
     ScriptedAgents(Step... steps) {
         this.steps = Queues.newArrayDeque(List.of(steps));
@@ -96,6 +103,20 @@ class ScriptedAgents implements ReviewAgents {
         /** starts a reviewer sub-agent of this turn's session, which ends its turn on its own unless told otherwise */
         String startReviewer() {
             return newSession(OpenCodeReviewConfig.REVIEWER, Optional.of(sessionId));
+        }
+        /** starts a reviewer as OpenCode 2.3 does, in the background: it is at work until {@link #reports} says otherwise */
+        String startBackgroundReviewer() {
+            String toReturn = startReviewer();
+            sessions.get(toReturn).running = true;
+            return toReturn;
+        }
+        /** a background reviewer finished, its report delivered to the session that started it */
+        void reports(String reviewerId) {
+            sessions.get(reviewerId).running = false;
+        }
+        /** the next look at whether this turn's reviewers are still at work fails */
+        void reviewersCannotBeCounted() {
+            reviewersUncountable = true;
         }
         /** how a reviewer's turn ended, for one that did not stop on its own */
         void ends(String reviewerId, TurnEnd end) {
@@ -148,6 +169,7 @@ class ScriptedAgents implements ReviewAgents {
         private final List<String> prompts = Lists.newArrayList();
         private TurnEnd lastTurn = TurnEnd.Ending.STOPPED_ON_ITS_OWN;
         private Optional<String> pending = Optional.empty();
+        private volatile boolean running;
 
         private Session(String agent, Optional<String> parent) {
             this.agent = agent;
@@ -171,7 +193,7 @@ class ScriptedAgents implements ReviewAgents {
             sessions.get(sessionId).pending = Optional.of(text);
         }
         @Override
-        public boolean awaitTurn(String sessionId) throws IOException {
+        public boolean awaitTurn(String sessionId, BooleanSupplier answered) throws IOException {
             String prompt = sessions.get(sessionId).pending.orElseThrow(() -> new AssertionError("session " + sessionId + " was waited for without a prompt"));
             sessions.get(sessionId).pending = Optional.empty();
             assertFalse(steps.isEmpty(), "the review sent a turn the test did not script: " + StringUtils.abbreviate(prompt, PROMPT_PREVIEW));
@@ -179,6 +201,20 @@ class ScriptedAgents implements ReviewAgents {
             Turn turn = new Turn(sessionId, prompt);
             sessions.get(sessionId).lastTurn = steps.pop().act(turn);
             return BooleanUtils.negate(turn.outOfTime);
+        }
+        @Override
+        public Set<String> runningSubagents(String sessionId) throws IOException {
+            if (reviewersUncountable) {
+                reviewersUncountable = false;
+                throw new IOException("GET /api/session/active failed with 503");
+            }
+            synchronized (sessions) {
+                return sessions.entrySet().stream()
+                        .filter(session -> session.getValue().parent.filter(sessionId::equals).isPresent())
+                        .filter(session -> session.getValue().running)
+                        .map(Map.Entry::getKey)
+                        .collect(Collectors.toSet());
+            }
         }
         @Override
         public TurnEnd lastTurn(String sessionId) {
@@ -190,10 +226,12 @@ class ScriptedAgents implements ReviewAgents {
         }
         @Override
         public List<SessionUsage> children(String sessionId) {
-            return sessions.entrySet().stream()
-                    .filter(session -> session.getValue().parent.filter(sessionId::equals).isPresent())
-                    .map(session -> usage(session.getKey()))
-                    .toList();
+            synchronized (sessions) {
+                return sessions.entrySet().stream()
+                        .filter(session -> session.getValue().parent.filter(sessionId::equals).isPresent())
+                        .map(session -> usage(session.getKey()))
+                        .toList();
+            }
         }
         @Override
         public ObjectNode trace(String sessionId) {

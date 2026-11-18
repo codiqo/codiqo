@@ -1,6 +1,7 @@
 package io.codiqo.llm.review;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -8,8 +9,12 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import org.eclipse.jgit.api.Git;
 import org.junit.jupiter.api.AfterEach;
@@ -17,7 +22,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
+
+import com.google.common.util.concurrent.Futures;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.llm.NoopLog;
@@ -34,10 +42,16 @@ class LocalReviewTest {
     private static final StaticFinding FINDING = new StaticFinding("pmd", "GodClass", "warning", "a/Service.java", 3, "possible God Class");
     private static final String REVIEW = "{\"unitLabels\":[{\"file\":\"a/Service.java\",\"signature\":\"handle(Request)\",\"category\":\"ROUTINE\",\"reason\":\"glue\"}],"
             + "\"observations\":[\"the handler validates its request\"],\"notChecked\":[]}";
+    /** a review that reports a bug, which only the coordinator's answer carries on */
+    private static final String BUGGY_REVIEW = "{\"blocking\":[],\"major\":[{\"type\":\"LOGIC\",\"title\":\"null request\",\"description\":\"the handler "
+            + "dereferences a null request\",\"file\":\"a/Service.java\",\"line\":2,\"confidence\":\"HIGH\"}],\"minor\":[],"
+            + "\"unitLabels\":[],\"observations\":[],\"notChecked\":[]}";
     private static final String ASSESSMENT = "{\"tasks\":[{\"paths\":[\"a/Service.java\"]}],\"summary\":\"Adds a request handler.\"}";
     private static final String LABELS = "{\"labels\":[{\"id\":\"U1\",\"category\":\"ROUTINE\",\"reason\":\"glue\"}]}";
     private static final String TRIAGE = "{\"verdicts\":[{\"tool\":\"pmd\",\"rule\":\"GodClass\",\"file\":\"a/Service.java\",\"line\":3,\"verdict\":\"harmless\",\"reason\":\"one small class\"}]}";
     private static final TurnEnd RATE_LIMITED = new TurnEnd.Failed("provider.rate-limit", "stream cut", false);
+    /** how long a background reviewer takes to submit, long enough for the coordinator's answer to be waiting by then */
+    private static final Duration LATE_REVIEW = Duration.ofMillis(500);
 
     private final JsonMapper mapper = JsonMapper.builder().build();
 
@@ -82,6 +96,161 @@ class LocalReviewTest {
         assertEquals(3, agents.prompts.size(), "the review, the labelling and the triage");
         assertEquals(4, sessionsTraced().size(), "the coordinator, its reviewer and both forks");
         assertTrue(agents.isClosed());
+        agents.assertEveryStepRan();
+    }
+    /**
+     * From OpenCode 2.3 a reviewer runs in the background and reports after the coordinator's response ended: an answer
+     * given while it still reviews waits inside its call until the reviewer submitted its review, though the reviewer
+     * still runs, is then turned away for the review it has not read, without counting against the answer's attempts,
+     * and taken once the coordinator read it. Without the wait the early answer would be taken and the review lost.
+     */
+    @Test
+    void anAnswerWaitsForEveryReviewerStillAtWork() throws Exception {
+        ScriptedAgents agents = new ScriptedAgents(
+                turn -> {
+                    String reviewer = turn.startBackgroundReviewer();
+                    turn.call(turn.sessionId, ReviewAnswers.REVIEWS_TOOL, "{}");
+                    try (ExecutorService reviewing = Executors.newVirtualThreadPerTaskExecutor()) {
+                        Future<JsonNode> late = reviewing.submit(() -> {
+                            Thread.sleep(LATE_REVIEW);
+                            return turn.call(reviewer, AnswerTool.REVIEW.getToolName(), REVIEW);
+                        });
+                        JsonNode waited = turn.call(turn.sessionId, AnswerTool.ANSWER.getToolName(), ASSESSMENT);
+                        assertTrue(waited.toString().contains("submitted reviews you have not read"), waited.toString());
+                        JsonNode review = Futures.getUnchecked(late);
+                        assertFalse(review.path("isError").asBoolean(), review.toString());
+                    }
+
+                    turn.answer(AnswerTool.ANSWER, ASSESSMENT);
+                    turn.reports(reviewer);
+                    return TurnEnd.Ending.STOPPED_ON_ITS_OWN;
+                },
+                turn -> answered(turn, AnswerTool.LABELS, LABELS),
+                turn -> answered(turn, AnswerTool.TRIAGE, TRIAGE));
+
+        ReviewVerdict.Succeeded succeeded = assertInstanceOf(ReviewVerdict.Succeeded.class, review(agents));
+
+        assertEquals(List.of("the handler validates its request"), succeeded.getOutcome().getReview().getObservations(), "the late review is merged");
+        agents.assertEveryStepRan();
+    }
+    /** an answer given when OpenCode could not say whether reviewers are at work is turned away, not taken blind */
+    @Test
+    void anAnswerIsTurnedAwayWhenTheRunningReviewersCannotBeCounted() throws Exception {
+        ScriptedAgents agents = new ScriptedAgents(
+                turn -> {
+                    turn.call(turn.startReviewer(), AnswerTool.REVIEW.getToolName(), REVIEW);
+                    turn.call(turn.sessionId, ReviewAnswers.REVIEWS_TOOL, "{}");
+                    turn.reviewersCannotBeCounted();
+                    JsonNode blind = turn.call(turn.sessionId, AnswerTool.ANSWER.getToolName(), ASSESSMENT);
+                    assertTrue(blind.toString().contains("could not be checked"), blind.toString());
+
+                    turn.answer(AnswerTool.ANSWER, ASSESSMENT);
+                    return TurnEnd.Ending.STOPPED_ON_ITS_OWN;
+                },
+                turn -> answered(turn, AnswerTool.LABELS, LABELS),
+                turn -> answered(turn, AnswerTool.TRIAGE, TRIAGE));
+
+        assertInstanceOf(ReviewVerdict.Succeeded.class, review(agents));
+    }
+    /**
+     * A coordinator turned away only because the reviewers could not be counted, and never taken after, failed on
+     * Codiqo's side whether its turn then stopped on its own or was cut off at its step cap.
+     */
+    @ParameterizedTest
+    @EnumSource(TurnEnd.Ending.class)
+    void anAnswerNeverTakenForWantOfACountIsCodiqosFailure(TurnEnd.Ending ending) throws Exception {
+        ScriptedAgents agents = new ScriptedAgents(turn -> {
+            turn.call(turn.startReviewer(), AnswerTool.REVIEW.getToolName(), REVIEW);
+            turn.call(turn.sessionId, ReviewAnswers.REVIEWS_TOOL, "{}");
+            turn.reviewersCannotBeCounted();
+            turn.call(turn.sessionId, AnswerTool.ANSWER.getToolName(), ASSESSMENT);
+            return ending;
+        });
+
+        ReviewVerdict.CodiqoFailure failed = assertInstanceOf(ReviewVerdict.CodiqoFailure.class, review(agents));
+
+        assertTrue(failed.getError().getMessage().contains("could not say whether its subagents were still reviewing"), failed.getError().getMessage());
+    }
+    /** a turn that ran out of time after a failed count is unanswered as any other: the refusal did not end it */
+    @Test
+    void aTurnOutOfTimeAfterAFailedCountIsUnanswered() throws Exception {
+        ScriptedAgents agents = new ScriptedAgents(turn -> {
+            turn.call(turn.startReviewer(), AnswerTool.REVIEW.getToolName(), REVIEW);
+            turn.call(turn.sessionId, ReviewAnswers.REVIEWS_TOOL, "{}");
+            turn.reviewersCannotBeCounted();
+            turn.call(turn.sessionId, AnswerTool.ANSWER.getToolName(), ASSESSMENT);
+            turn.runsOutOfTime();
+            return TurnEnd.Ending.STOPPED_ON_ITS_OWN;
+        });
+
+        ReviewVerdict.CommitFailure failed = assertInstanceOf(ReviewVerdict.CommitFailure.class, review(agents));
+
+        assertTrue(failed.getError().getMessage().contains("did not end its turn within"), failed.getError().getMessage());
+    }
+    /** a turn that then ended with a provider error is settled by that error, which names the failing provider */
+    @Test
+    void aProviderErrorAfterAFailedCountIsTheProvidersFailure() throws Exception {
+        ScriptedAgents agents = new ScriptedAgents(turn -> {
+            turn.call(turn.startReviewer(), AnswerTool.REVIEW.getToolName(), REVIEW);
+            turn.call(turn.sessionId, ReviewAnswers.REVIEWS_TOOL, "{}");
+            turn.reviewersCannotBeCounted();
+            turn.call(turn.sessionId, AnswerTool.ANSWER.getToolName(), ASSESSMENT);
+            return RATE_LIMITED;
+        });
+
+        ReviewVerdict.ProviderFailure failed = assertInstanceOf(ReviewVerdict.ProviderFailure.class, review(agents));
+
+        assertTrue(failed.getError().getMessage().contains("provider.rate-limit"), failed.getError().getMessage());
+    }
+    /**
+     * Only the coordinator's answer carries bugs: a review with bugs submitted after it, by a subagent started in the same
+     * response as the answer, would have them left out without a word, so the review fails on the commit instead.
+     */
+    @Test
+    void aReviewSubmittedAfterTheAnswerFailsTheReview() throws Exception {
+        ScriptedAgents agents = new ScriptedAgents(turn -> {
+            turn.call(turn.startReviewer(), AnswerTool.REVIEW.getToolName(), REVIEW);
+            turn.answer(AnswerTool.ANSWER, ASSESSMENT);
+            turn.call(turn.startReviewer(), AnswerTool.REVIEW.getToolName(), BUGGY_REVIEW);
+            return TurnEnd.Ending.STOPPED_ON_ITS_OWN;
+        });
+
+        ReviewVerdict.CommitFailure failed = assertInstanceOf(ReviewVerdict.CommitFailure.class, review(agents));
+
+        assertEquals("1 reviewer reviews with bugs were submitted after the coordinator's answer, so their bugs were not merged", failed.getError().getMessage());
+    }
+    /** a late review without bugs loses nothing: its labels and observations are collected with the other reviewers' */
+    @Test
+    void aLateReviewWithoutBugsLosesNothing() throws Exception {
+        ScriptedAgents agents = new ScriptedAgents(
+                turn -> {
+                    turn.call(turn.startReviewer(), AnswerTool.REVIEW.getToolName(), REVIEW);
+                    turn.answer(AnswerTool.ANSWER, ASSESSMENT);
+                    turn.call(turn.startReviewer(), AnswerTool.REVIEW.getToolName(), REVIEW);
+                    return TurnEnd.Ending.STOPPED_ON_ITS_OWN;
+                },
+                turn -> answered(turn, AnswerTool.LABELS, LABELS),
+                turn -> answered(turn, AnswerTool.TRIAGE, TRIAGE));
+
+        ReviewVerdict.Succeeded succeeded = assertInstanceOf(ReviewVerdict.Succeeded.class, review(agents));
+
+        assertEquals(2, succeeded.getOutcome().getReview().getReviewers());
+        agents.assertEveryStepRan();
+    }
+    /** a labelling fork runs with the coordinator's permissions, so a review a reviewer it started submitted is left out as well */
+    @Test
+    void aReviewSubmittedDuringAFollowUpFailsTheReview() throws Exception {
+        ScriptedAgents agents = new ScriptedAgents(
+                coordinator(1),
+                turn -> {
+                    turn.call(turn.startReviewer(), AnswerTool.REVIEW.getToolName(), BUGGY_REVIEW);
+                    return answered(turn, AnswerTool.LABELS, LABELS);
+                },
+                turn -> answered(turn, AnswerTool.TRIAGE, TRIAGE));
+
+        ReviewVerdict.CommitFailure failed = assertInstanceOf(ReviewVerdict.CommitFailure.class, review(agents));
+
+        assertEquals("1 reviewer reviews with bugs were submitted after the coordinator's answer, so their bugs were not merged", failed.getError().getMessage());
         agents.assertEveryStepRan();
     }
     /** a coordinator that reviewed the commit itself reviewed none of it the way the review asks */

@@ -1,21 +1,28 @@
 package io.codiqo.llm.review;
 
+import static java.util.function.Predicate.not;
+
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.StopWatch;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
@@ -47,25 +54,33 @@ public class OpenCodeSessions implements ReviewSessions {
             "provider.invalid-request",
             "provider.content-filter");
 
+    /** added to every bound, so a call never times out before the review timeout does */
+    private static final long DEADLINE_MARGIN_MILLIS = 2;
+
     private final OpenCodeClient client;
     private final Path workTree;
     private final Duration turnTimeout;
     private final Runnable stopServer;
+    private final Log log;
+    /** the client a look at the running sub-agents goes through when an answer asks, bounded as one look is */
+    private final OpenCodeClient reviewersCheck;
 
     /**
      * Sessions of an OpenCode server someone else runs and stops, as a test's fake of its HTTP API is. The turn timeout is
      * the review timeout, and the client's own timeouts may end a wait sooner, as a connect that timed out does.
      */
     @VisibleForTesting
-    public OpenCodeSessions(OpenCodeClient client, Path workTree, Duration turnTimeout) {
+    public OpenCodeSessions(OpenCodeClient client, Path workTree, Duration turnTimeout, Log log) {
         this(client, workTree, turnTimeout, () -> {
-        });
+        }, log);
     }
-    private OpenCodeSessions(OpenCodeClient client, Path workTree, Duration turnTimeout, Runnable stopServer) {
+    private OpenCodeSessions(OpenCodeClient client, Path workTree, Duration turnTimeout, Runnable stopServer, Log log) {
         this.client = Objects.requireNonNull(client);
         this.workTree = Objects.requireNonNull(workTree);
         this.turnTimeout = Objects.requireNonNull(turnTimeout);
         this.stopServer = Objects.requireNonNull(stopServer);
+        this.log = Objects.requireNonNull(log);
+        this.reviewersCheck = client.within(RunArgs.REVIEW_LOOK_TIMEOUT);
     }
     @Override
     public String createSession(String agent, String title) throws IOException {
@@ -79,12 +94,61 @@ public class OpenCodeSessions implements ReviewSessions {
     public void prompt(String sessionId, String text) throws IOException {
         client.prompt(sessionId, text);
     }
+    /**
+     * Waits until the session and the sub-agents it started are quiet. OpenCode 2.3 runs every sub-agent in the
+     * background: a coordinator's run ends once it started its reviewers, and each reviewer's report, put in its inbox,
+     * wakes it for a new run, while OpenCode's wait covers one session's own run and no route waits for a session's tree.
+     * A reviewer stays among the running sessions until its report is in the coordinator's inbox and the coordinator woken,
+     * which makes it running in turn, so the turn ended once no session of the tree is running: looked at twice a moment
+     * apart with the session unchanged in between, which also covers OpenCode 2.2, where a report reached the inbox just
+     * after its sub-agent stopped running. Once the session answered, the first look that finds nothing running ends it.
+     * A command run in the background is not waited for. Every call is bounded by what is left of the review timeout, and
+     * a look that failed is tried again a few times before the wait fails. Up to OpenCode 2.2 sub-agents ran in the
+     * foreground, inside the coordinator's run, and the first wait already covers them.
+     */
     @Override
-    public boolean awaitTurn(String sessionId) throws IOException {
+    public boolean awaitTurn(String sessionId, BooleanSupplier answered) throws IOException {
         StopWatch turn = StopWatch.createStarted();
         try {
-            client.awaitIdle(sessionId);
-            return true;
+            Optional<String> quiet = Optional.empty();
+            int failedLooks = 0;
+            while (turn.getDuration().compareTo(turnTimeout) < 0) {
+                try {
+                    bounded(turn).awaitIdle(sessionId);
+                    /** a quick listing, bounded as one look is, so one OpenCode never answers fails within seconds and is tried again */
+                    OpenCodeClient look = client.within(ObjectUtils.min(remaining(turn), RunArgs.REVIEW_LOOK_TIMEOUT));
+                    Set<String> running = running(look, sessionId, true);
+                    if (CollectionUtils.isNotEmpty(running)) {
+                        quiet = Optional.empty();
+                        for (String session : running) {
+                            bounded(turn).awaitIdle(session);
+                        }
+                    } else if (answered.getAsBoolean()) {
+                        return true;
+                    } else {
+                        String state = look.session(sessionId).toString();
+                        if (quiet.filter(state::equals).isPresent()) {
+                            return true;
+                        }
+                        quiet = Optional.of(state);
+                        OpenCodeClient.sleep(RunArgs.REVIEW_POLL);
+                    }
+                    failedLooks = 0;
+                } catch (InterruptedIOException err) {
+                    /** a connect that timed out is a failed look; an interrupt or the review timeout ends the wait */
+                    if (BooleanUtils.or(new boolean[] { Thread.currentThread().isInterrupted(), turn.getDuration().compareTo(turnTimeout) >= 0, ++failedLooks >= RunArgs.REVIEW_LOOK_ATTEMPTS })) {
+                        throw err;
+                    }
+                    OpenCodeClient.sleep(RunArgs.REVIEW_POLL);
+                } catch (IOException err) {
+                    if (++failedLooks >= RunArgs.REVIEW_LOOK_ATTEMPTS) {
+                        throw err;
+                    }
+                    log.warn("opencode: looking at the review's sessions failed (%d of %d), looking again: %s", failedLooks, RunArgs.REVIEW_LOOK_ATTEMPTS, err.getMessage());
+                    OpenCodeClient.sleep(RunArgs.REVIEW_POLL);
+                }
+            }
+            return false;
         } catch (InterruptedIOException err) {
             /**
              * OkHttp ends a call that outlived its call timeout, which is the review timeout, with this exception, and
@@ -96,6 +160,23 @@ public class OpenCodeSessions implements ReviewSessions {
                 throw err;
             }
             return false;
+        }
+    }
+    /**
+     * The sub-agents still running, as OpenCode lists its running sessions: from OpenCode 2.3 a reviewer stays running
+     * until its report is in the coordinator's inbox. A look that failed is tried again, as the wait's are.
+     */
+    @Override
+    public Set<String> runningSubagents(String sessionId) throws IOException {
+        for (int attempt = 1;; attempt++) {
+            try {
+                return running(reviewersCheck, sessionId, false);
+            } catch (IOException err) {
+                if (BooleanUtils.or(new boolean[] { Thread.currentThread().isInterrupted(), attempt >= RunArgs.REVIEW_LOOK_ATTEMPTS })) {
+                    throw err;
+                }
+                OpenCodeClient.sleep(RunArgs.REVIEW_POLL);
+            }
         }
     }
     /** A session with no message has run no turn, which reads as cut off. */
@@ -141,6 +222,18 @@ public class OpenCodeSessions implements ReviewSessions {
         stopServer.run();
     }
     /**
+     * The client bounded by what is left of the review timeout, rounded up: OkHttp keeps a timeout in whole milliseconds
+     * and starts it with the call, so one rounded down fired just before the deadline, and the wait, finding time left,
+     * threw it instead of reporting a turn out of time (1 run in 145 of the test that waits for a reviewer that never
+     * ends). It is never nothing, which OkHttp reads as no timeout at all.
+     */
+    private OpenCodeClient bounded(StopWatch turn) {
+        return client.within(remaining(turn));
+    }
+    private Duration remaining(StopWatch turn) {
+        return ObjectUtils.max(turnTimeout.minus(turn.getDuration()), Duration.ZERO).truncatedTo(ChronoUnit.MILLIS).plusMillis(DEADLINE_MARGIN_MILLIS);
+    }
+    /**
      * How a turn ended, read from its last assistant message: an error on it is the turn's error, and a {@code finish} of
      * "stop" is a turn the model ended on its own; anything else, a tool call or a step cap, is a turn cut off.
      */
@@ -171,7 +264,8 @@ public class OpenCodeSessions implements ReviewSessions {
             OpenCodeClient client = new OpenCodeClient(server.getUrl(), server.getPassword(), args.getReviewTimeout());
             try {
                 client.awaitMcpConnected(ReviewAnswers.SERVER, args.getReviewStartupTimeout());
-                return new OpenCodeSessions(client, workTree, args.getReviewTimeout(), server::close);
+                client.within(RunArgs.REVIEW_LOOK_TIMEOUT).requireBackgroundRoutes();
+                return new OpenCodeSessions(client, workTree, args.getReviewTimeout(), server::close, log);
             } catch (Throwable err) {
                 closeAfter(err, client::close);
                 throw err;
@@ -180,6 +274,21 @@ public class OpenCodeSessions implements ReviewSessions {
             closeAfter(err, server::close);
             throw err;
         }
+    }
+    /**
+     * The session's sub-agents running right now, with the session itself when {@code itself}. The sub-agents are listed
+     * only when some other session runs: a hold looks once a second for as long as a reviewer works.
+     */
+    private static Set<String> running(OpenCodeClient client, String sessionId, boolean itself) throws IOException {
+        Set<String> active = client.activeSessions();
+        Set<String> toReturn = Sets.newHashSet();
+        if (BooleanUtils.and(new boolean[] { itself, active.contains(sessionId) })) {
+            toReturn.add(sessionId);
+        }
+        if (active.stream().anyMatch(not(sessionId::equals))) {
+            client.childUsage(sessionId).stream().map(SessionUsage::getSessionId).filter(active::contains).forEach(toReturn::add);
+        }
+        return toReturn;
     }
     private static void closeAfter(Throwable failure, Runnable close) {
         try {

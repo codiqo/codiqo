@@ -2,22 +2,29 @@ package io.codiqo.llm.review;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
+import org.apache.commons.lang3.function.FailableFunction;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.commons.lang3.time.StopWatch;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Queues;
+import com.google.common.collect.Sets;
 import com.sun.net.httpserver.HttpExchange;
 
 import io.codiqo.api.RunArgs;
@@ -63,6 +70,7 @@ public final class ReviewAnswers implements AutoCloseable {
     private static final int PARSE_ERROR = -32700;
     private static final int METHOD_NOT_FOUND = -32601;
     private static final int INVALID_PARAMS = -32602;
+    private static final String STOPPING = "Refused: the review is being stopped. End your turn.";
     private static final String READ_FAILED = "Your answer could not be read because of an error on Codiqo's side, so the review fails. End your turn.";
 
     private final LoopbackServer loopback;
@@ -79,11 +87,26 @@ public final class ReviewAnswers implements AutoCloseable {
      * session and every review would be paid for in full and then fail on a missing answer.
      */
     private final AtomicReference<String> unmatchable = new AtomicReference<>();
+    /**
+     * The failure to count a session's running reviewers that turned its last answer call away, by session: no fault of
+     * the agent's. A later answer call clears it, whatever comes of that one.
+     */
+    private final Map<String, IOException> reviewerCountFailures = Maps.newConcurrentMap();
+    /**
+     * How many reviews each coordinator had read when its answer was taken: a review submitted after that never reached
+     * the merge. Recorded in the coordinator's own slot, so no slot ever waits on another's lock.
+     */
+    private final Map<String, Integer> readAtAnswer = Maps.newConcurrentMap();
+    /** the coordinator's sub-agents still running, as the review's agents report them; none until the agents are started */
+    private final AtomicReference<FailableFunction<String, Set<String>, IOException>> runningSubagents = new AtomicReference<>(sessionId -> Set.of());
+    /** how long a coordinator's answer waits for its reviewers at most: the review's own timeout */
+    private final Duration reviewTimeout;
     private final Log log;
 
     private ReviewAnswers(LoopbackServer loopback, RunArgs args, Log log) {
         this.loopback = Objects.requireNonNull(loopback);
         this.attempts = Math.max(1, args.getReviewAnswerAttempts());
+        this.reviewTimeout = args.getReviewTimeout();
         this.log = Objects.requireNonNull(log);
     }
     public Endpoint endpoint() {
@@ -92,6 +115,14 @@ public final class ReviewAnswers implements AutoCloseable {
     /** asks the session for its answer through the tool, read by the reader as each call arrives */
     public <T> void expect(String sessionId, AnswerTool tool, AnswerReader<T> reader) {
         slots.put(sessionId, new Slot<>(tool, reader));
+    }
+    /**
+     * Where a coordinator's answer learns which of its sub-agents still run: from OpenCode 2.3 a reviewer runs in the
+     * background and reports after the coordinator's response ended, so an answer given before then would leave its
+     * review out of the merge.
+     */
+    public void watchReviewers(FailableFunction<String, Set<String>, IOException> running) {
+        runningSubagents.set(Objects.requireNonNull(running));
     }
     /** takes the tool's answer from any session asked for nothing else, each read by the reader as its calls arrive */
     public <T> void expectFromAnySession(AnswerTool tool, AnswerReader<T> reader) {
@@ -116,6 +147,16 @@ public final class ReviewAnswers implements AutoCloseable {
     public Optional<String> refusal(String sessionId) {
         return Optional.ofNullable(slots.get(sessionId)).flatMap(Slot::refusal);
     }
+    /** the failure to tell whether the session's reviewers were still at work that turned its last answer call away */
+    public Optional<IOException> reviewerCountFailure(String sessionId) {
+        return Optional.ofNullable(reviewerCountFailures.get(sessionId));
+    }
+    /** the reviews submitted after the coordinator's answer, which the answer, the one carrier of the review's bugs, left out */
+    public List<JsonNode> reviewsAfterAnswer(String sessionId) {
+        return Optional.ofNullable(readAtAnswer.get(sessionId))
+                .map(read -> reviews.stream().skip(read).map(Pair::getRight).toList())
+                .orElse(List.of());
+    }
     /** what one call of a tool gets back, as {@code tools/call} answers it once the calling session is known */
     @VisibleForTesting
     public ObjectNode answerCall(String sessionId, String toolName, JsonNode arguments) {
@@ -131,11 +172,66 @@ public final class ReviewAnswers implements AutoCloseable {
         if (Objects.isNull(slot)) {
             return toolResult("Refused: nobody asked this session for " + tool.getOpenCodeName() + "; carry on with what you were asked.", true);
         }
+        /**
+         * Asked of OpenCode before the slot is locked, a slow answer holding up none of its other calls, and only while
+         * the slot still takes an answer: one already accepted or out of attempts says so instead.
+         */
+        if (BooleanUtils.and(new boolean[] { tool == AnswerTool.ANSWER, slot.tool == AnswerTool.ANSWER, slot.isOpen() })) {
+            Optional<ObjectNode> refused = awaitReviewers(sessionId, slot);
+            if (refused.isPresent()) {
+                return refused.get();
+            }
+        }
         return slot.submit(sessionId, tool, arguments);
     }
     @Override
     public void close() {
         loopback.close();
+    }
+    /**
+     * Holds the coordinator's answer while a sub-agent it started still runs without having submitted a review: only the
+     * coordinator's answer carries bugs, so an answer taken earlier would leave that review's bugs out of the merge. The
+     * hold is inside the call, which OpenCode lets run for 12 hours, and OpenCode delivers a report to a coordinator busy
+     * in it without waiting for it, so the hold never waits on itself. Once it ends, an answer given before the
+     * coordinator read the reviews that came in meanwhile is refused as any such answer is. A sub-agent that already
+     * submitted is not waited for: its closing sentence adds nothing. Two refusals here do not count against the answer's
+     * attempts: running out of the review timeout, and OpenCode unable to say which sub-agents run, Codiqo's failure if no
+     * later answer is taken ({@link #reviewerCountFailure}). The review timeout is counted from when the answer was asked
+     * for, just before the coordinator was prompted, so the hold never outlives the coordinator's turn. An interrupt, as
+     * {@link #close} sends, is the review being stopped, never a failed count. It runs on the call's own thread and holds
+     * no slot's lock.
+     */
+    private Optional<ObjectNode> awaitReviewers(String sessionId, Slot<?> slot) {
+        reviewerCountFailures.remove(sessionId);
+        try {
+            Set<String> waitingFor = stillReviewing(sessionId);
+            while (CollectionUtils.isNotEmpty(waitingFor)) {
+                if (slot.asked.getDuration().compareTo(reviewTimeout) >= 0) {
+                    return Optional.of(toolResult("Refused: your subagents " + waitingFor + " are still reviewing after " + reviewTimeout
+                            + ". Call " + slot.tool.getOpenCodeName() + " again with your whole answer.", true));
+                }
+                Thread.sleep(RunArgs.REVIEW_HOLD_POLL);
+                waitingFor = stillReviewing(sessionId);
+            }
+            return Optional.empty();
+        } catch (IOException err) {
+            if (Thread.currentThread().isInterrupted()) {
+                return Optional.of(toolResult(STOPPING, true));
+            }
+            reviewerCountFailures.put(sessionId, err);
+            log.warn("review answers: could not tell whether the subagents of %s are still reviewing, so its answer was turned away: %s", sessionId, err.getMessage());
+            return Optional.of(toolResult("Refused: whether your subagents are still reviewing could not be checked. Call " + slot.tool.getOpenCodeName()
+                    + " again with your whole answer.", true));
+        } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
+            return Optional.of(toolResult(STOPPING, true));
+        }
+    }
+    /** the session's sub-agents still running that have not submitted a review: those an answer has to wait for */
+    private Set<String> stillReviewing(String sessionId) throws IOException {
+        return runningSubagents.get().apply(sessionId).stream()
+                .filter(child -> Optional.ofNullable(slots.get(child)).filter(Slot::hasAnswer).isEmpty())
+                .collect(Collectors.toCollection(Sets::newTreeSet));
     }
     private void serve(HttpExchange exchange) throws IOException {
         try (exchange) {
@@ -346,6 +442,8 @@ public final class ReviewAnswers implements AutoCloseable {
         private int refused;
         private String lastRefusal;
         private RuntimeException failure;
+        /** when the session was asked for its answer, from which a coordinator's answer waits at most the review timeout */
+        private final StopWatch asked = StopWatch.createStarted();
 
         private Slot(AnswerTool tool, AnswerReader<T> reader) {
             this.tool = Objects.requireNonNull(tool);
@@ -386,6 +484,14 @@ public final class ReviewAnswers implements AutoCloseable {
             }
             return refuse(sessionId, "the arguments are not a JSON object");
         }
+        /** whether a call can still be taken as the answer: none accepted yet, attempts left and no reader failure */
+        private synchronized boolean isOpen() {
+            return BooleanUtils.and(new boolean[] { Objects.isNull(failure), Objects.isNull(accepted), refused < attempts });
+        }
+        /** read by an answer that waits for its reviewers, which holds no slot's lock while it asks */
+        private synchronized boolean hasAnswer() {
+            return Objects.nonNull(accepted);
+        }
         private ObjectNode read(String sessionId, JsonNode arguments) {
             try {
                 accepted = new Accepted<>(reader.read(arguments), arguments.toString());
@@ -401,6 +507,9 @@ public final class ReviewAnswers implements AutoCloseable {
             }
             if (tool == AnswerTool.REVIEW) {
                 reviews.add(Pair.of(sessionId, arguments));
+            }
+            if (tool == AnswerTool.ANSWER) {
+                readAtAnswer.put(sessionId, reviewsRead.getOrDefault(sessionId, 0));
             }
             return toolResult("Accepted; your answer is final. End your turn with one short sentence.", false);
         }

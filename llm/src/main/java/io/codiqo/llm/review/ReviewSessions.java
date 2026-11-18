@@ -3,6 +3,8 @@ package io.codiqo.llm.review;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.List;
+import java.util.Set;
+import java.util.function.BooleanSupplier;
 
 import tools.jackson.databind.node.ObjectNode;
 
@@ -20,10 +22,16 @@ public interface ReviewSessions extends Closeable {
     /** Sends the prompt as the session's next turn, without waiting for the turn to end. */
     void prompt(String sessionId, String text) throws IOException;
     /**
-     * Waits until the session's turn ended, every sub-agent it started included: false when it did not end within the
-     * review timeout. A wait that failed sooner, an interrupt among them, is thrown.
+     * Waits until the session's turn ended, every sub-agent it started included, and every run their reports woke it for:
+     * false when it did not end within the review timeout. Once {@code answered} holds, the turn ended as soon as none of
+     * its sessions runs. A wait that failed sooner, an interrupt among them, is thrown.
      */
-    boolean awaitTurn(String sessionId) throws IOException;
+    boolean awaitTurn(String sessionId, BooleanSupplier answered) throws IOException;
+    /**
+     * The sub-agents the session started that are still running: a coordinator's answer waits for those that have not
+     * reviewed yet, since a sub-agent that runs in the background reports after the coordinator's response ended.
+     */
+    Set<String> runningSubagents(String sessionId) throws IOException;
     /** How the session's last turn ended, read once the session is idle. */
     TurnEnd lastTurn(String sessionId) throws IOException;
     SessionUsage usage(String sessionId) throws IOException;
