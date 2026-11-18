@@ -175,6 +175,12 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
      * (forkedProcessExitTimeoutInSeconds) is NOT accepted on the command line and is silently ignored.
      */
     private static final long FORK_EXIT_GRACE_SECONDS = 120L;
+    /**
+     * How long before the build's own deadline surefire must end a test JVM: its exit grace plus a minute for the rest of
+     * the build (forkTimeoutSeconds)
+     */
+    private static final Duration TEST_FORK_DEADLINE_MARGIN = Duration.ofSeconds(FORK_EXIT_GRACE_SECONDS).plusMinutes(1);
+    private static final long MIN_TEST_FORK_SECONDS = 60L;
 
     /**
      * The directory in the build's output where the plugin writes what it leaves behind, the review's trace among
@@ -724,7 +730,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         }
     }
     @SuppressWarnings("deprecation")
-    protected InvocationRequest invocationRequest(RunArgs args, boolean timeMachineRequested, Duration targetOffset, BuildPhase phase) throws IOException {
+    protected InvocationRequest invocationRequest(RunArgs args, boolean timeMachineRequested, Duration targetOffset, BuildPhase phase, Duration deadline) throws IOException {
         File rootPom = new File(args.getGit().getWorkTree(), "pom.xml");
         InvocationRequest request = new DefaultInvocationRequest();
         request.setPomFile(rootPom);
@@ -744,7 +750,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                     "-Dmaven.javadoc.skip=true",
                     "-Dmdep.analyze.skip=true"));
         } else {
-            long surefireTimeout = args.getTestTimeout().getSeconds();
+            long surefireTimeout = forkTimeoutSeconds(args.getTestTimeout(), deadline);
             /**
              * jacoco.skip=true is deliberate: codiqo owns coverage in the fork. the injector extension attaches its
              * own agent to every module (uniform per-module destfile) and strips dangling agent-property tokens, so
@@ -908,6 +914,16 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             request.setProperties(props);
         }
         return request;
+    }
+    /**
+     * surefire's own limit for a test JVM, capped below the build's deadline for this run. A test stuck where no
+     * interrupt reaches runs until a limit kills its JVM; surefire's kill ends only that JVM, and the build finishes and
+     * is scored, while the build's deadline kills the whole forked build, maybe in the middle of a compile or a jar. Left
+     * at testTimeout, a test run started late got surefire's limit after the deadline, so the deadline's kill came first.
+     */
+    @VisibleForTesting
+    public static long forkTimeoutSeconds(Duration testTimeout, Duration deadline) {
+        return Math.max(MIN_TEST_FORK_SECONDS, Math.min(testTimeout.getSeconds(), deadline.minus(TEST_FORK_DEADLINE_MARGIN).getSeconds()));
     }
     /** Aether normalises a null version to the empty string, so a missing entry resolves to nothing with no signal why */
     @VisibleForTesting
@@ -1113,8 +1129,17 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             }
             if (timedOut) {
                 String reason = "fork build timed out after " + timeout;
-                if (BuildPhase.TESTS == phase) {
+                /**
+                 * A test run that reached the deadline after its tests started is scored from what it wrote: the compile
+                 * run built every module, and a test the commit hangs where no interrupt reaches would time out on every
+                 * run of a commit that cannot change. One that never started a test JVM (no budget left, or stuck
+                 * downloading a provider) or ran without coverage tells nothing about the tests and stays the timeout it
+                 * was. surefire.timeout is capped below this deadline (forkTimeout), so a hung test JVM is usually ended by
+                 * surefire first and the build finishes; this kill lands only when the rest of the build overruns.
+                 */
+                if (BooleanUtils.and(new boolean[] { BuildPhase.TESTS == phase, BooleanUtils.negate(args.isIgnoreCoverage()), sysout.testsStarted() })) {
                     getLog().warn(reason + "; the commit is scored from the tests that finished");
+                    addCompilerFindings(args, sysout);
                     return new ForkRun(
                             new BuildOutcome.TestsCutShort(TimeMachineSupport.withHostPinning(args, getLog(), () -> projectBuilder.build(rootPom, buildingRequest)),
                                     "the test run reached the build's deadline (" + timeout + ")"),
@@ -1145,19 +1170,22 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             }
         }
 
-        /**
-         * The compile run prints every Error Prone warning; the test run prints them again only for the modules it
-         * recompiles, so its findings are added to the compile run's rather than replacing them.
-         */
+        addCompilerFindings(args, sysout);
+        return new ForkRun(
+                new BuildOutcome.Proceeded(TimeMachineSupport.withHostPinning(args, getLog(), () -> projectBuilder.build(rootPom, buildingRequest))),
+                took.getDuration());
+    }
+    /**
+     * The compile run prints every Error Prone warning; the test run prints them again only for the modules it
+     * recompiles, so its findings are added to the compile run's rather than replacing them.
+     */
+    private void addCompilerFindings(RunArgs args, CapturingOutputHandler sysout) throws IOException {
         Set<CompilerFinding> findings = Sets.newLinkedHashSet(args.getCompilerFindings());
         findings.addAll(ErrorProneWarnings.findings(sysout.errorProneWarningLines(), args.getGit().getWorkTree()));
         args.setCompilerFindings(Lists.newArrayList(findings));
         if (CollectionUtils.isNotEmpty(args.getCompilerFindings())) {
             getLog().info(String.format(Locale.ROOT, "the build reported %d Error Prone findings", args.getCompilerFindings().size()));
         }
-        return new ForkRun(
-                new BuildOutcome.Proceeded(TimeMachineSupport.withHostPinning(args, getLog(), () -> projectBuilder.build(rootPom, buildingRequest))),
-                took.getDuration());
     }
     private Optional<String> buildFailureDetail(RunArgs args, CapturingOutputHandler sysout, CapturingOutputHandler syserr) {
         return readBuildFailureReport(args)
@@ -1613,6 +1641,8 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     @RequiredArgsConstructor
     private static final class CapturingOutputHandler implements InvocationOutputHandler {
         private static final Pattern HELP_LINE = Pattern.compile("\\[ERROR\\]\\s+\\[Help\\s+\\d+\\]\\s+");
+        /** the banner surefire and failsafe print when a test JVM starts its tests */
+        private static final String SUREFIRE_TESTS_BANNER = " T E S T S";
         private static final int MAX_CAPTURED_ERROR_LINES = 500;
 
         private final InvocationOutputHandler delegate;
@@ -1623,6 +1653,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
         private String firstErrorLine;
         private String compilerCrashLine;
         private boolean capturing;
+        private boolean testsStarted;
 
         @Override
         public void consumeLine(String line) throws IOException {
@@ -1645,6 +1676,13 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
             if (BooleanUtils.and(new boolean[] { Objects.isNull(compilerCrashLine), BuildFailureClassifier.isCompilerCrash(line) })) {
                 compilerCrashLine = line;
             }
+            if (Strings.CS.contains(line, SUREFIRE_TESTS_BANNER)) {
+                testsStarted = true;
+            }
+        }
+        /** whether surefire or failsafe started a test JVM: both print their banner before its first test */
+        public boolean testsStarted() {
+            return testsStarted;
         }
         public Optional<String> compilerCrashLine() {
             return Optional.ofNullable(compilerCrashLine);

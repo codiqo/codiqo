@@ -70,10 +70,10 @@ public class TestRuns {
      * what any test JVM's record says, so the held reason says both what cut the run short and where the tests were.
      */
     public TestRun cutShort(TestRun run, String reason) {
-        String toReturn = run.getCutOff()
+        String cutOff = run.getCutOff()
                 .map(records -> reason + ". " + records)
                 .orElse(reason + ", so the test counts and coverage cover only the tests that completed");
-        return run.toBuilder().cutOff(Optional.of(toReturn)).build();
+        return run.toBuilder().cutOff(Optional.of(cutOff)).build();
     }
     /**
      * Why the commit's score is held, when most executed tests failed. Such a run cannot tell a commit that broke a

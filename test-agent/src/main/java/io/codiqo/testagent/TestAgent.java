@@ -29,10 +29,13 @@ import java.util.concurrent.TimeUnit;
  * finished. JaCoCo's agent appends to its file in both of codiqo's plugins, so each write adds only what changed since
  * the last one and the data is merged when it is read.
  *
- * <p>When the JVM shuts down with its hooks running, the record is kept only while a thread is still inside a test:
- * Gradle ends a timed-out test JVM with SIGTERM, which runs the hooks, so deleting the record on every exit would have
- * hidden that timeout, while a JVM whose tests finished has no thread left inside one. The timer is stopped first, so a
- * write it was about to make cannot put a deleted record back.
+ * <p>When the JVM shuts down with its hooks running, the record is kept only while a non-daemon thread is still inside
+ * a test framework: Gradle ends a timed-out test JVM with SIGTERM, which runs the hooks, so deleting the record on every
+ * exit would have hidden that timeout, while a JVM whose tests finished has no such thread left. Daemon threads do not
+ * decide it: JUnit 4's {@code @Test(timeout)}, JUnit 5's preemptive timeouts and TestNG leave a timed-out test running
+ * on a daemon thread when they move on, and the run still finishes. The timer is stopped first, so a write it was about
+ * to make cannot put a deleted record back, and coverage is written once more, since JaCoCo's own exit write can fail
+ * on the file lock while an agent write holds it.
  *
  * <p>It runs on the analysed project's class path, so it uses nothing beyond the JDK, which also keeps it off the
  * project's own conventions for Guava, commons-lang3 and Lombok: any library it brought would be one more on that
@@ -69,6 +72,68 @@ public final class TestAgent implements AutoCloseable {
             return toReturn;
         });
     }
+    /** stops the agent and deletes its record; the unit test's way to end what it started */
+    @Override
+    public synchronized void close() {
+        closed = true;
+        timer.shutdownNow();
+        delete();
+    }
+    /** one failure of each kind is reported: either repeats every interval, and the rest would be noise */
+    private synchronized void tick() {
+        if (closed) {
+            return;
+        }
+        try {
+            flushCoverage();
+        } catch (IOException | ReflectiveOperationException | RuntimeException err) {
+            report("could not write coverage", err);
+        }
+        try {
+            write(describe(Thread.getAllStackTraces()));
+        } catch (IOException | RuntimeException err) {
+            report("could not write its record", err);
+        }
+    }
+    private synchronized void exit() {
+        closed = true;
+        timer.shutdownNow();
+        try {
+            flushCoverage();
+        } catch (IOException | ReflectiveOperationException | RuntimeException err) {
+            report("could not write coverage at exit", err);
+        }
+
+        Map<Thread, StackTraceElement[]> stacks = Thread.getAllStackTraces();
+        if (testsRunning(stacks)) {
+            try {
+                write(describe(stacks));
+            } catch (IOException err) {
+                report("could not write its record at exit", err);
+            }
+        } else {
+            delete();
+        }
+    }
+    private void write(List<String> lines) throws IOException {
+        Files.write(pending, lines, StandardCharsets.UTF_8);
+        Files.move(pending, record, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+    }
+    private void delete() {
+        try {
+            Files.deleteIfExists(pending);
+            Files.deleteIfExists(record);
+        } catch (IOException err) {
+            System.err.println("[codiqo] test agent could not delete " + record + ": " + err);
+        }
+    }
+    private void report(String what, Exception err) {
+        if (reported) {
+            return;
+        }
+        reported = true;
+        System.err.println("[codiqo] test agent " + what + ": " + err);
+    }
     /** {@code interval=<seconds>,dir=<directory>}, as {@link #argument} writes it */
     public static void premain(String args, Instrumentation instrumentation) {
         start(args);
@@ -81,9 +146,8 @@ public final class TestAgent implements AutoCloseable {
         return ARG_INTERVAL + intervalSeconds + ARG_DIRECTORY + directory;
     }
     /**
-     * Starts the agent, or leaves it inactive with one line on standard error when the argument cannot be read. The
-     * first record is written at once, so a JVM that dies within its first interval is not taken for one that finished.
-     * Public so the unit test can close the agent it starts; {@link #premain} is the agent's entry point.
+     * Starts the agent, or leaves it inactive with one line on standard error when the argument cannot be read. Public
+     * so the unit test can close the agent it starts; {@link #premain} is the agent's entry point.
      */
     public static Optional<TestAgent> start(String args) {
         int directory = Objects.nonNull(args) ? args.indexOf(ARG_DIRECTORY) : -1;
@@ -94,7 +158,6 @@ public final class TestAgent implements AutoCloseable {
                 Files.createDirectories(records);
 
                 TestAgent toReturn = new TestAgent(records.resolve(RECORD_PREFIX + UUID.randomUUID() + RECORD_SUFFIX));
-                toReturn.write(new ArrayList<>());
                 toReturn.timer.scheduleWithFixedDelay(toReturn::tick, interval, interval, TimeUnit.SECONDS);
                 Runtime.getRuntime().addShutdownHook(new Thread(toReturn::exit, THREAD_NAME + "-exit"));
                 return Optional.of(toReturn);
@@ -128,63 +191,28 @@ public final class TestAgent implements AutoCloseable {
         }
         return toReturn;
     }
-    /** stops the agent and deletes its record; the unit test's way to end what it started */
-    @Override
-    public synchronized void close() {
-        closed = true;
-        timer.shutdownNow();
-        delete();
-    }
-    private synchronized void tick() {
-        if (closed) {
-            return;
-        }
-        try {
-            flushCoverage();
-            write(describe(Thread.getAllStackTraces()));
-        } catch (IOException | ReflectiveOperationException | RuntimeException err) {
-            /** a failing write repeats every interval: one line in the test output says why, the rest would be noise */
-            if (reported) {
-                return;
+    /**
+     * Whether the test run is still going: a non-daemon thread inside a test framework, as surefire's main thread and
+     * Gradle's test worker are until their tests finish. Public so the unit test can hand it made-up stacks.
+     */
+    public static boolean testsRunning(Map<Thread, StackTraceElement[]> stacks) {
+        for (Map.Entry<Thread, StackTraceElement[]> entry : stacks.entrySet()) {
+            Thread thread = entry.getKey();
+            if (thread.isDaemon() || thread.getName().startsWith(THREAD_NAME)) {
+                continue;
             }
-            reported = true;
-            System.err.println("[codiqo] test agent could not write its record: " + err);
+            if (topmostFrameworkFrame(entry.getValue()) >= 0) {
+                return true;
+            }
         }
-    }
-    /** a JVM shutting down with a thread still inside a test did not finish its tests, whatever ended it */
-    private synchronized void exit() {
-        closed = true;
-        timer.shutdownNow();
-
-        List<String> running = describe(Thread.getAllStackTraces());
-        if (running.isEmpty()) {
-            delete();
-            return;
-        }
-        try {
-            write(running);
-        } catch (IOException err) {
-            System.err.println("[codiqo] test agent could not write its record: " + err);
-        }
-    }
-    private void write(List<String> lines) throws IOException {
-        Files.write(pending, lines, StandardCharsets.UTF_8);
-        Files.move(pending, record, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-    }
-    private void delete() {
-        try {
-            Files.deleteIfExists(pending);
-            Files.deleteIfExists(record);
-        } catch (IOException err) {
-            System.err.println("[codiqo] test agent could not delete " + record + ": " + err);
-        }
+        return false;
     }
     /**
      * JaCoCo's runtime is reached by name: its agent jar is on the system class path, and the project may not measure
      * coverage at all, in which case there is nothing to write. {@code dump(true)} writes what changed since the last
      * write and starts counting again, which leaves nothing out because JaCoCo appends to its file.
      */
-    private static void flushCoverage() throws ReflectiveOperationException {
+    private static void flushCoverage() throws IOException, ReflectiveOperationException {
         ClassLoader loader = ClassLoader.getSystemClassLoader();
         Class<?> runtime;
         try {
@@ -199,7 +227,14 @@ public final class TestAgent implements AutoCloseable {
             /** IllegalStateException: the JaCoCo agent is on the class path but was not started in this JVM */
             return;
         }
-        Class.forName("org.jacoco.agent.rt.IAgent", false, loader).getMethod("dump", boolean.class).invoke(jacoco, Boolean.TRUE);
+        try {
+            Class.forName("org.jacoco.agent.rt.IAgent", false, loader).getMethod("dump", boolean.class).invoke(jacoco, Boolean.TRUE);
+        } catch (InvocationTargetException err) {
+            if (err.getCause() instanceof IOException) {
+                throw (IOException) err.getCause();
+            }
+            throw err;
+        }
     }
     /** the frame nearest the top of the stack that belongs to a test framework; -1 for a thread that runs no test */
     private static int topmostFrameworkFrame(StackTraceElement[] stack) {

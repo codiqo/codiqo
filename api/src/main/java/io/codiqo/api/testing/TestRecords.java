@@ -6,7 +6,6 @@ import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.jar.JarFile;
 
@@ -66,9 +65,11 @@ public class TestRecords {
         return Optional.empty();
     }
     /**
-     * Why the test run covers only part of the tests, when a test JVM left its record behind: the test-run timeout killed
-     * it, or it crashed. The commit is still scored, from the tests that completed and the coverage the agent wrote, and
-     * the reason names where each test thread was last seen, so the test that hung can be found.
+     * Why the test run covers only part of the tests, when a test JVM left a record naming a test it was still in: the
+     * test-run timeout killed it, or it crashed. The commit is still scored, from the tests that completed and the
+     * coverage the agent wrote, and the reason names where each test thread was last seen, so the test that hung can be
+     * found. A record that names no test is left out: every JVM started with the agent writes one, so a server a test
+     * started in a JVM of its own, with the test JVM's arguments, and then killed would otherwise hold the commit.
      */
     public Optional<String> cutOff(Collection<File> directories, Log log) {
         int ended = 0;
@@ -76,19 +77,18 @@ public class TestRecords {
         for (File directory : directories) {
             if (directory.isDirectory()) {
                 for (File record : FileUtils.listFiles(directory, RECORDS, null)) {
-                    ended++;
-                    lastSeen.addAll(threads(record, log));
+                    List<String> threads = threads(record, log);
+                    if (CollectionUtils.isNotEmpty(threads)) {
+                        ended++;
+                        lastSeen.addAll(threads);
+                    }
                 }
             }
         }
 
         if (ended > 0) {
-            String where = "; no thread was running a test when it was last recorded";
-            if (CollectionUtils.isNotEmpty(lastSeen)) {
-                where = LAST_SEEN + Joiner.on("; ").join(lastSeen.stream().limit(MAX_NAMED).toList());
-            }
             return Optional.of(String.format("test JVMs that ended before their tests finished, as the test-run timeout or a crash ends one: %d. The test counts "
-                    + "and coverage cover only the tests that completed%s", ended, where));
+                    + "and coverage cover only the tests that completed%s%s", ended, LAST_SEEN, Joiner.on("; ").join(lastSeen.stream().limit(MAX_NAMED).toList())));
         }
         return Optional.empty();
     }
@@ -125,8 +125,12 @@ public class TestRecords {
     private static boolean isAgent(File jar) {
         if (jar.isFile()) {
             try (JarFile file = new JarFile(jar)) {
-                return Objects.nonNull(file.getManifest()) && TestAgent.class.getName().equals(file.getManifest().getMainAttributes().getValue(PREMAIN_CLASS));
+                return Optional.ofNullable(file.getManifest())
+                        .map(manifest -> manifest.getMainAttributes().getValue(PREMAIN_CLASS))
+                        .filter(TestAgent.class.getName()::equals)
+                        .isPresent();
             } catch (IOException err) {
+                /** the caller says the agent is left off, in the build's own log */
                 return false;
             }
         }

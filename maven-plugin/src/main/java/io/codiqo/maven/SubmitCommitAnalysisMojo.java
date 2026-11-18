@@ -317,7 +317,7 @@ public class SubmitCommitAnalysisMojo extends AbstractAnalyzeMojo {
             if (args.isTimeMachineEnabled()) {
                 compiled = buildWithBackoff(buildingRequest);
             } else {
-                compiled = compileRun(invocationRequest(args, false, Duration.ZERO, BuildPhase.COMPILE), buildingRequest);
+                compiled = compileRun(invocationRequest(args, false, Duration.ZERO, BuildPhase.COMPILE, args.getBuildTimeout()), buildingRequest);
             }
             if (compiled instanceof BuildOutcome.Skipped skipped) {
                 return failed(skipped);
@@ -334,21 +334,22 @@ public class SubmitCommitAnalysisMojo extends AbstractAnalyzeMojo {
         @Override
         public BuildVerdict test() throws Exception {
             Duration offset = args.getTimeMachineTargetOffset();
+            Duration deadline = args.getBuildTimeout().minus(compileTook);
             ForkRun tested = buildProject(
                     args,
-                    invocationRequest(args, Objects.nonNull(offset), Optional.ofNullable(offset).orElse(Duration.ZERO), BuildPhase.TESTS),
+                    invocationRequest(args, Objects.nonNull(offset), Optional.ofNullable(offset).orElse(Duration.ZERO), BuildPhase.TESTS, deadline),
                     buildingRequest,
                     BuildPhase.TESTS,
-                    args.getBuildTimeout().minus(compileTook));
+                    deadline);
             if (tested.getOutcome() instanceof BuildOutcome.Skipped skipped) {
                 return failed(skipped);
             }
 
             ProjectBuildingResult result;
             Optional<String> cutShort = Optional.empty();
-            if (tested.getOutcome() instanceof BuildOutcome.TestsCutShort deadline) {
-                result = deadline.getResult();
-                cutShort = Optional.of(deadline.getReason());
+            if (tested.getOutcome() instanceof BuildOutcome.TestsCutShort cut) {
+                result = cut.getResult();
+                cutShort = Optional.of(cut.getReason());
             } else {
                 result = ((BuildOutcome.Proceeded) tested.getOutcome()).getResult();
             }
@@ -364,6 +365,8 @@ public class SubmitCommitAnalysisMojo extends AbstractAnalyzeMojo {
                     reactors.stream().flatMap(reactor -> TestReportDirectories.resolve(reactor).stream()).distinct().toList(),
                     Optional.ofNullable(testRecordDirectory).map(List::of).orElse(List.of()),
                     new MavenMessageReporter(log));
+            /** the directory was only registered for deletion while empty, and a record left in it would outlive the run */
+            FileUtils.deleteQuietly(testRecordDirectory);
             return BuildVerdict.tested(cutShort.map(reason -> TestRuns.cutShort(run, reason)).orElse(run), Optional.of(tested.getTook()));
         }
         /**
@@ -406,7 +409,7 @@ public class SubmitCommitAnalysisMojo extends AbstractAnalyzeMojo {
             Duration offset = Duration.ZERO;
             for (;;) {
                 args.setTimeMachineTargetOffset(offset);
-                BuildOutcome outcome = compileRun(invocationRequest(args, true, offset, BuildPhase.COMPILE), request);
+                BuildOutcome outcome = compileRun(invocationRequest(args, true, offset, BuildPhase.COMPILE, args.getBuildTimeout()), request);
                 if (outcome instanceof BuildOutcome.Proceeded) {
                     return outcome;
                 }
@@ -443,7 +446,7 @@ public class SubmitCommitAnalysisMojo extends AbstractAnalyzeMojo {
                 if (next.isEmpty()) {
                     log.warn(String.format("commit %s: time-machine build failed at offset %s (%s), retrying with latest snapshots", args.getCommitId(), offset, skipped.getReason()));
                     args.setTimeMachineTargetOffset(null);
-                    BuildOutcome latest = compileRun(invocationRequest(args, false, Duration.ZERO, BuildPhase.COMPILE), request);
+                    BuildOutcome latest = compileRun(invocationRequest(args, false, Duration.ZERO, BuildPhase.COMPILE, args.getBuildTimeout()), request);
                     if (latest instanceof BuildOutcome.Skipped lastSkipped) {
                         attemptFailures.add(attemptEntry("latest snapshots", lastSkipped));
                         /**

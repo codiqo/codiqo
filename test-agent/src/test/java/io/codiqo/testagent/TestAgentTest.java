@@ -1,6 +1,7 @@
 package io.codiqo.testagent;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
@@ -96,34 +97,58 @@ class TestAgentTest {
     }
     /** the directory runs to the end of the argument, so a comma in a checkout's path does not cut it short */
     @Test
-    void aDirectoryWithACommaIsKeptWhole() throws IOException {
+    void aDirectoryWithACommaIsKeptWhole() throws Exception {
         Path records = tempDir.resolve("a,b").resolve("records");
-        try (TestAgent agent = TestAgent.start(TestAgent.argument(records.toString(), 60)).orElseThrow()) {
-            assertEquals(1, recordFiles(records).size(), "the first record is written at once");
+        try (TestAgent agent = TestAgent.start(TestAgent.argument(records.toString(), 1)).orElseThrow()) {
+            assertTrue(await(() -> recordFiles(records).size() == 1), records.toString());
         }
+    }
+    /**
+     * JUnit 4's {@code @Test(timeout)} and the preemptive timeouts leave a timed-out test on a daemon thread and move on:
+     * only a non-daemon thread inside a test framework, surefire's main thread or Gradle's worker, means the run is still going
+     */
+    @Test
+    void onlyANonDaemonThreadInsideATestMeansTheRunIsStillGoing() {
+        Thread abandoned = new Thread("Time-limited test");
+        abandoned.setDaemon(true);
+        Map<Thread, StackTraceElement[]> finished = new LinkedHashMap<>();
+        finished.put(abandoned, new StackTraceElement[] { SOCKET_READ, STREAM_READ, TEST_METHOD, ACCESSOR, METHOD_INVOKE, JUNIT });
+        finished.put(new Thread("main"), new StackTraceElement[] { frame("java.lang.Shutdown", "exit"), frame("java.lang.System", "exit"), BOOTER });
+        Map<Thread, StackTraceElement[]> running = new LinkedHashMap<>(finished);
+        running.put(new Thread("Test worker"), new StackTraceElement[] { SOCKET_READ, TEST_METHOD, ACCESSOR, METHOD_INVOKE, JUNIT });
+
+        assertFalse(TestAgent.testsRunning(finished));
+        assertTrue(TestAgent.testsRunning(running));
     }
     /** Gradle ends a timed-out test JVM with SIGTERM, which runs the shutdown hooks: a test still running keeps the record */
     @Test
     void aTestJvmEndedWhileATestRunsKeepsItsRecord() throws Exception {
         Path records = tempDir.resolve("records");
         Process child = child(records, "hangs");
-        assertTrue(await(() -> lines(records).stream().anyMatch(line -> line.contains("app.ChildTests.hangs"))), lines(records).toString());
+        try {
+            assertTrue(await(() -> lines(records).stream().anyMatch(line -> line.contains("app.ChildTests.hangs"))), lines(records).toString());
 
-        child.destroy();
-        assertTrue(child.waitFor(AWAIT.toSeconds(), TimeUnit.SECONDS));
+            child.destroy();
+            assertTrue(child.waitFor(AWAIT.toSeconds(), TimeUnit.SECONDS));
 
-        assertTrue(lines(records).stream().anyMatch(line -> line.startsWith("main\tapp.ChildTests.hangs(")), lines(records).toString());
+            assertTrue(lines(records).stream().anyMatch(line -> line.startsWith("main\tapp.ChildTests.hangs(")), lines(records).toString());
+        } finally {
+            child.destroyForcibly();
+        }
     }
     /** a JVM whose tests finished has no thread left inside one, so its record goes, even after records were written */
     @Test
     void aTestJvmWhoseTestsFinishedLeavesNoRecord() throws Exception {
         Path records = tempDir.resolve("records");
         Process child = child(records, "finishesAfterTwoRecords");
+        try {
+            assertTrue(child.waitFor(AWAIT.toSeconds(), TimeUnit.SECONDS));
+            assertEquals(0, child.exitValue());
 
-        assertTrue(child.waitFor(AWAIT.toSeconds(), TimeUnit.SECONDS));
-        assertEquals(0, child.exitValue());
-
-        assertEquals(List.of(), recordFiles(records));
+            assertEquals(List.of(), recordFiles(records));
+        } finally {
+            child.destroyForcibly();
+        }
     }
     /** a JVM running FakeRunner, which stands for a test framework, with the agent recording every second */
     private Process child(Path records, String testMethod) throws Exception {

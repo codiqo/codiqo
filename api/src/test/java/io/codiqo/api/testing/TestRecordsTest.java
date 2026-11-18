@@ -50,14 +50,13 @@ class TestRecordsTest {
 
         assertTrue(reason.endsWith("Test worker at " + HUNG_TEST + ", inside okhttp3.internal.http2.Http2Stream.takeHeaders(Http2Stream.java:10)"), reason);
     }
+    /** every JVM started with the agent writes a record, so a server a test started and killed names no test and holds nothing */
     @Test
-    void aRecordWithNoTestThreadStillSaysTheRunWasCutOff() throws IOException {
+    void aRecordThatNamesNoTestIsLeftOut() throws IOException {
         Path records = Files.createDirectories(tempDir.resolve("records"));
         record(records, "");
 
-        String reason = TestRecords.cutOff(List.of(records.toFile()), new NoopLog()).orElseThrow();
-
-        assertTrue(reason.endsWith("no thread was running a test when it was last recorded"), reason);
+        assertEquals(Optional.empty(), TestRecords.cutOff(List.of(records.toFile()), new NoopLog()));
     }
     /** -javaagent takes only a jar: run from a module's class output, the agent is left off rather than breaking the test JVM */
     @Test

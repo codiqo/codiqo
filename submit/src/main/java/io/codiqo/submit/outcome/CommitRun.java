@@ -417,7 +417,17 @@ public final class CommitRun {
         compileTook.map(Duration::toMillis).ifPresent(toReturn::compilePhaseMs);
         testTook.map(Duration::toMillis).ifPresent(toReturn::testPhaseMs);
 
-        run.getCutOff().or(() -> TestRuns.heldReason(run, args.getTestFailureHoldShare(), args.getTestFailureHoldMinTests())).ifPresent(reason -> {
+        /**
+         * A share of 1 or more turns holding off for both reasons: a project whose tests need what CI lacks (a database,
+         * Docker) sets it so that its failing tests hold nothing, and such tests can just as well hang in a connect no
+         * interrupt ends, which would otherwise hold every commit as cut short.
+         */
+        Optional<String> cutOff = run.getCutOff();
+        if (args.getTestFailureHoldShare() >= 1.0) {
+            cutOff.ifPresent(reason -> log.warn("%s; not held, since codiqo.testFailureHoldShare is 1 or more", reason));
+            cutOff = Optional.empty();
+        }
+        cutOff.or(() -> TestRuns.heldReason(run, args.getTestFailureHoldShare(), args.getTestFailureHoldMinTests())).ifPresent(reason -> {
             log.warn("%s: the commit is scored and its score held until someone accepts it", reason);
             toReturn.heldReason(reason);
         });

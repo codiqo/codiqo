@@ -123,14 +123,6 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
              * Only the two timeouts, and only for a build that tests: a plain test build of a project whose init.d applies
              * the plugin must not fail on a review setting it never uses. The analysis build checks all of them.
              */
-            /**
-             * Every Test task's record directory is emptied, not only those of the tasks this build runs: the collector
-             * reads the directories of all of them, and a record an earlier build of the same checkout left for a task
-             * that does not run now (an integrationTest) would hold every later commit.
-             */
-            project.getRootProject().getAllprojects().forEach(module -> module.getTasks().withType(Test.class)
-                    .forEach(test -> FileUtils.deleteQuietly(GradleBuildSupport.testRecordDir(test))));
-
             if (CollectionUtils.isNotEmpty(tests)) {
                 RunArgs timeouts = GradleSettings.runArgs(Maps.filterKeys(GradleSettings.of(project, ext), TEST_TIMEOUTS::contains));
                 boolean ignoreTestFailures = GradleSettings.flag(project, "codiqo.ignoreTestFailures", ext.isIgnoreTestFailures());
@@ -287,10 +279,25 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
         }
 
         /**
-         * codiqo's test agent writes JaCoCo's coverage while the tests run and records the test threads, so a test JVM the
-         * task timeout ends keeps its coverage and names the test that never finished (TestRecords).
+         * mirrors ignoreFailures: Gradle's failFast stops the test worker at the first failing test, in the middle of the
+         * next one, which the test agent below would read as a run its timeout cut short, holding every red commit.
          */
-        TestRecords.jvmArgument(GradleBuildSupport.testRecordDir(test)).ifPresent(test::jvmArgs);
+        test.setFailFast(false);
+
+        /**
+         * codiqo's test agent writes JaCoCo's coverage while the tests run and records the test threads, so a test JVM the
+         * task timeout ends keeps its coverage and names the test that never finished (TestRecords). The directory is
+         * emptied first: a record an earlier build of the same checkout left would otherwise read as this build's, and
+         * the collector reads the directories of the Test tasks this build runs, which all pass through here.
+         */
+        File records = GradleBuildSupport.testRecordDir(test);
+        FileUtils.deleteQuietly(records);
+        Optional<String> agent = TestRecords.jvmArgument(records);
+        if (agent.isPresent()) {
+            test.jvmArgs(agent.get());
+        } else {
+            test.getLogger().warn("codiqo's test agent is not a jar with its Premain-Class on this build's classpath, so a test JVM the task timeout ends loses its coverage");
+        }
 
         /**
          * the JUnit XML is the analysis's only evidence that this task forked and ran something — it is what

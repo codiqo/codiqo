@@ -526,7 +526,7 @@ public class JavaLanguageSpec implements LanguageSpec {
                  */
                 if (BooleanUtils.negate(loadedExecs.containsKey(file))) {
                     if (BooleanUtils.negate(JacocoExecFiles.load(loader, file))) {
-                        log.warn("%s ends inside a block, cut by the test JVM's kill: the coverage before the cut is kept", file);
+                        log.warn("%s could not be read to its end, cut by a test JVM's kill: the coverage before the cut is kept", file);
                     }
                     loadedExecs.put(file, readExecContents(file));
                 }

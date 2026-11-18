@@ -159,7 +159,14 @@ public class GradleModelCollector {
          */
         for (Test testTask : project.getTasks().withType(Test.class)) {
             toReturn.getTestReportDirectories().add(GradleBuildSupport.junitXmlDir(testTask).getAbsolutePath());
-            toReturn.getTestRecordDirectories().add(GradleBuildSupport.testRecordDir(testTask).getAbsolutePath());
+            /**
+             * only the tasks this build runs: their record directories are emptied as their test execution is set up
+             * (CodiqoGradlePlugin.ownTestExecution), and a record left by a task an earlier build ran but this one does
+             * not would hold every later commit
+             */
+            if (project.getGradle().getTaskGraph().hasTask(testTask)) {
+                toReturn.getTestRecordDirectories().add(GradleBuildSupport.testRecordDir(testTask).getAbsolutePath());
+            }
         }
 
         collectDependencies(project, toReturn);

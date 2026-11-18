@@ -47,6 +47,32 @@ class JacocoExecFilesTest {
         assertTrue(loader.getExecutionDataStore().contains("app/First"));
         assertFalse(loader.getExecutionDataStore().contains("app/Second"));
     }
+    /** a test JVM of the same module that appended after the cut makes the rest read as garbage: what came before is kept */
+    @Test
+    void aFileCutInTheMiddleAndAppendedToKeepsTheBlocksBeforeTheCut() throws IOException {
+        byte[] first = twoClasses();
+        byte[] second = twoClasses();
+        byte[] corrupt = new byte[first.length - 3 + second.length];
+        System.arraycopy(first, 0, corrupt, 0, first.length - 3);
+        System.arraycopy(second, 0, corrupt, first.length - 3, second.length);
+        Path exec = Files.write(tempDir.resolve("jacoco.exec"), corrupt);
+        ExecFileLoader loader = new ExecFileLoader();
+
+        assertFalse(JacocoExecFiles.load(loader, exec.toFile()));
+
+        assertTrue(loader.getExecutionDataStore().contains("app/First"));
+    }
+    /** each file is read on its own and merged: one cut file does not touch what the loader already holds */
+    @Test
+    void aCutFileAddsToWhatTheLoaderHolds() throws IOException {
+        ExecFileLoader loader = new ExecFileLoader();
+        assertTrue(JacocoExecFiles.load(loader, Files.write(tempDir.resolve("whole.exec"), twoClasses()).toFile()));
+        byte[] whole = twoClasses();
+
+        assertFalse(JacocoExecFiles.load(loader, Files.write(tempDir.resolve("cut.exec"), Arrays.copyOf(whole, whole.length - 3)).toFile()));
+
+        assertEquals(2, loader.getExecutionDataStore().getContents().size());
+    }
     @Test
     void aFileThatIsNotAnExecFileStillFails() throws IOException {
         Path exec = Files.writeString(tempDir.resolve("jacoco.exec"), "not coverage", StandardCharsets.UTF_8);
