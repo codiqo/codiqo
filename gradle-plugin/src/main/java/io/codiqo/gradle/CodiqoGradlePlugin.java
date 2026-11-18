@@ -46,7 +46,7 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
     private static final String LOGIN_TASK = "codiqoLogin";
     private static final String JACOCO_PLUGIN_ID = "jacoco";
 
-    private static final String TIMEOUT_DEFAULT_KEY = "junit.jupiter.execution.timeout.default";
+    private static final String TIMEOUT_TESTABLE_METHOD_KEY = "junit.jupiter.execution.timeout.testable.method.default";
     private static final String TIMEOUT_THREAD_MODE_KEY = "junit.jupiter.execution.timeout.thread.mode.default";
     private static final String SEPARATE_THREAD = "SEPARATE_THREAD";
 
@@ -264,9 +264,18 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
          * SEPARATE_THREAD makes a hung test preemptively interrupted and reported as a failure, which the
          * ignoreFailures above tolerates. JUnit 4 and TestNG have no equivalent global default and ignore the unknown
          * properties; a pure CPU spin is only reaped by the task timeout.
+         *
+         * The timeout covers test methods only ({@code timeout.testable.method.default}), so codiqo times no lifecycle
+         * method: under SEPARATE_THREAD a timed {@code @BeforeAll} or {@code @BeforeEach} runs on another thread than the extension
+         * that prepared it, so state an extension keeps in a ThreadLocal is gone. An extension that starts an embedded broker
+         * keeps it that way, and on one project with {@code timeout.default} 69 of its 1,347 tests failed on a null broker that pass
+         * without codiqo; covering test methods only left 5, which read the broker inside the test method.
+         * The thread mode is still global, so a lifecycle method the project times itself ({@code @Timeout},
+         * {@code timeout.default} or {@code timeout.lifecycle.method.default}) does move to another thread under codiqo.
+         * {@code codiqo.perTestTimeoutMinutes=0} turns the per-test timeout off for such a project.
          */
         if (timeouts.getPerTestTimeout().compareTo(Duration.ZERO) > 0) {
-            test.systemProperty(TIMEOUT_DEFAULT_KEY, timeouts.getPerTestTimeout().getSeconds());
+            test.systemProperty(TIMEOUT_TESTABLE_METHOD_KEY, timeouts.getPerTestTimeout().getSeconds());
             test.systemProperty(TIMEOUT_THREAD_MODE_KEY, SEPARATE_THREAD);
         }
 
