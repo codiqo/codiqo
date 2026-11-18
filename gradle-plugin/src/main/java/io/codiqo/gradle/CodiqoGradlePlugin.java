@@ -16,6 +16,7 @@ import javax.inject.Inject;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -35,6 +36,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
 import io.codiqo.api.RunArgs;
+import io.codiqo.api.testing.TestRecords;
 import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.gradle.model.AnalysisRequest;
 
@@ -46,9 +48,9 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
     private static final String LOGIN_TASK = "codiqoLogin";
     private static final String JACOCO_PLUGIN_ID = "jacoco";
 
-    private static final String TIMEOUT_TESTABLE_METHOD_KEY = "junit.jupiter.execution.timeout.testable.method.default";
+    private static final String TIMEOUT_DEFAULT_KEY = "junit.jupiter.execution.timeout.default";
     private static final String TIMEOUT_THREAD_MODE_KEY = "junit.jupiter.execution.timeout.thread.mode.default";
-    private static final String SEPARATE_THREAD = "SEPARATE_THREAD";
+    private static final String SAME_THREAD = "SAME_THREAD";
 
     private static final Pattern AGENT_ARTIFACT_VERSION = Pattern.compile("^(\\d+\\.\\d+\\.\\d+)");
     private static final String PROGRESS_SERVICE = "codiqoBuildProgress";
@@ -260,24 +262,30 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
         test.setIgnoreFailures(ignoreTestFailures);
 
         /**
-         * mirrors the Maven surefire injector: JUnit reads configuration parameters from JVM system properties, and
-         * SEPARATE_THREAD makes a hung test preemptively interrupted and reported as a failure, which the
-         * ignoreFailures above tolerates. JUnit 4 and TestNG have no equivalent global default and ignore the unknown
-         * properties; a pure CPU spin is only reaped by the task timeout.
-         *
-         * The timeout covers test methods only ({@code timeout.testable.method.default}), so codiqo times no lifecycle
-         * method: under SEPARATE_THREAD a timed {@code @BeforeAll} or {@code @BeforeEach} runs on another thread than the extension
-         * that prepared it, so state an extension keeps in a ThreadLocal is gone. An extension that starts an embedded broker
-         * keeps it that way, and on one project with {@code timeout.default} 69 of its 1,347 tests failed on a null broker that pass
-         * without codiqo; covering test methods only left 5, which read the broker inside the test method.
-         * The thread mode is still global, so a lifecycle method the project times itself ({@code @Timeout},
-         * {@code timeout.default} or {@code timeout.lifecycle.method.default}) does move to another thread under codiqo.
-         * {@code codiqo.perTestTimeoutMinutes=0} turns the per-test timeout off for such a project.
+         * mirrors the Maven surefire injector (JUnitTimeoutInjector, whose comment gives the evidence): JUnit reads
+         * configuration parameters from JVM system properties, {@code timeout.default} times test and lifecycle methods
+         * alike, and SAME_THREAD keeps them on the test framework's own thread, where Spring's test transactions, its
+         * mock users and every extension that keeps state per thread live. A hung test is interrupted and reported as a
+         * failure, which the ignoreFailures above tolerates. One stuck in something that ignores an interrupt (a blocking
+         * socket read, a monitor deadlock, a CPU spin) runs until the task timeout kills the test JVM, and the test agent
+         * below keeps that JVM's coverage and names the test. JUnit 4 and TestNG have no equivalent global default and
+         * ignore the unknown properties. A project's own {@code timeout.testable.method.default} is more specific and still
+         * wins; {@code codiqo.perTestTimeoutMinutes=0} turns the per-test timeout off.
          */
         if (timeouts.getPerTestTimeout().compareTo(Duration.ZERO) > 0) {
-            test.systemProperty(TIMEOUT_TESTABLE_METHOD_KEY, timeouts.getPerTestTimeout().getSeconds());
-            test.systemProperty(TIMEOUT_THREAD_MODE_KEY, SEPARATE_THREAD);
+            test.systemProperty(TIMEOUT_DEFAULT_KEY, timeouts.getPerTestTimeout().getSeconds());
+            test.systemProperty(TIMEOUT_THREAD_MODE_KEY, SAME_THREAD);
         }
+
+        /**
+         * codiqo's test agent writes JaCoCo's coverage while the tests run and records the test threads, so a test JVM the
+         * task timeout kills keeps its coverage and names the test that never finished (TestRecords). The directory is
+         * emptied first: the agent deletes its record when the JVM exits normally, so a record left by an earlier build of
+         * the same checkout would otherwise read as this build's.
+         */
+        File records = GradleBuildSupport.testRecordDir(test);
+        FileUtils.deleteQuietly(records);
+        TestRecords.jvmArgument(records).ifPresent(test::jvmArgs);
 
         /**
          * the JUnit XML is the analysis's only evidence that this task forked and ran something — it is what

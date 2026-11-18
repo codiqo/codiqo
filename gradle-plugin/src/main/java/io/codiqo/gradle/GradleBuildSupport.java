@@ -12,6 +12,7 @@ public class GradleBuildSupport {
     private static final String JACOCO_DIR = "jacoco";
     private static final String CODIQO_JACOCO_EXEC = "codiqo.exec";
     private static final String EXEC_EXTENSION = ".exec";
+    private static final String TEST_RECORDS = "codiqo-test-records";
 
     public File jacocoExec(Project project) {
         return new File(jacocoDir(project), CODIQO_JACOCO_EXEC);
@@ -31,6 +32,10 @@ public class GradleBuildSupport {
      */
     public File junitXmlDir(Test test) {
         return test.getReports().getJunitXml().getOutputLocation().getAsFile().get();
+    }
+    /** where the test agent in this task's test JVMs leaves its records (TestRecords): a directory of the task's own temporary one */
+    public File testRecordDir(Test test) {
+        return new File(test.getTemporaryDir(), TEST_RECORDS);
     }
     private static File jacocoDir(Project project) {
         return new File(project.getLayout().getBuildDirectory().getAsFile().get(), JACOCO_DIR);

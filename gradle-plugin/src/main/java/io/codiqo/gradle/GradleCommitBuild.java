@@ -99,7 +99,8 @@ public final class GradleCommitBuild implements CommitBuild {
             return BuildVerdict.passed(Optional.empty());
         }
         List<File> reports = request.getModules().stream().flatMap(module -> module.getTestReportDirectories().stream()).map(File::new).distinct().toList();
-        return BuildVerdict.tested(TestRuns.read(reports, log), Optional.empty());
+        List<File> records = request.getModules().stream().flatMap(module -> module.getTestRecordDirectories().stream()).map(File::new).distinct().toList();
+        return BuildVerdict.tested(TestRuns.read(reports, records, log), Optional.empty());
     }
     /**
      * The modules the collector read from Gradle's model before the build, as projects whose class output and classpath

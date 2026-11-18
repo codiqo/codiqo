@@ -14,9 +14,6 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.slf4j.event.Level;
-
-import io.codiqo.api.logging.Log;
 
 class TestRunsTest {
     @TempDir
@@ -126,21 +123,5 @@ class TestRunsTest {
         assertEquals(Optional.empty(), TestRuns.heldReason(someFailed, 0.75, 20));
         assertEquals(Optional.empty(), TestRuns.heldReason(tooFew, 0.75, 20), "ten tests prove nothing about the environment");
         assertEquals(Optional.empty(), TestRuns.heldReason(mostlySkipped, 0.75, 20), "the share is of executed tests, and only ten executed");
-    }
-    private static final class NoopLog implements Log {
-        @Override
-        public boolean isLoggable(Level level) {
-            return false;
-        }
-        @Override
-        public void logEx(Level level, String message, Object[] formatArgs, Throwable error) {
-        }
-        @Override
-        public void log(Level level, String message, Object... formatArgs) {
-        }
-        @Override
-        public int numErrors() {
-            return 0;
-        }
     }
 }

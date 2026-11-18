@@ -110,6 +110,7 @@ import io.codiqo.api.ProjectSpec;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.code.CompilerFinding;
 import io.codiqo.api.logging.Log;
+import io.codiqo.api.testing.TestRecords;
 import io.codiqo.client.model.AnalysisExcludeCategory;
 import io.codiqo.client.model.ClientInfoModel;
 import io.codiqo.core.ClassGraphWrapper;
@@ -188,6 +189,8 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
     private File jacocoAgentJar;
     /** where the forked build's coverage guard names the first module whose tests ran without the agent; per build */
     private File uninstrumentedReportFile;
+    /** where the test agent in every test JVM of the forked build leaves its record (TestRecords); per build */
+    protected File testRecordDirectory;
 
     @Inject
     private RuntimeInformation runtimeInformation;
@@ -879,6 +882,13 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                 uninstrumentedReportFile.deleteOnExit();
                 props.setProperty(CoverageInjectorConfig.PROP_UNINSTRUMENTED_REPORT, uninstrumentedReportFile.getAbsolutePath());
             }
+
+            FileUtils.deleteQuietly(testRecordDirectory);
+            testRecordDirectory = Files.createTempDirectory("codiqo-test-records-").toFile();
+            FileUtils.forceDeleteOnExit(testRecordDirectory);
+            TestRecords.jvmArgument(testRecordDirectory).ifPresentOrElse(
+                    argument -> props.setProperty(CoverageInjectorConfig.PROP_TEST_AGENT, argument),
+                    () -> getLog().warn("codiqo's test agent is not packaged as a jar here, so a test JVM the test-run timeout kills loses its coverage"));
         }
 
         if (perTestTimeoutActive) {
@@ -887,7 +897,7 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
 
                 long perTestSeconds = args.getPerTestTimeout().getSeconds();
                 props.setProperty(SurefireInjectorConfig.PROP_PER_TEST_TIMEOUT_SECONDS, String.valueOf(perTestSeconds));
-                getLog().info(String.format(Locale.ROOT, "per-test timeout injection enabled: %ds per JUnit 5 test method (SEPARATE_THREAD)", perTestSeconds));
+                getLog().info(String.format(Locale.ROOT, "per-test timeout injection enabled: %ds per JUnit 5 test method (SAME_THREAD)", perTestSeconds));
             } else {
                 getLog().warn("per-test timeout requested but codiqo-maven-surefire-injector could not be resolved — per-test timeout not applied");
             }

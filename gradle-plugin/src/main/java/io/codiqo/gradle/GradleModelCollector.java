@@ -159,6 +159,7 @@ public class GradleModelCollector {
          */
         for (Test testTask : project.getTasks().withType(Test.class)) {
             toReturn.getTestReportDirectories().add(GradleBuildSupport.junitXmlDir(testTask).getAbsolutePath());
+            toReturn.getTestRecordDirectories().add(GradleBuildSupport.testRecordDir(testTask).getAbsolutePath());
         }
 
         collectDependencies(project, toReturn);

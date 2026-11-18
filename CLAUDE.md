@@ -1624,7 +1624,11 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   carries `TestRuns.heldReason`, and the server stores the scored commit excluded as `UNHEALTHY_TEST_RUN` until someone
   who may include it accepts the score in codiqo-web. `codiqo.testFailureHoldShare` / `codiqo.testFailureHoldMinTests`
   (Gradle `-P`, action inputs `test-failure-hold-share` / `-min-tests`) override them, and a share of 1 or more turns the
-  check off. A run that
+  check off. A test JVM that ended before its tests finished is held the same way (`TestRecords.cutOff`): the per-test
+  timeout is JUnit's `timeout.default` on the test's own thread (`SAME_THREAD`, so Spring's test transactions and mock
+  users stay where they were set up), a test stuck in something that ignores the interrupt runs until the test-run
+  timeout kills its JVM, and codiqo's test agent (`codiqo-test-agent`, attached ahead of JaCoCo on both plugins) has by
+  then written that JVM's coverage and recorded where its tests were, which the held reason names. A run that
   fails after the server accepted its submission has scored its commit and halts nothing. A review that failed on the
   provider or on Codiqo's side halts under the review verdict's reason, the provider's failed answers kept whole at its
   end. One commit's run, its halt window included, is `CommitRun` on both plugins.

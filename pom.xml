@@ -922,6 +922,11 @@
             </dependency>
             <dependency>
                 <groupId>io.codiqo</groupId>
+                <artifactId>codiqo-test-agent</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.codiqo</groupId>
                 <artifactId>codiqo-maven-build-eventspy</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -1410,6 +1415,7 @@
         </plugins>
     </build>
     <modules>
+        <module>test-agent</module>
         <module>api</module>
         <module>core</module>
         <module>jdtls-extension</module>

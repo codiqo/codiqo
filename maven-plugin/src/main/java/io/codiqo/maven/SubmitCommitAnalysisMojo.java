@@ -355,6 +355,7 @@ public class SubmitCommitAnalysisMojo extends AbstractAnalyzeMojo {
             return BuildVerdict.tested(
                     TestRuns.read(
                             reactors.stream().flatMap(reactor -> TestReportDirectories.resolve(reactor).stream()).distinct().toList(),
+                            Optional.ofNullable(testRecordDirectory).map(List::of).orElse(List.of()),
                             new MavenMessageReporter(log)),
                     Optional.of(tested.getTook()));
         }

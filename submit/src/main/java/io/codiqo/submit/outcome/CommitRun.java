@@ -400,7 +400,9 @@ public final class CommitRun {
      * The commit's test-run record, with how long each build step ran when the build tool timed it. A run where most
      * tests failed is reviewed and scored all the same, and the server holds its score until someone accepts it
      * (TestRuns.heldReason): such a run cannot tell a commit that broke what its tests share from an environment the
-     * analysis cannot rebuild, and halting stopped the whole project on one commit's own defect.
+     * analysis cannot rebuild, and halting stopped the whole project on one commit's own defect. A run a test JVM ended
+     * before its tests finished is held the same way (TestRecords.cutOff): its counts and coverage cover only the tests
+     * that completed, and the commit's code cannot be changed to finish them, so excluding it would leave it unscored.
      */
     private TestRunModel testRun(TestRun run, Optional<Duration> compileTook, Optional<Duration> testTook) {
         log.info("test run: %d tests, %d failed, %d errors, %d skipped in %s", run.getTests(), run.getFailures(), run.getErrors(), run.getSkipped(), run.getTestTime());
@@ -415,7 +417,7 @@ public final class CommitRun {
         compileTook.map(Duration::toMillis).ifPresent(toReturn::compilePhaseMs);
         testTook.map(Duration::toMillis).ifPresent(toReturn::testPhaseMs);
 
-        TestRuns.heldReason(run, args.getTestFailureHoldShare(), args.getTestFailureHoldMinTests()).ifPresent(reason -> {
+        run.getCutOff().or(() -> TestRuns.heldReason(run, args.getTestFailureHoldShare(), args.getTestFailureHoldMinTests())).ifPresent(reason -> {
             log.warn("%s: the commit is scored and its score held until someone accepts it", reason);
             toReturn.heldReason(reason);
         });

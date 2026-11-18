@@ -43,6 +43,10 @@ public class TestRuns {
 
     /** every report in the directories; a directory that does not exist holds none */
     public TestRun read(Collection<File> reportDirectories, Log log) {
+        return read(reportDirectories, List.of(), log);
+    }
+    /** every report in the report directories, and whether a test JVM ended before its tests finished ({@link TestRecords}) */
+    public TestRun read(Collection<File> reportDirectories, Collection<File> recordDirectories, Log log) {
         Totals totals = new Totals();
         for (File dir : reportDirectories) {
             if (dir.isDirectory()) {
@@ -58,6 +62,7 @@ public class TestRuns {
                 .skipped(totals.skipped)
                 .testTime(Duration.ofMillis(Math.round(totals.seconds * DateUtils.MILLIS_PER_SECOND)))
                 .skippedTests(totals.skippedTests)
+                .cutOff(TestRecords.cutOff(recordDirectories, log))
                 .build();
     }
     /**

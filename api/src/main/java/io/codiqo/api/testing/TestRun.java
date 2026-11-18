@@ -2,6 +2,7 @@ package io.codiqo.api.testing;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 
 import com.google.common.collect.Lists;
 
@@ -24,6 +25,9 @@ public class TestRun {
     /** the skipped tests as class#method, in report order, at most {@link TestRuns#MAX_SKIPPED_TESTS} */
     @Builder.Default
     List<String> skippedTests = Lists.newArrayList();
+    /** why the counts and coverage cover only part of the tests: a test JVM ended before its tests finished ({@link TestRecords}) */
+    @Builder.Default
+    Optional<String> cutOff = Optional.empty();
 
     /** the share of executed tests that failed or errored; 0 when nothing executed */
     public double failedShare() {
