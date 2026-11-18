@@ -1147,15 +1147,21 @@ public abstract class AbstractAnalyzeMojo extends AbstractMojo implements Functi
                 .or(sysout::capturedDetail)
                 .or(syserr::capturedDetail);
     }
+    /**
+     * The builder is chained rather than held in a variable, because its type must not be named in this file. PMD reads
+     * {@link BuildOutcome} from this source, where Lombok has not generated {@code Skipped.SkippedBuilder}, and a
+     * variable of that type stopped PMD 7.29 on this whole file with "Disambiguation pass should resolve everything
+     * except qualified ctor calls", so none of the build's PMD rules checked it.
+     */
     private BuildOutcome.Skipped skipped(RunArgs args, String reason, AnalysisExcludeCategory category, boolean timedOut,
             CapturingOutputHandler sysout, CapturingOutputHandler syserr) {
-        BuildOutcome.Skipped.SkippedBuilder toReturn = BuildOutcome.Skipped.builder()
+        return buildFailureDetail(args, sysout, syserr)
+                .map(detail -> BuildOutcome.Skipped.builder().detail(detail))
+                .orElseGet(BuildOutcome.Skipped::builder)
                 .reason(reason)
                 .category(category)
-                .timedOut(timedOut);
-
-        buildFailureDetail(args, sysout, syserr).ifPresent(toReturn::detail);
-        return toReturn.build();
+                .timedOut(timedOut)
+                .build();
     }
     private Optional<String> readBuildFailureReport(RunArgs args) {
         File reportFile = args.getBuildFailureReportFile();

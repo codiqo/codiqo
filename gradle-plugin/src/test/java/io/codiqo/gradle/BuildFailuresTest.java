@@ -25,7 +25,7 @@ class BuildFailuresTest {
 
     @Test
     void everyDependencyGradleCouldNotResolveReachesTheDetail() {
-        ResolveException unresolved = new ResolveException("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
+        ResolveException unresolved = new Unresolved("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
                 new IllegalStateException("Could not find com.example:missing-a:1.0.\nSearched in the following locations:\n  - https://repo.example/com/example/missing-a/1.0/missing-a-1.0.pom"),
                 new IllegalStateException("Could not find com.example:missing-b:1.0.\nSearched in the following locations:\n  - https://repo.example/com/example/missing-b/1.0/missing-b-1.0.pom")));
 
@@ -57,9 +57,9 @@ class BuildFailuresTest {
     @Test
     void aModuleGradleReportsFromItsCacheOfMissingOnesIsTheEnvironments() {
         BuildFailures.BuildFailure failure = BuildFailures.classify(
-                Map.of(":compileTestJava", task(new ResolveException("Could not resolve all files for configuration ':testCompileClasspath'.", List.of(
+                Map.of(":compileTestJava", task(new Unresolved("Could not resolve all files for configuration ':testCompileClasspath'.", List.of(
                         new ModuleVersionNotFoundException("Could not find com.example:missing-test:1.0.\nRequired by:\n    root project 'app'"))))),
-                Map.of(":testRuntimeClasspath", new ResolveException("Could not resolve all files for configuration ':testRuntimeClasspath'.", List.of(
+                Map.of(":testRuntimeClasspath", new Unresolved("Could not resolve all files for configuration ':testRuntimeClasspath'.", List.of(
                         new ModuleVersionNotFoundException("Could not find com.example:missing-test:1.0.\nSearched in the following locations:\n  - https://repo.example/com/example/missing-test/1.0/missing-test-1.0.pom")))))
                 .orElseThrow();
 
@@ -69,7 +69,7 @@ class BuildFailuresTest {
     @Test
     void anAuthorsResolutionErrorBesideADownloadThatFailedStaysTheAuthors() {
         BuildFailures.BuildFailure failure = BuildFailures.classify(ImmutableMap.of(
-                ":app:compileJava", task(new ResolveException("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
+                ":app:compileJava", task(new Unresolved("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
                         new IllegalStateException("Dependency verification failed for configuration ':app:compileClasspath'")))),
                 ":docs:fetchTheme", task(new IllegalStateException("Could not GET 'https://repo.example/theme-1.0.zip'.", new IllegalStateException("Received status code 503 from server")))), Map.of())
                 .orElseThrow();
@@ -79,7 +79,7 @@ class BuildFailuresTest {
     @Test
     void aLocalProjectGradleCouldNotMatchStaysTheAuthors() {
         BuildFailures.BuildFailure failure = BuildFailures.classify(Map.of(":app:compileJava",
-                task(new ResolveException("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(new IllegalStateException(
+                task(new Unresolved("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(new IllegalStateException(
                         "Could not resolve project :lib.\nNo matching variant of project :lib was found."))))), Map.of())
                 .orElseThrow();
 
@@ -88,7 +88,7 @@ class BuildFailuresTest {
     @Test
     void aMissingModuleDoesNotHideAVariantTheAuthorGotWrongInTheSameConfiguration() {
         BuildFailures.BuildFailure failure = BuildFailures.classify(Map.of(), Map.of(":app:compileClasspath",
-                new ResolveException("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
+                new Unresolved("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
                         new ModuleVersionNotFoundException("Could not find com.example:missing:1.0.\nSearched in the following locations:\n  - https://repo.example/com/example/missing/1.0/missing-1.0.pom"),
                         new IllegalStateException("Could not resolve project :lib.\nNo matching variant of project :lib was found.")))))
                 .orElseThrow();
@@ -98,7 +98,7 @@ class BuildFailuresTest {
     @Test
     void aJarMissingFromTheAuthorsOwnRepositoryIsTheAuthors() {
         BuildFailures.BuildFailure failure = BuildFailures.classify(Map.of(), Map.of(":compileClasspath",
-                new ResolveException("Could not resolve all files for configuration ':compileClasspath'.", List.of(
+                new Unresolved("Could not resolve all files for configuration ':compileClasspath'.", List.of(
                         new ModuleVersionNotFoundException("Could not find :vendored:1.0.\nRequired by:\n    root project 'app'")))))
                 .orElseThrow();
 
@@ -107,9 +107,9 @@ class BuildFailuresTest {
     @Test
     void aBundleInsideABundleIsSplitToo() {
         BuildFailures.BuildFailure failure = BuildFailures.classify(Map.of(), Map.of(":app:compileClasspath",
-                new ResolveException("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
+                new Unresolved("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
                         new ModuleVersionNotFoundException("Could not find com.example:missing:1.0.\nSearched in the following locations:\n  - https://repo.example/com/example/missing/1.0/missing-1.0.pom"),
-                        new ResolveException("Could not resolve com.example:transformed:1.0.", List.of(
+                        new Unresolved("Could not resolve com.example:transformed:1.0.", List.of(
                                 new IllegalStateException("Could not GET 'https://repo.example/x.pom'. Received status code 503 from server"),
                                 new IllegalStateException("Could not resolve project :lib.\nNo matching variant of project :lib was found.")))))))
                 .orElseThrow();
@@ -119,7 +119,7 @@ class BuildFailuresTest {
     @Test
     void aProjectThatDefinesNoRepositoryIsTheAuthors() {
         BuildFailures.BuildFailure failure = BuildFailures.classify(Map.of(), Map.of(":app:compileClasspath",
-                new ResolveException("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
+                new Unresolved("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
                         new ModuleVersionNotFoundException("Cannot resolve external dependency com.example:lib:1.0 because no repositories are defined.")))))
                 .orElseThrow();
 
@@ -170,6 +170,18 @@ class BuildFailuresTest {
         return new IllegalStateException("Execution failed for task ':app:compileJava'.", cause);
     }
 
+    /**
+     * Stands for Gradle's own resolve failures, which build a {@link ResolveException} through the constructor kept for
+     * its subclasses. The public ones are deprecated, log a deprecation warning when called and are gone or protected
+     * from Gradle 9, so a test that called them would break on the next Gradle API it compiles against.
+     */
+    private static final class Unresolved extends ResolveException {
+        private static final long serialVersionUID = 1L;
+
+        private Unresolved(String message, List<? extends Throwable> causes) {
+            super(message, causes, false);
+        }
+    }
     /** stands for Gradle's internal exception of that name: the not-found rule reads a failure's class by its name */
     private static final class ModuleVersionNotFoundException extends IllegalStateException {
         private static final long serialVersionUID = 1L;

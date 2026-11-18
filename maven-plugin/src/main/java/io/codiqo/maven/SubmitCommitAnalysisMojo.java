@@ -63,7 +63,7 @@ import io.codiqo.util.MemoryReport;
 
 /**
  * Analyses one commit and submits it to Codiqo, or excludes it, through the commit's run ({@link CommitRun}) that the
- * Gradle worker runs too, with Maven's build of the commit behind {@link MavenCommitBuild}.
+ * Gradle worker runs too, with Maven's build of the commit behind {@link SubmitCommitAnalysisMojo.MavenCommitBuild}.
  */
 @Mojo(name = "submit-commit-analysis",
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,

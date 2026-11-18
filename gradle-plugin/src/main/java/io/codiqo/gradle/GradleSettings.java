@@ -9,6 +9,7 @@ import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.reflect.FieldUtils;
 import org.apache.commons.lang3.reflect.MethodUtils;
@@ -91,7 +92,7 @@ public class GradleSettings {
     /** the extension property a setting is read from, which may not exist: not every setting has one */
     @VisibleForTesting
     public String extensionProperty(String setting) {
-        List<String> parts = Splitter.on('.').trimResults().omitEmptyStrings().splitToList(StringUtils.removeStart(setting, Settings.PREFIX));
+        List<String> parts = Splitter.on('.').trimResults().omitEmptyStrings().splitToList(Strings.CS.removeStart(setting, Settings.PREFIX));
         return parts.iterator().next() + parts.stream().skip(1).map(StringUtils::capitalize).collect(Collectors.joining());
     }
     /** read through the property's getter, which Gradle's decorated extension may override, never its field */

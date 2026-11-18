@@ -67,7 +67,6 @@ public final class ReactorWorkspaceReader implements WorkspaceReader {
      * Registers an effective module model. Its POM is registered as well, so a module whose raw coordinates were
      * expressions (CI-friendly {@code ${revision}} versions) becomes answerable once its model is interpolated.
      */
-    @VisibleForTesting
     public void add(MavenProject project) {
         Triple<String, String, String> coordinates = Triple.of(project.getGroupId(), project.getArtifactId(), project.getVersion());
         projects.put(coordinates, project);

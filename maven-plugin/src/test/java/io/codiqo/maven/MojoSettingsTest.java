@@ -21,6 +21,7 @@ import java.util.Set;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.ClassUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.reflect.FieldUtils;
 import org.apache.maven.plugin.descriptor.MojoDescriptor;
 import org.apache.maven.plugin.descriptor.Parameter;
@@ -102,7 +103,7 @@ class MojoSettingsTest {
         for (MojoDescriptor goal : goals()) {
             for (Parameter parameter : goal.getParameters()) {
                 String property = StringUtils.substringBetween(parameter.getExpression(), "${", "}");
-                if (StringUtils.startsWith(property, "codiqo.")) {
+                if (Strings.CS.startsWith(property, "codiqo.")) {
                     assertTrue(BooleanUtils.or(new boolean[] { Settings.names().contains(property), MAVEN_ONLY.contains(property) }),
                             goal.getGoal() + " reads " + property + ", which is neither a RunArgs setting nor listed as Maven's own");
                 }
