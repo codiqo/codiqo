@@ -129,7 +129,7 @@ public class RunArgs {
      * and before a look that failed is tried again. OpenCode 2.2 put a report in the inbox and woke its parent right after
      * its sub-agent stopped running, so a short pause covers that.
      */
-    public static final Duration REVIEW_POLL = Duration.ofMillis(200);
+    public static final Duration REVIEW_POLL = Duration.ofMillis(250);
     /** how many looks at a review's OpenCode sessions in a row may fail before the review does: OpenCode runs beside it */
     public static final int REVIEW_LOOK_ATTEMPTS = 3;
     /** the limit of one look at a review's OpenCode sessions, a quick listing that a healthy server answers at once */
