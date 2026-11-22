@@ -38,7 +38,9 @@ import io.codiqo.submit.AnalysisSubmitter;
 import io.codiqo.submit.CommitIndexPublisher;
 import io.codiqo.submit.CommitIndexPublisher.MissingAnalysesSelection;
 import io.codiqo.submit.CommitIndexer;
+import io.codiqo.submit.SourceHiding;
 import io.codiqo.submit.auth.CodiqoCredential;
+import io.codiqo.util.Env;
 import io.codiqo.util.JGit;
 
 @Mojo(name = "index-commits",
@@ -81,6 +83,13 @@ public class IndexCommitsMojo extends AbstractMojo {
 
     @Parameter(property = "codiqo.excludeAuthorEmails")
     private String excludeAuthorEmails;
+
+    /** the index step stores the exclusion of an excluded author's commit, and hidden-source mode hides it as it is sent */
+    @Parameter(property = "codiqo.sourceHidden")
+    private Boolean sourceHidden;
+
+    @Parameter(property = "codiqo.sourceHashKey")
+    private String sourceHashKey;
 
     @Parameter(property = "codiqo.missingAnalysesOutputFile", defaultValue = "${project.build.directory}/codiqo/missing-analyses.txt")
     private File missingAnalysesOutputFile;
@@ -145,7 +154,8 @@ public class IndexCommitsMojo extends AbstractMojo {
                     commits,
                     resolvedBatchSize);
             AnalysisApi analyses = AnalysisSubmitter.buildClient(apiUrl, credential, args.getConnectTimeout().toSeconds(), args.getReadTimeout().toSeconds());
-            writeMissingAnalyses(log, client, analyses, repo, args, projectId, resolvedBranch, resolvedBatchSize);
+            SourceHiding hiding = SourceHiding.of(BooleanUtils.isTrue(sourceHidden), Env.resolve(sourceHashKey));
+            writeMissingAnalyses(log, client, analyses, hiding, repo, args, projectId, resolvedBranch, resolvedBatchSize);
             args.writeIndexMetadata(indexMetadataFile.toPath());
         } catch (MojoExecutionException | MojoFailureException err) {
             throw err;
@@ -187,6 +197,7 @@ public class IndexCommitsMojo extends AbstractMojo {
             Log log,
             CommitIndexApi client,
             AnalysisApi analyses,
+            SourceHiding hiding,
             Repository repo,
             RunArgs args,
             String projectId,
@@ -196,6 +207,7 @@ public class IndexCommitsMojo extends AbstractMojo {
                 log,
                 client,
                 analyses,
+                hiding,
                 apiUrl,
                 projectId,
                 resolvedBranch,

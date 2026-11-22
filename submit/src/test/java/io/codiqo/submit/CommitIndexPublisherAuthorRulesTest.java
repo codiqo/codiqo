@@ -1,6 +1,7 @@
 package io.codiqo.submit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -9,10 +10,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
-import java.util.function.Predicate;
 
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.junit.jupiter.api.AfterEach;
@@ -23,6 +25,7 @@ import org.slf4j.event.Level;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
@@ -40,9 +43,9 @@ import tools.jackson.databind.node.JsonNodeFactory;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * A commit the author rules reject is indexed, so Codiqo knows it and a finding it fixed can be marked fixed by it, and the
- * index step records it as excluded at once: it never reaches the per-commit loop, whose setup and build it would start
- * only to be excluded there.
+ * A single-parent commit of an excluded author is indexed, so Codiqo knows it and a finding it fixed can be marked fixed
+ * by it, and the index step stores its exclusion at once: it never reaches the per-commit loop, whose setup and build it
+ * would start only to be excluded there.
  */
 class CommitIndexPublisherAuthorRulesTest {
     private static final JsonNodeFactory JSON = JsonNodeFactory.instance;
@@ -51,6 +54,8 @@ class CommitIndexPublisherAuthorRulesTest {
     private static final String MISSING_PATH = "/api/v1/projects/" + PROJECT + "/commits/missing-analyses";
     private static final String ANALYSES_PATH = "/api/v1/analyses/commit/";
     private static final String DEVOPS = "devops.team@example.com";
+    private static final String EXCLUDED_AUTHOR = "author excluded by codiqo.excludeAuthorEmails";
+    private static final String HASH_KEY = "0123456789abcdef0123456789abcdef";
 
     @TempDir
     Path tempDir;
@@ -73,41 +78,80 @@ class CommitIndexPublisherAuthorRulesTest {
     }
     @Test
     void theIndexStepExcludesACommitOfAnExcludedAuthorAndListsTheRestForAnalysis() throws Exception {
-        RunArgs args = new RunArgs();
-        args.setExcludeAuthorEmails(DEVOPS);
         StubCodiqo codiqo = new StubCodiqo(List.of(fix.getName(), release.getName(), feature.getName()));
 
-        MissingAnalysesSelection selection = codiqo.select(args);
+        MissingAnalysesSelection selection = codiqo.select(excludingDevops(), SourceHiding.NONE);
 
         assertEquals(List.of(fix.getName(), feature.getName()), selection.getAnalyzableShas());
-        assertEquals(Map.of(release.getName(), "FILTERED_BY_RULES:author excluded by codiqo.excludeAuthorEmails"), codiqo.excluded,
-                "the exclusion the per-commit gate gives the commit");
+        assertEquals(Map.of(release.getName(), "FILTERED_BY_RULES:" + EXCLUDED_AUTHOR), codiqo.excluded, "the exclusion the per-commit gate gives the commit");
         assertEquals(2, codiqo.listings, "read again after the exclusion, so the limit is filled with commits to analyse");
     }
+    /** a stored exclusion is final, so the include rules' verdict stays with the gate, as the index never keeps such a commit */
     @Test
-    void theIndexStepExcludesACommitTheIncludeRulesRejectWithTheGatesReason() throws Exception {
+    void aCommitTheIncludeRulesRejectIsLeftToThePerCommitGate() throws Exception {
         RunArgs args = new RunArgs();
         args.setIncludeAuthorEmails("alice@example.com");
         StubCodiqo codiqo = new StubCodiqo(List.of(fix.getName(), release.getName(), feature.getName()));
 
-        MissingAnalysesSelection selection = codiqo.select(args);
-
-        assertEquals(List.of(fix.getName(), feature.getName()), selection.getAnalyzableShas());
-        assertEquals(Set.of(release.getName()), codiqo.excluded.keySet());
-        assertEquals("FILTERED_BY_RULES:filtered by include-rules — branch match: true (branches=[main]), author match: false (author=" + DEVOPS + ")",
-                codiqo.excluded.get(release.getName()));
-    }
-    @Test
-    void withNoCommitOfARejectedAuthorTheListIsReadOnceAndNothingIsExcluded() throws Exception {
-        RunArgs args = new RunArgs();
-        args.setExcludeAuthorEmails("someone.else@example.com");
-        StubCodiqo codiqo = new StubCodiqo(List.of(fix.getName(), release.getName(), feature.getName()));
-
-        MissingAnalysesSelection selection = codiqo.select(args);
+        MissingAnalysesSelection selection = codiqo.select(args, SourceHiding.NONE);
 
         assertEquals(List.of(fix.getName(), release.getName(), feature.getName()), selection.getAnalyzableShas());
         assertEquals(Map.of(), codiqo.excluded);
         assertEquals(1, codiqo.listings);
+    }
+    @Test
+    void withNoCommitOfAnExcludedAuthorTheListIsReadOnceAndNothingIsExcluded() throws Exception {
+        RunArgs args = new RunArgs();
+        args.setExcludeAuthorEmails("someone.else@example.com");
+        StubCodiqo codiqo = new StubCodiqo(List.of(fix.getName(), release.getName(), feature.getName()));
+
+        MissingAnalysesSelection selection = codiqo.select(args, SourceHiding.NONE);
+
+        assertEquals(List.of(fix.getName(), release.getName(), feature.getName()), selection.getAnalyzableShas());
+        assertEquals(Map.of(), codiqo.excluded);
+        assertEquals(1, codiqo.listings);
+    }
+    /**
+     * the server accepts an exclusion by organization and commit but lists missing analyses by project, so a commit two
+     * projects of one organization index stays listed for the second: each commit is tried once, so the reads end
+     */
+    @Test
+    void theReadsEndWhenTheServerKeepsListingACommitItExcluded() throws Exception {
+        StubCodiqo codiqo = new StubCodiqo(List.of(fix.getName(), release.getName(), feature.getName()));
+        codiqo.keepsListingExcluded = true;
+
+        MissingAnalysesSelection selection = codiqo.select(excludingDevops(), SourceHiding.NONE);
+
+        assertEquals(List.of(fix.getName(), feature.getName()), selection.getAnalyzableShas(), "the excluded commit is not built");
+        assertEquals(1, codiqo.exclusionRequests);
+        assertEquals(2, codiqo.listings);
+    }
+    /** a refused exclusion does not fail the index step: the commit stays listed and the per-commit gate excludes it */
+    @Test
+    void aCommitWhoseExclusionTheServerRefusesIsLeftToThePerCommitGate() throws Exception {
+        StubCodiqo codiqo = new StubCodiqo(List.of(fix.getName(), release.getName(), feature.getName()));
+        codiqo.refusesExclusions = true;
+
+        MissingAnalysesSelection selection = codiqo.select(excludingDevops(), SourceHiding.NONE);
+
+        assertEquals(List.of(fix.getName(), release.getName(), feature.getName()), selection.getAnalyzableShas());
+        assertEquals(1, codiqo.exclusionRequests);
+        assertEquals(1, codiqo.listings, "nothing was excluded, so the list is not read again");
+    }
+    /** the index step sends the exclusion through the same source hiding as the per-commit gate */
+    @Test
+    void aHiddenSourceRunSendsTheExclusionHidden() throws Exception {
+        StubCodiqo codiqo = new StubCodiqo(List.of(fix.getName(), release.getName(), feature.getName()));
+
+        codiqo.select(excludingDevops(), SourceHiding.of(true, Optional.of(HASH_KEY)));
+
+        assertEquals(Map.of(release.getName(), "FILTERED_BY_RULES:" + SourceHiding.reason(EXCLUDED_AUTHOR)), codiqo.excluded);
+        assertTrue(codiqo.hidden.contains(release.getName()), "the exclusion is flagged hidden");
+    }
+    private static RunArgs excludingDevops() {
+        RunArgs toReturn = new RunArgs();
+        toReturn.setExcludeAuthorEmails(DEVOPS);
+        return toReturn;
     }
     private RevCommit commitAs(String path, String message, String email) throws Exception {
         Files.writeString(tempDir.resolve(path), message, StandardCharsets.UTF_8);
@@ -122,28 +166,43 @@ class CommitIndexPublisherAuthorRulesTest {
         exchange.close();
     }
 
-    /** answers the missing analyses with every commit not excluded yet, and records each exclusion as category:reason */
+    /**
+     * answers the missing analyses with every commit not excluded yet (or every commit, when it keeps listing excluded
+     * ones), and records each exclusion as category:reason
+     */
     private final class StubCodiqo {
         private final List<String> missing;
         private final Map<String, String> excluded = Maps.newLinkedHashMap();
+        private final Set<String> hidden = Sets.newHashSet();
+        private boolean keepsListingExcluded;
+        private boolean refusesExclusions;
         private int listings;
+        private int exclusionRequests;
 
         private StubCodiqo(List<String> missing) {
             this.missing = Lists.newArrayList(missing);
         }
-        private MissingAnalysesSelection select(RunArgs args) throws Exception {
+        private MissingAnalysesSelection select(RunArgs args, SourceHiding hiding) throws Exception {
             HttpServer server = HttpServer.create(new InetSocketAddress(RunArgs.LOOPBACK_HOST, 0), 0);
             server.createContext(MISSING_PATH, exchange -> {
                 listings++;
                 ObjectNode answer = JSON.objectNode().put("projectId", PROJECT);
                 ArrayNode shas = answer.putArray("commitShas");
-                missing.stream().filter(Predicate.not(excluded::containsKey)).forEach(shas::add);
+                missing.stream().filter(sha -> keepsListingExcluded || BooleanUtils.negate(excluded.containsKey(sha))).forEach(shas::add);
                 respond(exchange, HttpResponseStatus.OK.code(), answer.toString());
             });
             server.createContext(ANALYSES_PATH, exchange -> {
+                exclusionRequests++;
+                if (refusesExclusions) {
+                    respond(exchange, HttpResponseStatus.BAD_REQUEST.code(), "{}");
+                    return;
+                }
                 String sha = exchange.getRequestURI().getPath().substring(ANALYSES_PATH.length()).replace("/exclude", "");
                 JsonNode body = new ObjectMapper().readTree(IOUtils.toString(exchange.getRequestBody(), StandardCharsets.UTF_8));
                 excluded.put(sha, body.get("category").asString() + ":" + body.get("reason").asString());
+                if (body.path("sourceHidden").asBoolean()) {
+                    hidden.add(sha);
+                }
                 exchange.sendResponseHeaders(HttpResponseStatus.NO_CONTENT.code(), -1);
                 exchange.close();
             });
@@ -155,6 +214,7 @@ class CommitIndexPublisherAuthorRulesTest {
                         new NoopLog(),
                         CommitIndexPublisher.buildClient(url, credential, 5, 5),
                         AnalysisSubmitter.buildClient(url, credential, 5, 5),
+                        hiding,
                         url,
                         PROJECT,
                         MAIN,

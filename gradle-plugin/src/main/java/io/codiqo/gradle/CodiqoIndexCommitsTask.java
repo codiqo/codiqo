@@ -32,6 +32,7 @@ import io.codiqo.submit.AnalysisSubmitter;
 import io.codiqo.submit.CommitIndexPublisher;
 import io.codiqo.submit.CommitIndexPublisher.MissingAnalysesSelection;
 import io.codiqo.submit.CommitIndexer;
+import io.codiqo.submit.SourceHiding;
 import io.codiqo.submit.auth.CodiqoCredential;
 import io.codiqo.submit.auth.CodiqoCredentials;
 import io.codiqo.util.JGit;
@@ -95,7 +96,14 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
         Optional<CodiqoCredential> credential = resolveCredential(ext);
         if (credential.isEmpty()) {
             getLogger().lifecycle("codiqo: no API key configured and no browser login stored — writing every extracted commit instead of the server's missing-analysis list");
-            return commits.stream().map(CommitModel::getSha).toList();
+            /**
+             * the index keeps an excluded author's commit only for the server to store its exclusion; with no server
+             * the analysis would build it just to exclude it
+             */
+            return commits.stream()
+                    .filter(commit -> BooleanUtils.negate(args.isExcludedAuthor(commit.getAuthorEmail())))
+                    .map(CommitModel::getSha)
+                    .toList();
         }
 
         String apiUrl = prop("codiqo.apiUrl", ext.getApiUrl());
@@ -120,6 +128,7 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
                 log,
                 client,
                 AnalysisSubmitter.buildClient(apiUrl, credential.get(), args.getConnectTimeout().toSeconds(), args.getReadTimeout().toSeconds()),
+                sourceHiding(root, ext),
                 apiUrl,
                 projectId,
                 branch,
@@ -134,6 +143,13 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
                     + selection.getSkippedMissingParentCount() + " whose first parent is not present locally (deepen the clone to analyze these)");
         }
         return selection.getAnalyzableShas();
+    }
+    /** read as the analysis reads it ({@link GradleModelCollector}): only a hidden run needs the key */
+    private static SourceHiding sourceHiding(Project root, CodiqoExtension ext) {
+        if (GradleSettings.flag(root, "codiqo.sourceHidden", ext.isSourceHidden())) {
+            return SourceHiding.of(true, GradleModelCollector.resolveSourceHashKey(root, ext));
+        }
+        return SourceHiding.NONE;
     }
     /** a configured key, else the stored browser login; never the browser, which an index run has nobody to answer */
     private Optional<CodiqoCredential> resolveCredential(CodiqoExtension ext) throws IOException {

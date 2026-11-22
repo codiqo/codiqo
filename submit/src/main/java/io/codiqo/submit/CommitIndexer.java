@@ -81,7 +81,7 @@ public class CommitIndexer {
                  * includeBranches is applied here, alongside the author filters, rather than only at analysis time:
                  * a commit rejected by it is worth no build at all, and reaching that verdict after the fork build
                  * and the language-server import costs the same as analysing a commit that counts. A single-parent
-                 * commit the author filters reject is kept and excluded by the index step instead ({@link #admits}).
+                 * commit of an excluded author is kept and excluded by the index step instead ({@link #admits}).
                  */
                 if (BooleanUtils.or(new boolean[] {
                         BooleanUtils.negate(branches.contains(branch)),
@@ -94,8 +94,12 @@ public class CommitIndexer {
                  * drop duplicate squash-merges: one change re-applied into the branch under two
                  * SHAs (rebase / re-merge) shares a patch-id keep the first by order. only
                  * single-parent commits have a stable parent difference to hash; keep merge commits.
+                 * A commit of an excluded author takes no part: it is only indexed to be excluded, and a newer one
+                 * (a bot's reland) would otherwise take the place of the older commit a person wrote.
                  */
-                if (commit.getParentCount() == 1 && BooleanUtils.isFalse(seenPatchIds.add(patchId(repo, commit)))) {
+                if (commit.getParentCount() == 1
+                        && BooleanUtils.negate(filterArgs.isExcludedAuthor(author.getEmailAddress()))
+                        && BooleanUtils.isFalse(seenPatchIds.add(patchId(repo, commit)))) {
                     continue;
                 }
                 toReturn.add(toCommitModel(repo, commit, branches, author));
@@ -122,15 +126,22 @@ public class CommitIndexer {
         return toReturn;
     }
     /**
-     * A single-parent commit the author rules reject is indexed as well, and the index step records it as excluded as soon
-     * as it is listed missing ({@link CommitIndexPublisher#selectMissingAnalyses}), before anything is built. Codiqo then
-     * knows it, so a finding fixed by a release or another bot commit can be marked fixed by that commit. A merge the
-     * author rules reject stays out: the merge rule decides a merge's exclusion first.
+     * A single-parent commit whose author {@code codiqo.excludeAuthorEmails} names is indexed as well, and the index step
+     * stores its exclusion as soon as it is listed missing ({@link CommitIndexPublisher#selectMissingAnalyses}), before
+     * anything is built. Codiqo then knows it, so a finding fixed by a release or another bot commit can be marked fixed
+     * by that commit.
+     *
+     * <p>Left out, as before: a commit the include rules reject, since a stored exclusion is final and widening the
+     * include list (a pilot growing to the whole team) must still bring that commit in; and a merge of an excluded
+     * author, since excluding it here would first need the merge rule, which reads the merged line. A bot's pull request
+     * merged with a merge commit therefore still cannot be named as a fix.
      */
     private static boolean admits(RunArgs filterArgs, RevCommit commit, List<String> branches, PersonIdent author) {
+        String email = author.getEmailAddress();
         return BooleanUtils.and(new boolean[] {
                 filterArgs.matchesByBranch(branches),
-                BooleanUtils.or(new boolean[] { filterArgs.isAuthorAllowed(author.getEmailAddress()), BooleanUtils.negate(JGit.isMerge(commit)) })
+                filterArgs.matchesByAuthor(email),
+                BooleanUtils.or(new boolean[] { BooleanUtils.negate(filterArgs.isExcludedAuthor(email)), BooleanUtils.negate(JGit.isMerge(commit)) })
         });
     }
     private static ObjectId patchId(Repository repo, RevCommit commit) throws IOException {
