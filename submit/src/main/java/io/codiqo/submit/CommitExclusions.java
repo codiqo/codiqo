@@ -29,7 +29,9 @@ import lombok.experimental.UtilityClass;
  * one build tool scores and the other excludes would give two project histories for one repository.
  *
  * <p>{@link CommitIndexer} applies the matching rule at index time, and the two must agree — a commit the index keeps
- * but the analysis excludes is re-reported as missing on every run and rebuilt each time.
+ * but the analysis excludes is re-reported as missing on every run and rebuilt each time. A single-parent commit the
+ * author rules reject is the one the index keeps on purpose: the index step records its exclusion itself
+ * ({@link #byRules}), before anything is built.
  */
 @UtilityClass
 public class CommitExclusions {
@@ -50,12 +52,19 @@ public class CommitExclusions {
             }
         }
 
-        String author = creditedAuthorEmail(args);
+        return byRules(args, args.getGit(), args.getCommitId(), creditedAuthorEmail(args));
+    }
+    /**
+     * The author and include rules' verdict on a commit, from its credited author and the branches holding it. The index
+     * step records the verdict of a commit the author rules reject as soon as the commit is listed missing
+     * ({@link CommitIndexPublisher#selectMissingAnalyses}), so both give the commit the same exclusion.
+     */
+    public static Optional<Exclusion> byRules(RunArgs args, Repository git, String commitId, String author) throws Exception {
         if (args.isExcludedAuthor(author)) {
             return Optional.of(new Exclusion("author excluded by codiqo.excludeAuthorEmails", AnalysisExcludeCategory.FILTERED_BY_RULES));
         }
 
-        List<String> branches = JGit.branchesContaining(args.getGit(), args.getCommitId());
+        List<String> branches = JGit.branchesContaining(git, commitId);
         boolean branchMatches = args.matchesByBranch(branches);
         boolean authorMatches = args.matchesByAuthor(author);
         if (BooleanUtils.and(new boolean[] { branchMatches, authorMatches })) {

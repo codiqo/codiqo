@@ -242,8 +242,9 @@ class CommitExclusionsLineMergeTest {
 
         List<CommitModel> models = CommitIndexer.toCommitModels(repo, args, List.of(bot, firstUnseenDevCommitOfRelease3));
 
-        assertEquals(List.of(firstUnseenDevCommitOfRelease3.getName()), models.stream().map(CommitModel::getSha).toList());
-        assertTrue(models.iterator().next().getBranches().contains(DEV));
+        /** the excluded author's release commit is indexed as well, and the index step excludes it once it is listed missing */
+        assertEquals(List.of(bot.getName(), firstUnseenDevCommitOfRelease3.getName()), models.stream().map(CommitModel::getSha).toList());
+        assertTrue(models.get(1).getBranches().contains(DEV));
     }
     /** what index runs had walked on {@code dev} while it still had its own first parents, and after each move */
     private RecordingIndex indexedBeforeTheMoves() {

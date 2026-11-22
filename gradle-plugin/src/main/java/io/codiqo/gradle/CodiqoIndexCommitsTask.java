@@ -28,6 +28,7 @@ import io.codiqo.client.api.CommitIndexApi;
 import io.codiqo.client.model.CommitModel;
 import io.codiqo.client.model.ProjectModel;
 import io.codiqo.core.logging.SlfLogFactory;
+import io.codiqo.submit.AnalysisSubmitter;
 import io.codiqo.submit.CommitIndexPublisher;
 import io.codiqo.submit.CommitIndexPublisher.MissingAnalysesSelection;
 import io.codiqo.submit.CommitIndexer;
@@ -118,6 +119,7 @@ public class CodiqoIndexCommitsTask extends DefaultTask {
         MissingAnalysesSelection selection = CommitIndexPublisher.selectMissingAnalyses(
                 log,
                 client,
+                AnalysisSubmitter.buildClient(apiUrl, credential.get(), args.getConnectTimeout().toSeconds(), args.getReadTimeout().toSeconds()),
                 apiUrl,
                 projectId,
                 branch,

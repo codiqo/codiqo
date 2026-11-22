@@ -28,11 +28,13 @@ import org.eclipse.jgit.lib.Repository;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
+import io.codiqo.client.api.AnalysisApi;
 import io.codiqo.client.api.CommitIndexApi;
 import io.codiqo.client.model.CommitModel;
 import io.codiqo.client.model.ProjectModel;
 import io.codiqo.maven.auth.MavenCredentials;
 import io.codiqo.maven.logging.MavenMessageReporter;
+import io.codiqo.submit.AnalysisSubmitter;
 import io.codiqo.submit.CommitIndexPublisher;
 import io.codiqo.submit.CommitIndexPublisher.MissingAnalysesSelection;
 import io.codiqo.submit.CommitIndexer;
@@ -142,7 +144,8 @@ public class IndexCommitsMojo extends AbstractMojo {
                     buildProjectMetadata(projectId, repo),
                     commits,
                     resolvedBatchSize);
-            writeMissingAnalyses(log, client, repo, args, projectId, resolvedBranch, resolvedBatchSize);
+            AnalysisApi analyses = AnalysisSubmitter.buildClient(apiUrl, credential, args.getConnectTimeout().toSeconds(), args.getReadTimeout().toSeconds());
+            writeMissingAnalyses(log, client, analyses, repo, args, projectId, resolvedBranch, resolvedBatchSize);
             args.writeIndexMetadata(indexMetadataFile.toPath());
         } catch (MojoExecutionException | MojoFailureException err) {
             throw err;
@@ -183,6 +186,7 @@ public class IndexCommitsMojo extends AbstractMojo {
     private void writeMissingAnalyses(
             Log log,
             CommitIndexApi client,
+            AnalysisApi analyses,
             Repository repo,
             RunArgs args,
             String projectId,
@@ -191,6 +195,7 @@ public class IndexCommitsMojo extends AbstractMojo {
         MissingAnalysesSelection selection = CommitIndexPublisher.selectMissingAnalyses(
                 log,
                 client,
+                analyses,
                 apiUrl,
                 projectId,
                 resolvedBranch,

@@ -80,11 +80,12 @@ public class CommitIndexer {
                 /**
                  * includeBranches is applied here, alongside the author filters, rather than only at analysis time:
                  * a commit rejected by it is worth no build at all, and reaching that verdict after the fork build
-                 * and the language-server import costs the same as analysing a commit that counts.
+                 * and the language-server import costs the same as analysing a commit that counts. A single-parent
+                 * commit the author filters reject is kept and excluded by the index step instead ({@link #admits}).
                  */
                 if (BooleanUtils.or(new boolean[] {
                         BooleanUtils.negate(branches.contains(branch)),
-                        BooleanUtils.negate(admits(filterArgs, branches, author))
+                        BooleanUtils.negate(admits(filterArgs, commit, branches, author))
                 })) {
                     continue;
                 }
@@ -114,14 +115,23 @@ public class CommitIndexer {
         for (RevCommit commit : commits) {
             List<String> branches = branchIndex.getOrDefault(commit.getName(), Collections.emptyList());
             PersonIdent author = JGit.creditedAuthor(repo, commit);
-            if (admits(filterArgs, branches, author)) {
+            if (admits(filterArgs, commit, branches, author)) {
                 toReturn.add(toCommitModel(repo, commit, branches, author));
             }
         }
         return toReturn;
     }
-    private static boolean admits(RunArgs filterArgs, List<String> branches, PersonIdent author) {
-        return BooleanUtils.and(new boolean[] { filterArgs.matchesByBranch(branches), filterArgs.isAuthorAllowed(author.getEmailAddress()) });
+    /**
+     * A single-parent commit the author rules reject is indexed as well, and the index step records it as excluded as soon
+     * as it is listed missing ({@link CommitIndexPublisher#selectMissingAnalyses}), before anything is built. Codiqo then
+     * knows it, so a finding fixed by a release or another bot commit can be marked fixed by that commit. A merge the
+     * author rules reject stays out: the merge rule decides a merge's exclusion first.
+     */
+    private static boolean admits(RunArgs filterArgs, RevCommit commit, List<String> branches, PersonIdent author) {
+        return BooleanUtils.and(new boolean[] {
+                filterArgs.matchesByBranch(branches),
+                BooleanUtils.or(new boolean[] { filterArgs.isAuthorAllowed(author.getEmailAddress()), BooleanUtils.negate(JGit.isMerge(commit)) })
+        });
     }
     private static ObjectId patchId(Repository repo, RevCommit commit) throws IOException {
         try (RevWalk walk = new RevWalk(repo); PatchIdDiffFormatter formatter = new PatchIdDiffFormatter()) {

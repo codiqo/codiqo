@@ -28,12 +28,15 @@ import com.google.common.collect.Sets;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.client.ApiException;
+import io.codiqo.client.api.AnalysisApi;
 import io.codiqo.client.api.CommitIndexApi;
+import io.codiqo.client.model.AnalysisExcludeModel;
 import io.codiqo.client.model.CommitIndexBatchModel;
 import io.codiqo.client.model.CommitIndexBatchResultModel;
 import io.codiqo.client.model.CommitModel;
 import io.codiqo.client.model.MissingAnalysesModel;
 import io.codiqo.client.model.ProjectModel;
+import io.codiqo.submit.CommitExclusions.Exclusion;
 import io.codiqo.submit.CommitExclusions.MergeExclusion;
 import io.codiqo.submit.auth.CodiqoApiClients;
 import io.codiqo.submit.auth.CodiqoCredential;
@@ -101,6 +104,7 @@ public class CommitIndexPublisher {
     public static MissingAnalysesSelection selectMissingAnalyses(
             Log log,
             CommitIndexApi client,
+            AnalysisApi analyses,
             String apiUrl,
             String projectId,
             String branch,
@@ -108,9 +112,9 @@ public class CommitIndexPublisher {
             Repository repo,
             RunArgs filterArgs,
             int batchSize) throws Exception {
-        MissingAnalysesSelection toReturn = selectAnalyzable(repo, listMissingAnalyses(log, client, apiUrl, projectId, branch, limit));
+        MissingAnalysesSelection toReturn = selectAnalyzable(repo, listMissingToAnalyse(log, client, analyses, apiUrl, projectId, branch, limit, repo, filterArgs));
         if (indexUnseenLines(log, client, apiUrl, projectId, repo, filterArgs, toReturn.getAnalyzableShas(), batchSize) > 0) {
-            toReturn = selectAnalyzable(repo, listMissingAnalyses(log, client, apiUrl, projectId, branch, limit));
+            toReturn = selectAnalyzable(repo, listMissingToAnalyse(log, client, analyses, apiUrl, projectId, branch, limit, repo, filterArgs));
         }
         return toReturn;
     }
@@ -147,6 +151,62 @@ public class CommitIndexPublisher {
                     unseen.size(), commits.size()));
             indexBatches(log, client, apiUrl, projectId, null, commits, batchSize);
             toReturn = commits.size();
+        }
+        return toReturn;
+    }
+    /**
+     * The missing analyses less the commits the author rules reject, which are recorded as excluded here: listed for the
+     * per-commit loop, such a commit would start the loop's setup and a run of its own, only for
+     * {@link CommitExclusions#beforeAnalysis} to exclude it there. The list is read again while any were excluded, so the
+     * limit is filled with commits to analyse.
+     */
+    private static List<String> listMissingToAnalyse(
+            Log log,
+            CommitIndexApi client,
+            AnalysisApi analyses,
+            String apiUrl,
+            String projectId,
+            String branch,
+            int limit,
+            Repository repo,
+            RunArgs filterArgs) throws Exception {
+        List<String> toReturn = listMissingAnalyses(log, client, apiUrl, projectId, branch, limit);
+        while (excludeByAuthorRules(log, analyses, apiUrl, repo, filterArgs, toReturn) > 0) {
+            toReturn = listMissingAnalyses(log, client, apiUrl, projectId, branch, limit);
+        }
+        return toReturn;
+    }
+    /**
+     * Records as excluded each listed single-parent commit this clone holds whose credited author the rules reject, with
+     * the exclusion {@link CommitExclusions#beforeAnalysis} gives it, and says how many it excluded. A merge is left to
+     * the per-commit gate, which decides a merge's exclusion by the merge rule first; the index keeps no merge the author
+     * rules reject anyway ({@link CommitIndexer}).
+     */
+    private static int excludeByAuthorRules(Log log, AnalysisApi analyses, String apiUrl, Repository repo, RunArgs filterArgs, List<String> shas) throws Exception {
+        int toReturn = 0;
+        try (RevWalk walk = new RevWalk(repo)) {
+            ObjectReader reader = walk.getObjectReader();
+            for (String sha : shas) {
+                ObjectId commitId = repo.resolve(sha);
+                if (BooleanUtils.or(new boolean[] { Objects.isNull(commitId), BooleanUtils.negate(reader.has(commitId)) })) {
+                    continue;
+                }
+                RevCommit commit = walk.parseCommit(commitId);
+                String author = JGit.creditedAuthor(repo, commit).getEmailAddress();
+                if (BooleanUtils.or(new boolean[] { JGit.isMerge(commit), filterArgs.isAuthorAllowed(author) })) {
+                    continue;
+                }
+                Optional<Exclusion> excluded = CommitExclusions.byRules(filterArgs, repo, sha, author);
+                if (excluded.isPresent()) {
+                    AnalysisExcludeModel body = new AnalysisExcludeModel().reason(excluded.get().getReason()).category(excluded.get().getCategory()).files(List.of());
+                    log.info("excluding commit " + sha + " at index time: " + body.getReason());
+                    ApiRetry.call(log, "excludeAnalysis", apiUrl, () -> {
+                        analyses.excludeAnalysis(sha, body);
+                        return new Object();
+                    });
+                    toReturn++;
+                }
+            }
         }
         return toReturn;
     }
