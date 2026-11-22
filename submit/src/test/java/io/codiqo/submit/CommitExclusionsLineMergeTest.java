@@ -242,8 +242,21 @@ class CommitExclusionsLineMergeTest {
 
         List<CommitModel> models = CommitIndexer.toCommitModels(repo, args, List.of(bot, firstUnseenDevCommitOfRelease3));
 
-        assertEquals(List.of(firstUnseenDevCommitOfRelease3.getName()), models.stream().map(CommitModel::getSha).toList());
-        assertTrue(models.iterator().next().getBranches().contains(DEV));
+        /** the excluded author's release commit is indexed as well, and the index step excludes it once it is listed missing */
+        assertEquals(List.of(bot.getName(), firstUnseenDevCommitOfRelease3.getName()), models.stream().map(CommitModel::getSha).toList());
+        assertTrue(models.get(1).getBranches().contains(DEV));
+    }
+    /** the include filter still drops an unseen commit, an excluded author's one too */
+    @Test
+    void theUnseenCommitsTheIncludeRulesRejectStayOutOfTheIndex() throws Exception {
+        Files.writeString(tempDir.resolve("version.txt"), "1.1", StandardCharsets.UTF_8);
+        git.add().addFilepattern("version.txt").call();
+        RevCommit bot = git.commit().setMessage("release 1.1").setAuthor("Release Bot", "release-bot@corp.example").call();
+        RunArgs args = new RunArgs();
+        args.setIncludeAuthorEmails("someone.else@corp.example");
+        args.setExcludeAuthorEmails("release-bot@corp.example");
+
+        assertEquals(List.of(), CommitIndexer.toCommitModels(repo, args, List.of(bot, firstUnseenDevCommitOfRelease3)));
     }
     /** what index runs had walked on {@code dev} while it still had its own first parents, and after each move */
     private RecordingIndex indexedBeforeTheMoves() {

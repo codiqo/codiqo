@@ -107,6 +107,7 @@ class IndexCommitsMojoTest {
         assertFalse(commits.stream().anyMatch(c -> featureOnly.getName().equals(c.getSha())),
                 "feature-only commit must be excluded when branch=main");
     }
+    /** a stored exclusion is final, so the include filter still drops a commit: widening the list later brings it in */
     @Test
     void authorFilterExcludesByEmail() throws Exception {
         RevCommit kept = commitAs("a.txt", "v1", "kept", "Alice", "alice@example.com");
@@ -120,18 +121,68 @@ class IndexCommitsMojoTest {
         assertEquals(kept.getName(), commits.iterator().next().getSha());
         assertFalse(commits.stream().anyMatch(c -> dropped.getName().equals(c.getSha())));
     }
+    /** a release commit of an excluded CI account is indexed, so a finding it fixed can be marked fixed by it */
     @Test
-    void excludeAuthorFilterDropsByEmail() throws Exception {
+    void excludeAuthorFilterKeepsARejectedCommitForTheIndexStepToExclude() throws Exception {
         RevCommit kept = commitAs("a.txt", "v1", "kept", "Alice", "alice@example.com");
-        RevCommit dropped = commitAs("a.txt", "v2", "dropped", "Bob", "bob@other.com");
+        RevCommit release = commitAs("a.txt", "v2", "Release 1.0", "devops", "devops.team@example.com");
 
         RunArgs filter = new RunArgs();
-        filter.setExcludeAuthorEmails("bob@other.com");
+        filter.setExcludeAuthorEmails("devops.team@example.com");
         List<CommitModel> commits = extract(filter, "HEAD", EPOCH, "main");
 
-        assertEquals(1, commits.size());
-        assertEquals(kept.getName(), commits.iterator().next().getSha());
-        assertFalse(commits.stream().anyMatch(c -> dropped.getName().equals(c.getSha())));
+        assertEquals(List.of(release.getName(), kept.getName()), shas(commits));
+    }
+    /** a commit of an excluded author outside the include list is dropped by the include filter, as before */
+    @Test
+    void excludeAuthorFilterDropsACommitTheIncludeFilterRejectsToo() throws Exception {
+        RevCommit kept = commitAs("a.txt", "v1", "kept", "Alice", "alice@example.com");
+        commitAs("a.txt", "v2", "Release 1.0", "devops", "devops.team@example.com");
+
+        RunArgs filter = new RunArgs();
+        filter.setIncludeAuthorEmails("alice@example.com");
+        filter.setExcludeAuthorEmails("devops.team@example.com");
+        List<CommitModel> commits = extract(filter, "HEAD", EPOCH, "main");
+
+        assertEquals(List.of(kept.getName()), shas(commits));
+    }
+    /**
+     * an excluded author's commit takes no part in the duplicate-patch check: a bot's newer reland of a change must not
+     * take the place of the commit a person wrote, which would then be scored nowhere
+     */
+    @Test
+    void anExcludedAuthorsRelandDoesNotDropTheOriginalCommitAsADuplicatePatch() throws Exception {
+        commit("a.txt", "v1", "base");
+        RevCommit original = commitAs("a.txt", "v2", "change", "Alice", "alice@example.com");
+        RevCommit revert = commitAs("a.txt", "v1", "Revert \"change\"", "Alice", "alice@example.com");
+        RevCommit reland = commitAs("a.txt", "v2", "Reland \"change\"", "bot", "release-bot@example.com");
+
+        RunArgs filter = new RunArgs();
+        filter.setExcludeAuthorEmails("release-bot@example.com");
+        List<String> indexed = shas(extract(filter, "HEAD", EPOCH, "main"));
+
+        assertTrue(indexed.containsAll(List.of(reland.getName(), revert.getName(), original.getName())), indexed.toString());
+    }
+    /**
+     * a merge of an excluded author stays out of the index, as before: excluding it at index time would first need the
+     * merge rule, which reads the merged line
+     */
+    @Test
+    void excludeAuthorFilterDropsAMergeCreditedToTheExcludedAuthor() throws Exception {
+        RevCommit base = commit("base.txt", "0", "base");
+        git.branchCreate().setName("feature").call();
+        git.checkout().setName("feature").call();
+        RevCommit sideWork = commitAs("f.txt", "1", "side work", "devops", "devops.team@example.com");
+        git.checkout().setName("main").call();
+        RevCommit mainWork = commit("m.txt", "m", "mainline");
+        String mergeSha = mergeAs("feature", "Merge branch feature", "Alice", "alice@example.com");
+
+        RunArgs filter = allCommits();
+        filter.setExcludeAuthorEmails("devops.team@example.com");
+        List<String> indexed = shas(extract(filter, "HEAD", EPOCH, "main"));
+
+        assertFalse(indexed.contains(mergeSha), "the merge is credited to the side branch's excluded author");
+        assertTrue(indexed.containsAll(List.of(sideWork.getName(), mainWork.getName(), base.getName())), indexed.toString());
     }
     @Test
     void mergeCommitIsIncludedInExtraction() throws Exception {

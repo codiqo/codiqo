@@ -29,7 +29,9 @@ import lombok.experimental.UtilityClass;
  * one build tool scores and the other excludes would give two project histories for one repository.
  *
  * <p>{@link CommitIndexer} applies the matching rule at index time, and the two must agree — a commit the index keeps
- * but the analysis excludes is re-reported as missing on every run and rebuilt each time.
+ * but the analysis excludes is re-reported as missing on every run and rebuilt each time. A single-parent commit of an
+ * author {@code codiqo.excludeAuthorEmails} names is the one the index keeps on purpose: the index step stores its
+ * exclusion ({@link #excludedAuthor}) before anything is built, so it is not reported missing again.
  */
 @UtilityClass
 public class CommitExclusions {
@@ -52,7 +54,7 @@ public class CommitExclusions {
 
         String author = creditedAuthorEmail(args);
         if (args.isExcludedAuthor(author)) {
-            return Optional.of(new Exclusion("author excluded by codiqo.excludeAuthorEmails", AnalysisExcludeCategory.FILTERED_BY_RULES));
+            return Optional.of(excludedAuthor());
         }
 
         List<String> branches = JGit.branchesContaining(args.getGit(), args.getCommitId());
@@ -65,6 +67,14 @@ public class CommitExclusions {
                 String.format("filtered by include-rules — branch match: %s (branches=%s), author match: %s (author=%s)",
                         branchMatches, branches, authorMatches, author),
                 AnalysisExcludeCategory.FILTERED_BY_RULES));
+    }
+    /**
+     * The exclusion of a commit whose credited author {@code codiqo.excludeAuthorEmails} names. The index step stores it
+     * for such a single-parent commit once the commit is listed missing ({@link CommitIndexPublisher#selectMissingAnalyses}),
+     * so the commit is excluded exactly as {@link #beforeAnalysis} would exclude it.
+     */
+    public static Exclusion excludedAuthor() {
+        return new Exclusion("author excluded by codiqo.excludeAuthorEmails", AnalysisExcludeCategory.FILTERED_BY_RULES);
     }
     /**
      * Gates that need the computed delta: whether the delta could be computed at all, and whether anything in the diff

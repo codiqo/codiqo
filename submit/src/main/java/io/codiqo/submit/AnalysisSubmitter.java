@@ -274,7 +274,16 @@ public class AnalysisSubmitter {
             AnalysisExcludeModel body,
             SourceHiding hiding,
             Log log) throws ApiException {
-        AnalysisApi client = buildClient(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds);
+        exclude(buildClient(apiUrl, credential, connectTimeoutSeconds, readTimeoutSeconds), apiUrl, commitSha, body, hiding, log);
+    }
+    /** the exclusion's source is hidden in place before it is sent, over a client the caller already holds */
+    public static void exclude(
+            AnalysisApi client,
+            String apiUrl,
+            String commitSha,
+            AnalysisExcludeModel body,
+            SourceHiding hiding,
+            Log log) throws ApiException {
         log.info("excluding commit " + commitSha + " at " + apiUrl + " (reason: " + body.getReason() + ", category: " + body.getCategory() + ", files: " + body.getFiles().size() + ")");
 
         hiding.hide(body);

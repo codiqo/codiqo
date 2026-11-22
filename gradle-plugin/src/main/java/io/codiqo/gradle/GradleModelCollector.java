@@ -255,8 +255,11 @@ public class GradleModelCollector {
         return Optional.of(Env.resolve(configured).orElseThrow(() -> new GradleException(
                 "codiqo.apiKey is set to '" + configured + "' but resolves to nothing — export that variable, or pass the key directly")));
     }
-    /** resolved like the API key, so a key naming an unset variable fails here and not after a paid review */
-    private static Optional<String> resolveSourceHashKey(Project root, CodiqoExtension ext) {
+    /**
+     * resolved like the API key, so a key naming an unset variable fails here and not after a paid review; the index
+     * task reads it too, for the exclusions it stores
+     */
+    static Optional<String> resolveSourceHashKey(Project root, CodiqoExtension ext) {
         String configured = stringProp(root, "codiqo.sourceHashKey", ext.getSourceHashKey());
         if (StringUtils.isBlank(configured)) {
             return Optional.empty();

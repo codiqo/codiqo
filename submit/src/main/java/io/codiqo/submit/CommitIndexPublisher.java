@@ -28,12 +28,15 @@ import com.google.common.collect.Sets;
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
 import io.codiqo.client.ApiException;
+import io.codiqo.client.api.AnalysisApi;
 import io.codiqo.client.api.CommitIndexApi;
+import io.codiqo.client.model.AnalysisExcludeModel;
 import io.codiqo.client.model.CommitIndexBatchModel;
 import io.codiqo.client.model.CommitIndexBatchResultModel;
 import io.codiqo.client.model.CommitModel;
 import io.codiqo.client.model.MissingAnalysesModel;
 import io.codiqo.client.model.ProjectModel;
+import io.codiqo.submit.CommitExclusions.Exclusion;
 import io.codiqo.submit.CommitExclusions.MergeExclusion;
 import io.codiqo.submit.auth.CodiqoApiClients;
 import io.codiqo.submit.auth.CodiqoCredential;
@@ -96,11 +99,14 @@ public class CommitIndexPublisher {
     }
     /**
      * The missing analyses this clone can run, once the commits of missing merges' lines that no index run reached are
-     * indexed ({@link #indexUnseenLines}). The list is read again when any were, so they are analysed in this run.
+     * indexed ({@link #indexUnseenLines}). The list is read again when any were, so they are analysed in this run. A
+     * listed commit of an excluded author is excluded here instead ({@link ExcludedAuthorCommits}).
      */
     public static MissingAnalysesSelection selectMissingAnalyses(
             Log log,
             CommitIndexApi client,
+            AnalysisApi analyses,
+            SourceHiding hiding,
             String apiUrl,
             String projectId,
             String branch,
@@ -108,9 +114,10 @@ public class CommitIndexPublisher {
             Repository repo,
             RunArgs filterArgs,
             int batchSize) throws Exception {
-        MissingAnalysesSelection toReturn = selectAnalyzable(repo, listMissingAnalyses(log, client, apiUrl, projectId, branch, limit));
+        ExcludedAuthorCommits excludedAuthors = new ExcludedAuthorCommits(log, analyses, hiding, apiUrl, repo, filterArgs);
+        MissingAnalysesSelection toReturn = selectAnalyzable(repo, listMissingToAnalyse(log, client, apiUrl, projectId, branch, limit, excludedAuthors));
         if (indexUnseenLines(log, client, apiUrl, projectId, repo, filterArgs, toReturn.getAnalyzableShas(), batchSize) > 0) {
-            toReturn = selectAnalyzable(repo, listMissingAnalyses(log, client, apiUrl, projectId, branch, limit));
+            toReturn = selectAnalyzable(repo, listMissingToAnalyse(log, client, apiUrl, projectId, branch, limit, excludedAuthors));
         }
         return toReturn;
     }
@@ -197,6 +204,27 @@ public class CommitIndexPublisher {
 
         return new MissingAnalysesSelection(analyzable, skippedMissingCommit, skippedMissingParent);
     }
+    /**
+     * The missing analyses less the commits of excluded authors, whose exclusion is stored here: listed for the
+     * per-commit loop, such a commit would start the loop's setup and a run of its own, only for
+     * {@link CommitExclusions#beforeAnalysis} to exclude it there. The list is read again while a pass stores a new
+     * exclusion, so the limit is filled with commits to analyse. Each commit is tried once, so the reads end even when
+     * the server keeps listing a commit whose exclusion it accepted.
+     */
+    private static List<String> listMissingToAnalyse(
+            Log log,
+            CommitIndexApi client,
+            String apiUrl,
+            String projectId,
+            String branch,
+            int limit,
+            ExcludedAuthorCommits excludedAuthors) throws Exception {
+        List<String> listed = listMissingAnalyses(log, client, apiUrl, projectId, branch, limit);
+        while (excludedAuthors.exclude(listed) > 0) {
+            listed = listMissingAnalyses(log, client, apiUrl, projectId, branch, limit);
+        }
+        return excludedAuthors.withoutExcluded(listed);
+    }
     public static final class MissingAnalysesSelection extends ImmutableTriple<List<String>, Integer, Integer> {
         public MissingAnalysesSelection(List<String> analyzableShas, int skippedMissingCommitCount, int skippedMissingParentCount) {
             super(analyzableShas, skippedMissingCommitCount, skippedMissingParentCount);
@@ -209,6 +237,72 @@ public class CommitIndexPublisher {
         }
         public int getSkippedMissingParentCount() {
             return getRight();
+        }
+    }
+
+    /**
+     * Stores the exclusion of each listed single-parent commit whose credited author {@code codiqo.excludeAuthorEmails}
+     * names ({@link CommitExclusions#excludedAuthor}), sent through {@link AnalysisSubmitter#exclude} with the run's
+     * {@link SourceHiding}, as the per-commit gate sends it. A merge is left to that gate, which asks the merge rule
+     * first. Each commit is tried once per index run; one whose exclusion the server refuses stays listed, and the gate
+     * excludes it as before.
+     */
+    private static final class ExcludedAuthorCommits {
+        private final Log log;
+        private final AnalysisApi analyses;
+        private final SourceHiding hiding;
+        private final String apiUrl;
+        private final Repository repo;
+        private final RunArgs filterArgs;
+        private final Set<String> tried = Sets.newHashSet();
+        private final Set<String> excluded = Sets.newHashSet();
+
+        private ExcludedAuthorCommits(Log log, AnalysisApi analyses, SourceHiding hiding, String apiUrl, Repository repo, RunArgs filterArgs) {
+            this.log = log;
+            this.analyses = analyses;
+            this.hiding = hiding;
+            this.apiUrl = apiUrl;
+            this.repo = repo;
+            this.filterArgs = filterArgs;
+        }
+        /** stores the exclusion of each such commit not tried yet, and says how many it stored */
+        private int exclude(List<String> shas) throws IOException {
+            int toReturn = 0;
+            try (RevWalk walk = new RevWalk(repo)) {
+                ObjectReader reader = walk.getObjectReader();
+                for (String sha : shas) {
+                    if (BooleanUtils.negate(tried.add(sha))) {
+                        continue;
+                    }
+                    ObjectId commitId = repo.resolve(sha);
+                    if (Objects.isNull(commitId) || BooleanUtils.negate(reader.has(commitId))) {
+                        continue;
+                    }
+                    RevCommit commit = walk.parseCommit(commitId);
+                    if (JGit.isMerge(commit) || BooleanUtils.negate(filterArgs.isExcludedAuthor(JGit.creditedAuthor(repo, commit).getEmailAddress()))) {
+                        continue;
+                    }
+                    if (store(sha)) {
+                        excluded.add(sha);
+                        toReturn++;
+                    }
+                }
+            }
+            return toReturn;
+        }
+        private boolean store(String sha) {
+            Exclusion exclusion = CommitExclusions.excludedAuthor();
+            AnalysisExcludeModel body = new AnalysisExcludeModel().reason(exclusion.getReason()).category(exclusion.getCategory()).files(List.of());
+            try {
+                AnalysisSubmitter.exclude(analyses, apiUrl, sha, body, hiding, log);
+                return true;
+            } catch (ApiException err) {
+                log.warn("could not exclude commit " + sha + " at index time, so the per-commit gate excludes it instead: " + ApiRetry.summarize(err));
+                return false;
+            }
+        }
+        private List<String> withoutExcluded(List<String> shas) {
+            return shas.stream().filter(sha -> BooleanUtils.negate(excluded.contains(sha))).toList();
         }
     }
 }

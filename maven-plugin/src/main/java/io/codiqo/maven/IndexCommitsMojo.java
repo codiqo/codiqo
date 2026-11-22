@@ -28,15 +28,19 @@ import org.eclipse.jgit.lib.Repository;
 
 import io.codiqo.api.RunArgs;
 import io.codiqo.api.logging.Log;
+import io.codiqo.client.api.AnalysisApi;
 import io.codiqo.client.api.CommitIndexApi;
 import io.codiqo.client.model.CommitModel;
 import io.codiqo.client.model.ProjectModel;
 import io.codiqo.maven.auth.MavenCredentials;
 import io.codiqo.maven.logging.MavenMessageReporter;
+import io.codiqo.submit.AnalysisSubmitter;
 import io.codiqo.submit.CommitIndexPublisher;
 import io.codiqo.submit.CommitIndexPublisher.MissingAnalysesSelection;
 import io.codiqo.submit.CommitIndexer;
+import io.codiqo.submit.SourceHiding;
 import io.codiqo.submit.auth.CodiqoCredential;
+import io.codiqo.util.Env;
 import io.codiqo.util.JGit;
 
 @Mojo(name = "index-commits",
@@ -79,6 +83,13 @@ public class IndexCommitsMojo extends AbstractMojo {
 
     @Parameter(property = "codiqo.excludeAuthorEmails")
     private String excludeAuthorEmails;
+
+    /** the index step stores the exclusion of an excluded author's commit, and hidden-source mode hides it as it is sent */
+    @Parameter(property = "codiqo.sourceHidden")
+    private Boolean sourceHidden;
+
+    @Parameter(property = "codiqo.sourceHashKey")
+    private String sourceHashKey;
 
     @Parameter(property = "codiqo.missingAnalysesOutputFile", defaultValue = "${project.build.directory}/codiqo/missing-analyses.txt")
     private File missingAnalysesOutputFile;
@@ -142,7 +153,9 @@ public class IndexCommitsMojo extends AbstractMojo {
                     buildProjectMetadata(projectId, repo),
                     commits,
                     resolvedBatchSize);
-            writeMissingAnalyses(log, client, repo, args, projectId, resolvedBranch, resolvedBatchSize);
+            AnalysisApi analyses = AnalysisSubmitter.buildClient(apiUrl, credential, args.getConnectTimeout().toSeconds(), args.getReadTimeout().toSeconds());
+            SourceHiding hiding = SourceHiding.of(BooleanUtils.isTrue(sourceHidden), Env.resolve(sourceHashKey));
+            writeMissingAnalyses(log, client, analyses, hiding, repo, args, projectId, resolvedBranch, resolvedBatchSize);
             args.writeIndexMetadata(indexMetadataFile.toPath());
         } catch (MojoExecutionException | MojoFailureException err) {
             throw err;
@@ -183,6 +196,8 @@ public class IndexCommitsMojo extends AbstractMojo {
     private void writeMissingAnalyses(
             Log log,
             CommitIndexApi client,
+            AnalysisApi analyses,
+            SourceHiding hiding,
             Repository repo,
             RunArgs args,
             String projectId,
@@ -191,6 +206,8 @@ public class IndexCommitsMojo extends AbstractMojo {
         MissingAnalysesSelection selection = CommitIndexPublisher.selectMissingAnalyses(
                 log,
                 client,
+                analyses,
+                hiding,
                 apiUrl,
                 projectId,
                 resolvedBranch,
