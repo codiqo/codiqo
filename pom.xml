@@ -53,12 +53,12 @@
         <!-- CORE -->
         <!-- -->
         <slf4j.version>2.0.20</slf4j.version>
-        <logback.version>1.6.7</logback.version>
+        <logback.version>1.6.8</logback.version>
         <asm.version>9.11.1</asm.version>
         <javax.inject.version>1</javax.inject.version>
         <jakarta.annotation-api.version>3.0.0</jakarta.annotation-api.version>
         <jakarta.validation-api.version>3.1.1</jakarta.validation-api.version>
-        <spring.version>7.0.10</spring.version>
+        <spring.version>7.0.11</spring.version>
         <jspecify.version>1.0.1</jspecify.version>
         <lombok.version>1.18.48</lombok.version>
         <gson.version>2.15.0</gson.version>
@@ -98,9 +98,9 @@
         <classgraph.version>4.8.200</classgraph.version>
         <oshi.version>7.8.0</oshi.version>
         <jol.version>0.17</jol.version>
-        <openai.version>4.108.0</openai.version>
+        <openai.version>4.111.0</openai.version>
         <gradle.api.version>8.11.1</gradle.api.version>
-        <micrometer.version>1.17.2</micrometer.version>
+        <micrometer.version>1.18.0</micrometer.version>
         <thymeleaf.version>3.1.7.RELEASE</thymeleaf.version>
         <commons-lang3.version>3.22.0</commons-lang3.version>
         <commons-collections4.version>4.6.0</commons-collections4.version>
@@ -113,9 +113,9 @@
         <failsafe.version>3.3.2</failsafe.version>
         <ascii-table.version>1.13.0</ascii-table.version>
         <antlr4.version>4.13.2</antlr4.version>
-        <aether.version>2.0.25</aether.version>
+        <aether.version>2.0.26</aether.version>
         <maven.plugin-annotations.version>3.16.0</maven.plugin-annotations.version>
-        <maven.version>3.10.1</maven.version>
+        <maven.version>3.10.2</maven.version>
         <maven.invoker.version>3.3.0</maven.invoker.version>
         <scala.binary.version>2.13</scala.binary.version>
         <scala.version>${scala.binary.version}.18</scala.version>
