@@ -202,6 +202,8 @@ class TurnTest {
             body = messages(error);
         } else if (route.equals("GET /api/session/active")) {
             body = "{\"data\":{}}";
+        } else if (route.equals("GET /api/experimental/job")) {
+            body = "{\"data\":[]}";
         }
         respond(exchange, HttpResponseStatus.OK.code(), body);
     }

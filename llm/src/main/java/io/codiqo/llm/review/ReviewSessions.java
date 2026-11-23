@@ -23,13 +23,16 @@ public interface ReviewSessions extends Closeable {
     void prompt(String sessionId, String text) throws IOException;
     /**
      * Waits until the session's turn ended, every sub-agent it started included, and every run their reports woke it for:
-     * false when it did not end within the review timeout. Once {@code answered} holds, the turn ended as soon as none of
-     * its sessions runs. A wait that failed sooner, an interrupt among them, is thrown.
+     * false when it did not end within the review timeout. A shell command one of its sessions runs in the background
+     * holds the turn open until its result has woken that session. Once {@code answered} holds, the turn ended as soon as
+     * none of its sessions runs or waits for such a command. A wait that failed sooner, an interrupt among them, is
+     * thrown.
      */
     boolean awaitTurn(String sessionId, BooleanSupplier answered) throws IOException;
     /**
-     * The sub-agents the session started that are still running: a coordinator's answer waits for those that have not
-     * reviewed yet, since a sub-agent that runs in the background reports after the coordinator's response ended.
+     * The sub-agents the session started that are still running, or that wait for a shell command running in the
+     * background: a coordinator's answer waits for those that have not reviewed yet, since a sub-agent that runs in the
+     * background reports after the coordinator's response ended.
      */
     Set<String> runningSubagents(String sessionId) throws IOException;
     /** How the session's last turn ended, read once the session is idle. */

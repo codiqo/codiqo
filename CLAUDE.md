@@ -1764,9 +1764,16 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   wait route covers one session's own run, and no route waits for a session's tree, so `OpenCodeSessions.awaitTurn`
   waits until no session of the tree is running (`GET /api/session/active`), looked at twice with the session unchanged:
   a reviewer stays running until its report is in the inbox and the coordinator woken, which makes it running in turn.
-  Once the session answered, the first look with nothing running ends it. The job and inbox routes are not read: a job
-  row or report OpenCode failed to deliver would hold the turn to its timeout. On 2.3.0 a review that trusted the wait
-  failed in 27 s, the coordinator having ended its first response, and every commit would have been excluded.
+  Once the session answered, the first look with nothing running ends it. The subagent jobs and the inbox are not read:
+  a subagent job or report OpenCode failed to deliver would hold the turn to its timeout. On 2.3.0 a review that trusted
+  the wait failed in 27 s, the coordinator having ended its first response, and every commit would have been excluded.
+  The shell jobs are read (`OpenCodeClient.backgroundShells`, `GET /api/experimental/job?kind=shell`), before the
+  running sessions, since OpenCode wakes a session with a command's result before it drops the command's job. OpenCode
+  2.3.2 moves a shell command still running at its two-minute timeout to the background instead of stopping it and
+  tells the agent to end its response, so a reviewer waiting for one runs nowhere, and a wait on the running sessions
+  alone ended the turn at its first quiet look and lost that reviewer's review (5 of 22 local review traces ran a
+  command past the timeout, a `grep -r` through `~/.m2` or a `find /`). A session waiting for such a command keeps the
+  turn open, looked at every `RunArgs.REVIEW_SHELL_POLL`, and a subagent waiting for one holds the answer below.
   Only the coordinator's answer carries bugs, so `ReviewAnswers` holds that answer inside its call (OpenCode allows an
   MCP call 12 hours) while a subagent it started still runs without having submitted a review
   (`ReviewSessions.runningSubagents`), polled every `RunArgs.REVIEW_HOLD_POLL` for at most `reviewTimeout` from when the
@@ -1781,10 +1788,11 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   setting a subagent call's `background` option, which OpenCode 2.2.7 still offers and where a report reaches the
   inbox only after its subagent stopped running, asks the coordinator to end each response at once until every reviewer
   has reported, and every agent never to run a shell
-  command in the background, whose result would come after its turn (the shell tool takes `background` on 2.2.7 and
-  2.3.0, and such a command is not waited for). OpenCode 2.3 starts the step count again from 1 at each report that
+  command in the background (the shell tool takes `background` on 2.2.7 to 2.3.2): such a command is waited for as one
+  that outlived its timeout is, and one that never ends, a server, holds the turn to its timeout. OpenCode 2.3 starts the step count again from 1 at each report that
   arrives as a message of its own, so the step cap bounds each response and `reviewTimeout` the whole review.
-  `OpenCodeClient.requireBackgroundRoutes` refuses an OpenCode without the route before any agent runs.
+  `OpenCodeClient.requireBackgroundRoutes` refuses an OpenCode without either route (the job listing came in 2.2.6)
+  before any agent runs.
   The same code runs OpenCode 2.2, whose subagents ran in the foreground inside the coordinator's run. Start no further
   subagent once the reviewers reported: in 1 of 48 reviews GLM-5.3 started a second "verification" subagent after its
   reviewer had reported.

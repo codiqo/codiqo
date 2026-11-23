@@ -158,10 +158,16 @@ public final class OpenCodeServer implements Closeable {
          * is set, so reviewing a commit could otherwise run that repository's plugin code or widen the agents' tools;
          * and it reads {@code OPENCODE_CONFIG}, {@code OPENCODE_CONFIG_CONTENT} and their siblings from the environment,
          * which the developer's shell passes on. Only the global directory below, which holds our configuration, is left.
+         * It also reads Claude Code's files in the user's home, which the reviewers' shell commands need and which is
+         * therefore not moved: from OpenCode 2.3.2 {@code ~/.claude/CLAUDE.md} stands in for a global {@code AGENTS.md},
+         * which our global directory never holds, so a developer's own instructions entered every agent's system prompt
+         * (checked with a stub model; 2.2.7 and 2.3.0 read none). {@code OPENCODE_DISABLE_CLAUDE_CODE} closes it and the
+         * skills under {@code ~/.claude}, which the agents' permissions already hide.
          */
         Map<String, String> env = builder.environment();
         env.keySet().removeIf(name -> Strings.CS.startsWith(name, OPENCODE_ENV_PREFIX));
         env.put("OPENCODE_DISABLE_PROJECT_CONFIG", Boolean.TRUE.toString());
+        env.put("OPENCODE_DISABLE_CLAUDE_CODE", Boolean.TRUE.toString());
         env.put("OPENCODE_SERVER_PASSWORD", password);
         for (String xdg : List.of("CONFIG", "DATA", "STATE", "CACHE")) {
             env.put("XDG_" + xdg + "_HOME", new File(home, xdg.toLowerCase(Locale.ROOT)).getAbsolutePath());

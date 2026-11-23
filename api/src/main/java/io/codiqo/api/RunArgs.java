@@ -140,6 +140,12 @@ public class RunArgs {
      * so it looks once a second rather than at {@link #REVIEW_POLL}; a second more before the answer is read costs nothing.
      */
     public static final Duration REVIEW_HOLD_POLL = Duration.ofSeconds(1);
+    /**
+     * The pause between two looks at a review whose sessions wait for a shell command OpenCode runs in the background, one
+     * still running at its two-minute timeout: it may run for minutes more, and each look lists OpenCode's background jobs
+     * and its running sessions, so the wait looks once a second, as a held answer does.
+     */
+    public static final Duration REVIEW_SHELL_POLL = Duration.ofSeconds(1);
 
     public static final int SCORE_PRECISION = 2;
     /** the 0-10 scale of the quality dimensions, the architecture impact and the senior-review score */

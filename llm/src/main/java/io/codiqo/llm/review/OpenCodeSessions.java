@@ -102,9 +102,11 @@ public class OpenCodeSessions implements ReviewSessions {
      * which makes it running in turn, so the turn ended once no session of the tree is running: looked at twice a moment
      * apart with the session unchanged in between, which also covers OpenCode 2.2, where a report reached the inbox just
      * after its sub-agent stopped running. Once the session answered, the first look that finds nothing running ends it.
-     * A command run in the background is not waited for. Every call is bounded by what is left of the review timeout, and
-     * a look that failed is tried again a few times before the wait fails. Up to OpenCode 2.2 sub-agents ran in the
-     * foreground, inside the coordinator's run, and the first wait already covers them.
+     * A session of the tree that waits for a shell command running in the background keeps the turn open as a running
+     * one does: OpenCode 2.3.2 moves a command still running at its timeout there, the agent ends its response, and the
+     * command's result wakes it again, a reviewer that has not answered yet included. Every call is bounded by what is
+     * left of the review timeout, and a look that failed is tried again a few times before the wait fails. Up to OpenCode
+     * 2.2 sub-agents ran in the foreground, inside the coordinator's run, and the first wait already covers them.
      */
     @Override
     public boolean awaitTurn(String sessionId, BooleanSupplier answered) throws IOException {
@@ -117,12 +119,18 @@ public class OpenCodeSessions implements ReviewSessions {
                     bounded(turn).awaitIdle(sessionId);
                     /** a quick listing, bounded as one look is, so one OpenCode never answers fails within seconds and is tried again */
                     OpenCodeClient look = client.within(ObjectUtils.min(remaining(turn), RunArgs.REVIEW_LOOK_TIMEOUT));
+                    /** the shells first, for the reason OpenCodeClient#backgroundShells gives */
+                    boolean waitingForShells = CollectionUtils.isNotEmpty(look.backgroundShells(sessionId));
                     Set<String> running = running(look, sessionId, true);
                     if (CollectionUtils.isNotEmpty(running)) {
                         quiet = Optional.empty();
                         for (String session : running) {
                             bounded(turn).awaitIdle(session);
                         }
+                    } else if (waitingForShells) {
+                        /** no session runs to wait on: the one a command's result wakes stays idle until then */
+                        quiet = Optional.empty();
+                        OpenCodeClient.sleep(RunArgs.REVIEW_SHELL_POLL);
                     } else if (answered.getAsBoolean()) {
                         return true;
                     } else {
@@ -164,13 +172,19 @@ public class OpenCodeSessions implements ReviewSessions {
     }
     /**
      * The sub-agents still running, as OpenCode lists its running sessions: from OpenCode 2.3 a reviewer stays running
-     * until its report is in the coordinator's inbox. A look that failed is tried again, as the wait's are.
+     * until its report is in the coordinator's inbox. One that waits for a shell command running in the background counts
+     * too, since the command's result wakes it to go on with its review. A look that failed is tried again, as the wait's
+     * are.
      */
     @Override
     public Set<String> runningSubagents(String sessionId) throws IOException {
         for (int attempt = 1;; attempt++) {
             try {
-                return running(reviewersCheck, sessionId, false);
+                /** the shells first, as the turn's wait looks at them */
+                Set<String> toReturn = reviewersCheck.backgroundShells(sessionId);
+                toReturn.remove(sessionId);
+                toReturn.addAll(running(reviewersCheck, sessionId, false));
+                return toReturn;
             } catch (IOException err) {
                 if (BooleanUtils.or(new boolean[] { Thread.currentThread().isInterrupted(), attempt >= RunArgs.REVIEW_LOOK_ATTEMPTS })) {
                     throw err;

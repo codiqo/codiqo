@@ -65,6 +65,14 @@ class BackgroundSubagentWaitTest {
     private volatile boolean withoutActiveRoute;
     /** the route answers, but without the data object that lists the running sessions */
     private volatile boolean activeWithoutData;
+    /** how many more looks at the background jobs list a shell command of {@link #shellSessions} */
+    private final AtomicInteger shellLooks = new AtomicInteger();
+    private volatile List<String> shellSessions = List.of();
+    private volatile String jobQuery = StringUtils.EMPTY;
+    /** an OpenCode older than the job listing, which came in 2.2.6 */
+    private volatile boolean withoutJobRoute;
+    /** the job listing answers, but without its data array */
+    private volatile boolean jobsWithoutData;
     private ExecutorService executor;
     private HttpServer server;
     private String url;
@@ -128,9 +136,41 @@ class BackgroundSubagentWaitTest {
             assertTrue(err.getMessage().contains("500"), err.getMessage());
         }
     }
+    /**
+     * A reviewer whose shell command OpenCode 2.3.2 moved to the background ends its response and is listed among no
+     * running sessions until the command's result wakes it. The turn stays open until then and spans the run that result
+     * woke the reviewer for, where a wait that read only the running sessions ended the turn at its first quiet look and
+     * lost the reviewer's review.
+     */
+    @Test
+    void aShellRunningInTheBackgroundHoldsTheTurnUntilItsResultWokeTheReviewer(@TempDir Path directory) throws Exception {
+        phase.set(2);
+        shellSessions = List.of(REVIEWER);
+        shellLooks.set(2);
+        try (OpenCodeSessions sessions = sessions(directory, TIMEOUT)) {
+            assertTrue(sessions.awaitTurn(COORDINATOR, () -> false));
+        }
+
+        assertEquals(List.of(COORDINATOR, COORDINATOR, REVIEWER, COORDINATOR, COORDINATOR), waits,
+                "two looks at the shell, the reviewer's run its result woke, the coordinator's run its report woke, then the second quiet look");
+        assertEquals(0, shellLooks.get());
+        for (String parameter : List.of("sessionID=" + COORDINATOR, "kind=shell", "descendants=true")) {
+            assertTrue(Strings.CS.contains(jobQuery, parameter), jobQuery);
+        }
+    }
     /** the session's own sub-agents still running are listed, never one that finished, the session itself or another's */
     @Test
     void theRunningSubagentsAreTheSessionsOwnStillRunning(@TempDir Path directory) throws Exception {
+        try (OpenCodeSessions sessions = sessions(directory, TIMEOUT)) {
+            assertEquals(Set.of(REVIEWER), sessions.runningSubagents(COORDINATOR));
+        }
+    }
+    /** a sub-agent waiting for a shell command in the background is still at work; the session's own command is no sub-agent */
+    @Test
+    void aSubagentWaitingForABackgroundShellIsStillRunning(@TempDir Path directory) throws Exception {
+        phase.set(2);
+        shellSessions = List.of(COORDINATOR, REVIEWER);
+        shellLooks.set(Integer.MAX_VALUE);
         try (OpenCodeSessions sessions = sessions(directory, TIMEOUT)) {
             assertEquals(Set.of(REVIEWER), sessions.runningSubagents(COORDINATOR));
         }
@@ -155,6 +195,26 @@ class BackgroundSubagentWaitTest {
             assertTrue(err.getMessage().contains("without its data object"), err.getMessage());
         }
     }
+    /** an OpenCode that lists its running sessions but not its background jobs (2.1 to 2.2.5) is refused as well */
+    @Test
+    void anOpenCodeWithoutTheJobListingIsRefusedNamingTheVersion() {
+        withoutJobRoute = true;
+        try (OpenCodeClient client = new OpenCodeClient(url, PASSWORD, TIMEOUT)) {
+            IOException err = assertThrows(IOException.class, client::requireBackgroundRoutes);
+
+            assertTrue(err.getMessage().contains("GET /api/experimental/job"), err.getMessage());
+            assertTrue(err.getMessage().contains("2.2.7"), err.getMessage());
+        }
+    }
+    /** a job listing without its data array is refused: read as no shell running, it would end a turn a reviewer still owes */
+    @Test
+    void aJobListingWithoutItsDataIsRefused() {
+        jobsWithoutData = true;
+        try (OpenCodeClient client = new OpenCodeClient(url, PASSWORD, TIMEOUT)) {
+            IOException err = assertThrows(IOException.class, client::requireBackgroundRoutes);
+            assertTrue(err.getMessage().contains("without its data array"), err.getMessage());
+        }
+    }
     private OpenCodeSessions sessions(Path directory, Duration turnTimeout) {
         return new OpenCodeSessions(new OpenCodeClient(url, PASSWORD, TIMEOUT), directory, turnTimeout, NoopLog.INSTANCE);
     }
@@ -175,11 +235,23 @@ class BackgroundSubagentWaitTest {
                 return;
             }
         }
+        if (route.equals("GET /api/experimental/job")) {
+            if (withoutJobRoute) {
+                respond(exchange, HttpResponseStatus.NOT_FOUND.code(), "{}");
+                return;
+            }
+            if (jobsWithoutData) {
+                respond(exchange, HttpResponseStatus.OK.code(), "{}");
+                return;
+            }
+            jobQuery = StringUtils.defaultString(exchange.getRequestURI().getQuery());
+        }
         respond(exchange, HttpResponseStatus.OK.code(), switch (route) {
             case "POST /api/experimental/session/" + COORDINATOR + "/wait" -> waitFor(COORDINATOR);
             case "POST /api/experimental/session/" + REVIEWER + "/wait" -> waitFor(REVIEWER);
             case "GET /api/session" -> data(children(exchange.getRequestURI().getQuery()));
             case "GET /api/session/active" -> data(active());
+            case "GET /api/experimental/job" -> data(shells());
             case "GET /api/session/" + COORDINATOR -> data(JSON.objectNode().put("id", COORDINATOR).put("runs", phase.get() == 2 ? 2 : 1));
             default -> throw new IllegalArgumentException("unexpected route " + route);
         });
@@ -222,6 +294,21 @@ class BackgroundSubagentWaitTest {
             toReturn.putObject(REVIEWER).put("type", "running");
         } else if (phase.get() == 1) {
             toReturn.putObject(COORDINATOR).put("type", "running");
+        }
+        return toReturn;
+    }
+    /**
+     * The shell jobs, listed while their commands run. OpenCode wakes a session with its command's result before it drops
+     * the job, so the reviewer runs again from the last look that still lists the job.
+     */
+    private ArrayNode shells() {
+        ArrayNode toReturn = JSON.arrayNode();
+        int left = shellLooks.getAndUpdate(looks -> Math.max(0, looks - 1));
+        if (left > 0) {
+            shellSessions.forEach(session -> toReturn.addObject().put("kind", "shell").put("sessionID", session).put("status", "running"));
+        }
+        if (left == 1) {
+            phase.set(0);
         }
         return toReturn;
     }

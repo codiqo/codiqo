@@ -52,6 +52,14 @@ class OpenCodeReviewConfigTest {
 
         assertEquals("relay-secret", settings.path("apiKey").asString());
     }
+    /** no review session reaches the point where compaction would use a summary written in the background */
+    @Test
+    void noSummaryIsWrittenInTheBackground() {
+        ObjectNode config = OpenCodeReviewConfig.build(new RunArgs(), endpoint(RunArgs.DEFAULT_LLM_PROXY_URL, null), ANSWERS, StringUtils.EMPTY, NAMING_RULES, ReviewTags.NONE);
+
+        assertTrue(config.path("compaction").path("background").isBoolean());
+        assertFalse(config.path("compaction").path("background").asBoolean());
+    }
     /** the member's credential goes to the Codiqo deployment it was issued for and nowhere else */
     @Test
     void onlyTheCodiqoDeploymentIsSentTheCredential() {
