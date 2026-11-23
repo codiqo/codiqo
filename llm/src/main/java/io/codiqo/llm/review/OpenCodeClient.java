@@ -5,18 +5,19 @@ import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.apache.commons.lang3.tuple.ImmutableTriple;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -119,15 +120,23 @@ public class OpenCodeClient implements Closeable {
         throw new IOException("GET /api/session/active answered without its data object: " + StringUtils.abbreviate(data.toString(), RunArgs.REVIEW_ANSWER_PREVIEW));
     }
     /**
-     * The sessions of the session's tree, itself included, that wait for a shell command OpenCode runs in the
-     * background. OpenCode 2.3.2 moves a command still running at its timeout (two minutes unless the agent set one)
-     * there instead of stopping it, and tells the agent to end its response if it has nothing else to do: the agent's
-     * session is then idle, and absent from {@link #activeSessions()}, until the command's result wakes it. A job is
-     * listed until that result is in the session, finished or not, and OpenCode wakes the session before it drops the
-     * job, so a look at these jobs taken before a look at the running sessions misses no session that will run again.
+     * The shell commands OpenCode runs in the background for the session's tree, itself included. OpenCode 2.3.2 moves a
+     * command still running at its timeout (two minutes unless the agent set one) there instead of stopping it, and tells
+     * the agent to end its response if it has nothing else to do: the agent's session is then idle, and absent from
+     * {@link #activeSessions()}, until the command's result wakes it. A job is listed until that result is in the
+     * session, finished or not, and OpenCode wakes the session before it drops the job, so a look at these jobs taken
+     * before a look at the running sessions misses no session that will run again.
      */
-    public Set<String> backgroundShells(String sessionId) throws IOException {
-        return shellJobSessions(shellJobs().addQueryParameter("sessionID", sessionId).addQueryParameter("descendants", Boolean.TRUE.toString()).build());
+    public List<ShellJob> backgroundShells(String sessionId) throws IOException {
+        return shellJobs(shellJobsUrl().addQueryParameter("sessionID", sessionId).addQueryParameter("descendants", Boolean.TRUE.toString()).build());
+    }
+    /**
+     * Stops a shell command and drops its output. A command OpenCode runs in the background then ends with an error,
+     * which wakes its session as a finished command's result does (checked on OpenCode 2.3.2, where stopping it again
+     * also answers 204). The command belongs to the directory OpenCode serves, the review's work tree.
+     */
+    public void stopShell(String shellId) throws IOException {
+        execute(new Request.Builder().url(path("api", "shell", shellId)).delete());
     }
     /**
      * Waits until OpenCode has connected to the named MCP server. OpenCode 2.1.1 lists the server about a second after it
@@ -162,7 +171,7 @@ public class OpenCodeClient implements Closeable {
     public void requireBackgroundRoutes() throws IOException {
         try {
             activeSessions();
-            shellJobSessions(shellJobs().build());
+            shellJobs(shellJobsUrl().build());
         } catch (IOException err) {
             throw new IOException("OpenCode could not list its running sessions or background shell commands (" + err.getMessage() + "); the review needs "
                     + "GET /api/session/active and GET /api/experimental/job to wait for its subagents, which OpenCode 2.2.7 and later serve", err);
@@ -280,15 +289,17 @@ public class OpenCodeClient implements Closeable {
         }
         return get(url.build());
     }
-    /** the sessions of the listed shell jobs, refusing an answer without its list as {@link #activeSessions()} does */
-    private Set<String> shellJobSessions(HttpUrl url) throws IOException {
+    /** the listed shell jobs, refusing an answer without its list as {@link #activeSessions()} does */
+    private List<ShellJob> shellJobs(HttpUrl url) throws IOException {
         JsonNode data = get(url).path("data");
         if (data.isArray()) {
-            return data.valueStream().map(job -> job.path("sessionID").asString()).collect(Collectors.toCollection(Sets::newHashSet));
+            return data.valueStream()
+                    .map(job -> new ShellJob(job.path("sessionID").asString(), job.path("shellID").asString(), Instant.ofEpochMilli(job.path("time").path("started").asLong())))
+                    .toList();
         }
         throw new IOException("GET /api/experimental/job answered without its data array: " + StringUtils.abbreviate(data.toString(), RunArgs.REVIEW_ANSWER_PREVIEW));
     }
-    private HttpUrl.Builder shellJobs() {
+    private HttpUrl.Builder shellJobsUrl() {
         return path("api", "experimental", "job").newBuilder().addQueryParameter("kind", "shell");
     }
     private HttpUrl path(String... segments) {
@@ -339,5 +350,21 @@ public class OpenCodeClient implements Closeable {
     /** the shorter of the limit and the client's own timeout, which OkHttp keeps as 0 when there is none */
     private static Duration shorter(Duration limit, int ownMillis) {
         return ownMillis > 0 ? ObjectUtils.min(limit, Duration.ofMillis(ownMillis)) : limit;
+    }
+
+    /** a shell command OpenCode runs in the background: the session it wakes, the command's id and when it started */
+    public static final class ShellJob extends ImmutableTriple<String, String, Instant> {
+        public ShellJob(String sessionId, String shellId, Instant started) {
+            super(sessionId, shellId, started);
+        }
+        public String getSessionId() {
+            return getLeft();
+        }
+        public String getShellId() {
+            return getMiddle();
+        }
+        public Instant getStarted() {
+            return getRight();
+        }
     }
 }

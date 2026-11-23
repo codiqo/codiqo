@@ -1772,8 +1772,12 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   2.3.2 moves a shell command still running at its two-minute timeout to the background instead of stopping it and
   tells the agent to end its response, so a reviewer waiting for one runs nowhere, and a wait on the running sessions
   alone ended the turn at its first quiet look and lost that reviewer's review (5 of 22 local review traces ran a
-  command past the timeout, a `grep -r` through `~/.m2` or a `find /`). A session waiting for such a command keeps the
-  turn open, looked at every `RunArgs.REVIEW_SHELL_POLL`, and a subagent waiting for one holds the answer below.
+  command past the timeout, a `grep -r` through `~/.m2` or a `find /`). A session waiting for such a command keeps an
+  unanswered turn open, looked at every `RunArgs.REVIEW_SHELL_POLL`, and a subagent waiting for one holds the answer
+  below; an answered turn does not wait for one, since the hold already waited for every subagent still at work.
+  OpenCode never stops a command it moved to the background, so the review stops one that has run
+  `RunArgs.REVIEW_SHELL_LIMIT` (10 minutes) from its start (`DELETE /api/shell/{id}`), which ends it with an error
+  that wakes its agent: of 4,967 traced commands the longest that finished took 66 s.
   Only the coordinator's answer carries bugs, so `ReviewAnswers` holds that answer inside its call (OpenCode allows an
   MCP call 12 hours) while a subagent it started still runs without having submitted a review
   (`ReviewSessions.runningSubagents`), polled every `RunArgs.REVIEW_HOLD_POLL` for at most `reviewTimeout` from when the
@@ -1788,8 +1792,8 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   setting a subagent call's `background` option, which OpenCode 2.2.7 still offers and where a report reaches the
   inbox only after its subagent stopped running, asks the coordinator to end each response at once until every reviewer
   has reported, and every agent never to run a shell
-  command in the background (the shell tool takes `background` on 2.2.7 to 2.3.2): such a command is waited for as one
-  that outlived its timeout is, and one that never ends, a server, holds the turn to its timeout. OpenCode 2.3 starts the step count again from 1 at each report that
+  command in the background (the shell tool takes `background` on 2.2.7 to 2.3.2): such a command is waited for, and
+  stopped at the limit, as one that outlived its timeout is. OpenCode 2.3 starts the step count again from 1 at each report that
   arrives as a message of its own, so the step cap bounds each response and `reviewTimeout` the whole review.
   `OpenCodeClient.requireBackgroundRoutes` refuses an OpenCode without either route (the job listing came in 2.2.6)
   before any agent runs.

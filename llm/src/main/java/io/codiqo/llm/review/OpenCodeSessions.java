@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
@@ -102,11 +103,14 @@ public class OpenCodeSessions implements ReviewSessions {
      * which makes it running in turn, so the turn ended once no session of the tree is running: looked at twice a moment
      * apart with the session unchanged in between, which also covers OpenCode 2.2, where a report reached the inbox just
      * after its sub-agent stopped running. Once the session answered, the first look that finds nothing running ends it.
-     * A session of the tree that waits for a shell command running in the background keeps the turn open as a running
-     * one does: OpenCode 2.3.2 moves a command still running at its timeout there, the agent ends its response, and the
-     * command's result wakes it again, a reviewer that has not answered yet included. Every call is bounded by what is
-     * left of the review timeout, and a look that failed is tried again a few times before the wait fails. Up to OpenCode
-     * 2.2 sub-agents ran in the foreground, inside the coordinator's run, and the first wait already covers them.
+     * A session of the tree that waits for a shell command running in the background keeps an unanswered turn open as a
+     * running one does: OpenCode 2.3.2 moves a command still running at its timeout there, the agent ends its response,
+     * and the command's result wakes it again, a reviewer that has not answered yet included. An answered turn does not
+     * wait for such a command: the answer was taken only once every sub-agent still at work, one waiting for a command
+     * included, had submitted its review (the answer's hold), so a command left then belongs to an agent that is done,
+     * and a server or a hung command would hold the answered review to its timeout and fail it. Every call is bounded by
+     * what is left of the review timeout, and a look that failed is tried again a few times before the wait fails. Up to
+     * OpenCode 2.2 sub-agents ran in the foreground, inside the coordinator's run, and the first wait already covers them.
      */
     @Override
     public boolean awaitTurn(String sessionId, BooleanSupplier answered) throws IOException {
@@ -119,20 +123,25 @@ public class OpenCodeSessions implements ReviewSessions {
                     bounded(turn).awaitIdle(sessionId);
                     /** a quick listing, bounded as one look is, so one OpenCode never answers fails within seconds and is tried again */
                     OpenCodeClient look = client.within(ObjectUtils.min(remaining(turn), RunArgs.REVIEW_LOOK_TIMEOUT));
-                    /** the shells first, for the reason OpenCodeClient#backgroundShells gives */
-                    boolean waitingForShells = CollectionUtils.isNotEmpty(look.backgroundShells(sessionId));
+                    /**
+                     * The shell jobs are read before the running sessions: OpenCode wakes a session with its command's
+                     * result before it drops the command's job, so a session found in neither look has no command left
+                     * that would make it run again. Read the other way round, a command that ended between the two
+                     * looks would leave its session in neither, and the turn would end before that session's next run.
+                     */
+                    boolean waitingForShells = CollectionUtils.isNotEmpty(waitedForShells(look, sessionId));
                     Set<String> running = running(look, sessionId, true);
                     if (CollectionUtils.isNotEmpty(running)) {
                         quiet = Optional.empty();
                         for (String session : running) {
                             bounded(turn).awaitIdle(session);
                         }
+                    } else if (answered.getAsBoolean()) {
+                        return true;
                     } else if (waitingForShells) {
                         /** no session runs to wait on: the one a command's result wakes stays idle until then */
                         quiet = Optional.empty();
                         OpenCodeClient.sleep(RunArgs.REVIEW_SHELL_POLL);
-                    } else if (answered.getAsBoolean()) {
-                        return true;
                     } else {
                         String state = look.session(sessionId).toString();
                         if (quiet.filter(state::equals).isPresent()) {
@@ -180,8 +189,12 @@ public class OpenCodeSessions implements ReviewSessions {
     public Set<String> runningSubagents(String sessionId) throws IOException {
         for (int attempt = 1;; attempt++) {
             try {
-                /** the shells first, as the turn's wait looks at them */
-                Set<String> toReturn = reviewersCheck.backgroundShells(sessionId);
+                /**
+                 * The shell jobs are read before the running sessions, as in the turn's wait: OpenCode wakes a sub-agent
+                 * with its command's result before it drops the command's job, so one found in neither look has no
+                 * command left that would make it run again, and an answer is not held for it.
+                 */
+                Set<String> toReturn = waitedForShells(reviewersCheck, sessionId);
                 toReturn.remove(sessionId);
                 toReturn.addAll(running(reviewersCheck, sessionId, false));
                 return toReturn;
@@ -234,6 +247,24 @@ public class OpenCodeSessions implements ReviewSessions {
             throw err;
         }
         stopServer.run();
+    }
+    /**
+     * The sessions of the tree waiting for a shell command OpenCode runs in the background, after stopping each command
+     * that has run longer than {@link RunArgs#REVIEW_SHELL_LIMIT}. A stopped command's session is still returned:
+     * OpenCode lists its job until the error the stop ended it with has woken that session, and a look taken after that
+     * finds the session running.
+     */
+    private Set<String> waitedForShells(OpenCodeClient client, String sessionId) throws IOException {
+        Instant overdue = Instant.now().minus(RunArgs.REVIEW_SHELL_LIMIT);
+        Set<String> toReturn = Sets.newHashSet();
+        for (OpenCodeClient.ShellJob job : client.backgroundShells(sessionId)) {
+            if (job.getStarted().isBefore(overdue)) {
+                log.warn("opencode: stopping shell command %s of session %s, still running %s after it started", job.getShellId(), job.getSessionId(), RunArgs.REVIEW_SHELL_LIMIT);
+                client.stopShell(job.getShellId());
+            }
+            toReturn.add(job.getSessionId());
+        }
+        return toReturn;
     }
     /**
      * The client bounded by what is left of the review timeout, rounded up: OkHttp keeps a timeout in whole milliseconds

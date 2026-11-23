@@ -24,9 +24,9 @@ public interface ReviewSessions extends Closeable {
     /**
      * Waits until the session's turn ended, every sub-agent it started included, and every run their reports woke it for:
      * false when it did not end within the review timeout. A shell command one of its sessions runs in the background
-     * holds the turn open until its result has woken that session. Once {@code answered} holds, the turn ended as soon as
-     * none of its sessions runs or waits for such a command. A wait that failed sooner, an interrupt among them, is
-     * thrown.
+     * holds an unanswered turn open until its result has woken that session, and is stopped once it has run the review's
+     * limit. Once {@code answered} holds, the turn ended as soon as none of its sessions runs, whatever command is left.
+     * A wait that failed sooner, an interrupt among them, is thrown.
      */
     boolean awaitTurn(String sessionId, BooleanSupplier answered) throws IOException;
     /**

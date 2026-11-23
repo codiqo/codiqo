@@ -11,6 +11,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -49,6 +50,7 @@ class BackgroundSubagentWaitTest {
     private static final String REVIEWER = "ses_reviewer";
     private static final String FINISHED_REVIEWER = "ses_finished";
     private static final String OTHER_SESSION = "ses_other";
+    private static final String SHELL = "sh_reviewer";
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
     private static final Duration SHORT = Duration.ofMillis(300);
     private static final JsonNodeFactory JSON = JsonNodeFactory.instance;
@@ -68,7 +70,11 @@ class BackgroundSubagentWaitTest {
     /** how many more looks at the background jobs list a shell command of {@link #shellSessions} */
     private final AtomicInteger shellLooks = new AtomicInteger();
     private volatile List<String> shellSessions = List.of();
+    /** when the listed shell commands started */
+    private volatile Instant shellStarted = Instant.now();
     private volatile String jobQuery = StringUtils.EMPTY;
+    /** the shell commands the review stopped, each by its own route */
+    private final List<String> stoppedShells = Lists.newCopyOnWriteArrayList();
     /** an OpenCode older than the job listing, which came in 2.2.6 */
     private volatile boolean withoutJobRoute;
     /** the job listing answers, but without its data array */
@@ -157,6 +163,40 @@ class BackgroundSubagentWaitTest {
         for (String parameter : List.of("sessionID=" + COORDINATOR, "kind=shell", "descendants=true")) {
             assertTrue(Strings.CS.contains(jobQuery, parameter), jobQuery);
         }
+        assertEquals(List.of(), stoppedShells, "a command within the limit runs on");
+    }
+    /**
+     * An answered turn ends at once though a command still runs in the background: the answer was taken only once every
+     * sub-agent still at work had submitted, and a server left running would hold the review to its timeout.
+     */
+    @Test
+    void anAnsweredTurnDoesNotWaitForACommandLeftInTheBackground(@TempDir Path directory) throws Exception {
+        phase.set(2);
+        shellSessions = List.of(REVIEWER);
+        shellLooks.set(Integer.MAX_VALUE);
+        try (OpenCodeSessions sessions = sessions(directory, TIMEOUT)) {
+            assertTrue(sessions.awaitTurn(COORDINATOR, () -> true));
+        }
+
+        assertEquals(List.of(COORDINATOR), waits);
+    }
+    /**
+     * A command running longer than the limit is stopped, which ends it with an error that wakes its reviewer, and the
+     * turn then spans that reviewer's run: OpenCode 2.3.2 never stops a command it moved to the background itself.
+     */
+    @Test
+    void aCommandRunningPastTheLimitIsStoppedAndItsReviewerWaitedFor(@TempDir Path directory) throws Exception {
+        phase.set(2);
+        shellSessions = List.of(REVIEWER);
+        shellLooks.set(Integer.MAX_VALUE);
+        shellStarted = Instant.now().minus(RunArgs.REVIEW_SHELL_LIMIT).minusSeconds(1);
+        try (OpenCodeSessions sessions = sessions(directory, TIMEOUT)) {
+            assertTrue(sessions.awaitTurn(COORDINATOR, () -> false));
+        }
+
+        assertEquals(List.of(SHELL), stoppedShells);
+        assertEquals(List.of(COORDINATOR, COORDINATOR, REVIEWER, COORDINATOR, COORDINATOR), waits,
+                "the look that stopped the command, the reviewer's run the stop woke, the coordinator's run its report woke, then the second quiet look");
     }
     /** the session's own sub-agents still running are listed, never one that finished, the session itself or another's */
     @Test
@@ -246,6 +286,11 @@ class BackgroundSubagentWaitTest {
             }
             jobQuery = StringUtils.defaultString(exchange.getRequestURI().getQuery());
         }
+        if (route.equals("DELETE /api/shell/" + SHELL)) {
+            stopShell();
+            respond(exchange, HttpResponseStatus.NO_CONTENT.code(), StringUtils.EMPTY);
+            return;
+        }
         respond(exchange, HttpResponseStatus.OK.code(), switch (route) {
             case "POST /api/experimental/session/" + COORDINATOR + "/wait" -> waitFor(COORDINATOR);
             case "POST /api/experimental/session/" + REVIEWER + "/wait" -> waitFor(REVIEWER);
@@ -305,12 +350,24 @@ class BackgroundSubagentWaitTest {
         ArrayNode toReturn = JSON.arrayNode();
         int left = shellLooks.getAndUpdate(looks -> Math.max(0, looks - 1));
         if (left > 0) {
-            shellSessions.forEach(session -> toReturn.addObject().put("kind", "shell").put("sessionID", session).put("status", "running"));
+            for (String session : shellSessions) {
+                ObjectNode job = toReturn.addObject().put("kind", "shell").put("sessionID", session).put("shellID", SHELL).put("status", "running");
+                job.putObject("time").put("started", shellStarted.toEpochMilli());
+            }
         }
         if (left == 1) {
             phase.set(0);
         }
         return toReturn;
+    }
+    /**
+     * A stopped command ends with an error that wakes its reviewer: the job is still listed once more, as OpenCode lists
+     * it until that error is in the session, and the reviewer runs.
+     */
+    private void stopShell() {
+        stoppedShells.add(SHELL);
+        shellLooks.set(1);
+        shellStarted = Instant.now();
     }
     private static String data(Object data) {
         return "{\"data\":" + data + "}";
