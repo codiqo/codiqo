@@ -53,6 +53,8 @@ class OpenCodeServerTest {
                         } else if (System.nanoTime() < booted) {
                             status = 503;
                             body = "{\\"code\\":\\"service_starting\\"}";
+                        } else if (exchange.getRequestURI().getPath().equals("/api/environment")) {
+                            body = System.getenv("OPENCODE_DISABLE_PROJECT_CONFIG") + "," + System.getenv("OPENCODE_DISABLE_CLAUDE_CODE");
                         }
                         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
                         exchange.sendResponseHeaders(status, bytes.length);
@@ -80,6 +82,25 @@ class OpenCodeServerTest {
                     .build();
 
             assertEquals(HttpResponseStatus.OK.code(), HttpClient.newHttpClient().send(mcp, HttpResponse.BodyHandlers.discarding()).statusCode());
+        }
+    }
+    /**
+     * OpenCode starts without the reviewed repository's configuration and without Claude Code's files in the user's home:
+     * OpenCode 2.3.2 put a developer's {@code ~/.claude/CLAUDE.md} into every agent's system prompt. The fake echoes both
+     * switches from its environment.
+     */
+    @Test
+    void theServerReadsNeitherTheProjectsConfigurationNorClaudeCodes() throws Exception {
+        RunArgs args = new RunArgs();
+        args.setReviewExecutable(fakeOpenCode().toString());
+
+        try (OpenCodeServer server = OpenCodeServer.start(args, JsonNodeFactory.instance.objectNode(), tempDir, new NoopLog())) {
+            HttpRequest environment = HttpRequest.newBuilder(HttpUrl.get(server.getUrl()).newBuilder().addPathSegments("api/environment").build().uri())
+                    .header(HttpHeaderNames.AUTHORIZATION.toString(), Credentials.basic(OpenCodeClient.USER, server.getPassword()))
+                    .GET()
+                    .build();
+
+            assertEquals("true,true", HttpClient.newHttpClient().send(environment, HttpResponse.BodyHandlers.ofString()).body());
         }
     }
     /** an {@code opencode} executable that runs {@link #FAKE_OPENCODE} with the JDK running the test */

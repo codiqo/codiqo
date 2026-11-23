@@ -140,6 +140,21 @@ public class RunArgs {
      * so it looks once a second rather than at {@link #REVIEW_POLL}; a second more before the answer is read costs nothing.
      */
     public static final Duration REVIEW_HOLD_POLL = Duration.ofSeconds(1);
+    /**
+     * The pause between two looks at a review whose sessions wait for a shell command OpenCode runs in the background, one
+     * still running at its two-minute timeout: it may run for minutes more, and each look lists OpenCode's background jobs
+     * and its running sessions, so the wait looks once a second, as a held answer does.
+     */
+    public static final Duration REVIEW_SHELL_POLL = Duration.ofSeconds(1);
+    /**
+     * How long a review lets a shell command run, from its start, before it stops the command. OpenCode 2.3.2 never stops
+     * a command it moved to the background at its two-minute timeout (nor one an agent started there), so a hung command
+     * or a server would hold the review to its whole timeout and then fail it. Of 4,967 shell commands in 23 local review
+     * traces, the longest that finished took 66 seconds; the 6 that ran to OpenCode 2.3.0's two-minute stop were searches
+     * of all of {@code ~/.m2} or {@code /}, and their reviews still passed. A stopped command wakes its agent with an
+     * error, as that stop did.
+     */
+    public static final Duration REVIEW_SHELL_LIMIT = Duration.ofMinutes(10);
 
     public static final int SCORE_PRECISION = 2;
     /** the 0-10 scale of the quality dimensions, the architecture impact and the senior-review score */

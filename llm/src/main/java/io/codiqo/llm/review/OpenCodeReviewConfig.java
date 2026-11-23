@@ -79,6 +79,13 @@ public class OpenCodeReviewConfig {
         toReturn.put("update", "disable");
         toReturn.put("snapshots", false);
         toReturn.put("model", PROVIDER + "/" + args.getReviewCoordinatorModel());
+        /**
+         * OpenCode 2.3.2 writes a session's summary in the background from about 60,000 tokens below the point where it
+         * compacts (170,000 prompt tokens of the default 200,000 window), so the summary is ready when compaction comes. Of 197
+         * review sessions traced, 15 passed 110,000 tokens and none reached 170,000: every such summary is a paid model
+         * call nobody reads. OpenCode 2.3.0 and earlier drop the key.
+         */
+        toReturn.putObject("compaction").put("background", false);
 
         ObjectNode provider = toReturn.putObject("providers").putObject(PROVIDER);
         provider.put("name", "Codiqo review");
