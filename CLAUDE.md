@@ -1667,7 +1667,7 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   surfaced as, and `CommitRun` is the one place both plugins apply it. A turn OpenCode ended with an
   error is the provider's unless the error follows from what the commit asks (`COMMIT_TURN_ERRORS`: an invalid
   request, a content filter), so an error type a new OpenCode version adds halts rather than silently excludes
-  (`TurnTest` pins every type OpenCode 2.2.2 ends a turn with; diff `to-session-error.ts` on every bump). A refused
+  (`TurnTest` pins every type OpenCode 2.4.1 ends a turn with; diff `session/to-session-error.ts`, `session/runner/step.ts`, `session/execution/restart.ts` and `session/compaction.ts` on every bump). A refused
   answer, a turn the model ended without the answer call, an answer Codiqo could not read (it fails the same way on
   every run) and a coordinator that started no reviewer are the commit's. A session cut off at its step cap, a turn
   that did not end within `reviewTimeout` and a review its caller stopped waiting for (`LocalReviewer.longestReview`)
@@ -1792,7 +1792,7 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   setting a subagent call's `background` option, which OpenCode 2.2.7 still offers and where a report reaches the
   inbox only after its subagent stopped running, asks the coordinator to end each response at once until every reviewer
   has reported, and every agent never to run a shell
-  command in the background (the shell tool takes `background` on 2.2.7 to 2.3.2): such a command is waited for, and
+  command in the background (the shell tool takes `background` on 2.2.7 to 2.4.1): such a command is waited for, and
   stopped at the limit, as one that outlived its timeout is. OpenCode 2.3 starts the step count again from 1 at each report that
   arrives as a message of its own, so the step cap bounds each response and `reviewTimeout` the whole review.
   `OpenCodeClient.requireBackgroundRoutes` refuses an OpenCode without either route (the job listing came in 2.2.6)

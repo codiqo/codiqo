@@ -104,18 +104,22 @@ class TurnTest {
         assertEquals(List.of(PROMPT), prompts, "the turn is not prompted again");
     }
     /**
-     * Every type OpenCode 2.2.2 ends a turn with other than the two the commit causes (its to-session-error.ts, and the
-     * provider.unknown, compaction.failed and compaction.interrupted its runner records), plus one no version has yet:
-     * each halts the project, so the commit is reviewed again on resume rather than silently excluded. An exhausted quota
-     * (provider.quota) excluded 28 commits of one project when only the listed types halted.
+     * Every type OpenCode 2.4.1 ends a turn with other than the two the commit causes, plus one no version has yet: each
+     * halts the project, so the commit is reviewed again on resume rather than silently excluded. The types are those of
+     * its session/to-session-error.ts, which provider.chatgpt-workspace-limit joined in 2.4.0, those its runner records
+     * itself (aborted and tool.result-missing in session/runner/step.ts, aborted again in session/execution/restart.ts)
+     * and those of session/compaction.ts. An exhausted quota (provider.quota) excluded 28 commits of one project when only
+     * the listed types halted.
      */
     @ParameterizedTest
     @ValueSource(strings = {
-            "provider.auth", "provider.budget-limit", "provider.chatgpt-limit", "provider.free-limit", "provider.go-limit",
+            "provider.auth", "provider.budget-limit", "provider.chatgpt-limit", "provider.chatgpt-workspace-limit",
+            "provider.free-limit", "provider.go-limit",
             "provider.internal", "provider.invalid-output", "provider.model-budget-limit", "provider.no-route",
             "provider.quota", "provider.rate-limit", "provider.timeout", "provider.transport", "provider.unknown",
-            "provider.unsupported-operation", "permission.rejected", "tool.execution", "compaction.failed",
-            "compaction.interrupted", "unknown", "provider.added-in-a-later-version" })
+            "provider.unsupported-operation", "permission.rejected", "tool.execution", "tool.result-missing", "aborted",
+            "compaction.failed", "compaction.interrupted", "compaction.unavailable", "unknown",
+            "provider.added-in-a-later-version" })
     void aTurnThatFailedOnAnythingButTheCommitIsTheProvidersFailure(String type) throws Exception {
         error = Optional.of(type);
 
