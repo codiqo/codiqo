@@ -42,7 +42,7 @@ import tools.jackson.databind.node.ObjectNode;
 
 /**
  * The few routes of the OpenCode v2 HTTP API a review needs, checked against the OpenAPI documents of OpenCode 2.0.20,
- * 2.2.7, 2.3.0 and 2.3.2.
+ * 2.2.7, 2.3.0, 2.3.2 and 2.4.1.
  *
  * <p>The wait route is still under {@code /api/experimental/} and blocks until the session's own run is idle. Up to
  * OpenCode 2.2 that included every sub-agent a coordinator started in the foreground; from 2.3 every sub-agent runs in

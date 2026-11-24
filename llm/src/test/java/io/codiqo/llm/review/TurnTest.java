@@ -105,13 +105,15 @@ class TurnTest {
     }
     /**
      * Every type OpenCode 2.2.2 ends a turn with other than the two the commit causes (its to-session-error.ts, and the
-     * provider.unknown, compaction.failed and compaction.interrupted its runner records), plus one no version has yet:
-     * each halts the project, so the commit is reviewed again on resume rather than silently excluded. An exhausted quota
+     * provider.unknown, compaction.failed and compaction.interrupted its runner records), with provider.no-route, which
+     * 2.2.7 dropped, and provider.chatgpt-workspace-limit, which 2.4.0 added, plus one no version has yet: each halts the
+     * project, so the commit is reviewed again on resume rather than silently excluded. An exhausted quota
      * (provider.quota) excluded 28 commits of one project when only the listed types halted.
      */
     @ParameterizedTest
     @ValueSource(strings = {
-            "provider.auth", "provider.budget-limit", "provider.chatgpt-limit", "provider.free-limit", "provider.go-limit",
+            "provider.auth", "provider.budget-limit", "provider.chatgpt-limit", "provider.chatgpt-workspace-limit",
+            "provider.free-limit", "provider.go-limit",
             "provider.internal", "provider.invalid-output", "provider.model-budget-limit", "provider.no-route",
             "provider.quota", "provider.rate-limit", "provider.timeout", "provider.transport", "provider.unknown",
             "provider.unsupported-operation", "permission.rejected", "tool.execution", "compaction.failed",
