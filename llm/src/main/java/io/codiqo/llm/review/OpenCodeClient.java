@@ -47,8 +47,9 @@ import tools.jackson.databind.node.ObjectNode;
  * <p>The wait route is still under {@code /api/experimental/} and blocks until the session's own run is idle. Up to
  * OpenCode 2.2 that included every sub-agent a coordinator started in the foreground; from 2.3 every sub-agent runs in
  * the background, so the route listing the running sessions tells when they are done ({@code OpenCodeSessions}). It has
- * the same answer in 2.2.7, 2.3.0 and 2.3.2. From 2.3.2 a shell command still running at its timeout moves to the
- * background too, where no session runs while it does, so the job listing tells when it is done.
+ * the same answer in 2.2.7, 2.3.0, 2.3.2 and 2.4.1. From 2.3.2 a shell command still running at its timeout moves to
+ * the background too, where no session runs while it does, so the job listing tells when it is done. That listing is
+ * read with {@code kind=shell}: 2.4 adds job kinds (a video being generated) the review never waits for.
  */
 public class OpenCodeClient implements Closeable {
     public static final String ORDER_OLDEST_FIRST = "asc";
