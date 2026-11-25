@@ -6,13 +6,14 @@ package io.codiqo.api;
  */
 public enum LlmModelUsageIntent {
     /**
-     * Plans the local review and writes its commit-level answer, through the LLM proxy. Nothing but the prompt holds that
-     * answer, one JSON object of several thousand tokens, to JSON: OpenCode's prompt API takes text only, and ollama.com
-     * ignored {@code format} and {@code response_format} for deepseek-v4.1-flash. The coordinator is therefore a non-flash
-     * model: at the review's temperature of 1.0 ({@code RunArgs.reviewTemperature}) deepseek-v4.1-flash closed the
-     * answer's last array with a brace in 2 of 83 reviews, against none of 392 at 0.0, and each of those reviews failed.
-     * Putting deepseek-v4.1-flash back here at 1.0 fails reviews that way, and lowering the temperature to 0.0 instead
-     * repeats tool calls. How often GLM-5.3 slips has not been measured.
+     * Plans the local review and writes its commit-level answer, through the LLM proxy. That answer, one JSON object of
+     * several thousand tokens, is the arguments of the coordinator's answer tool call ({@code AnswerTool}): OpenCode checks
+     * them against the tool's schema, and a call that does not fit is refused within the turn and made again. The
+     * coordinator is a non-flash model: at the review's temperature of 1.0 ({@code RunArgs.reviewTemperature})
+     * deepseek-v4.1-flash closed the answer's last array with a brace in 2 of 83 reviews, against none of 392 at 0.0,
+     * while the answer was text that only the prompt held to JSON, and each of those reviews failed. Lowering the
+     * temperature to 0.0 instead repeats tool calls. Whether a refused call and its retry absorb such a slip has not been
+     * measured, for deepseek-v4.1-flash or for GLM-5.3.
      */
     LOCAL_REVIEW_COORDINATOR(LlmModel.GLM_5_3, "local_review"),
     /** reviews one part of the commit for the coordinator */
