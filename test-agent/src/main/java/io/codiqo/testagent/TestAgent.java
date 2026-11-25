@@ -39,8 +39,10 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>It runs on the analysed project's class path, so it uses nothing beyond the JDK, which also keeps it off the
  * project's own conventions for Guava, commons-lang3 and Lombok: any library it brought would be one more on that
- * project's tests. It is compiled for Java 8, the oldest JVM a JUnit 5 test run uses. It must never stop a test JVM: an
- * argument it cannot read leaves it inactive.
+ * project's tests. It is compiled for Java 21, the release of every codiqo module: a test JVM older than that cannot
+ * load it and does not start (an UnsupportedClassVersionError in premain, then "processing of -javaagent failed"), so
+ * the analysed project's tests have to run on Java 21 or newer. On those it must never stop a test JVM: an argument it
+ * cannot read leaves it inactive.
  */
 public final class TestAgent implements AutoCloseable {
     public static final String RECORD_PREFIX = "codiqo-test-jvm-";
