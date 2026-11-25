@@ -1574,7 +1574,10 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   own). Gradle names the repositories it searched for a missing module only once per build, so a later not-found
   report (`ModuleVersionNotFoundException`, `ArtifactNotFoundException`, read from the failure's class, never its text)
   is the environment's when the build searched that module remotely; one missing from a flatDir or file repository
-  stays the author's. Each cause a resolve failure bundles, nested ones included, is classified on its own.
+  stays the author's. Each cause a resolve failure bundles, nested ones included, is classified on its own, except a
+  module left without a version (`Could not find g:a:.`, which Gradle prints alike for a dependency written without
+  one and for one a platform that could not be fetched would have versioned): it takes the verdict of the other causes
+  of its failure, the platform's not-found or failed download included, and is the author's when there are none.
   `submit-commit-analysis` runs the
   same `CommitRun`, with Maven's two-phase fork and time-machine ladder behind `MavenCommitBuild`.
 - **Uncommitted changes are a commit too** (`analyze-uncommitted-changes`): `WorkingTreeCommit` makes a commit object

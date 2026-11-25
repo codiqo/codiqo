@@ -22,6 +22,8 @@ import io.codiqo.client.model.AnalysisExcludeCategory;
 class BuildFailuresTest {
     private static final String COMPILE_ERROR = "Compilation failed; see the compiler output below.\n/work/src/main/java/app/App.java:5: error: cannot find symbol\n1 error";
     private static final String ERROR_PRONE_CRASH = "/work/src/main/java/app/App.java:4: error: An unhandled exception was thrown by the Error Prone static analysis plugin.";
+    /** as Gradle 9.9 reports a dependency without a version: it searched no repository, so it names none */
+    private static final String MANAGED_A_WITHOUT_VERSION = "Could not find com.example:managed-a:.\nRequired by:\n    project ':app'";
 
     @Test
     void everyDependencyGradleCouldNotResolveReachesTheDetail() {
@@ -65,6 +67,68 @@ class BuildFailuresTest {
 
         assertEquals(AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, failure.getCategory(), "the task's report repeats a module the build searched remotely, naming no repository");
         assertTrue(failure.getDetail().startsWith(":compileTestJava:"), "the failed task comes before what the collector reported: " + failure.getDetail());
+    }
+    @Test
+    void aModuleAPlatformThatWasNotFoundLeftWithoutAVersionIsTheEnvironments() {
+        BuildFailures.BuildFailure failure = BuildFailures.classify(Map.of(":app:compileJava", task(new Unresolved("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
+                new ModuleVersionNotFoundException("Could not find com.example:example-bom:2.0-INTERNAL-SNAPSHOT.\nSearched in the following locations:\n  - https://repo.example/com/example/example-bom/2.0-INTERNAL-SNAPSHOT/maven-metadata.xml\nRequired by:\n    project ':app'"),
+                new ModuleVersionNotFoundException(MANAGED_A_WITHOUT_VERSION),
+                new ModuleVersionNotFoundException("Could not find com.example:managed-b:.\nRequired by:\n    project ':app'"))))), Map.of())
+                .orElseThrow();
+
+        assertEquals(AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, failure.getCategory(), "the platform that would have given the modules their versions was not found remotely");
+    }
+    @Test
+    void aModuleAPlatformThatCouldNotBeDownloadedLeftWithoutAVersionIsTheEnvironments() {
+        BuildFailures.BuildFailure failure = BuildFailures.classify(Map.of(":app:compileJava", task(new Unresolved("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
+                new ModuleVersionNotFoundException(MANAGED_A_WITHOUT_VERSION),
+                new IllegalStateException("Could not resolve com.example:example-bom:2.0.",
+                        new IllegalStateException("Could not get resource 'https://repo.example/com/example/example-bom/2.0/example-bom-2.0.pom'.",
+                                new IllegalStateException("Could not GET 'https://repo.example/com/example/example-bom/2.0/example-bom-2.0.pom'. Received status code 401 from server: Unauthorized"))))))), Map.of())
+                .orElseThrow();
+
+        assertEquals(AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, failure.getCategory(), "a private repository refusing the platform is no not-found report, and still the environment's");
+    }
+    @Test
+    void aModuleWithoutAVersionIsReadFromWindowsLineEndingsToo() {
+        BuildFailures.BuildFailure failure = BuildFailures.classify(Map.of(":app:compileJava", task(new Unresolved("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
+                new ModuleVersionNotFoundException("Could not find com.example:example-bom:2.0.\r\nSearched in the following locations:\r\n  - https://repo.example/com/example/example-bom/2.0/example-bom-2.0.pom\r\nRequired by:\r\n    project ':app'"),
+                new ModuleVersionNotFoundException("Could not find com.example:managed-a:.\r\nRequired by:\r\n    project ':app'"))))), Map.of())
+                .orElseThrow();
+
+        assertEquals(AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, failure.getCategory(), "Gradle separates the lines with the platform's separator");
+    }
+    @Test
+    void aModuleDeclaredWithoutAVersionIsTheAuthors() {
+        BuildFailures.BuildFailure failure = BuildFailures.classify(Map.of(":app:compileJava", task(new Unresolved("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
+                new ModuleVersionNotFoundException(MANAGED_A_WITHOUT_VERSION))))), Map.of())
+                .orElseThrow();
+
+        assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, failure.getCategory(), "Gradle reports a dependency its author wrote without a version in the same words");
+    }
+    @Test
+    void aModuleWithoutAVersionFollowsAPlatformReportedFromTheCache() {
+        BuildFailures.BuildFailure failure = BuildFailures.classify(
+                Map.of(":app:compileJava", task(new Unresolved("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
+                        new ModuleVersionNotFoundException("Could not find com.example:example-bom:2.0-INTERNAL-SNAPSHOT.\nRequired by:\n    project ':app'"),
+                        new ModuleVersionNotFoundException(MANAGED_A_WITHOUT_VERSION))))),
+                Map.of(":app:compileClasspath", new Unresolved("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
+                        new ModuleVersionNotFoundException("Could not find com.example:example-bom:2.0-INTERNAL-SNAPSHOT.\nSearched in the following locations:\n  - https://repo.example/com/example/example-bom/2.0-INTERNAL-SNAPSHOT/maven-metadata.xml\nRequired by:\n    project ':app'"),
+                        new ModuleVersionNotFoundException(MANAGED_A_WITHOUT_VERSION)))))
+                .orElseThrow();
+
+        assertEquals(AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, failure.getCategory(), "the task's report of the platform repeats one the build searched remotely");
+    }
+    @Test
+    void aModuleWithoutAVersionDoesNotFollowAModuleMissingFromAnotherTask() {
+        BuildFailures.BuildFailure failure = BuildFailures.classify(ImmutableMap.of(
+                ":app:compileJava", task(new Unresolved("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
+                        new ModuleVersionNotFoundException(MANAGED_A_WITHOUT_VERSION)))),
+                ":docs:compileJava", task(new Unresolved("Could not resolve all files for configuration ':docs:compileClasspath'.", List.of(
+                        new ModuleVersionNotFoundException("Could not find com.example:missing:1.0.\nSearched in the following locations:\n  - https://repo.example/com/example/missing/1.0/missing-1.0.pom"))))), Map.of())
+                .orElseThrow();
+
+        assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, failure.getCategory(), "a platform :app needed would have been missing from :app's own classpath");
     }
     @Test
     void anAuthorsResolutionErrorBesideADownloadThatFailedStaysTheAuthors() {

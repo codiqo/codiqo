@@ -60,6 +60,21 @@ public class BuildFailures {
      */
     private static final Set<String> NOT_FOUND = Set.of("ModuleVersionNotFoundException", "ArtifactNotFoundException");
     private static final String NOT_FOUND_MESSAGE = "Could not find";
+    /**
+     * How a not-found report ends when the dependency it names has no version ("Could not find
+     * org.springframework:spring-context:."). Gradle searches no repository for such a module, so the report names
+     * none, and it prints the same words for two different causes: an author who declared a dependency without a
+     * version, and a platform that would have supplied the version but could not be fetched itself. A release commit
+     * that pinned its BOMs to versions only a vendor's private repository serves failed with the missing BOMs, which
+     * named the repositories searched, beside one such report per module they manage, and was scored as its author's
+     * broken build. Such a report therefore takes the verdict of the other causes of its failure: the environment's
+     * beside a platform that was not found remotely or could not be downloaded (a 401 from a private repository is a
+     * "Could not resolve", not a not-found), the author's when nothing else failed. Gradle does not say which cause was
+     * the platform, so an author's dependency without a version beside an unrelated module missing remotely in the same
+     * failure reads as the environment's, and so does a platform version that was never published, as a dependency
+     * version that was never published already does: none of those builds could have passed here.
+     */
+    private static final String VERSIONLESS_SUFFIX = ":.";
     private static final Pattern REMOTE_URL = Pattern.compile("https?://\\S+");
 
     /** @param unresolvedClasspaths the main and test classpaths the model collector could not resolve, by configuration path */
@@ -82,7 +97,8 @@ public class BuildFailures {
      * <p>The build is the environment's only when every failure is, and a failure that bundles several, Gradle's resolve
      * failure with one cause per dependency it could not resolve, only when each of them is: under --continue an unrelated
      * download failure would otherwise hide an error the author made, and a missing module would hide a variant of the
-     * author's that does not match in the same configuration.
+     * author's that does not match in the same configuration. A module left without a version is the one cause judged by
+     * what fails beside it ({@link #VERSIONLESS_SUFFIX}).
      *
      * <p>The failed tasks come first: a missing module is reported once per classpath of every module that needs it, and
      * listed first those reports would fill the detail and cut away the task failure that decided the category.
@@ -108,7 +124,7 @@ public class BuildFailures {
             }
 
             AnalysisExcludeCategory category = AnalysisExcludeCategory.BUILD_FAILURE;
-            if (failures.stream().flatMap(failure -> parts(failure.getValue()).stream()).allMatch(part -> isEnvironments(part, searchedRemotely))) {
+            if (failures.stream().allMatch(failure -> isEnvironmentsFailure(parts(failure.getValue()), searchedRemotely))) {
                 category = AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE;
             }
 
@@ -125,17 +141,36 @@ public class BuildFailures {
         }
         return Objects.nonNull(task.getState().getFailure());
     }
-    private static boolean isEnvironments(List<Throwable> part, Set<String> searchedRemotely) {
+    /**
+     * Whether one failure is the environment's: every part of it, judged on its own, except the parts that report a
+     * module left without a version ({@link #VERSIONLESS_SUFFIX}), which follow the others and make the failure the
+     * author's when there are no others.
+     */
+    private static boolean isEnvironmentsFailure(List<List<Throwable>> parts, Set<String> searchedRemotely) {
+        Map<Boolean, List<List<Throwable>>> byVersionless = parts.stream().collect(Collectors.partitioningBy(BuildFailures::isVersionless));
+        List<List<Throwable>> judged = byVersionless.get(Boolean.FALSE);
+        return BooleanUtils.and(new boolean[] {
+                judged.stream().allMatch(part -> isEnvironmentsPart(part, searchedRemotely)),
+                BooleanUtils.or(new boolean[] { CollectionUtils.isEmpty(byVersionless.get(Boolean.TRUE)), CollectionUtils.isNotEmpty(judged) }) });
+    }
+    private static boolean isEnvironmentsPart(List<Throwable> part, Set<String> searchedRemotely) {
         return BooleanUtils.or(new boolean[] {
                 AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE == BuildFailureClassifier.category(text(part)),
                 part.stream().filter(BuildFailures::isNotFound).map(BuildFailures::notFoundModule).anyMatch(searchedRemotely::contains) });
     }
+    private static boolean isVersionless(List<Throwable> part) {
+        return part.stream().filter(BuildFailures::isNotFound).map(BuildFailures::notFoundModule).anyMatch(module -> Strings.CS.endsWith(module, VERSIONLESS_SUFFIX));
+    }
     private static boolean isNotFound(Throwable cause) {
         return BooleanUtils.and(new boolean[] { NOT_FOUND.contains(cause.getClass().getSimpleName()), Strings.CS.startsWith(cause.getMessage(), NOT_FOUND_MESSAGE) });
     }
-    /** the module a not-found report names, its first line, which a report from the build's cache repeats */
+    /**
+     * The module a not-found report names: its first line, which a report from the build's cache repeats. Gradle writes
+     * these messages with the platform's line separator, so on Windows the line ends in a carriage return, which would
+     * keep a module without a version from ending in {@link #VERSIONLESS_SUFFIX}.
+     */
     private static String notFoundModule(Throwable cause) {
-        return StringUtils.substringBefore(cause.getMessage(), StringUtils.LF);
+        return StringUtils.stripEnd(StringUtils.substringBefore(cause.getMessage(), StringUtils.LF), null);
     }
     /** the failure's chain, and each cause's class name beside its message, as Maven's console prints them */
     private static String text(List<Throwable> chain) {
