@@ -62,9 +62,10 @@ public class BuildFailures {
     private static final String NOT_FOUND_MESSAGE = "Could not find";
     /**
      * How a not-found report ends when the dependency it names has no version ("Could not find
-     * org.springframework:spring-context:."). Gradle searches no repository for such a module, so the report names
-     * none, and it prints the same words for two different causes: an author who declared a dependency without a
-     * version, and a platform that would have supplied the version but could not be fetched itself. A release commit
+     * org.springframework:spring-context:."). Gradle searches no Maven repository for such a module, so the report
+     * names no remote location, and it prints the same words for two different causes: an author who declared a
+     * dependency without a version, and a platform that would have supplied the version but could not be fetched
+     * itself. A release commit
      * that pinned its BOMs to versions only a vendor's private repository serves failed with the missing BOMs, which
      * named the repositories searched, beside one such report per module they manage, and was scored as its author's
      * broken build. Such a report therefore takes the verdict of the other causes of its failure: the environment's
@@ -74,9 +75,12 @@ public class BuildFailures {
      * resolution result of the whole configuration shows. So an author's dependency without a version beside an
      * unrelated cause of the same failure that is the environment's (a module missing remotely, a download that failed)
      * reads as the environment's, and so does a platform version that was never published, as a dependency version
-     * that was never published already does: none of those builds could have passed here. A flatDir jar is the
-     * exception: declared by name alone, it is reported as "Could not find :vendored:.", searched in the project's own
-     * directory, and no platform manages a module without a group, so it stays the author's.
+     * that was never published already does: none of those builds could have passed here. Two kinds of report are
+     * judged on their own instead. One that names a remote location (an Ivy repository whose pattern needs no revision
+     * is searched) is a module missing remotely like any other. A jar declared by name alone and missing from a flatDir
+     * is reported as "Could not find :vendored:.", and no platform manages a module without a group, so it stays the
+     * author's. A flatDir jar declared with a group cannot be told apart: a module a platform manages lists the same
+     * flatDir locations in a project that declares one, so it follows the causes beside it like any other.
      */
     private static final String VERSIONLESS_SUFFIX = ":.";
     private static final String GROUPLESS_PREFIX = NOT_FOUND_MESSAGE + " :";
@@ -166,6 +170,7 @@ public class BuildFailures {
     private static boolean isVersionless(List<Throwable> part) {
         return part.stream()
                 .filter(BuildFailures::isNotFound)
+                .filter(cause -> BooleanUtils.negate(REMOTE_URL.matcher(cause.getMessage()).find()))
                 .map(BuildFailures::notFoundModule)
                 .filter(module -> Strings.CS.endsWith(module, VERSIONLESS_SUFFIX))
                 .anyMatch(module -> BooleanUtils.negate(Strings.CS.startsWith(module, GROUPLESS_PREFIX)));

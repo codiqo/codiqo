@@ -1577,9 +1577,9 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   stays the author's. Each cause a resolve failure bundles, nested ones included, is classified on its own, except a
   module left without a version (`Could not find g:a:.`, which Gradle prints alike for a dependency written without
   one and for one a platform that could not be fetched would have versioned): it takes the verdict of the other causes
-  of its failure, the platform's not-found or failed download included, and is the author's when there are none; a
-  flatDir jar declared by name alone (`Could not find :vendored:.`) has no group a platform could manage and stays the
-  author's.
+  of its failure, the platform's not-found or failed download included, and is the author's when there are none. One
+  that names a remote location (an Ivy repository was searched) is judged on its own, and a flatDir jar declared by
+  name alone (`Could not find :vendored:.`) has no group a platform could manage and stays the author's.
   `submit-commit-analysis` runs the
   same `CommitRun`, with Maven's two-phase fork and time-machine ladder behind `MavenCommitBuild`.
 - **Uncommitted changes are a commit too** (`analyze-uncommitted-changes`): `WorkingTreeCommit` makes a commit object

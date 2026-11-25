@@ -22,7 +22,7 @@ import io.codiqo.client.model.AnalysisExcludeCategory;
 class BuildFailuresTest {
     private static final String COMPILE_ERROR = "Compilation failed; see the compiler output below.\n/work/src/main/java/app/App.java:5: error: cannot find symbol\n1 error";
     private static final String ERROR_PRONE_CRASH = "/work/src/main/java/app/App.java:4: error: An unhandled exception was thrown by the Error Prone static analysis plugin.";
-    /** as Gradle 9.9 reports a dependency without a version: it searched no repository, so it names none */
+    /** as Gradle 9.9 reports a dependency without a version: it searches no Maven repository for one, so it names none */
     private static final String MANAGED_A_WITHOUT_VERSION = "Could not find com.example:managed-a:.\nRequired by:\n    project ':app'";
 
     @Test
@@ -114,6 +114,14 @@ class BuildFailuresTest {
                 .orElseThrow();
 
         assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, failure.getCategory(), "a jar declared by name alone has no group a platform could manage");
+    }
+    @Test
+    void aModuleWithoutAVersionSearchedRemotelyIsJudgedOnItsOwn() {
+        BuildFailures.BuildFailure failure = BuildFailures.classify(Map.of(":app:compileJava", task(new Unresolved("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
+                new ModuleVersionNotFoundException("Could not find org.example:module:.\nSearched in the following locations:\n  - https://ivy.example/org.example/module/ivy.xml\nRequired by:\n    project ':app'"))))), Map.of())
+                .orElseThrow();
+
+        assertEquals(AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, failure.getCategory(), "an Ivy repository searched for it remotely and did not find it");
     }
     @Test
     void aModuleWithoutAVersionDoesNotHideAVariantTheAuthorGotWrong() {
