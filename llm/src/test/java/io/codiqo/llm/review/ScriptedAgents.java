@@ -65,9 +65,9 @@ class ScriptedAgents implements ReviewAgents {
         this.steps = Queues.newArrayDeque(List.of(steps));
     }
     @Override
-    public ReviewSessions start(Path workTree, ReviewEndpoint model, ReviewAnswers.Endpoint answers, List<String> namingRules) {
-        this.model = model;
-        this.answers = answers;
+    public ReviewSessions start(Path workTree, ReviewEndpoint reviewModel, ReviewAnswers.Endpoint endpointAnswers, List<String> namingRules) {
+        this.model = reviewModel;
+        this.answers = endpointAnswers;
         return new Sessions();
     }
     /** whether the review stopped its agents */

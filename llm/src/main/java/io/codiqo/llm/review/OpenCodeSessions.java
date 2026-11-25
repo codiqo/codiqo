@@ -254,13 +254,13 @@ public class OpenCodeSessions implements ReviewSessions {
      * OpenCode lists its job until the error the stop ended it with has woken that session, and a look taken after that
      * finds the session running.
      */
-    private Set<String> waitedForShells(OpenCodeClient client, String sessionId) throws IOException {
+    private Set<String> waitedForShells(OpenCodeClient openCode, String sessionId) throws IOException {
         Instant overdue = Instant.now().minus(RunArgs.REVIEW_SHELL_LIMIT);
         Set<String> toReturn = Sets.newHashSet();
-        for (OpenCodeClient.ShellJob job : client.backgroundShells(sessionId)) {
+        for (OpenCodeClient.ShellJob job : openCode.backgroundShells(sessionId)) {
             if (job.getStarted().isBefore(overdue)) {
                 log.warn("opencode: stopping shell command %s of session %s, still running %s after it started", job.getShellId(), job.getSessionId(), RunArgs.REVIEW_SHELL_LIMIT);
-                client.stopShell(job.getShellId());
+                openCode.stopShell(job.getShellId());
             }
             toReturn.add(job.getSessionId());
         }

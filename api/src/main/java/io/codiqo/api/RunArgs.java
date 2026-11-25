@@ -44,7 +44,6 @@ import edu.umd.cs.findbugs.Priorities;
 import io.codiqo.api.code.CompilerFinding;
 import io.codiqo.util.DownloadFailedException;
 import io.codiqo.util.Fetch;
-import io.codiqo.util.JGit;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.ToString;
