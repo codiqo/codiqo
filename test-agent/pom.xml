@@ -12,11 +12,6 @@
     <packaging>jar</packaging>
     <name>Codiqo Test Agent</name>
     <description>Java agent codiqo attaches to the analysed project's test JVMs: it writes JaCoCo's coverage while the tests run and records where the test threads are, so a test JVM killed by its timeout still leaves both behind.</description>
-    <properties>
-        <!-- the agent runs in the analysed project's test JVM, which may be as old as Java 8, the floor of JUnit 5 -->
-        <maven.compiler.release>8</maven.compiler.release>
-        <maven.compiler.testRelease>21</maven.compiler.testRelease>
-    </properties>
     <dependencies>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
@@ -31,16 +26,6 @@
     </dependencies>
     <build>
         <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <configuration>
-                    <compilerArgs combine.children="append">
-                        <!-- release 8 is on purpose (see maven.compiler.release); javac only warns it is obsolete -->
-                        <arg>-Xlint:-options</arg>
-                    </compilerArgs>
-                </configuration>
-            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
