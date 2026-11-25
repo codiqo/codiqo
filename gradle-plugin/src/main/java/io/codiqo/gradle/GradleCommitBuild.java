@@ -99,7 +99,8 @@ public final class GradleCommitBuild implements CommitBuild {
             return BuildVerdict.passed(Optional.empty());
         }
         List<File> reports = request.getModules().stream().flatMap(module -> module.getTestReportDirectories().stream()).map(File::new).distinct().toList();
-        return BuildVerdict.tested(TestRuns.read(reports, log), Optional.empty());
+        List<File> records = request.getModules().stream().flatMap(module -> module.getTestRecordDirectories().stream()).map(File::new).distinct().toList();
+        return BuildVerdict.tested(TestRuns.read(reports, records, log), Optional.empty());
     }
     /**
      * The modules the collector read from Gradle's model before the build, as projects whose class output and classpath
@@ -210,7 +211,7 @@ public final class GradleCommitBuild implements CommitBuild {
             ExecFileLoader loader = new ExecFileLoader();
             long oldestPart = Long.MAX_VALUE;
             for (File part : parts) {
-                loader.load(part);
+                loadPart(loader, part, log);
                 oldestPart = Math.min(oldestPart, part.lastModified());
             }
             loader.save(merged, false);
@@ -234,6 +235,25 @@ public final class GradleCommitBuild implements CommitBuild {
                     merged.getAbsolutePath(),
                     Instant.ofEpochMilli(oldestPart));
         }
+    }
+    /**
+     * codiqo's test agent has JaCoCo append to the part while the tests run (TestRecords), so a test JVM killed in the
+     * middle of such a write leaves the part cut inside a block, or garbled where a later test JVM of the same task
+     * appended. Each part is read on its own and what was read before the failure is kept, as JacocoExecFiles does on the
+     * analysis side, which this plugin compiles without; a part of which nothing could be read still fails.
+     */
+    private static void loadPart(ExecFileLoader loader, File part, Log log) throws IOException {
+        ExecFileLoader read = new ExecFileLoader();
+        try {
+            read.load(part);
+        } catch (IOException err) {
+            if (read.getExecutionDataStore().getContents().isEmpty()) {
+                throw err;
+            }
+            log.warn("%s could not be read to its end (%s), cut by a test JVM's kill: the coverage before the cut is kept", part, err.getMessage());
+        }
+        read.getSessionInfoStore().accept(loader.getSessionInfoStore());
+        read.getExecutionDataStore().accept(loader.getExecutionDataStore());
     }
     /**
      * A module whose tests ran but which has no merged coverage: the agent did not attach. Coverage capture finds the

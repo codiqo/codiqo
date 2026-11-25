@@ -43,6 +43,10 @@ public class TestRuns {
 
     /** every report in the directories; a directory that does not exist holds none */
     public TestRun read(Collection<File> reportDirectories, Log log) {
+        return read(reportDirectories, List.of(), log);
+    }
+    /** every report in the report directories, and whether a test JVM ended before its tests finished ({@link TestRecords}) */
+    public TestRun read(Collection<File> reportDirectories, Collection<File> recordDirectories, Log log) {
         Totals totals = new Totals();
         for (File dir : reportDirectories) {
             if (dir.isDirectory()) {
@@ -58,7 +62,18 @@ public class TestRuns {
                 .skipped(totals.skipped)
                 .testTime(Duration.ofMillis(Math.round(totals.seconds * DateUtils.MILLIS_PER_SECOND)))
                 .skippedTests(totals.skippedTests)
+                .cutOff(TestRecords.cutOff(recordDirectories, log))
                 .build();
+    }
+    /**
+     * The run with the reason the build gave for stopping it before its tests finished (the build's deadline), ahead of
+     * what any test JVM's record says, so the held reason says both what cut the run short and where the tests were.
+     */
+    public TestRun cutShort(TestRun run, String reason) {
+        String cutOff = run.getCutOff()
+                .map(records -> reason + ". " + records)
+                .orElse(reason + ", so the test counts and coverage cover only the tests that completed");
+        return run.toBuilder().cutOff(Optional.of(cutOff)).build();
     }
     /**
      * Why the commit's score is held, when most executed tests failed. Such a run cannot tell a commit that broke a

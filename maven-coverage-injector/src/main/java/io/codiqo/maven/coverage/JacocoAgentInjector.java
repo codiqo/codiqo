@@ -136,7 +136,7 @@ public class JacocoAgentInjector extends AbstractMavenLifecycleParticipant {
          * destfile path contains a space (macOS user dirs, spaced CI workspaces); argLine is tokenized on whitespace,
          * so an unquoted spaced path would be truncated. mirrors jacoco-maven-plugin's own prepare-agent.
          */
-        String javaAgent = org.codehaus.plexus.util.StringUtils.quoteAndEscape("-javaagent:" + agentJar + "=destfile=" + destFile + ",append=true", '"');
+        String javaAgent = withTestAgent(org.codehaus.plexus.util.StringUtils.quoteAndEscape("-javaagent:" + agentJar + "=destfile=" + destFile + ",append=true", '"'));
 
         Set<String> agentPropertyNames = jacocoAgentPropertyNames(project);
         String argLineProperty = StringUtils.trimToEmpty(project.getProperties().getProperty(ARG_LINE));
@@ -153,6 +153,18 @@ public class JacocoAgentInjector extends AbstractMavenLifecycleParticipant {
     /** a pom module runs no tests, so it gets no agent */
     public static boolean isAggregator(MavenProject project) {
         return POM_PACKAGING.equals(project.getPackaging());
+    }
+    /**
+     * codiqo's test agent writes this JaCoCo agent's coverage while the tests run and records the test threads, so a test
+     * JVM the whole-fork timeout kills keeps both (TestRecords). It transforms no class, so it goes before JaCoCo, which
+     * stays last for the reason appendAgent gives.
+     */
+    private static String withTestAgent(String jacocoAgent) {
+        String testAgent = StringUtils.trimToEmpty(System.getProperty(CoverageInjectorConfig.PROP_TEST_AGENT));
+        if (StringUtils.isNotEmpty(testAgent)) {
+            return org.codehaus.plexus.util.StringUtils.quoteAndEscape(testAgent, '"') + StringUtils.SPACE + jacocoAgent;
+        }
+        return jacocoAgent;
     }
     private static void injectAgent(Plugin plugin, String javaAgent, Set<String> agentPropertyNames, String argLineProperty) {
         /**

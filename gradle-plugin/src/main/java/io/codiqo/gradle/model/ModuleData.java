@@ -24,6 +24,7 @@ public class ModuleData implements Serializable {
     private List<String> compileSourceRoots = Lists.newArrayList();
     private List<String> testCompileSourceRoots = Lists.newArrayList();
     private List<String> testReportDirectories = Lists.newArrayList();
+    private List<String> testRecordDirectories = Lists.newArrayList();
     private List<String> compileClasspathElements = Lists.newArrayList();
     private List<String> testClasspathElements = Lists.newArrayList();
     private List<DependencyData> dependencies = Lists.newArrayList();
