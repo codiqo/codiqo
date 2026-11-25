@@ -107,6 +107,37 @@ class BuildFailuresTest {
         assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, failure.getCategory(), "Gradle reports a dependency its author wrote without a version in the same words");
     }
     @Test
+    void aJarMissingFromTheAuthorsFlatDirIsTheAuthorsBesideAMissingPlatformToo() {
+        BuildFailures.BuildFailure failure = BuildFailures.classify(Map.of(":app:compileJava", task(new Unresolved("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
+                new ModuleVersionNotFoundException("Could not find com.example:example-bom:2.0.\nSearched in the following locations:\n  - https://repo.example/com/example/example-bom/2.0/example-bom-2.0.pom"),
+                new ModuleVersionNotFoundException("Could not find :vendored:.\nSearched in the following locations:\n  - file:/work/libs/vendored.jar\nRequired by:\n    project ':app'"))))), Map.of())
+                .orElseThrow();
+
+        assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, failure.getCategory(), "a jar declared by name alone has no group a platform could manage");
+    }
+    @Test
+    void aModuleWithoutAVersionDoesNotHideAVariantTheAuthorGotWrong() {
+        BuildFailures.BuildFailure failure = BuildFailures.classify(Map.of(), Map.of(":app:compileClasspath",
+                new Unresolved("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
+                        new ModuleVersionNotFoundException("Could not find com.example:example-bom:2.0.\nSearched in the following locations:\n  - https://repo.example/com/example/example-bom/2.0/example-bom-2.0.pom"),
+                        new ModuleVersionNotFoundException(MANAGED_A_WITHOUT_VERSION),
+                        new IllegalStateException("Could not resolve project :lib.\nNo matching variant of project :lib was found.")))))
+                .orElseThrow();
+
+        assertEquals(AnalysisExcludeCategory.BUILD_FAILURE, failure.getCategory(), "every other cause of the failure is still judged on its own");
+    }
+    @Test
+    void aModuleWithoutAVersionFollowsAnyDownloadThatFailedBesideIt() {
+        BuildFailures.BuildFailure failure = BuildFailures.classify(Map.of(":app:compileJava", task(new Unresolved("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(
+                new ModuleVersionNotFoundException(MANAGED_A_WITHOUT_VERSION),
+                new IllegalStateException("Could not resolve com.example:lib:1.0.",
+                        new IllegalStateException("Could not GET 'https://repo.example/com/example/lib/1.0/lib-1.0.pom'. Received status code 503 from server: Service Unavailable")))))),
+                Map.of())
+                .orElseThrow();
+
+        assertEquals(AnalysisExcludeCategory.DEPENDENCY_RESOLUTION_FAILURE, failure.getCategory(), "the failure does not say which cause was the platform, and the build could not have passed here");
+    }
+    @Test
     void aModuleWithoutAVersionFollowsAPlatformReportedFromTheCache() {
         BuildFailures.BuildFailure failure = BuildFailures.classify(
                 Map.of(":app:compileJava", task(new Unresolved("Could not resolve all files for configuration ':app:compileClasspath'.", List.of(

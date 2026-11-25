@@ -70,11 +70,16 @@ public class BuildFailures {
      * broken build. Such a report therefore takes the verdict of the other causes of its failure: the environment's
      * beside a platform that was not found remotely or could not be downloaded (a 401 from a private repository is a
      * "Could not resolve", not a not-found), the author's when nothing else failed. Gradle does not say which cause was
-     * the platform, so an author's dependency without a version beside an unrelated module missing remotely in the same
-     * failure reads as the environment's, and so does a platform version that was never published, as a dependency
-     * version that was never published already does: none of those builds could have passed here.
+     * the platform: neither the report nor the request it carries keeps the platform category, which only the
+     * resolution result of the whole configuration shows. So an author's dependency without a version beside an
+     * unrelated cause of the same failure that is the environment's (a module missing remotely, a download that failed)
+     * reads as the environment's, and so does a platform version that was never published, as a dependency version
+     * that was never published already does: none of those builds could have passed here. A flatDir jar is the
+     * exception: declared by name alone, it is reported as "Could not find :vendored:.", searched in the project's own
+     * directory, and no platform manages a module without a group, so it stays the author's.
      */
     private static final String VERSIONLESS_SUFFIX = ":.";
+    private static final String GROUPLESS_PREFIX = NOT_FOUND_MESSAGE + " :";
     private static final Pattern REMOTE_URL = Pattern.compile("https?://\\S+");
 
     /** @param unresolvedClasspaths the main and test classpaths the model collector could not resolve, by configuration path */
@@ -159,7 +164,11 @@ public class BuildFailures {
                 part.stream().filter(BuildFailures::isNotFound).map(BuildFailures::notFoundModule).anyMatch(searchedRemotely::contains) });
     }
     private static boolean isVersionless(List<Throwable> part) {
-        return part.stream().filter(BuildFailures::isNotFound).map(BuildFailures::notFoundModule).anyMatch(module -> Strings.CS.endsWith(module, VERSIONLESS_SUFFIX));
+        return part.stream()
+                .filter(BuildFailures::isNotFound)
+                .map(BuildFailures::notFoundModule)
+                .filter(module -> Strings.CS.endsWith(module, VERSIONLESS_SUFFIX))
+                .anyMatch(module -> BooleanUtils.negate(Strings.CS.startsWith(module, GROUPLESS_PREFIX)));
     }
     private static boolean isNotFound(Throwable cause) {
         return BooleanUtils.and(new boolean[] { NOT_FOUND.contains(cause.getClass().getSimpleName()), Strings.CS.startsWith(cause.getMessage(), NOT_FOUND_MESSAGE) });
