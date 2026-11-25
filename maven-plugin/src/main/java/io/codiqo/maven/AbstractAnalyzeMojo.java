@@ -117,7 +117,6 @@ import io.codiqo.maven.coverage.CoverageInjectorConfig;
 import io.codiqo.maven.eventspy.BuildFailureConfig;
 import io.codiqo.maven.eventspy.BuildProgressConfig;
 import io.codiqo.maven.logging.MavenLogFactory;
-import io.codiqo.maven.populator.ProjectModelPopulator;
 import io.codiqo.maven.surefire.SurefireInjectorConfig;
 import io.codiqo.maven.timemachine.TimeMachineConfig;
 import io.codiqo.submit.CommitBuildFailedException;

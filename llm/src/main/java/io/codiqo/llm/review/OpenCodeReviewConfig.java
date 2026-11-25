@@ -124,7 +124,9 @@ public class OpenCodeReviewConfig {
 
         ObjectNode reviewer = agents.putObject(REVIEWER);
         reviewer.put("mode", "subagent");
-        reviewer.put("description", "Reviews part of a commit with shell and file tools that leave the checkout untouched and returns confirmed defects as JSON");
+        reviewer.put("description", "Reviews part of a commit with shell and file tools that leave the checkout untouched. It submits its review with "
+                + AnswerTool.REVIEW.getOpenCodeName() + ", and " + ReviewAnswers.openCodeName(ReviewAnswers.REVIEWS_TOOL)
+                + " returns that review; its reply text is one sentence, not the review");
         reviewer.put("model", PROVIDER + "/" + args.getReviewReviewerModel());
         reviewer.put("steps", args.getReviewReviewerSteps());
         reviewer.put("system", prompt("opencode/module-reviewer", AnswerTool.REVIEW, args.getReviewReviewerSteps(), args, conventionGuidance, namingRules, tags));

@@ -294,9 +294,11 @@ public class OpenCodeClient implements Closeable {
     private List<ShellJob> shellJobs(HttpUrl url) throws IOException {
         JsonNode data = get(url).path("data");
         if (data.isArray()) {
-            return data.valueStream()
-                    .map(job -> new ShellJob(job.path("sessionID").asString(), job.path("shellID").asString(), Instant.ofEpochMilli(job.path("time").path("started").asLong())))
-                    .toList();
+            List<ShellJob> toReturn = Lists.newArrayList();
+            for (JsonNode job : data) {
+                toReturn.add(shellJob(job));
+            }
+            return toReturn;
         }
         throw new IOException("GET /api/experimental/job answered without its data array: " + StringUtils.abbreviate(data.toString(), RunArgs.REVIEW_ANSWER_PREVIEW));
     }
@@ -320,6 +322,23 @@ public class OpenCodeClient implements Closeable {
             toThrow.initCause(err);
             throw toThrow;
         }
+    }
+    /**
+     * One listed shell job, with every field the review uses required. Jackson's {@code asString()} and {@code asLong()} answer an
+     * empty string and 0 for a field the record lacks, so a job without its start time would read as a command started at
+     * the epoch, already past {@link RunArgs#REVIEW_SHELL_LIMIT} at the first look, and the review would stop it at once;
+     * a job without its ids could be neither matched to its session nor stopped. A record OpenCode changed is refused
+     * here, naming what is missing, instead.
+     */
+    private static ShellJob shellJob(JsonNode job) throws IOException {
+        JsonNode sessionId = job.path("sessionID");
+        JsonNode shellId = job.path("shellID");
+        JsonNode started = job.path("time").path("started");
+        if (BooleanUtils.and(new boolean[] { sessionId.isString(), shellId.isString(), started.isIntegralNumber() })) {
+            return new ShellJob(sessionId.asString(), shellId.asString(), Instant.ofEpochMilli(started.longValue()));
+        }
+        throw new IOException("GET /api/experimental/job listed a shell job without its sessionID, shellID or time.started: "
+                + StringUtils.abbreviate(job.toString(), RunArgs.REVIEW_ANSWER_PREVIEW));
     }
     /** without an id every later call goes to {@code /api/session//...} and fails with a 404 that names nothing */
     private static String sessionId(JsonNode answer, String what) throws IOException {

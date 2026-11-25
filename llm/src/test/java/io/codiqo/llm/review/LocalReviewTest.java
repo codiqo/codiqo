@@ -403,7 +403,7 @@ class LocalReviewTest {
         return toReturn;
     }
     /** the sessions the review's one trace holds */
-    private List<JsonNode> sessionsTraced() throws IOException {
+    private List<JsonNode> sessionsTraced() {
         File[] written = traces.toFile().listFiles();
         assertEquals(1, written.length);
         return mapper.readTree(written[0]).path("sessions").valueStream().toList();

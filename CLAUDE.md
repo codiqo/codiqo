@@ -51,13 +51,6 @@ Transform tasks into verifiable goals:
 - "Fix the bug" → "Write a test that reproduces it, then make it pass"
 - "Refactor X" → "Ensure tests pass before and after"
 
-For multi-step tasks, state a brief plan:
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
-```
-
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
 ---
@@ -548,29 +541,29 @@ ctx.setVariable("count", Objects.nonNull(review) && Objects.nonNull(review.getIt
 
 **Do not add null/empty checks at the start of methods that silently return.** The caller is responsible for passing valid data. If invalid data is passed, let it fail fast (NPE) so bugs are discovered immediately.
 
-**Forbidden patterns - NEVER do this:**
+**Patterns to avoid:**
 
 ```java
-// FORBIDDEN - defensive null check on method argument
+// Bad - defensive null check on method argument
 private Result mapSomething(Input input) {
     if (Objects.isNull(input)) {
-        return null;  // WRONG! Silent failure hides bugs
+        return null;  // silent failure hides bugs
     }
     // ... actual logic
 }
 
-// FORBIDDEN - defensive null check that returns early
+// Bad - defensive null check that returns early
 public void mapToResult(Response response, Result result) {
     if (Objects.isNull(response) || Objects.isNull(result)) {
-        return;  // WRONG! Caller should ensure valid args
+        return;  // the caller ensures valid arguments
     }
     // ... actual logic
 }
 
-// FORBIDDEN - defensive empty check
+// Bad - defensive empty check
 private void processItems(List<Item> items) {
     if (CollectionUtils.isEmpty(items)) {
-        return;  // WRONG! Let caller decide whether to call
+        return;  // the caller decides whether to call
     }
     // ... actual logic
 }
@@ -619,13 +612,13 @@ result.setRiskLevel(Optional.ofNullable(riskAssessment.getRiskLevel())
 toReturn.setItems(Optional.ofNullable(source.getItems())
         .map(Mapper::mapItems).orElse(Collections.emptyList()));
 
-// FORBIDDEN - null/empty guard inside the mapper method itself
+// Bad - null/empty guard inside the mapper method itself
 private static RiskAssessmentModel mapRiskAssessment(RiskAssessment riskAssessment) {
-    if (Objects.isNull(riskAssessment)) { return null; }  // WRONG! Check at call site
+    if (Objects.isNull(riskAssessment)) { return null; }  // belongs at the call site
     // ...
 }
 private static List<Item> mapItems(List<SourceItem> items) {
-    if (CollectionUtils.isEmpty(items)) { return Collections.emptyList(); }  // WRONG!
+    if (CollectionUtils.isEmpty(items)) { return Collections.emptyList(); }
     // ...
 }
 ```
@@ -1376,7 +1369,7 @@ extractClassName(codeUnit).ifPresent(builder::className);
 // Good - a real default, not null
 String name = Optional.ofNullable(user.getName()).orElse("Unknown");
 
-// FORBIDDEN - laundering a null through the Optional API
+// Bad - laundering a null through the Optional API
 .severity(Optional.ofNullable(diag.getSeverity()).map(Mapper::mapDiagnosticSeverity).orElse(null))
 .className(extractClassName(codeUnit).orElse(null))
 Repository git = openWorkTree().orElse(null);
@@ -1530,8 +1523,8 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   seed 42 until a coordinator ran one grep 95 times with the same reasoning up to its step cap; 1.0 / 0.95 is what the
   model cards of both review models (GLM-5.3 coordinates, GLM-5.3-Flash reviews) use for their tool-using evaluation,
   and a fixed seed over a nearly identical context would draw the same tokens again. At 1.0 deepseek-v4.1-flash, the
-  coordinator until then, closed its answer's last array with a brace in 2 of 83 reviews (none of 392 at 0.0): nothing
-  but the prompt holds that answer to JSON, so the coordinator moved to the non-flash GLM-5.3 (`LlmModelUsageIntent`). Scoring keeps `llmTemperature` / `llmTopP` / `llmSeed`. It sets them on the OpenAI SDK's own request body
+  coordinator until then, closed its answer's last array with a brace in 2 of 83 reviews (none of 392 at 0.0) while
+  that answer was text, so the coordinator moved to the non-flash GLM-5.3 (`LlmModelUsageIntent`). Scoring keeps `llmTemperature` / `llmTopP` / `llmSeed`. It sets them on the OpenAI SDK's own request body
   (`ChatCompletionCreateParams.Body`, read and written with `ObjectMappers.jsonMapper()`), which keeps every field it
   does not model as OpenCode sent it; its error bodies are the SDK's `ErrorObject`. A chat completion it cannot read is
   refused with 400, since it would leave without that sampling. Write OpenAI JSON with the SDK's

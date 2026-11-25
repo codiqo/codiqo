@@ -69,8 +69,8 @@ public class GitFileAnalysis implements FileAnalysis {
         removedSymbols.add(symbol);
     }
     @Override
-    public boolean isExtension(SourceLanguage language) {
-        return FilenameUtils.isExtension(file.getName(), language.getExtensions());
+    public boolean isExtension(SourceLanguage lang) {
+        return FilenameUtils.isExtension(file.getName(), lang.getExtensions());
     }
     @Override
     public void accept(ProjectSpec spec) {

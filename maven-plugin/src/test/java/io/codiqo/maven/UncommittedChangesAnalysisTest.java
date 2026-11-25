@@ -168,16 +168,21 @@ class UncommittedChangesAnalysisTest {
         toReturn.commit().setMessage("first").setSign(false).call();
         return toReturn;
     }
+    private void write(String path, String content) throws Exception {
+        Path file = workTree.resolve(path);
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, content, StandardCharsets.UTF_8);
+    }
     private static void identify(Git git) throws Exception {
         StoredConfig config = git.getRepository().getConfig();
         config.setString("user", null, "name", "dev");
         config.setString("user", null, "email", DEVELOPER);
         config.save();
     }
-    private Map<String, FileAnalysis> analysed(Git git, boolean includeUntracked) throws Exception {
+    private static Map<String, FileAnalysis> analysed(Git git, boolean includeUntracked) throws Exception {
         return files(analysis(git, includeUntracked));
     }
-    private CommitAnalysis analysis(Git git, boolean includeUntracked) throws Exception {
+    private static CommitAnalysis analysis(Git git, boolean includeUntracked) throws Exception {
         RunArgs args = new RunArgs();
         args.setGit(git.getRepository());
         args.setIncludeUntracked(includeUntracked);
@@ -188,10 +193,5 @@ class UncommittedChangesAnalysisTest {
         Map<String, FileAnalysis> toReturn = Maps.newTreeMap();
         StreamSupport.stream(analysis.spliterator(), false).forEach(file -> toReturn.put(file.getNewPath(), file));
         return toReturn;
-    }
-    private void write(String path, String content) throws Exception {
-        Path file = workTree.resolve(path);
-        Files.createDirectories(file.getParent());
-        Files.writeString(file, content, StandardCharsets.UTF_8);
     }
 }

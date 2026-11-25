@@ -79,6 +79,8 @@ class BackgroundSubagentWaitTest {
     private volatile boolean withoutJobRoute;
     /** the job listing answers, but without its data array */
     private volatile boolean jobsWithoutData;
+    /** the listed shell jobs carry no start time */
+    private volatile boolean jobsWithoutStart;
     private ExecutorService executor;
     private HttpServer server;
     private String url;
@@ -255,6 +257,17 @@ class BackgroundSubagentWaitTest {
             assertTrue(err.getMessage().contains("without its data array"), err.getMessage());
         }
     }
+    /** a job without its start time is refused: read as started at the epoch, its command would be stopped at the first look */
+    @Test
+    void aJobWithoutItsStartTimeIsRefused() {
+        shellSessions = List.of(REVIEWER);
+        shellLooks.set(Integer.MAX_VALUE);
+        jobsWithoutStart = true;
+        try (OpenCodeClient client = new OpenCodeClient(url, PASSWORD, TIMEOUT)) {
+            IOException err = assertThrows(IOException.class, () -> client.backgroundShells(COORDINATOR));
+            assertTrue(err.getMessage().contains("time.started"), err.getMessage());
+        }
+    }
     private OpenCodeSessions sessions(Path directory, Duration turnTimeout) {
         return new OpenCodeSessions(new OpenCodeClient(url, PASSWORD, TIMEOUT), directory, turnTimeout, NoopLog.INSTANCE);
     }
@@ -352,7 +365,11 @@ class BackgroundSubagentWaitTest {
         if (left > 0) {
             for (String session : shellSessions) {
                 ObjectNode job = toReturn.addObject().put("kind", "shell").put("sessionID", session).put("shellID", SHELL).put("status", "running");
-                job.putObject("time").put("started", shellStarted.toEpochMilli());
+                if (jobsWithoutStart) {
+                    job.putObject("time");
+                } else {
+                    job.putObject("time").put("started", shellStarted.toEpochMilli());
+                }
             }
         }
         if (left == 1) {
