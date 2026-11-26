@@ -1659,7 +1659,10 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   (`CommitRun`), so the backend still records what changed. Built first, 217 such commits in 30 days ran a whole
   build and test run only to be excluded, and a repository's first commit (a `.gitignore`, no `pom.xml`) failed to build
   and was excluded as `BUILD_FAILURE`. No changed file at all is a shallow-clone boundary, left to the after-build
-  `INCOMPLETE_HISTORY` gate. Gradle builds before its worker starts, so it still decides after the build.
+  `INCOMPLETE_HISTORY` gate. Gradle builds before its worker starts, so the daemon asks the same rule while the task
+  graph is ready (`AnalysisEngine.nothingToAnalyse`, `CodiqoGradlePlugin.skipWhenNothingToAnalyse`) and skips every
+  task but the analysis for a run that names its commit (`codiqo.commitId`); the worker decides again and records the
+  same exclusion, and a check that fails builds the commit as before.
 - **The Maven fork builds twice** (`BuildPhase`): `clean package -DskipTests` (with the time-machine ladder; package, not test-compile, so a sibling module's packaged artifact exists), then `verify`
   without `clean` at the offset that compiled, within what the compile run that compiled left of `buildTimeout` (each
   ladder rung has a whole `buildTimeout` of its own). The review starts in between

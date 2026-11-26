@@ -1,5 +1,7 @@
 package io.codiqo.gradle;
 
+import static java.util.function.Predicate.not;
+
 import java.io.File;
 import java.io.IOException;
 import java.time.Duration;
@@ -24,6 +26,7 @@ import org.gradle.api.GradleException;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.Task;
+import org.gradle.api.execution.TaskExecutionGraph;
 import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.testing.Test;
 import org.gradle.build.event.BuildEventsListenerRegistry;
@@ -98,6 +101,7 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
                 if (MapUtils.isNotEmpty(unresolved)) {
                     graph.getAllTasks().stream().filter(Test.class::isInstance).forEach(test -> test.onlyIf("codiqo: a classpath did not resolve, so no test result is read", skipped -> false));
                 }
+                skipWhenNothingToAnalyse(project, request, graph, task);
             }
         });
 
@@ -156,6 +160,33 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
                     });
             service.get().expect(tasksByProject, ids);
         });
+    }
+    /**
+     * Skips every scheduled task but the analysis when the commit changes nothing analysable, as Maven never builds such
+     * a commit: Gradle ran the commit's whole build and test suite (about ten minutes on a mid-sized project) before
+     * its worker excluded it as NO_ANALYZABLE_DIFF, and a documentation commit on a tree whose build was broken failed
+     * the run instead. The worker decides again by the same rule ({@link AnalysisEngine#nothingToAnalyse}) and records
+     * the same exclusion, with the commit's diff, from git alone.
+     *
+     * <p>Only a run that names its commit ({@code codiqo.commitId}, as the GitHub Action and the GitLab template pass)
+     * is skipped: a developer who runs a build with the analysis on a documentation-only HEAD keeps the build asked for.
+     * A check that fails builds the commit as before, since the worker reaches and reports the same failure, and a skip
+     * the worker disagreed with would score a commit with no classes.
+     */
+    private static void skipWhenNothingToAnalyse(Project project, AnalysisRequest request, TaskExecutionGraph graph, Task analysis) {
+        if (Objects.nonNull(request.getCommitId())) {
+            try {
+                AnalysisEngine.nothingToAnalyse(request).ifPresent(exclusion -> {
+                    project.getLogger().lifecycle("codiqo: commit {} changes nothing to analyse, so its build and tests are skipped: {}", request.getCommitId(), exclusion.getReason());
+                    graph.getAllTasks().stream()
+                            .filter(not(analysis::equals))
+                            .forEach(scheduled -> scheduled.onlyIf("codiqo: the commit changes nothing to analyse", skipped -> false));
+                });
+            } catch (Exception err) {
+                project.getLogger().warn("codiqo: could not tell whether commit {} changes anything to analyse, so it is built: {}", request.getCommitId(),
+                        ExceptionUtils.getRootCauseMessage(err));
+            }
+        }
     }
     /**
      * The full analysis's JDK check (DefaultLanguageProcessors.requireRuntime), run while no task has started: Gradle

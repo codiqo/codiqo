@@ -47,6 +47,19 @@ class DiffClassificationDeriverTest {
             "+return process(a, b);",
             "+log(\"a b\");",
             " context2");
+    /** B1: a( ), b( ), c( ) re-spaced, with c() moved ahead of the other two */
+    private static final String REORDERED_DIFF = Joiner.on(StringUtils.LF).join(
+            "--- a/Foo.java",
+            "+++ b/Foo.java",
+            "@@ -10,5 +10,5 @@",
+            " context",
+            "-a( );",
+            "-b( );",
+            "-c( );",
+            "+c();",
+            "+a();",
+            "+b();",
+            " context2");
 
     @Test
     void derivesPairsAndPureLinesWithoutAnyLlmEntry() {
@@ -363,6 +376,60 @@ class DiffClassificationDeriverTest {
         assertEquals(List.of(12), entry.getCosmeticDeleted(), "second() pairs with second(); first( ) comes before it and is not taken");
         assertEquals(List.of(11), entry.getCosmeticAdded());
         assertEquals(List.of(pair(11, 12)), entry.getTrueModifyPairs(), "the reordered first() stays a modified line");
+    }
+    @Test
+    void aRunOfRespacedLinesTheMoveDetectorOffersIsCosmeticNotMoved() {
+        LlmScoringResponse response = new LlmScoringResponse();
+        response.setEffortBreakdown(EffortBreakdown.builder()
+                .diffClassification(DiffClassification.builder().confirmedMoveIds(Lists.newArrayList(List.of("M1", "M2"))).build())
+                .build());
+        LlmScoringRequest request = requestWithDiff("Foo.java", Joiner.on(StringUtils.LF).join(
+                "--- a/Foo.java",
+                "+++ b/Foo.java",
+                "@@ -10,4 +10,4 @@",
+                " context",
+                "-return  process(alpha,beta);",
+                "-return  process(gamma,delta);",
+                "+return process(alpha, beta);",
+                "+return process(gamma, delta);",
+                " context2"));
+
+        new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request,
+                List.of(candidate("M1", "Foo.java", 11, "Foo.java", 11), candidate("M2", "Foo.java", 12, "Foo.java", 12)));
+
+        FileDiffClassification entry = soleEntry(response);
+        assertTrue(entry.getMovedAdded().isEmpty(), "a line re-spaced in place relocates nothing");
+        assertEquals(List.of(11, 12), entry.getCosmeticAdded());
+        assertEquals(List.of(11, 12), entry.getCosmeticDeleted());
+        assertTrue(response.getEffortBreakdown().getDiffClassification().getConfirmedMoveIds().isEmpty());
+    }
+    @Test
+    void respacedLinesPairByTheLongestRunTheyShare() {
+        LlmScoringResponse response = new LlmScoringResponse();
+        LlmScoringRequest request = requestWithDiff("Foo.java", REORDERED_DIFF);
+
+        new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request);
+
+        FileDiffClassification entry = soleEntry(response);
+        assertEquals(List.of(11, 12), entry.getCosmeticDeleted(), "a( ) and b( ) pair; only c( ), moved ahead of them, is work");
+        assertEquals(List.of(12, 13), entry.getCosmeticAdded());
+        assertEquals(List.of(pair(13, 11)), entry.getTrueModifyPairs());
+    }
+    @Test
+    void derivingAgainFromItsOwnOutputFindsTheSamePairs() {
+        LlmScoringResponse first = new LlmScoringResponse();
+        new DiffClassificationDeriver(NoopLog.INSTANCE).derive(first, requestWithDiff("Foo.java", REORDERED_DIFF));
+        FileDiffClassification derived = soleEntry(first);
+
+        LlmScoringResponse again = responseWith(FileDiffClassification.builder()
+                .file("Foo.java")
+                .cosmeticAdded(Lists.newArrayList(derived.getCosmeticAdded()))
+                .cosmeticDeleted(Lists.newArrayList(derived.getCosmeticDeleted()))
+                .build());
+        new DiffClassificationDeriver(NoopLog.INSTANCE).derive(again, requestWithDiff("Foo.java", REORDERED_DIFF));
+
+        assertEquals(derived.getCosmeticAdded(), soleEntry(again).getCosmeticAdded());
+        assertEquals(derived.getCosmeticDeleted(), soleEntry(again).getCosmeticDeleted());
     }
 
     private static FileDiffClassification soleEntry(LlmScoringResponse response) {

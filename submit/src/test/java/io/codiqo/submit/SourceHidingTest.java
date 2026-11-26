@@ -83,6 +83,7 @@ class SourceHidingTest {
     private static final CallShape JAVA_CALLS = FileKinds.ofLanguage(FileKinds.JAVA.getWireId()).orElseThrow().getCalls();
     private static final String RETRY = "src/main/java/com/acme/billing/RetryPolicy.java";
     private static final String CLIENT = "src/main/java/com/acme/billing/PaymentClient.java";
+    private static final String FORMAT = "src/main/java/com/acme/billing/Format.java";
     private static final String TEST = "src/test/java/com/acme/billing/RetryPolicyTest.java";
     private static final String POM = "pom.xml";
 
@@ -128,6 +129,32 @@ class SourceHidingTest {
             \s
                  public void charge(String account) {
                      log.info("charging {}", account);
+            """;
+    /**
+     * Lines re-spaced in place, which the scorer sets aside as cosmetic, beside the cases a reading of spacing must not
+     * merge: two words joined, two operators joined, a literal's own spacing, and the escaped-quote idiom whose literals a
+     * reading with escapes would cut differently from hidden-source mode's
+     */
+    private static final String FORMAT_DIFF = """
+            diff --git a/src/main/java/com/acme/billing/Format.java b/src/main/java/com/acme/billing/Format.java
+            index 5555555..6666666 100644
+            --- a/src/main/java/com/acme/billing/Format.java
+            +++ b/src/main/java/com/acme/billing/Format.java
+            @@ -3,8 +3,8 @@ public class Format {
+                 String render(String name, int j, int k) {
+            -        String quoted = "\"" + name + "\"";
+            -        String label = String.format("%s  %s",name,  name);
+            -        Object o = new Builder();
+            -        int i = j + ++k;
+            -        log("a  b");
+            +        String quoted = "\""+name+"\"";
+            +        String label = String.format("%s  %s", name, name);
+            +        Object o = newBuilder();
+            +        int i = j++ + k;
+            +        log("a b");
+                     return quoted + label;
+                 }
+             }
             """;
     private static final String POM_DIFF = """
             diff --git a/pom.xml b/pom.xml
@@ -181,6 +208,21 @@ class SourceHidingTest {
 
         assertTrue(CollectionUtils.isNotEmpty(plain.getResponse().getEffortBreakdown().getDiffClassification().getMovedPairs()),
                 "the commit moves a line between files, so the comparison covers moved-line matching");
+        assertEquals(plain.getResponse().getScore(), scored.getResponse().getScore());
+        assertEquals(numbers(plain), numbers(scored));
+    }
+    @Test
+    void aSpacingOnlyChangeScoresAsThePlainOne() throws Exception {
+        AnalysisSubmissionModel plainSubmission = submission();
+        plainSubmission.getFiles().add(file(FORMAT, FORMAT_DIFF, FileChangeModel.ChangeTypeEnum.MODIFY));
+        LocalAssessmentScorer.Result plain = score(plainSubmission);
+        AnalysisSubmissionModel hidden = submission();
+        hidden.getFiles().add(file(FORMAT, FORMAT_DIFF, FileChangeModel.ChangeTypeEnum.MODIFY));
+        SourceHiding.of(true, Optional.of(KEY)).hide(hidden);
+        LocalAssessmentScorer.Result scored = score(hidden);
+
+        assertEquals(2, plain.getResponse().getEffortBreakdown().getDiffClassification().getCosmeticLines(),
+                "only the String.format line is re-spaced outside its literal, so only its pair is cosmetic");
         assertEquals(plain.getResponse().getScore(), scored.getResponse().getScore());
         assertEquals(numbers(plain), numbers(scored));
     }

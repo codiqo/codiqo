@@ -24,6 +24,7 @@ import org.apache.commons.math3.util.Precision;
 import org.slf4j.event.Level;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
@@ -827,7 +828,15 @@ public class FinalScoreCalculator {
         assignPairsToInnermostBlock(fileClassification.getInPlaceModifyPairs(), blocks, toReturn);
         assignPairsToInnermostBlock(fileClassification.getTrueModifyPairs(), blocks, toReturn);
 
-        for (Integer line : CollectionUtils.emptyIfNull(fileClassification.getInPlaceCollapsedAdded())) {
+        /**
+         * A cosmetic line costs nothing, so both of its sides leave the block's changed lines, where a pair leaves one:
+         * left in, a line whose only change is its spacing showed as two changed lines in a block whose effort it no
+         * longer adds to. A deleted line is placed by its old-file number, as a pair's deleted side is.
+         */
+        for (Integer line : Iterables.concat(
+                CollectionUtils.emptyIfNull(fileClassification.getInPlaceCollapsedAdded()),
+                CollectionUtils.emptyIfNull(fileClassification.getCosmeticAdded()),
+                CollectionUtils.emptyIfNull(fileClassification.getCosmeticDeleted()))) {
             int innermost = innermostBlockForLine(blocks, line, 0, false);
             if (innermost >= 0) {
                 toReturn[innermost]++;
