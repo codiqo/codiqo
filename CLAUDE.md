@@ -65,7 +65,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 - **Name by capability, not by language.** Prefer `requiresLineFiltering`, `isStructuredLanguage`, `hasJvmTypes` over `isJava` whenever the underlying logic isn't Java-exclusive. A predicate that happens to return true only for Java today, but conceptually applies to Kotlin/Scala tomorrow, must not be named after Java.
 - **Avoid hard-coded language branches in shared code.** Don't sprinkle `if (isJava)` through general modules — push the language-specific behavior behind a capability check (`file.getLanguage().requiresLineFiltering()`) or into the language-specific module.
-- **Keep language-specific code in language-specific modules.** Java-only logic belongs in `lang-java/` (e.g., bytecode parsing, JDT integration, PMD rules). Shared modules (`api/`, `llm/`, `maven-plugin/`) should treat language as data, not as a hardcoded assumption. The one exception is a language's row in `FileKinds` (`lang-config`): the rules that read a file's lines (its wire value, extensions, comment and import filter, whether a re-indent is cosmetic, its call shape, how it is scored), which the server scores with and reads without the language modules.
+- **Keep language-specific code in language-specific modules.** Java-only logic belongs in `lang-java/` (e.g., bytecode parsing, JDT integration, PMD rules). Shared modules (`api/`, `llm/`, `maven-plugin/`) should treat language as data, not as a hardcoded assumption. The one exception is a language's row in `FileKinds` (`lang-config`): the rules that read a file's lines (its wire value, extensions, comment and import filter, whether its whitespace is free-form, so a re-indent or a spacing-only change is cosmetic, its call shape, how it is scored), which the server scores with and reads without the language modules.
 - **Question every Java reference.** When you write `Java`, `java`, or `.java` in a name, type, or string in shared code, stop and ask: "Would this same logic apply to Kotlin or JavaScript?" If yes, rename or abstract before committing.
 - **Bad:** `boolean isJava = isJavaFile(file);` used to gate line-filtering.
 - **Good:** `boolean requiresLineFiltering = LanguageCapabilities.requiresLineFiltering(file);` — the predicate names the capability, and the per-language answer lives in one place: the file kind's row in `FileKinds`, which `LanguageCapabilities` reads (a `@UtilityClass`, since `LanguageEnum` is generated from OpenAPI and can't host instance methods).
@@ -1659,7 +1659,10 @@ JDK's `HttpServer` with virtual threads, and clients stay on `java.net.http` or 
   (`CommitRun`), so the backend still records what changed. Built first, 217 such commits in 30 days ran a whole
   build and test run only to be excluded, and a repository's first commit (a `.gitignore`, no `pom.xml`) failed to build
   and was excluded as `BUILD_FAILURE`. No changed file at all is a shallow-clone boundary, left to the after-build
-  `INCOMPLETE_HISTORY` gate. Gradle builds before its worker starts, so it still decides after the build.
+  `INCOMPLETE_HISTORY` gate. Gradle builds before its worker starts, so the daemon asks the same rule while the task
+  graph is ready (`AnalysisEngine.nothingToAnalyse`, `CodiqoGradlePlugin.skipWhenNothingToAnalyse`) and skips every
+  task but the analysis for a run that names its commit (`codiqo.commitId`); the worker decides again and records the
+  same exclusion, and a check that fails builds the commit as before.
 - **The Maven fork builds twice** (`BuildPhase`): `clean package -DskipTests` (with the time-machine ladder; package, not test-compile, so a sibling module's packaged artifact exists), then `verify`
   without `clean` at the offset that compiled, within what the compile run that compiled left of `buildTimeout` (each
   ladder rung has a whole `buildTimeout` of its own). The review starts in between

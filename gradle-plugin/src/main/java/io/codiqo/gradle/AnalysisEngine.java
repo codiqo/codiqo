@@ -17,8 +17,11 @@ import io.codiqo.api.logging.Log;
 import io.codiqo.api.logging.LogFactory;
 import io.codiqo.client.model.ClientInfoModel;
 import io.codiqo.client.model.ClientInfoModel.BuildToolEnum;
+import io.codiqo.core.DefaultLanguageProcessors;
 import io.codiqo.gradle.model.AnalysisRequest;
 import io.codiqo.submit.CodiqoServer;
+import io.codiqo.submit.CommitExclusions;
+import io.codiqo.submit.CommitExclusions.Exclusion;
 import io.codiqo.submit.HttpCodiqoServer;
 import io.codiqo.submit.OutputSerializer;
 import io.codiqo.submit.auth.CodiqoCredential;
@@ -115,6 +118,19 @@ public class AnalysisEngine {
         args.setCommitId(resolveCommitId(request, git));
         args.setHotspotsCommitId(JGit.resolveCommit(git, Optional.ofNullable(args.getHotspotsCommitId()).orElse(Constants.HEAD)));
         args.setRemoteUrls(JGit.detectRemoteUrls(git));
+    }
+    /**
+     * The exclusion of a commit that changes nothing analysable, decided from git alone by the rule Maven applies right
+     * after its checkout ({@link CommitExclusions#beforeBuild}). The daemon asks it before any task runs and skips the
+     * build and the tests of such a commit, which ran in full only for the worker to exclude the commit as
+     * NO_ANALYZABLE_DIFF. The worker still decides on its own, through {@link CommitRun}, by the same rule and the same
+     * registered extensions, so the exclusion it records is unchanged; a daemon that skipped a build the worker then
+     * needed would score a commit with no classes, which one rule for both cannot produce.
+     */
+    public static Optional<Exclusion> nothingToAnalyse(AnalysisRequest request) throws Exception {
+        try (Repository git = JGit.openRepository(new File(request.getRootDir()))) {
+            return CommitExclusions.beforeBuild(git, resolveCommitId(request, git), DefaultLanguageProcessors.supportedExtensions());
+        }
     }
     private static String resolveCommitId(AnalysisRequest request, Repository git) throws Exception {
         return JGit.resolveCommit(git, Optional.ofNullable(request.getCommitId()).orElse(Constants.HEAD));

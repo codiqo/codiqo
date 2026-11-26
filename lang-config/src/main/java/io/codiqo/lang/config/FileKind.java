@@ -24,7 +24,7 @@ import lombok.Value;
 
 /**
  * One kind of file, as every rule that reads a file's lines sees it: how the file is recognised, the wire value of
- * the language its units are reported in, which of its lines change nothing, whether a re-indent is cosmetic, how a
+ * the language its units are reported in, which of its lines change nothing, whether its whitespace is free-form, how a
  * call looks on one of its lines and how a change to it is scored. A row of {@link FileKinds}.
  */
 @Value
@@ -49,7 +49,14 @@ public class FileKind {
     @Builder.Default
     IneffectiveLineFilter lineFilter = IneffectiveLineFilter.NONE;
 
-    boolean reindentCosmetic;
+    /**
+     * Whether whitespace between tokens means nothing in this kind, as in a brace-delimited language, so a change to it
+     * alone is cosmetic: the diff ignores a re-indent ({@code JGitDeltaAnalyzer}) and the scorer sets aside a changed line
+     * that differs from its counterpart only in spacing outside literals ({@code DiffClassificationDeriver},
+     * {@link io.codiqo.api.diff.Spacing}). False where layout is meaning (Python, YAML, a Makefile) and for the
+     * descriptors whose values may hold whitespace that matters (pom.xml, .proto, .properties, .toml).
+     */
+    boolean freeFormWhitespace;
 
     @Builder.Default
     CallShape calls = CallShape.NONE;
