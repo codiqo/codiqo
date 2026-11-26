@@ -130,7 +130,7 @@ public class JGitDeltaAnalyzer implements DeltaAnalyzer {
         return Optional.empty();
     }
     private static void applyWhitespacePolicy(DiffFormatter formatter, String path) {
-        formatter.setDiffComparator(FileKinds.of(path).filter(FileKind::isReindentCosmetic).isPresent()
+        formatter.setDiffComparator(FileKinds.of(path).filter(FileKind::isFreeFormWhitespace).isPresent()
                 ? RawTextComparator.WS_IGNORE_LEADING
                 : RawTextComparator.DEFAULT);
     }

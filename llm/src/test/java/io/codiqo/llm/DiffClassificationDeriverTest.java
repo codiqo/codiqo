@@ -36,6 +36,17 @@ class DiffClassificationDeriverTest {
             "-old line C",
             "+new line B",
             " context3");
+    /** B1: deleted {11, 12} / added {11, 12}; line 11 changes only its spacing, line 12 a string literal's */
+    private static final String SPACING_DIFF = Joiner.on(StringUtils.LF).join(
+            "--- a/Foo.java",
+            "+++ b/Foo.java",
+            "@@ -10,4 +10,4 @@",
+            " context",
+            "-return  process(a,b);",
+            "-log(\"a  b\");",
+            "+return process(a, b);",
+            "+log(\"a b\");",
+            " context2");
 
     @Test
     void derivesPairsAndPureLinesWithoutAnyLlmEntry() {
@@ -308,6 +319,50 @@ class DiffClassificationDeriverTest {
         FileDiffClassification entry = soleEntry(response);
         assertTrue(entry.getInPlaceCollapsedAdded().isEmpty(), "a confirmed moved line beats its collapsed citation");
         assertEquals(List.of(13), entry.getMovedAdded());
+    }
+    @Test
+    void aLineWhoseOnlyChangeIsSpacingIsCosmeticInAFreeFormFile() {
+        LlmScoringResponse response = new LlmScoringResponse();
+        LlmScoringRequest request = requestWithDiff("Foo.java", SPACING_DIFF);
+
+        new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request);
+
+        FileDiffClassification entry = soleEntry(response);
+        assertEquals(List.of(11), entry.getCosmeticDeleted(), "return  process(a,b) and return process(a, b) read the same");
+        assertEquals(List.of(11), entry.getCosmeticAdded());
+        assertEquals(List.of(pair(12, 12)), entry.getTrueModifyPairs(), "the string literal's spacing is a real change");
+    }
+    @Test
+    void spacingInAWhitespaceSensitiveFileIsARealChange() {
+        LlmScoringResponse response = new LlmScoringResponse();
+        LlmScoringRequest request = requestWithDiff("tool.py", SPACING_DIFF);
+
+        new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request);
+
+        FileDiffClassification entry = soleEntry(response);
+        assertTrue(entry.getCosmeticAdded().isEmpty(), "Python's whitespace is not free-form");
+        assertEquals(List.of(pair(11, 11), pair(12, 12)), entry.getTrueModifyPairs());
+    }
+    @Test
+    void aReorderedLineStaysWork() {
+        LlmScoringResponse response = new LlmScoringResponse();
+        LlmScoringRequest request = requestWithDiff("Foo.java", Joiner.on(StringUtils.LF).join(
+                "--- a/Foo.java",
+                "+++ b/Foo.java",
+                "@@ -10,4 +10,4 @@",
+                " context",
+                "-first();",
+                "-second();",
+                "+second();",
+                "+first( );",
+                " context2"));
+
+        new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request);
+
+        FileDiffClassification entry = soleEntry(response);
+        assertEquals(List.of(12), entry.getCosmeticDeleted(), "second() pairs with second(); first( ) comes before it and is not taken");
+        assertEquals(List.of(11), entry.getCosmeticAdded());
+        assertEquals(List.of(pair(11, 12)), entry.getTrueModifyPairs(), "the reordered first() stays a modified line");
     }
 
     private static FileDiffClassification soleEntry(LlmScoringResponse response) {

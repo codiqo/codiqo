@@ -64,7 +64,7 @@ _Avoid_: option, flag, parameter (a Maven parameter is one way to give a setting
 ## Files
 
 **File kind**:
-What a changed file is to the rules that read its lines: which of its lines change nothing, whether a re-indent is
-cosmetic, how a call looks on one of its lines, and whether a change to it is scored by its units, by its lines or not
+What a changed file is to the rules that read its lines: which of its lines change nothing, whether its whitespace is
+free-form (a re-indent or a spacing-only change is then cosmetic), how a call looks on one of its lines, and whether a change to it is scored by its units, by its lines or not
 at all. Every file is of at most one kind, recognised by its whole name before its extension.
 _Avoid_: file type, language (a language is one file kind among others; a build descriptor is another)

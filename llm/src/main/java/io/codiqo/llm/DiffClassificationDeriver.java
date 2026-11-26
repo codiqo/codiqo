@@ -20,7 +20,10 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 
+import io.codiqo.api.diff.Spacing;
 import io.codiqo.api.logging.Log;
+import io.codiqo.lang.config.FileKind;
+import io.codiqo.lang.config.FileKinds;
 import io.codiqo.llm.MovedLineDetector.MoveCandidate;
 import io.codiqo.llm.UnifiedDiffLines.ChangeBlock;
 import io.codiqo.llm.schema.LlmScoringRequest;
@@ -120,6 +123,9 @@ public class DiffClassificationDeriver {
         dropMovedLines(cosmeticAdded, movedAdded, fc.getPath(), "cosmeticAdded");
         dropMovedLines(cosmeticDeleted, movedDeleted, fc.getPath(), "cosmeticDeleted");
         dropMovedLines(inPlaceCollapsedAdded, movedAdded, fc.getPath(), "inPlaceCollapsedAdded");
+        if (FileKinds.of(fc.getPath()).filter(FileKind::isFreeFormWhitespace).isPresent()) {
+            addSpacingOnlyPairs(diffLines, movedDeleted, movedAdded, cosmeticDeleted, cosmeticAdded);
+        }
         inPlaceCollapsedAdded.removeAll(cosmeticAdded);
 
         List<LinePair> inPlacePairs = Lists.newArrayList();
@@ -258,6 +264,43 @@ public class DiffClassificationDeriver {
 
         log.warn("diffClassification.unknownBlockKind file='%s' block=%s kind='%s' — defaulting to trueModify", file, blockId, kind);
         return false;
+    }
+    /**
+     * Sets aside, as cosmetic, each deleted and added line of a block that read the same once their spacing outside
+     * literals is removed ({@link Spacing}): a line whose only change is {@code foo(a,  b)} to {@code foo(a, b)} costs no
+     * effort. The diff already ignores a re-indent of a free-form file, but not spacing inside a line, so a commit that
+     * only tidied spacing scored as a mechanical edit of every line it touched. Rules-only scoring had no cosmetic lines
+     * at all: the scoring prompt that cited them is gone, and its own rules left whitespace out on the belief that the
+     * diff had removed it.
+     *
+     * <p>Lines pair within one block and in diff order, each deleted line at most once and never before the line the
+     * previous pair took, so a block that reorders lines keeps its reordering as work; a moved or already cosmetic line
+     * takes no part. Only a free-form file's lines are read this way: in Python or YAML the same whitespace changes the
+     * program.
+     */
+    private static void addSpacingOnlyPairs(UnifiedDiffLines diffLines, Set<Integer> movedDeleted, Set<Integer> movedAdded,
+            Set<Integer> cosmeticDeleted, Set<Integer> cosmeticAdded) {
+        for (ChangeBlock block : diffLines.getBlocks()) {
+            List<Integer> deleted = block.getDeletedLines().stream()
+                    .filter(not(movedDeleted::contains))
+                    .filter(not(cosmeticDeleted::contains))
+                    .toList();
+            List<Integer> added = block.getAddedLines().stream()
+                    .filter(not(movedAdded::contains))
+                    .filter(not(cosmeticAdded::contains))
+                    .toList();
+
+            List<String> deletedReads = deleted.stream().map(diffLines.getCandidateDeletedContent()::get).map(Spacing::withoutSpacing).toList();
+            int next = 0;
+            for (Integer addedLine : added) {
+                int match = deletedReads.subList(next, deletedReads.size()).indexOf(Spacing.withoutSpacing(diffLines.getCandidateAddedContent().get(addedLine)));
+                if (match >= 0) {
+                    cosmeticDeleted.add(deleted.get(next + match));
+                    cosmeticAdded.add(addedLine);
+                    next += match + 1;
+                }
+            }
+        }
     }
     private static DiffClassification ensureClassification(LlmScoringResponse response) {
         EffortBreakdown breakdown = response.getEffortBreakdown();

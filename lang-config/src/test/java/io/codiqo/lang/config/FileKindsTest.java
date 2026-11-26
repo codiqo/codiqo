@@ -19,31 +19,31 @@ import io.codiqo.lang.config.FileKind.Scoring;
 
 class FileKindsTest {
     @Test
-    void aReindentIsCosmeticInFreeFormLanguages() {
-        assertTrue(reindentCosmetic("src/main/java/com/x/Foo.java"));
-        assertTrue(reindentCosmetic("Foo.kt"));
-        assertTrue(reindentCosmetic("Foo.scala"));
-        assertTrue(reindentCosmetic("app/widget.tsx"));
-        assertTrue(reindentCosmetic("main.go"));
-        assertTrue(reindentCosmetic("build.gradle"), "a Groovy build script is as brace-delimited as its Kotlin twin");
-        assertTrue(reindentCosmetic("build.gradle.kts"));
+    void whitespaceIsFreeFormInBraceDelimitedLanguages() {
+        assertTrue(freeFormWhitespace("src/main/java/com/x/Foo.java"));
+        assertTrue(freeFormWhitespace("Foo.kt"));
+        assertTrue(freeFormWhitespace("Foo.scala"));
+        assertTrue(freeFormWhitespace("app/widget.tsx"));
+        assertTrue(freeFormWhitespace("main.go"));
+        assertTrue(freeFormWhitespace("build.gradle"), "a Groovy build script is as brace-delimited as its Kotlin twin");
+        assertTrue(freeFormWhitespace("build.gradle.kts"));
     }
     @Test
-    void aReindentChangesLayoutSignificantDescriptorAndUnknownFiles() {
-        assertFalse(reindentCosmetic("script.py"));
-        assertFalse(reindentCosmetic("config.yaml"));
-        assertFalse(reindentCosmetic("config.yml"));
-        assertFalse(reindentCosmetic("Makefile"));
-        assertFalse(reindentCosmetic("notes.txt"));
-        assertFalse(reindentCosmetic("pom.xml"));
-        assertFalse(reindentCosmetic("api/user.proto"));
-        assertFalse(reindentCosmetic("gradle.properties"));
-        assertFalse(reindentCosmetic("gradle/libs.versions.toml"));
+    void whitespaceCountsInLayoutSignificantDescriptorAndUnknownFiles() {
+        assertFalse(freeFormWhitespace("script.py"));
+        assertFalse(freeFormWhitespace("config.yaml"));
+        assertFalse(freeFormWhitespace("config.yml"));
+        assertFalse(freeFormWhitespace("Makefile"));
+        assertFalse(freeFormWhitespace("notes.txt"));
+        assertFalse(freeFormWhitespace("pom.xml"));
+        assertFalse(freeFormWhitespace("api/user.proto"));
+        assertFalse(freeFormWhitespace("gradle.properties"));
+        assertFalse(freeFormWhitespace("gradle/libs.versions.toml"));
     }
     @Test
     void recognitionIgnoresCase() {
-        assertTrue(reindentCosmetic("Foo.JAVA"));
-        assertTrue(reindentCosmetic("Bar.Kt"));
+        assertTrue(freeFormWhitespace("Foo.JAVA"));
+        assertTrue(freeFormWhitespace("Bar.Kt"));
         assertEquals(FileKinds.of("pom.xml"), FileKinds.of("modules/core/POM.XML"));
     }
     @Test
@@ -114,7 +114,7 @@ class FileKindsTest {
         assertEquals(Set.of("import"), FileKinds.of("api/user.proto").orElseThrow().getWordsReadByName());
         assertEquals(Set.of(), FileKinds.of("pom.xml").orElseThrow().getWordsReadByName());
     }
-    private static boolean reindentCosmetic(String path) {
-        return FileKinds.of(path).filter(FileKind::isReindentCosmetic).isPresent();
+    private static boolean freeFormWhitespace(String path) {
+        return FileKinds.of(path).filter(FileKind::isFreeFormWhitespace).isPresent();
     }
 }

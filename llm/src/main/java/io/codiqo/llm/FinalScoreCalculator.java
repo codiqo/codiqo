@@ -91,8 +91,9 @@ public class FinalScoreCalculator {
     /**
      * Scores a response that no scoring prompt produced: the judgment (labels, dimensions, findings) came from the
      * local assessment, and everything the prompt used to compute follows from rules. A move candidate is confirmed
-     * when it is a relocation by {@link #relocations} (the prompt's cosmetic and collapsed lines were 0.2% of changed
-     * lines and are dropped); the quality multiplier and the bonus inputs come from {@link QualityRules}, given the
+     * when it is a relocation by {@link #relocations} (the prompt's cited cosmetic and collapsed lines were 0.2% of changed
+     * lines and are dropped; the deriver still sets aside a free-form file's spacing-only lines as cosmetic); the quality
+     * multiplier and the bonus inputs come from {@link QualityRules}, given the
      * local review's bugs.
      */
     public void applyRules(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request, LlmScoringResponse.Bugs reviewBugs) {
