@@ -158,6 +158,7 @@ public class LlmScoringRequest {
         /** Body block range: the lines of `{` and `}`. 0 when the block has no body (abstract / interface methods). */
         private int bodyStartLine;
         private int bodyEndLine;
+
         /**
          * For MODIFY: the new-file anchors of the deleted lines whose calls this block was billed
          * ({@code effectiveInvocationsChanged}), by the rule the client billed them with

@@ -1509,7 +1509,7 @@ class FinalScoreCalculatorTest {
                 /*effort*/ blockEffort, /*bucketBaseline*/ 1000.0, /*isTest*/ false,
                 /*deviationNcss*/ 0.0, /*deviationInvocations*/ 0.0, /*ratioOutlier*/ false,
                 /*effortShare*/ 1.0, /*globalCapDriver*/ false,
-                bodyStart, bodyEnd, bodyCodeLines, /*isConfig*/ false, /*deletedCallAnchors*/ Set.of());
+                bodyStart, bodyEnd, bodyCodeLines, /*isConfig*/ false, /**deletedCallAnchors*/ Set.of());
         FileEffort fileEffort = new FileEffort(file, blockEffort, false, List.of(cbe), 0, 0, 0.0, 0.0, false);
 
         double volumeExponent = 1.0;
@@ -1541,7 +1541,7 @@ class FinalScoreCalculatorTest {
                 /*effort*/ blockEffort, /*bucketBaseline*/ 0.0, /*isTest*/ false,
                 /*deviationNcss*/ 0.0, /*deviationInvocations*/ 0.0, /*ratioOutlier*/ false,
                 /*effortShare*/ 1.0, /*globalCapDriver*/ false,
-                0, 0, 0, /*isConfig*/ false, /*deletedCallAnchors*/ Set.of());
+                0, 0, 0, /*isConfig*/ false, /**deletedCallAnchors*/ Set.of());
         FileEffort fileEffort = new FileEffort(file, blockEffort, false, List.of(cbe), 0, 0, 0.0, 0.0, false);
 
         return PreComputedScores.builder()
@@ -1566,7 +1566,7 @@ class FinalScoreCalculatorTest {
                 /*effort*/ blockEffort, /*bucketBaseline*/ 0.0, /*isTest*/ false,
                 /*deviationNcss*/ 0.0, /*deviationInvocations*/ 0.0, /*ratioOutlier*/ false,
                 /*effortShare*/ 1.0, /*globalCapDriver*/ false,
-                0, 0, 0, /*isConfig*/ false, /*deletedCallAnchors*/ Set.of());
+                0, 0, 0, /*isConfig*/ false, /**deletedCallAnchors*/ Set.of());
         FileEffort fileEffort = new FileEffort(file, blockEffort, false, List.of(cbe), 0, 0, 0.0, 0.0, false);
 
         return PreComputedScores.builder()
@@ -1621,7 +1621,7 @@ class FinalScoreCalculatorTest {
                 /*deviationNcss*/ 0.0, /*deviationInvocations*/ 0.0, /*ratioOutlier*/ false,
                 /*effortShare*/ 0.5, /*globalCapDriver*/ false,
                 bodyStart, bodyEnd, bodyCodeLines, /*isConfig*/ false,
-                /*deletedCallAnchors*/ BooleanUtils.and(new boolean[] { operation == Operation.MODIFY, bodyStart > 0 })
+                /**deletedCallAnchors*/ BooleanUtils.and(new boolean[] { operation == Operation.MODIFY, bodyStart > 0 })
                         ? IntStream.rangeClosed(bodyStart, bodyEnd + 1).boxed().collect(Collectors.toSet())
                         : Set.of());
     }
@@ -1638,7 +1638,7 @@ class FinalScoreCalculatorTest {
                 /*effort*/ 50.0, /*bucketBaseline*/ 1000.0, /*isTest*/ false,
                 /*deviationNcss*/ 0.0, /*deviationInvocations*/ 0.0, /*ratioOutlier*/ false,
                 /*effortShare*/ 0.5, /*globalCapDriver*/ false,
-                bodyStart, bodyEnd, bodyCodeLines, /*isConfig*/ false, /*deletedCallAnchors*/ Set.of());
+                bodyStart, bodyEnd, bodyCodeLines, /*isConfig*/ false, /**deletedCallAnchors*/ Set.of());
     }
     // single hunk: deleted old-file lines {11, 13}, added new-file line {11}
     private static final String VALIDATION_DIFF = Joiner.on(StringUtils.LF).join(

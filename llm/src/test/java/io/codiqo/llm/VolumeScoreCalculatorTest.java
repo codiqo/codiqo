@@ -64,8 +64,8 @@ class VolumeScoreCalculatorTest {
         List<CodeBlockEffort> efforts = VolumeScoreCalculator.calculateCodeBlockEfforts(
                 List.of(block),
                 scaler, scaler, scaler, scaler,
-                /*methodCapQProd*/ 10, /*methodCapQTest*/ 100,
-                /*ctorCapQProd*/ 0, /*ctorCapQTest*/ 0,
+                /**methodCapQProd*/ 10, /**methodCapQTest*/ 100,
+                /**ctorCapQProd*/ 0, /**ctorCapQTest*/ 0,
                 ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP, false);
 
         assertEquals(Set.of(11, 40), efforts.iterator().next().getDeletedCallAnchors());

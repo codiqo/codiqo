@@ -908,6 +908,7 @@ public class VolumeScoreCalculator {
         int bodyEndLine;
         int bodyCodeLines;
         boolean isConfig;
+
         /**
          * The request block's deletedCallAnchors: the new-file anchors of the deleted lines whose calls this block was
          * billed. FinalScoreCalculator takes a moved-out line's calls back from every block whose anchors hold the line's,
