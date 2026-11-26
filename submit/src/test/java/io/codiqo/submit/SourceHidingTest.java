@@ -140,21 +140,25 @@ class SourceHidingTest {
             index 5555555..6666666 100644
             --- a/src/main/java/com/acme/billing/Format.java
             +++ b/src/main/java/com/acme/billing/Format.java
-            @@ -3,8 +3,8 @@ public class Format {
+            @@ -3,7 +3,7 @@ public class Format {
                  String render(String name, int j, int k) {
-            -        String quoted = "\"" + name + "\"";
-            -        String label = String.format("%s  %s",name,  name);
+            -        String quoted = "\\"" + name + "\\"";
             -        Object o = new Builder();
             -        int i = j + ++k;
             -        log("a  b");
-            +        String quoted = "\""+name+"\"";
-            +        String label = String.format("%s  %s", name, name);
+            +        String quoted = "\\""+name+"\\"";
             +        Object o = newBuilder();
             +        int i = j++ + k;
             +        log("a b");
-                     return quoted + label;
+                     return quoted;
                  }
-             }
+            @@ -20,5 +20,5 @@ public class Format {
+                 String label(String name) {
+                     String first = name;
+            -        String label = String.format("%s  %s",first,  name);
+            +        String label = String.format("%s  %s", first, name);
+                     return label;
+                 }
             """;
     private static final String POM_DIFF = """
             diff --git a/pom.xml b/pom.xml

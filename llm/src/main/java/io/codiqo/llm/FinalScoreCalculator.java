@@ -24,7 +24,6 @@ import org.apache.commons.math3.util.Precision;
 import org.slf4j.event.Level;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
@@ -849,14 +848,19 @@ public class FinalScoreCalculator {
         /**
          * A cosmetic line costs nothing, so both of its sides leave the block's changed lines, where a pair leaves one:
          * left in, a line whose only change is its spacing showed as two changed lines in a block whose effort it no
-         * longer adds to. A cosmetic deleted line is placed where the block counted it, by its new-file anchor, in MODIFY
-         * units only and with an end slack of one line, as EffectiveChangePopulator bills deleted lines; its old-file
-         * number would land in another block once lines were added above it.
+         * longer adds to. Only a MODIFY unit counts changed lines, so only one gives them back; a NEW unit's view would
+         * otherwise lose the change ratio its whole body gave it. A cosmetic deleted line is placed where the block counted
+         * it, by its new-file anchor and with an end slack of one line, as EffectiveChangePopulator bills deleted lines; its
+         * old-file number would land in another block once lines were added above it.
          */
-        for (Integer line : Iterables.concat(
-                CollectionUtils.emptyIfNull(fileClassification.getInPlaceCollapsedAdded()),
-                CollectionUtils.emptyIfNull(fileClassification.getCosmeticAdded()))) {
+        for (Integer line : CollectionUtils.emptyIfNull(fileClassification.getInPlaceCollapsedAdded())) {
             int innermost = innermostBlockForLine(blocks, line, 0, false);
+            if (innermost >= 0) {
+                toReturn[innermost]++;
+            }
+        }
+        for (Integer line : CollectionUtils.emptyIfNull(fileClassification.getCosmeticAdded())) {
+            int innermost = innermostBlockForLine(blocks, line, 0, true);
             if (innermost >= 0) {
                 toReturn[innermost]++;
             }

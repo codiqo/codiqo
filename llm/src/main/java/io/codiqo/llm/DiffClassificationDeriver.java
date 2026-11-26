@@ -84,11 +84,7 @@ public class DiffClassificationDeriver {
             diffLinesByFile.put(fc.getPath(), UnifiedDiffLines.parse(fc.getDiff(), fc.getLineFilter()));
         }
 
-        Map<String, RespacedLines> respacedByFile = Maps.newHashMap();
-        for (FileChange fc : eligible) {
-            respacedByFile.put(fc.getPath(), respacedLines(fc.getPath(), diffLinesByFile.get(fc.getPath())));
-        }
-        ConfirmedMoves confirmed = resolveConfirmedMoves(classification, moveCandidates, diffLinesByFile, respacedByFile);
+        ConfirmedMoves confirmed = resolveConfirmedMoves(classification, moveCandidates, diffLinesByFile);
         Map<String, FileDiffClassification> llmByFile = Maps.newHashMap();
         for (FileDiffClassification entry : CollectionUtils.emptyIfNull(classification.getPerFile())) {
             llmByFile.put(entry.getFile(), entry);
@@ -98,7 +94,7 @@ public class DiffClassificationDeriver {
         int totalAdded = 0;
         int totalDeleted = 0;
         for (FileChange fc : eligible) {
-            derived.add(deriveFile(fc, diffLinesByFile.get(fc.getPath()), llmByFile.get(fc.getPath()), confirmed, respacedByFile.get(fc.getPath())));
+            derived.add(deriveFile(fc, diffLinesByFile.get(fc.getPath()), llmByFile.get(fc.getPath()), confirmed));
             totalAdded += fc.getLinesAdded();
             totalDeleted += fc.getLinesDeleted();
         }
@@ -108,7 +104,7 @@ public class DiffClassificationDeriver {
         classification.setTotalLinesAddedRaw(totalAdded);
         classification.setTotalLinesDeletedRaw(totalDeleted);
     }
-    private FileDiffClassification deriveFile(FileChange fc, UnifiedDiffLines diffLines, FileDiffClassification llm, ConfirmedMoves confirmed, RespacedLines respaced) {
+    private FileDiffClassification deriveFile(FileChange fc, UnifiedDiffLines diffLines, FileDiffClassification llm, ConfirmedMoves confirmed) {
         Collection<Integer> citedCosmeticAdded = Collections.emptyList();
         Collection<Integer> citedCosmeticDeleted = Collections.emptyList();
         Collection<Integer> citedInPlaceCollapsedAdded = Collections.emptyList();
@@ -135,9 +131,9 @@ public class DiffClassificationDeriver {
         dropMovedLines(cosmeticAdded, movedAdded, fc.getPath(), "cosmeticAdded");
         dropMovedLines(cosmeticDeleted, movedDeleted, fc.getPath(), "cosmeticDeleted");
         dropMovedLines(inPlaceCollapsedAdded, movedAdded, fc.getPath(), "inPlaceCollapsedAdded");
-        /** a respaced line a kept move claims stays moved; the moves that were respaced in place were never kept */
-        respaced.getDeleted().stream().filter(not(movedDeleted::contains)).forEach(cosmeticDeleted::add);
-        respaced.getAdded().stream().filter(not(movedAdded::contains)).forEach(cosmeticAdded::add);
+        RespacedLines respaced = respacedLines(fc.getPath(), diffLines, movedDeleted, movedAdded);
+        cosmeticDeleted.addAll(respaced.getDeleted());
+        cosmeticAdded.addAll(respaced.getAdded());
         inPlaceCollapsedAdded.removeAll(cosmeticAdded);
 
         List<LinePair> inPlacePairs = Lists.newArrayList();
@@ -187,8 +183,7 @@ public class DiffClassificationDeriver {
      * materializes ALL confirmed relocations (candidates first, then extra pairs), so the field
      * written back to the response is the complete persisted linkage.
      */
-    private ConfirmedMoves resolveConfirmedMoves(DiffClassification classification, List<MoveCandidate> moveCandidates, Map<String, UnifiedDiffLines> diffLinesByFile,
-            Map<String, RespacedLines> respacedByFile) {
+    private ConfirmedMoves resolveConfirmedMoves(DiffClassification classification, List<MoveCandidate> moveCandidates, Map<String, UnifiedDiffLines> diffLinesByFile) {
         Map<String, MoveCandidate> byId = Maps.newHashMap();
         for (MoveCandidate candidate : moveCandidates) {
             byId.put(candidate.getId(), candidate);
@@ -201,12 +196,10 @@ public class DiffClassificationDeriver {
         for (String id : CollectionUtils.emptyIfNull(classification.getConfirmedMoveIds())) {
             MoveCandidate candidate = byId.get(id);
             if (Objects.nonNull(candidate)) {
-                if (relocatesItsLine(candidate, respacedByFile)) {
-                    ids.add(candidate.getId());
-                    pairs.add(new MovedPair(candidate.getFromFile(), candidate.getFromLine(), candidate.getToFile(), candidate.getToLine()).format());
-                    deletedByFile.computeIfAbsent(candidate.getFromFile(), k -> Sets.newTreeSet()).add(candidate.getFromLine());
-                    addedByFile.computeIfAbsent(candidate.getToFile(), k -> Sets.newTreeSet()).add(candidate.getToLine());
-                }
+                ids.add(candidate.getId());
+                pairs.add(new MovedPair(candidate.getFromFile(), candidate.getFromLine(), candidate.getToFile(), candidate.getToLine()).format());
+                deletedByFile.computeIfAbsent(candidate.getFromFile(), k -> Sets.newTreeSet()).add(candidate.getFromLine());
+                addedByFile.computeIfAbsent(candidate.getToFile(), k -> Sets.newTreeSet()).add(candidate.getToLine());
             } else {
                 log.warn("diffClassification.droppedMoveId id='%s' — not a server-offered move candidate", id);
             }
@@ -286,21 +279,27 @@ public class DiffClassificationDeriver {
      * effort. The diff ignores a re-indent of a free-form file but not the spacing inside a line, and nothing else marks
      * such a line. A file of any other kind has none: in Python or YAML the same whitespace changes the program.
      *
-     * <p>Every line of a block takes part, moved or already cited as cosmetic, so the move detector's offers are judged
-     * against them ({@link #relocatesItsLine}) and a classification derived again from its own output finds the same
-     * lines. A block's lines pair by the longest run they share in diff order, so a block that reorders lines keeps the
+     * <p>A confirmed move keeps its lines, so a moved line takes no part. The move detector compares a line's tokens and
+     * offers a line re-spaced in place as moved onto itself, so a run of such lines, each beside another, is confirmed as
+     * a relocation and keeps costing the moved-line fraction of a line rather than nothing: taking those moves back
+     * would have to decide again which lines relocate, after move confirmation already has. Lines already cited as
+     * cosmetic do take part, so a classification derived again from its own output finds the same lines.
+     *
+     * <p>A block's lines pair by the longest run they share in diff order, so a block that reorders lines keeps the
      * reordering as work. A block with more than {@link #MAX_PAIRING_CELLS} cells to compare pairs only in diff order,
      * line by line, and only when both sides have as many lines, which is what a formatter pass over a whole file is.
      */
-    private static RespacedLines respacedLines(String file, UnifiedDiffLines diffLines) {
+    private static RespacedLines respacedLines(String file, UnifiedDiffLines diffLines, Set<Integer> movedDeleted, Set<Integer> movedAdded) {
         RespacedLines toReturn = new RespacedLines(Sets.newTreeSet(), Sets.newTreeSet());
         if (FileKinds.of(file).filter(FileKind::isFreeFormWhitespace).isPresent()) {
             for (ChangeBlock block : diffLines.getBlocks()) {
-                List<String> deletedReads = block.getDeletedLines().stream().map(diffLines.getCandidateDeletedContent()::get).map(Spacing::withoutSpacing).toList();
-                List<String> addedReads = block.getAddedLines().stream().map(diffLines.getCandidateAddedContent()::get).map(Spacing::withoutSpacing).toList();
+                List<Integer> deleted = block.getDeletedLines().stream().filter(not(movedDeleted::contains)).toList();
+                List<Integer> added = block.getAddedLines().stream().filter(not(movedAdded::contains)).toList();
+                List<String> deletedReads = deleted.stream().map(diffLines.getCandidateDeletedContent()::get).map(Spacing::withoutSpacing).toList();
+                List<String> addedReads = added.stream().map(diffLines.getCandidateAddedContent()::get).map(Spacing::withoutSpacing).toList();
                 for (Pair<Integer, Integer> pair : pairReads(deletedReads, addedReads)) {
-                    toReturn.getDeleted().add(block.getDeletedLines().get(pair.getLeft()));
-                    toReturn.getAdded().add(block.getAddedLines().get(pair.getRight()));
+                    toReturn.getDeleted().add(deleted.get(pair.getLeft()));
+                    toReturn.getAdded().add(added.get(pair.getRight()));
                 }
             }
         }
@@ -309,14 +308,11 @@ public class DiffClassificationDeriver {
     /**
      * The indexes of the deleted and added lines that read the same, paired by their longest common subsequence, or, above
      * {@link #MAX_PAIRING_CELLS}, in diff order when both sides are as long. The comparison table is one flat array of
-     * {@code (deleted + 1) * (added + 1)} cells, and a side with no line pairs nothing without one.
+     * {@code (deleted + 1) * (added + 1)} cells.
      */
     private static List<Pair<Integer, Integer>> pairReads(List<String> deleted, List<String> added) {
         List<Pair<Integer, Integer>> toReturn = Lists.newArrayList();
         long cells = (long) (deleted.size() + 1) * (added.size() + 1);
-        if (BooleanUtils.or(new boolean[] { deleted.isEmpty(), added.isEmpty() })) {
-            return toReturn;
-        }
         if (cells > MAX_PAIRING_CELLS) {
             if (deleted.size() == added.size()) {
                 for (int i = 0; i < deleted.size(); i++) {
@@ -348,21 +344,6 @@ public class DiffClassificationDeriver {
             }
         }
         return toReturn;
-    }
-    /**
-     * Whether a confirmed move candidate relocates its line, rather than being a line whose two sides are both respaced
-     * lines of its file ({@link #respacedLines}). The move detector compares a line's tokens, so it offers a line re-spaced
-     * in place as moved onto itself, and a run of them, each with a neighbour, was confirmed as a relocation, at a fraction
-     * of a line's effort rather than none. A candidate whose sides are not both respaced (a block too large to pair, a
-     * line a reordering left unpaired) stays a move.
-     */
-    private static boolean relocatesItsLine(MoveCandidate candidate, Map<String, RespacedLines> respacedByFile) {
-        RespacedLines respaced = respacedByFile.get(candidate.getFromFile());
-        boolean respacedInPlace = candidate.getFromFile().equals(candidate.getToFile())
-                && Objects.nonNull(respaced)
-                && respaced.getDeleted().contains(candidate.getFromLine())
-                && respaced.getAdded().contains(candidate.getToLine());
-        return BooleanUtils.negate(respacedInPlace);
     }
     private static DiffClassification ensureClassification(LlmScoringResponse response) {
         EffortBreakdown breakdown = response.getEffortBreakdown();

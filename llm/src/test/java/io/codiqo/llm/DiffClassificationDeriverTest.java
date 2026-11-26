@@ -378,10 +378,10 @@ class DiffClassificationDeriverTest {
         assertEquals(List.of(pair(11, 12)), entry.getTrueModifyPairs(), "the reordered first() stays a modified line");
     }
     @Test
-    void aRunOfRespacedLinesTheMoveDetectorOffersIsCosmeticNotMoved() {
+    void aRespacedLineAConfirmedMoveClaimsStaysMoved() {
         LlmScoringResponse response = new LlmScoringResponse();
         response.setEffortBreakdown(EffortBreakdown.builder()
-                .diffClassification(DiffClassification.builder().confirmedMoveIds(Lists.newArrayList(List.of("M1", "M2"))).build())
+                .diffClassification(DiffClassification.builder().confirmedMoveIds(Lists.newArrayList(List.of("M1"))).build())
                 .build());
         LlmScoringRequest request = requestWithDiff("Foo.java", Joiner.on(StringUtils.LF).join(
                 "--- a/Foo.java",
@@ -394,14 +394,13 @@ class DiffClassificationDeriverTest {
                 "+return process(gamma, delta);",
                 " context2"));
 
-        new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request,
-                List.of(candidate("M1", "Foo.java", 11, "Foo.java", 11), candidate("M2", "Foo.java", 12, "Foo.java", 12)));
+        new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, request, List.of(candidate("M1", "Foo.java", 11, "Foo.java", 11)));
 
         FileDiffClassification entry = soleEntry(response);
-        assertTrue(entry.getMovedAdded().isEmpty(), "a line re-spaced in place relocates nothing");
-        assertEquals(List.of(11, 12), entry.getCosmeticAdded());
-        assertEquals(List.of(11, 12), entry.getCosmeticDeleted());
-        assertTrue(response.getEffortBreakdown().getDiffClassification().getConfirmedMoveIds().isEmpty());
+        assertEquals(List.of(11), entry.getMovedAdded(), "move confirmation already decided line 11, and the spacing pass leaves it");
+        assertEquals(List.of(12), entry.getCosmeticAdded());
+        assertEquals(List.of(12), entry.getCosmeticDeleted());
+        assertTrue(entry.getTrueModifyPairs().isEmpty());
     }
     @Test
     void respacedLinesPairByTheLongestRunTheyShare() {
@@ -414,23 +413,6 @@ class DiffClassificationDeriverTest {
         assertEquals(List.of(11, 12), entry.getCosmeticDeleted(), "a( ) and b( ) pair; only c( ), moved ahead of them, is work");
         assertEquals(List.of(12, 13), entry.getCosmeticAdded());
         assertEquals(List.of(pair(13, 11)), entry.getTrueModifyPairs());
-    }
-    @Test
-    void aLineAReorderingLeavesUnpairedKeepsItsMove() {
-        LlmScoringResponse response = new LlmScoringResponse();
-        response.setEffortBreakdown(EffortBreakdown.builder()
-                .diffClassification(DiffClassification.builder().confirmedMoveIds(Lists.newArrayList(List.of("M1", "M2", "M3"))).build())
-                .build());
-
-        new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, requestWithDiff("Foo.java", REORDERED_DIFF), List.of(
-                candidate("M1", "Foo.java", 11, "Foo.java", 12), candidate("M2", "Foo.java", 12, "Foo.java", 13), candidate("M3", "Foo.java", 13, "Foo.java", 11)));
-
-        FileDiffClassification entry = soleEntry(response);
-        assertEquals(List.of(11, 12), entry.getCosmeticDeleted(), "a( ) and b( ) are respaced in place");
-        assertEquals(List.of(13), entry.getMovedDeleted(), "c( ) moved ahead of them and stays a move, not a full modification");
-        assertEquals(List.of(11), entry.getMovedAdded());
-        assertTrue(entry.getTrueModifyPairs().isEmpty());
-        assertEquals(List.of("M3"), response.getEffortBreakdown().getDiffClassification().getConfirmedMoveIds());
     }
     @Test
     void aBlockTooLargeToCompareWholePairsLineByLine() {

@@ -31,7 +31,6 @@ class SpacingTest {
     void whitespaceInsideALiteralIsKept() {
         assertNotEquals(Spacing.withoutSpacing("log.info(\"a  b\");"), Spacing.withoutSpacing("log.info(\"a b\");"));
         assertNotEquals(Spacing.withoutSpacing("char c = ' ';"), Spacing.withoutSpacing("char c = '';"));
-        assertNotEquals(Spacing.withoutSpacing("const s = `x ${y}`;"), Spacing.withoutSpacing("const s = `x${y}`;"));
     }
     @Test
     void aLiteralEndsAtItsNextQuoteAsHiddenSourceModeReadsIt() {

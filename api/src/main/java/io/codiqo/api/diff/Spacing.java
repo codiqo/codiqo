@@ -25,18 +25,20 @@ import lombok.experimental.UtilityClass;
  * whole, since {@code "a  b"} and {@code "a b"} are different strings. A hidden submission keeps every quote,
  * whitespace character, every operator, and every character's word class (an identifier becomes a hash of ASCII word
  * characters, a non-ASCII run private-use characters, both read as word characters here), so a pair of lines reads the
- * same here exactly when its hidden pair does, and both score alike. A backtick opens a literal too, which hidden-source mode
- * reads as plain text but keeps character for character. A quote left open runs to the end of the line.
+ * same here exactly when its hidden pair does, and both score alike. A quote left open runs to the end of the line. A
+ * backtick opens no literal, as in hidden-source mode, whose content hashing of a quoted run between two backticks would
+ * otherwise differ from the plain reading.
  *
  * <p>Reading literals without escapes errs in one place: after an escaped quote ({@code "say \" a  b"}) the rest of a
  * string reads as code, so a spacing change there is set aside although it changes the string. A quote that opens no
  * literal (a Rust lifetime, an apostrophe in a trailing comment) errs the other way, keeping spacing that means nothing.
  * A line is read on its own, so a line inside a multi-line literal whose opening quote is on an earlier line (a Java
- * text block, a Groovy slashy string) reads as code too.
+ * text block, a Kotlin raw string) reads as code too, and so does a literal no quote opens (a JavaScript template, a
+ * Groovy slashy string, single-line or not).
  */
 @UtilityClass
 public class Spacing {
-    private static final Set<Character> QUOTES = Set.of('"', '\'', '`');
+    private static final Set<Character> QUOTES = Set.of('"', '\'');
     /**
      * The two-character starts of the longer operators of the brace-delimited languages (Java, Kotlin, JavaScript, Go,
      * the C family), comments included: two operator characters a space keeps apart join only when they make one of these.
