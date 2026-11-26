@@ -174,7 +174,7 @@ public abstract class CodiqoGradlePlugin implements Plugin<Project> {
      * the worker disagreed with would score a commit with no classes.
      */
     private static void skipWhenNothingToAnalyse(Project project, AnalysisRequest request, TaskExecutionGraph graph, Task analysis) {
-        if (Objects.nonNull(request.getCommitId())) {
+        if (StringUtils.isNotBlank(request.getCommitId())) {
             try {
                 AnalysisEngine.nothingToAnalyse(request).ifPresent(exclusion -> {
                     project.getLogger().lifecycle("codiqo: commit {} changes nothing to analyse, so its build and tests are skipped: {}", request.getCommitId(), exclusion.getReason());

@@ -295,11 +295,14 @@ public class DiffClassificationDeriver {
             for (ChangeBlock block : diffLines.getBlocks()) {
                 List<Integer> deleted = block.getDeletedLines().stream().filter(not(movedDeleted::contains)).toList();
                 List<Integer> added = block.getAddedLines().stream().filter(not(movedAdded::contains)).toList();
-                List<String> deletedReads = deleted.stream().map(diffLines.getCandidateDeletedContent()::get).map(Spacing::withoutSpacing).toList();
-                List<String> addedReads = added.stream().map(diffLines.getCandidateAddedContent()::get).map(Spacing::withoutSpacing).toList();
-                for (Pair<Integer, Integer> pair : pairReads(deletedReads, addedReads)) {
-                    toReturn.getDeleted().add(deleted.get(pair.getLeft()));
-                    toReturn.getAdded().add(added.get(pair.getRight()));
+                /** a block that only adds or only deletes pairs nothing, so its lines are neither read nor tabled */
+                if (BooleanUtils.and(new boolean[] { CollectionUtils.isNotEmpty(deleted), CollectionUtils.isNotEmpty(added) })) {
+                    List<String> deletedReads = deleted.stream().map(diffLines.getCandidateDeletedContent()::get).map(Spacing::withoutSpacing).toList();
+                    List<String> addedReads = added.stream().map(diffLines.getCandidateAddedContent()::get).map(Spacing::withoutSpacing).toList();
+                    for (Pair<Integer, Integer> pair : pairReads(deletedReads, addedReads)) {
+                        toReturn.getDeleted().add(deleted.get(pair.getLeft()));
+                        toReturn.getAdded().add(added.get(pair.getRight()));
+                    }
                 }
             }
         }
