@@ -1603,7 +1603,8 @@ class FinalScoreCalculatorTest {
     /**
      * A block billed {@code billedInvocations} calls. A MODIFY block with a body is billed the deleted lines anchored
      * from its body start to one line past its end, as a unit whose location is its body would be under
-     * NestedBlockRanges.billsDeletion; a test that needs a block billed other anchors sets them itself.
+     * NestedBlockRanges.billsDeletion with no unit nested in it; a test with nested blocks, or one that needs a block
+     * billed other anchors, sets them itself.
      */
     private static CodeBlockEffort invocationBlock(String file, String name, Operation operation, int billedInvocations,
             double scaledLines, double scaledInvocations, int bodyStart, int bodyEnd, int bodyCodeLines) {

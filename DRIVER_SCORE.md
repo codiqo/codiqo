@@ -312,7 +312,7 @@ A candidate is discounted only when it is a relocation: it moves between two pro
 
 Matching uses **multiset token containment**, `|tokens(A) ∩ tokens(B)| / min(|A|, |B|)`, against `moveSimilarityThreshold` (default `0.95`) — deliberately *not* Dice or Jaccard. Relocation typically only *adds* tokens (a re-qualified receiver, `props.X` → `channel.props.X`), so a genuine move scores `1.0` under containment while a symmetric metric would drop it below the threshold and miss it.
 
-The line side of this is handled by the per-file diff classification. The **invocation** term of the driver score is not — it is uncapped and bills relocated calls to whichever block's new-file span absorbed them. `movedFactor` corrects that, per block:
+The line side of this is handled by the per-file diff classification. The **invocation** term of the driver score is not — it is uncapped and bills relocated calls to the blocks that absorbed them: a moved-out line's to the blocks its anchor was billed to (below), a moved-in line's to the innermost block whose body holds it. `movedFactor` corrects that, per block:
 
 ```
 billedInvocations    = effectiveInvocationsChanged (MODIFY) | directInvocationCount (NEW)

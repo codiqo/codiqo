@@ -369,12 +369,12 @@ public class FinalScoreCalculator {
         return DiffAdjustment.applied(adjusted, perFile.getBookkeeping());
     }
     /**
-     * Relocated lines still bill their invocation counts to the block whose new-file span absorbed
-     * them: deleted lines anchor to the next surviving line (so a moved-out body lands on the
-     * surviving block), and moved-in additions sit in the destination body. The line term is
-     * bounded by the bodyCodeLines cap and discounted by the per-file factor, but the invocation
-     * term of the driver score is uncapped — this factor removes each block's moved invocation
-     * share at movedLineCoefficient/2, mirroring the per-line relocation charge.
+     * Relocated lines still bill their invocation counts: a moved-out line's calls to every block that recorded its
+     * anchor (deletedCallAnchors, the next surviving line, by the client's rule over the unit's location, so two
+     * adjacent blocks can both hold it), and a moved-in line's to the innermost block whose body holds it. The line term
+     * is bounded by the bodyCodeLines cap and discounted by the per-file factor, but the invocation term of the driver
+     * score is uncapped — this factor removes each block's moved invocation share at movedLineCoefficient/2, mirroring
+     * the per-line relocation charge.
      */
     private Map<Pair<String, String>, Double> buildPerBlockMovedFactor(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
         Map<Pair<String, String>, Double> toReturn = Maps.newHashMap();

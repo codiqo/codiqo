@@ -616,12 +616,19 @@ class SubmissionToRequestMapperTest {
 
     /**
      * The calls of a deleted line anchored on a nested unit's annotation line are billed to the nested unit, whose
-     * location starts there, and to no unit around it; the block records the anchors it was billed, by location.
+     * location starts there, and to no unit around it; the block records the anchors it was billed by its location, so
+     * the nested unit, whose body starts a line later, records anchor 40 and the outer unit, whose body holds it, does
+     * not.
      */
     @Test
     void aBlockRecordsTheDeletionAnchorsItWasBilledByItsLocation() {
         CodeUnitModel outer = modifyMethod("outer", "com.example.Foo.outer()", 30, 60);
+        outer.getLocation().setBodyStartLine(31);
+        outer.getLocation().setBodyEndLine(60);
         CodeUnitModel nested = modifyMethod("run", "com.example.Foo$1.run()", 40, 50);
+        nested.getLocation().setBodyStartLine(41);
+        nested.getLocation().setBodyEndLine(50);
+        nested.setEffectiveInvocationsChanged(1);
 
         AnalysisSubmissionModel submission = baseSubmission();
         FileChangeModel file = submission.getFiles().get(0);
