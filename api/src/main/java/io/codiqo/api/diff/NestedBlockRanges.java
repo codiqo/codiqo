@@ -2,6 +2,8 @@ package io.codiqo.api.diff;
 
 import java.util.List;
 
+import org.apache.commons.lang3.BooleanUtils;
+
 import com.google.common.collect.Lists;
 
 import lombok.experimental.UtilityClass;
@@ -32,6 +34,17 @@ public class NestedBlockRanges {
             }
         }
         return false;
+    }
+    /**
+     * Whether a unit spanning {@code startLine..endLine} is billed the deleted line anchored at {@code anchor}: the anchor
+     * lies in the unit's range, up to one line past its end, and in none of the units nested in it. The client bills a
+     * deleted line's calls to a unit by this rule (EffectiveChangePopulator), and the scorer takes a moved-out line's
+     * calls back from the units it says (FinalScoreCalculator, through the anchors SubmissionToRequestMapper records on
+     * each block); deciding the two apart placed the discount on a unit that was never billed for it. The end slack lets
+     * two adjacent units both claim the line between them, and both are billed.
+     */
+    public static boolean billsDeletion(int startLine, int endLine, List<int[]> nestedRanges, int anchor) {
+        return anchor >= startLine && anchor <= endLine + 1 && BooleanUtils.negate(coversAnchor(nestedRanges, anchor));
     }
     /** Deletion anchors point at the next surviving line, so a range claims anchors up to endLine + 1. */
     public static boolean coversAnchor(List<int[]> nestedRanges, int anchor) {

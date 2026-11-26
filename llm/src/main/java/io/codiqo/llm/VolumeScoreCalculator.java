@@ -432,6 +432,7 @@ public class VolumeScoreCalculator {
                     .blockRatioDeviationNcss(Precision.round(deviationNcss, RunArgs.SCORE_PRECISION))
                     .blockRatioDeviationInvocations(Precision.round(deviationInvocations, RunArgs.SCORE_PRECISION))
                     .blockRatioOutlier(ratioOutlier)
+                    .deletedCallAnchors(block.getDeletedCallAnchors())
                     .bodyStartLine(block.getBodyStartLine())
                     .bodyEndLine(block.getBodyEndLine())
                     .bodyCodeLines(block.getBodyCodeLines())
@@ -907,6 +908,9 @@ public class VolumeScoreCalculator {
         int bodyEndLine;
         int bodyCodeLines;
         boolean isConfig;
+        /** the anchors of the deleted lines whose calls this block was billed, as SubmissionToRequestMapper recorded them */
+        @Builder.Default
+        Set<Integer> deletedCallAnchors = Sets.newHashSet();
     }
 
     @Value

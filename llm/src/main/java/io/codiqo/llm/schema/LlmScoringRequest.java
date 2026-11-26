@@ -5,12 +5,14 @@ import static java.util.function.Predicate.not;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import org.apache.commons.collections4.CollectionUtils;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 import io.codiqo.api.diff.IneffectiveLineFilter;
 import io.codiqo.api.metrics.DriverScaler;
@@ -156,6 +158,17 @@ public class LlmScoringRequest {
         /** Body block range: the lines of `{` and `}`. 0 when the block has no body (abstract / interface methods). */
         private int bodyStartLine;
         private int bodyEndLine;
+        /**
+         * For MODIFY: the new-file anchors of the deleted lines whose calls this block was billed
+         * ({@code effectiveInvocationsChanged}), by the rule the client billed them with
+         * ({@link io.codiqo.api.diff.NestedBlockRanges#billsDeletion}, over the block's whole location). The scorer takes a
+         * moved-out line's calls back from exactly these blocks, rather than finding a block again by its body range,
+         * which missed a line anchored on an annotation and discounted one of two adjacent blocks the line was billed to.
+         * Only the scorer reads it, in the process that mapped the request, so it is not serialized, like the line filter.
+         */
+        @JsonIgnore
+        @Builder.Default
+        private Set<Integer> deletedCallAnchors = Sets.newHashSet();
 
         private int linesAdded;
         private int linesDeleted;

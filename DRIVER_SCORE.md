@@ -323,7 +323,7 @@ movedInvocationsScaled = min(movedInvocations × invocationsFactor, scaledInvoca
 movedFactor = (driverComponents − W_I · movedInvocationsScaled × (1 − movedLineCoefficient / 2)) / driverComponents
 ```
 
-Because the driver score is the weighted mean of its scaled components, removing that share of the moved invocations' weighted term scales the driver by exactly this ratio — the operation-specific denominator cancels. The factor returns `1.0` (no-op) when the block bills no invocations. The moved share is recounted by regex, matching how the deleted side was billed.
+Because the driver score is the weighted mean of its scaled components, removing that share of the moved invocations' weighted term scales the driver by exactly this ratio — the operation-specific denominator cancels. The factor returns `1.0` (no-op) when the block bills no invocations. The moved share is recounted by regex, matching how the deleted side was billed. A moved-out line's calls come off exactly the blocks that were billed for them, chosen by the same rule (`NestedBlockRanges.billsDeletion`): the line's anchor falls within the unit's location, or on the line just after it, and outside every unit nested in it. A line anchored on a nested unit's annotation therefore lowers that unit and not the unit around it. A line anchored between two adjacent units lowers both, since both were billed.
 
 ### Delete reward
 
