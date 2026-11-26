@@ -312,7 +312,7 @@ A candidate is discounted only when it is a relocation: it moves between two pro
 
 Matching uses **multiset token containment**, `|tokens(A) ∩ tokens(B)| / min(|A|, |B|)`, against `moveSimilarityThreshold` (default `0.95`) — deliberately *not* Dice or Jaccard. Relocation typically only *adds* tokens (a re-qualified receiver, `props.X` → `channel.props.X`), so a genuine move scores `1.0` under containment while a symmetric metric would drop it below the threshold and miss it.
 
-The line side of this is handled by the per-file diff classification. The **invocation** term of the driver score is not — it is uncapped and bills relocated calls to whichever block's new-file span absorbed them. `movedFactor` corrects that, per block:
+The line side of this is handled by the per-file diff classification. The **invocation** term of the driver score is not — it is uncapped and bills relocated calls to the blocks that absorbed them: a moved-out line's to the blocks its anchor was billed to (below), a moved-in line's to the innermost block whose body holds it. `movedFactor` corrects that, per block:
 
 ```
 billedInvocations    = effectiveInvocationsChanged (MODIFY) | directInvocationCount (NEW)
@@ -323,7 +323,7 @@ movedInvocationsScaled = min(movedInvocations × invocationsFactor, scaledInvoca
 movedFactor = (driverComponents − W_I · movedInvocationsScaled × (1 − movedLineCoefficient / 2)) / driverComponents
 ```
 
-Because the driver score is the weighted mean of its scaled components, removing that share of the moved invocations' weighted term scales the driver by exactly this ratio — the operation-specific denominator cancels. The factor returns `1.0` (no-op) when the block bills no invocations. The moved share is recounted by regex, matching how the deleted side was billed.
+Because the driver score is the weighted mean of its scaled components, removing that share of the moved invocations' weighted term scales the driver by exactly this ratio — the operation-specific denominator cancels. The factor returns `1.0` (no-op) when the block bills no invocations. The moved share is recounted by regex, matching how the deleted side was billed. A moved-out line's calls come off exactly the blocks that were billed for them, chosen by the same rule (`NestedBlockRanges.billsDeletion`): the line's anchor falls within the unit's location or on the line just after it, and neither within a unit nested in it nor on the line just after one. Only units of a language scored by units are billed deleted calls. A line anchored on a nested unit's annotation therefore lowers that unit and not the unit around it. An anchor on the first line of a unit that directly follows another is billed to both units, and comes off both.
 
 ### Delete reward
 

@@ -432,6 +432,7 @@ public class VolumeScoreCalculator {
                     .blockRatioDeviationNcss(Precision.round(deviationNcss, RunArgs.SCORE_PRECISION))
                     .blockRatioDeviationInvocations(Precision.round(deviationInvocations, RunArgs.SCORE_PRECISION))
                     .blockRatioOutlier(ratioOutlier)
+                    .deletedCallAnchors(block.getDeletedCallAnchors())
                     .bodyStartLine(block.getBodyStartLine())
                     .bodyEndLine(block.getBodyEndLine())
                     .bodyCodeLines(block.getBodyCodeLines())
@@ -907,6 +908,14 @@ public class VolumeScoreCalculator {
         int bodyEndLine;
         int bodyCodeLines;
         boolean isConfig;
+
+        /**
+         * The request block's deletedCallAnchors: the new-file anchors of the deleted lines whose calls this block was
+         * billed. FinalScoreCalculator takes a moved-out line's calls back from every block whose anchors hold the line's,
+         * so a block built without them is never discounted for calls that moved out of it.
+         */
+        @Builder.Default
+        Set<Integer> deletedCallAnchors = Sets.newHashSet();
     }
 
     @Value

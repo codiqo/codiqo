@@ -1,5 +1,6 @@
 package io.codiqo.llm;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -613,6 +614,96 @@ class SubmissionToRequestMapperTest {
                 "change summary must agree with the filtered block list");
     }
 
+    /**
+     * The calls of a deleted line anchored on a nested unit's annotation line are billed to the nested unit, whose
+     * location starts there, and to no unit around it; the block records the anchors it was billed by its location, so
+     * the nested unit, whose body starts a line later, records anchor 40 and the outer unit, whose body holds it, does
+     * not.
+     */
+    @Test
+    void aBlockRecordsTheDeletionAnchorsItWasBilledByItsLocation() {
+        CodeUnitModel outer = modifyMethod("outer", "com.example.Foo.outer()", 30, 60);
+        outer.getLocation().setBodyStartLine(31);
+        outer.getLocation().setBodyEndLine(60);
+        CodeUnitModel nested = modifyMethod("run", "com.example.Foo$1.run()", 40, 50);
+        nested.getLocation().setBodyStartLine(41);
+        nested.getLocation().setBodyEndLine(50);
+        nested.setEffectiveInvocationsChanged(1);
+
+        AnalysisSubmissionModel submission = baseSubmission();
+        FileChangeModel file = submission.getFiles().get(0);
+        file.setDiff(
+                """
+                    --- a/Foo.java
+                    +++ b/Foo.java
+                    @@ -35,1 +35,1 @@
+                    -        first();
+                    +        second();
+                    @@ -40,2 +40,1 @@
+                    -        moved();
+                             @Override
+                    """);
+        file.setCodeUnits(Lists.newArrayList(List.of(outer, nested)));
+
+        LlmScoringRequest request = mapper.apply(submission);
+
+        LlmScoringRequest.CodeBlockChange outerBlock = request.getCodeBlockChanges().stream().filter(block -> "outer".equals(block.getName())).findFirst().orElseThrow();
+        LlmScoringRequest.CodeBlockChange nestedBlock = request.getCodeBlockChanges().stream().filter(block -> "run".equals(block.getName())).findFirst().orElseThrow();
+        assertEquals(Set.of(35), outerBlock.getDeletedCallAnchors(), "the nested unit covers anchor 40, so outer is not billed it");
+        assertEquals(Set.of(40), nestedBlock.getDeletedCallAnchors(), "anchor 40 is the nested unit's annotation line, inside its location");
+    }
+    @Test
+    void twoAdjacentBlocksBothRecordTheAnchorBetweenThem() {
+        CodeUnitModel first = modifyMethod("first", "com.example.Foo.first()", 30, 39);
+        CodeUnitModel second = modifyMethod("second", "com.example.Foo.second()", 40, 50);
+
+        AnalysisSubmissionModel submission = baseSubmission();
+        FileChangeModel file = submission.getFiles().get(0);
+        file.setDiff(
+                """
+                    --- a/Foo.java
+                    +++ b/Foo.java
+                    @@ -35,1 +35,1 @@
+                    -        a();
+                    +        b();
+                    @@ -40,2 +40,1 @@
+                    -        moved();
+                             void second() {
+                    @@ -45,1 +44,1 @@
+                    -        c();
+                    +        d();
+                    """);
+        file.setCodeUnits(Lists.newArrayList(List.of(first, second)));
+
+        LlmScoringRequest request = mapper.apply(submission);
+
+        for (LlmScoringRequest.CodeBlockChange block : request.getCodeBlockChanges()) {
+            assertTrue(block.getDeletedCallAnchors().contains(40), block.getName() + " is billed the line between the two, as the client bills it to both");
+        }
+        assertEquals(2, request.getCodeBlockChanges().size());
+    }
+    /** EffectiveChangePopulator counts a deleted line's calls with no call shape on a file whose language is unresolved. */
+    @Test
+    void aBlockOfAFileWhoseLanguageIsUnresolvedRecordsNoDeletionAnchor() {
+        AnalysisSubmissionModel submission = baseSubmission();
+        FileChangeModel file = submission.getFiles().get(0);
+        file.setLanguage(null);
+        file.setDiff(
+                """
+                    --- a/Foo.java
+                    +++ b/Foo.java
+                    @@ -35,2 +35,1 @@
+                    -        moved();
+                    -        first();
+                    +        second();
+                    """);
+        file.setCodeUnits(Lists.newArrayList(List.of(modifyMethod("outer", "com.example.Foo.outer()", 30, 60))));
+
+        LlmScoringRequest request = mapper.apply(submission);
+
+        assertEquals(1, request.getCodeBlockChanges().size());
+        assertEquals(Set.of(), request.getCodeBlockChanges().iterator().next().getDeletedCallAnchors());
+    }
     @Test
     void filesWithOnlyImportAndBlankAdditionsProduceNoCodeBlockChanges() {
         AnalysisSubmissionModel submission = baseSubmission();

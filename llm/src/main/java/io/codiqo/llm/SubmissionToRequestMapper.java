@@ -494,12 +494,13 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         mapMetrics(codeUnit.getMetrics(), builder);
         mapCallers(codeUnit.getCallers(), builder);
         mapDiagnostics(codeUnit.getDiagnostics(), filePath, fileContext, builder);
-        mapChangeMetrics(codeUnit, filePath, bodyStartLine, bodyEndLine, startLine, endLine, fileContext, builder);
+        mapChangeMetrics(codeUnit, file, bodyStartLine, bodyEndLine, startLine, endLine, fileContext, builder);
 
         return builder.build();
     }
-    private static void mapChangeMetrics(CodeUnitModel codeUnit, String filePath, int bodyStartLine, int bodyEndLine,
+    private static void mapChangeMetrics(CodeUnitModel codeUnit, FileChangeModel file, int bodyStartLine, int bodyEndLine,
             int startLine, int endLine, FileContext fileContext, CodeBlockChange.CodeBlockChangeBuilder builder) {
+        String filePath = file.getPath();
         MetricsModel metrics = codeUnit.getMetrics();
 
         int nonCommentCodeLines = Optional.ofNullable(metrics.getNonCommentCodeLines())
@@ -530,6 +531,23 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
         Map<Integer, Integer> deletionAnchors = fileContext.effectiveDeletionAnchorsByFile().get(filePath);
         if (Objects.nonNull(deletionAnchors) && rangeStart > 0 && rangeEnd >= rangeStart) {
             effectiveLinesDeleted = countEffectiveDeletionsInRange(deletionAnchors, rangeStart, rangeEnd, nestedRanges);
+        }
+
+        /**
+         * The anchors of the deleted lines whose calls this unit was billed. EffectiveChangePopulator bills them only on
+         * a file whose language is scored by units (any other file's call shape is none) and whose line filter is not
+         * NONE (it tracks no deleted line under one), over the unit's whole location
+         * (annotations and Javadoc included), with the units nested in that location left out; they are recorded under
+         * the same condition, over the same range, by the same rule, not over the body the line counts above use. The
+         * scorer takes a moved-out line's calls back from the blocks that recorded its anchor: recorded over the body, a
+         * line anchored on a nested unit's annotation was taken back from the unit around it, which was never billed it.
+         */
+        if (BooleanUtils.and(new boolean[] { Objects.nonNull(deletionAnchors), LanguageCapabilities.kindScoredByUnits(file).isPresent(),
+                BooleanUtils.negate(LanguageCapabilities.filterFor(file).isNone()), startLine > 0, endLine >= startLine })) {
+            List<int[]> nestedInLocation = NestedBlockRanges.nestedWithin(startLine, endLine, fileContext.blockRangesByFile().getOrDefault(filePath, Collections.emptyList()));
+            builder.deletedCallAnchors(deletionAnchors.keySet().stream()
+                    .filter(anchor -> NestedBlockRanges.billsDeletion(startLine, endLine, nestedInLocation, anchor))
+                    .collect(Collectors.toSet()));
         }
 
         builder.linesAdded(effectiveLinesChanged);
@@ -784,8 +802,7 @@ public class SubmissionToRequestMapper implements Function<AnalysisSubmissionMod
     private static int countEffectiveDeletionsInRange(Map<Integer, Integer> anchors, int startLine, int endLine, List<int[]> nestedRanges) {
         int count = 0;
         for (Map.Entry<Integer, Integer> entry : anchors.entrySet()) {
-            int anchor = entry.getKey();
-            if (anchor >= startLine && anchor <= endLine + 1 && BooleanUtils.negate(NestedBlockRanges.coversAnchor(nestedRanges, anchor))) {
+            if (NestedBlockRanges.billsDeletion(startLine, endLine, nestedRanges, entry.getKey())) {
                 count += entry.getValue();
             }
         }

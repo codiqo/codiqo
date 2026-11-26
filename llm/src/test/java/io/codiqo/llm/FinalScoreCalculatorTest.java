@@ -10,7 +10,10 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 
@@ -1153,6 +1156,48 @@ class FinalScoreCalculatorTest {
         assertEquals(1.354167, vs.getBlockEffortSum(), 0.005,
                 "moved-out anchor discounts the billing block, moved-in addition discounts the destination");
     }
+    /**
+     * A moved-out line's calls come back from exactly the blocks that were billed them. Its anchor, new-file 11, is the
+     * annotation line of a nested block whose body starts at 12: the nested block was billed (its location starts at the
+     * annotation) and its enclosing block was not, so the nested block takes the discount, 6.667 × 0.125 × 0.9125 = 0.76,
+     * and the enclosing one keeps its whole driver, 6.667 × 0.125 = 0.83.
+     */
+    @Test
+    void aMovedOutLineIsTakenBackFromTheBlockItWasBilledTo() {
+        FinalScoreCalculator calculator = new FinalScoreCalculator(new RunArgs(), NoopLog.INSTANCE);
+        CodeBlockEffort outer = invocationBlock("Foo.java", "outer", Operation.MODIFY, 4, 6.0, 8.0, 1, 22, 20).toBuilder()
+                .deletedCallAnchors(Set.of()).build();
+        CodeBlockEffort nested = invocationBlock("Foo.java", "run", Operation.MODIFY, 4, 6.0, 8.0, 12, 20, 9).toBuilder()
+                .deletedCallAnchors(Set.of(11)).build();
+        CodeBlockEffort destination = invocationBlock("Foo.java", "destination", Operation.MODIFY, 2, 6.0, 4.0, 25, 35, 11);
+        LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList(List.of("M1")));
+        response.setBlockCategories(List.of(routine("Foo.java", "outer()"), routine("Foo.java", "run()"), routine("Foo.java", "destination()")));
+
+        calculator.apply(response, scoresWithBlocks("Foo.java", outer, nested, destination), requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF));
+
+        List<LlmScoringResponse.CodeBlockEffortView> blocks = response.getEffortBreakdown().getFileEfforts().iterator().next().getCodeBlockEfforts();
+        assertEquals(0.83, blocks.get(0).getEffort(), 0.005, "outer was not billed the line's calls");
+        assertEquals(0.76, blocks.get(1).getEffort(), 0.005, "the nested block was");
+    }
+    @Test
+    void aMovedOutLineBilledToTwoAdjacentBlocksIsTakenBackFromBoth() {
+        FinalScoreCalculator calculator = new FinalScoreCalculator(new RunArgs(), NoopLog.INSTANCE);
+        CodeBlockEffort first = invocationBlock("Foo.java", "first", Operation.MODIFY, 4, 6.0, 8.0, 1, 10, 10).toBuilder()
+                .deletedCallAnchors(Set.of(11)).build();
+        CodeBlockEffort second = invocationBlock("Foo.java", "second", Operation.MODIFY, 4, 6.0, 8.0, 11, 20, 10).toBuilder()
+                .deletedCallAnchors(Set.of(11)).build();
+        CodeBlockEffort destination = invocationBlock("Foo.java", "destination", Operation.MODIFY, 2, 6.0, 4.0, 25, 35, 11);
+        LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
+        response.getEffortBreakdown().getDiffClassification().setConfirmedMoveIds(Lists.newArrayList(List.of("M1")));
+        response.setBlockCategories(List.of(routine("Foo.java", "first()"), routine("Foo.java", "second()"), routine("Foo.java", "destination()")));
+
+        calculator.apply(response, scoresWithBlocks("Foo.java", first, second, destination), requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF));
+
+        List<LlmScoringResponse.CodeBlockEffortView> blocks = response.getEffortBreakdown().getFileEfforts().iterator().next().getCodeBlockEfforts();
+        assertEquals(0.76, blocks.get(0).getEffort(), 0.005, "the client billed the line between them to both");
+        assertEquals(0.76, blocks.get(1).getEffort(), 0.005);
+    }
     @Test
     void movedInAdditionDiscountsNewDestinationBlock() {
         RunArgs args = new RunArgs();
@@ -1464,7 +1509,7 @@ class FinalScoreCalculatorTest {
                 /*effort*/ blockEffort, /*bucketBaseline*/ 1000.0, /*isTest*/ false,
                 /*deviationNcss*/ 0.0, /*deviationInvocations*/ 0.0, /*ratioOutlier*/ false,
                 /*effortShare*/ 1.0, /*globalCapDriver*/ false,
-                bodyStart, bodyEnd, bodyCodeLines, /*isConfig*/ false);
+                bodyStart, bodyEnd, bodyCodeLines, /*isConfig*/ false, /**deletedCallAnchors*/ Set.of());
         FileEffort fileEffort = new FileEffort(file, blockEffort, false, List.of(cbe), 0, 0, 0.0, 0.0, false);
 
         double volumeExponent = 1.0;
@@ -1496,7 +1541,7 @@ class FinalScoreCalculatorTest {
                 /*effort*/ blockEffort, /*bucketBaseline*/ 0.0, /*isTest*/ false,
                 /*deviationNcss*/ 0.0, /*deviationInvocations*/ 0.0, /*ratioOutlier*/ false,
                 /*effortShare*/ 1.0, /*globalCapDriver*/ false,
-                0, 0, 0, /*isConfig*/ false);
+                0, 0, 0, /*isConfig*/ false, /**deletedCallAnchors*/ Set.of());
         FileEffort fileEffort = new FileEffort(file, blockEffort, false, List.of(cbe), 0, 0, 0.0, 0.0, false);
 
         return PreComputedScores.builder()
@@ -1521,7 +1566,7 @@ class FinalScoreCalculatorTest {
                 /*effort*/ blockEffort, /*bucketBaseline*/ 0.0, /*isTest*/ false,
                 /*deviationNcss*/ 0.0, /*deviationInvocations*/ 0.0, /*ratioOutlier*/ false,
                 /*effortShare*/ 1.0, /*globalCapDriver*/ false,
-                0, 0, 0, /*isConfig*/ false);
+                0, 0, 0, /*isConfig*/ false, /**deletedCallAnchors*/ Set.of());
         FileEffort fileEffort = new FileEffort(file, blockEffort, false, List.of(cbe), 0, 0, 0.0, 0.0, false);
 
         return PreComputedScores.builder()
@@ -1555,6 +1600,12 @@ class FinalScoreCalculatorTest {
                 .fileEfforts(Lists.newArrayList(List.of(fileEffort)))
                 .build();
     }
+    /**
+     * A block billed {@code billedInvocations} calls. A MODIFY block with a body is billed the deleted lines anchored
+     * from its body start to one line past its end, as a unit whose location is its body would be under
+     * NestedBlockRanges.billsDeletion with no unit nested in it; a test with nested blocks, or one that needs a block
+     * billed other anchors, sets them itself.
+     */
     private static CodeBlockEffort invocationBlock(String file, String name, Operation operation, int billedInvocations,
             double scaledLines, double scaledInvocations, int bodyStart, int bodyEnd, int bodyCodeLines) {
         double divisor = operation == Operation.MODIFY
@@ -1569,7 +1620,10 @@ class FinalScoreCalculatorTest {
                 driver, (int) driver, /*effort*/ driver, /*bucketBaseline*/ 1000.0, /*isTest*/ false,
                 /*deviationNcss*/ 0.0, /*deviationInvocations*/ 0.0, /*ratioOutlier*/ false,
                 /*effortShare*/ 0.5, /*globalCapDriver*/ false,
-                bodyStart, bodyEnd, bodyCodeLines, /*isConfig*/ false);
+                bodyStart, bodyEnd, bodyCodeLines, /*isConfig*/ false,
+                /**deletedCallAnchors*/ BooleanUtils.and(new boolean[] { operation == Operation.MODIFY, bodyStart > 0 })
+                        ? IntStream.rangeClosed(bodyStart, bodyEnd + 1).boxed().collect(Collectors.toSet())
+                        : Set.of());
     }
     private static CodeBlockEffort blockEffort(String file, String name, int effLinesChanged, int bodyStart, int bodyEnd, int bodyCodeLines) {
         return blockEffort(file, name, Operation.MODIFY, effLinesChanged, bodyStart, bodyEnd, bodyCodeLines);
@@ -1584,7 +1638,7 @@ class FinalScoreCalculatorTest {
                 /*effort*/ 50.0, /*bucketBaseline*/ 1000.0, /*isTest*/ false,
                 /*deviationNcss*/ 0.0, /*deviationInvocations*/ 0.0, /*ratioOutlier*/ false,
                 /*effortShare*/ 0.5, /*globalCapDriver*/ false,
-                bodyStart, bodyEnd, bodyCodeLines, /*isConfig*/ false);
+                bodyStart, bodyEnd, bodyCodeLines, /*isConfig*/ false, /**deletedCallAnchors*/ Set.of());
     }
     // single hunk: deleted old-file lines {11, 13}, added new-file line {11}
     private static final String VALIDATION_DIFF = Joiner.on(StringUtils.LF).join(

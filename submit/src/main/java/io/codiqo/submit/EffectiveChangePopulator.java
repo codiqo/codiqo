@@ -176,12 +176,10 @@ public class EffectiveChangePopulator implements SubmissionPopulator {
     private static int countDeletedInvocationsInRange(Map<Integer, List<String>> deletedContents, int startLine, int endLine, List<int[]> nestedRanges, CallShape calls) {
         int count = 0;
         for (Entry<Integer, List<String>> entry : deletedContents.entrySet()) {
-            int anchor = entry.getKey();
-            if (BooleanUtils.or(new boolean[] { anchor < startLine, anchor > endLine + 1, NestedBlockRanges.coversAnchor(nestedRanges, anchor) })) {
-                continue;
-            }
-            for (String content : entry.getValue()) {
-                count += calls.countInLine(content);
+            if (NestedBlockRanges.billsDeletion(startLine, endLine, nestedRanges, entry.getKey())) {
+                for (String content : entry.getValue()) {
+                    count += calls.countInLine(content);
+                }
             }
         }
         return count;

@@ -369,12 +369,12 @@ public class FinalScoreCalculator {
         return DiffAdjustment.applied(adjusted, perFile.getBookkeeping());
     }
     /**
-     * Relocated lines still bill their invocation counts to the block whose new-file span absorbed
-     * them: deleted lines anchor to the next surviving line (so a moved-out body lands on the
-     * surviving block), and moved-in additions sit in the destination body. The line term is
-     * bounded by the bodyCodeLines cap and discounted by the per-file factor, but the invocation
-     * term of the driver score is uncapped — this factor removes each block's moved invocation
-     * share at movedLineCoefficient/2, mirroring the per-line relocation charge.
+     * Relocated lines still bill their invocation counts: a moved-out line's calls to every block that recorded its
+     * anchor (deletedCallAnchors, the next surviving line, by the client's rule over the unit's location, so two
+     * adjacent blocks can both hold it), and a moved-in line's to the innermost block whose body holds it. The line term
+     * is bounded by the bodyCodeLines cap and discounted by the per-file factor, but the invocation term of the driver
+     * score is uncapped — this factor removes each block's moved invocation share at movedLineCoefficient/2, mirroring
+     * the per-line relocation charge.
      */
     private Map<Pair<String, String>, Double> buildPerBlockMovedFactor(LlmScoringResponse response, PreComputedScores preComputed, LlmScoringRequest request) {
         Map<Pair<String, String>, Double> toReturn = Maps.newHashMap();
@@ -425,21 +425,22 @@ public class FinalScoreCalculator {
                 Integer anchor = diffLines.getCandidateDeletedAnchor().get(line);
                 String content = diffLines.getCandidateDeletedContent().get(line);
                 /**
-                 * EffectiveChangePopulator bills deleted lines only to MODIFY units and lets the anchor sit one
-                 * line past the body end. Both rules are mirrored here (modifyOnly, end slack of 1); diverging from
-                 * them would remove moved invocations from a block that was never billed for them.
+                 * Taken back from exactly the blocks that were billed the line's calls (deletedCallAnchors, recorded by
+                 * the rule the client billed them with), so a line anchored on an annotation or between two adjacent
+                 * blocks lowers the blocks it was billed to and no other.
                  */
                 if (Objects.nonNull(anchor) && Objects.nonNull(content)) {
-                    int idx = innermostBlockForLine(blocks, anchor, 1, true);
-                    if (idx >= 0) {
-                        movedInvocations[idx] += calls.countInLine(content);
+                    for (int i = 0; i < blocks.size(); i++) {
+                        if (blocks.get(i).getDeletedCallAnchors().contains(anchor)) {
+                            movedInvocations[i] += calls.countInLine(content);
+                        }
                     }
                 }
             }
             for (Integer line : CollectionUtils.emptyIfNull(entry.getMovedAdded())) {
                 String content = diffLines.getCandidateAddedContent().get(line);
                 if (Objects.nonNull(content)) {
-                    int idx = innermostBlockForLine(blocks, line, 0, false);
+                    int idx = innermostBlockForLine(blocks, line, 0);
                     if (idx >= 0) {
                         movedInvocations[idx] += calls.countInLine(content);
                     }
@@ -856,20 +857,20 @@ public class FinalScoreCalculator {
          * old-file number would land in another block once lines were added above it.
          */
         for (Integer line : CollectionUtils.emptyIfNull(fileClassification.getInPlaceCollapsedAdded())) {
-            int innermost = innermostBlockForLine(blocks, line, 0, false);
+            int innermost = innermostBlockForLine(blocks, line, 0);
             if (innermost >= 0) {
                 toReturn[innermost]++;
             }
         }
         for (Integer line : CollectionUtils.emptyIfNull(fileClassification.getCosmeticAdded())) {
-            int innermost = innermostBlockForLine(blocks, line, 0, false);
+            int innermost = innermostBlockForLine(blocks, line, 0);
             if (innermost >= 0 && blocks.get(innermost).getOperation() == LlmScoringRequest.Operation.MODIFY) {
                 toReturn[innermost]++;
             }
         }
         for (Integer line : CollectionUtils.emptyIfNull(fileClassification.getCosmeticDeleted())) {
             Optional.ofNullable(cosmeticDeletedAnchors.get(line))
-                    .map(anchor -> innermostBlockForLine(blocks, anchor, 1, false))
+                    .map(anchor -> innermostBlockForLine(blocks, anchor, 1))
                     .filter(innermost -> innermost >= 0)
                     .filter(innermost -> blocks.get(innermost).getOperation() == LlmScoringRequest.Operation.MODIFY)
                     .ifPresent(innermost -> toReturn[innermost]++);
@@ -904,13 +905,10 @@ public class FinalScoreCalculator {
         return pair.getAdded() >= bodyStartLine && pair.getAdded() <= bodyEndLine
                 && pair.getDeleted() >= bodyStartLine && pair.getDeleted() <= bodyEndLine;
     }
-    private static int innermostBlockForLine(List<CodeBlockEffort> blocks, int line, int endSlack, boolean modifyOnly) {
+    private static int innermostBlockForLine(List<CodeBlockEffort> blocks, int line, int endSlack) {
         int innermost = -1;
         for (int i = 0; i < blocks.size(); i++) {
             CodeBlockEffort block = blocks.get(i);
-            if (modifyOnly && block.getOperation() != LlmScoringRequest.Operation.MODIFY) {
-                continue;
-            }
             int bodyStartLine = block.getBodyStartLine();
             int bodyEndLine = block.getBodyEndLine();
             if (bodyStartLine <= 0 || bodyEndLine < bodyStartLine) {
