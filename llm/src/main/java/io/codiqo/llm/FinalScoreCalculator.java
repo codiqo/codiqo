@@ -869,8 +869,9 @@ public class FinalScoreCalculator {
         }
         for (Integer line : CollectionUtils.emptyIfNull(fileClassification.getCosmeticDeleted())) {
             Optional.ofNullable(cosmeticDeletedAnchors.get(line))
-                    .map(anchor -> innermostBlockForLine(blocks, anchor, 1, true))
+                    .map(anchor -> innermostBlockForLine(blocks, anchor, 1, false))
                     .filter(innermost -> innermost >= 0)
+                    .filter(innermost -> blocks.get(innermost).getOperation() == LlmScoringRequest.Operation.MODIFY)
                     .ifPresent(innermost -> toReturn[innermost]++);
         }
         return toReturn;

@@ -82,7 +82,6 @@ public class Spacing {
         }
         return toReturn.toString();
     }
-    /** whether two characters a run of whitespace separates would read as one token without it */
     private static boolean joins(char before, char after) {
         return BooleanUtils.or(new boolean[] {
                 BooleanUtils.and(new boolean[] { isWord(before), isWord(after) }),

@@ -833,7 +833,8 @@ class FinalScoreCalculatorTest {
         calculator.apply(response, scoresWithBlocks("Foo.java", outer, run), request);
 
         List<LlmScoringResponse.CodeBlockEffortView> blocks = response.getEffortBreakdown().getFileEfforts().get(0).getCodeBlockEfforts();
-        assertEquals(2, blocks.get(0).getEffectiveLinesChanged(), "only the deleted side, anchored in outer, leaves outer's three lines");
+        assertEquals(3, blocks.get(0).getEffectiveLinesChanged(), "the deleted side is anchored in NEW run(), whose lines outer never counted");
+        assertEquals(0.3, blocks.get(0).getChangeRatio(), "outer's ratio is unchanged with its counted lines");
         assertEquals(0, blocks.get(1).getEffectiveLinesChanged(), "the added side lies in the NEW run(), which counted none, and outer never counted it");
     }
     @Test
