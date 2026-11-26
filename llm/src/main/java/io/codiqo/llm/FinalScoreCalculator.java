@@ -848,8 +848,10 @@ public class FinalScoreCalculator {
         /**
          * A cosmetic line costs nothing, so both of its sides leave the block's changed lines, where a pair leaves one:
          * left in, a line whose only change is its spacing showed as two changed lines in a block whose effort it no
-         * longer adds to. Only a MODIFY unit counts changed lines, so only one gives them back; a NEW unit's view would
-         * otherwise lose the change ratio its whole body gave it. A cosmetic deleted line is placed where the block counted
+         * longer adds to. Only a MODIFY unit counts changed lines, so only one gives them back: a NEW unit's view would
+         * otherwise lose the change ratio its whole body gave it, and a MODIFY unit around a NEW one (a method of an
+         * anonymous class the commit wrapped a line in) never counted the nested unit's lines, so a line of the innermost
+         * unit is given back only when that unit is itself a MODIFY unit. A cosmetic deleted line is placed where the block counted
          * it, by its new-file anchor and with an end slack of one line, as EffectiveChangePopulator bills deleted lines; its
          * old-file number would land in another block once lines were added above it.
          */
@@ -860,8 +862,8 @@ public class FinalScoreCalculator {
             }
         }
         for (Integer line : CollectionUtils.emptyIfNull(fileClassification.getCosmeticAdded())) {
-            int innermost = innermostBlockForLine(blocks, line, 0, true);
-            if (innermost >= 0) {
+            int innermost = innermostBlockForLine(blocks, line, 0, false);
+            if (innermost >= 0 && blocks.get(innermost).getOperation() == LlmScoringRequest.Operation.MODIFY) {
                 toReturn[innermost]++;
             }
         }

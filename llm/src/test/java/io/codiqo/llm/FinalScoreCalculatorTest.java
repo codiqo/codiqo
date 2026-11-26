@@ -815,6 +815,28 @@ class FinalScoreCalculatorTest {
                 "both sides of a cosmetic line leave the block, the deleted one placed by its new-file anchor 61, not its old-file 31");
     }
     @Test
+    void aRespacedLineInANewNestedUnitLeavesTheEnclosingUnitAlone() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
+        CodeBlockEffort outer = blockEffort("Foo.java", "outer", Operation.MODIFY, 3, 55, 67, 13);
+        CodeBlockEffort run = blockEffort("Foo.java", "run", Operation.NEW, 0, 59, 63, 5);
+        LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, Joiner.on(StringUtils.LF).join(
+                "--- a/Foo.java",
+                "+++ b/Foo.java",
+                "@@ -30,3 +60,3 @@",
+                " context",
+                "-return  process(a,b);",
+                "+return process(a, b);",
+                " context2"));
+        LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
+
+        calculator.apply(response, scoresWithBlocks("Foo.java", outer, run), request);
+
+        List<LlmScoringResponse.CodeBlockEffortView> blocks = response.getEffortBreakdown().getFileEfforts().get(0).getCodeBlockEfforts();
+        assertEquals(2, blocks.get(0).getEffectiveLinesChanged(), "only the deleted side, anchored in outer, leaves outer's three lines");
+        assertEquals(0, blocks.get(1).getEffectiveLinesChanged(), "the added side lies in the NEW run(), which counted none, and outer never counted it");
+    }
+    @Test
     void pairWithSideOutsideBlockDoesNotCollapse() {
         RunArgs args = new RunArgs();
         FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
@@ -1549,8 +1571,11 @@ class FinalScoreCalculatorTest {
                 bodyStart, bodyEnd, bodyCodeLines, /*isConfig*/ false);
     }
     private static CodeBlockEffort blockEffort(String file, String name, int effLinesChanged, int bodyStart, int bodyEnd, int bodyCodeLines) {
+        return blockEffort(file, name, Operation.MODIFY, effLinesChanged, bodyStart, bodyEnd, bodyCodeLines);
+    }
+    private static CodeBlockEffort blockEffort(String file, String name, Operation operation, int effLinesChanged, int bodyStart, int bodyEnd, int bodyCodeLines) {
         return new CodeBlockEffort(file, name, name + "()",
-                Operation.MODIFY,
+                operation,
                 /*ncss*/ 10, /*invocations*/ 5, /*effInvocsChanged*/ 0,
                 /*nonCommentCodeLines*/ 20, /*commentLines*/ 0, effLinesChanged,
                 /*changeRatio*/ 0.3, /*scaledLines*/ 6.0, /*scaledNcss*/ 0.0, /*scaledInvocations*/ 0.0,
