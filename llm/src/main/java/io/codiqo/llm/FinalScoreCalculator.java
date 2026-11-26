@@ -863,14 +863,14 @@ public class FinalScoreCalculator {
             }
         }
         for (Integer line : CollectionUtils.emptyIfNull(fileClassification.getCosmeticAdded())) {
-            int innermost = innermostBlockForLine(blocks, line, 0, false);
+            int innermost = innermostBlockForLine(blocks, line, 0);
             if (innermost >= 0 && blocks.get(innermost).getOperation() == LlmScoringRequest.Operation.MODIFY) {
                 toReturn[innermost]++;
             }
         }
         for (Integer line : CollectionUtils.emptyIfNull(fileClassification.getCosmeticDeleted())) {
             Optional.ofNullable(cosmeticDeletedAnchors.get(line))
-                    .map(anchor -> innermostBlockForLine(blocks, anchor, 1, false))
+                    .map(anchor -> innermostBlockForLine(blocks, anchor, 1))
                     .filter(innermost -> innermost >= 0)
                     .filter(innermost -> blocks.get(innermost).getOperation() == LlmScoringRequest.Operation.MODIFY)
                     .ifPresent(innermost -> toReturn[innermost]++);
