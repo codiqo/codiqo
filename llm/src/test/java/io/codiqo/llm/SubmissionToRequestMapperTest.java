@@ -675,6 +675,28 @@ class SubmissionToRequestMapperTest {
         }
         assertEquals(2, request.getCodeBlockChanges().size());
     }
+    /** EffectiveChangePopulator counts a deleted line's calls with no call shape on a file whose language is unresolved. */
+    @Test
+    void aBlockOfAFileWhoseLanguageIsUnresolvedRecordsNoDeletionAnchor() {
+        AnalysisSubmissionModel submission = baseSubmission();
+        FileChangeModel file = submission.getFiles().get(0);
+        file.setLanguage(null);
+        file.setDiff(
+                """
+                    --- a/Foo.java
+                    +++ b/Foo.java
+                    @@ -35,2 +35,1 @@
+                    -        moved();
+                    -        first();
+                    +        second();
+                    """);
+        file.setCodeUnits(Lists.newArrayList(List.of(modifyMethod("outer", "com.example.Foo.outer()", 30, 60))));
+
+        LlmScoringRequest request = mapper.apply(submission);
+
+        assertEquals(1, request.getCodeBlockChanges().size());
+        assertEquals(Set.of(), request.getCodeBlockChanges().iterator().next().getDeletedCallAnchors());
+    }
     @Test
     void filesWithOnlyImportAndBlankAdditionsProduceNoCodeBlockChanges() {
         AnalysisSubmissionModel submission = baseSubmission();

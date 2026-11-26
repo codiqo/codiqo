@@ -13,6 +13,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 
@@ -1175,7 +1176,7 @@ class FinalScoreCalculatorTest {
 
         calculator.apply(response, scoresWithBlocks("Foo.java", outer, nested, destination), requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF));
 
-        List<LlmScoringResponse.CodeBlockEffortView> blocks = response.getEffortBreakdown().getFileEfforts().get(0).getCodeBlockEfforts();
+        List<LlmScoringResponse.CodeBlockEffortView> blocks = response.getEffortBreakdown().getFileEfforts().iterator().next().getCodeBlockEfforts();
         assertEquals(0.83, blocks.get(0).getEffort(), 0.005, "outer was not billed the line's calls");
         assertEquals(0.76, blocks.get(1).getEffort(), 0.005, "the nested block was");
     }
@@ -1193,7 +1194,7 @@ class FinalScoreCalculatorTest {
 
         calculator.apply(response, scoresWithBlocks("Foo.java", first, second, destination), requestWithFileChangeAndDiff("Foo.java", 1, 1, MOVE_DIFF));
 
-        List<LlmScoringResponse.CodeBlockEffortView> blocks = response.getEffortBreakdown().getFileEfforts().get(0).getCodeBlockEfforts();
+        List<LlmScoringResponse.CodeBlockEffortView> blocks = response.getEffortBreakdown().getFileEfforts().iterator().next().getCodeBlockEfforts();
         assertEquals(0.76, blocks.get(0).getEffort(), 0.005, "the client billed the line between them to both");
         assertEquals(0.76, blocks.get(1).getEffort(), 0.005);
     }
@@ -1599,6 +1600,11 @@ class FinalScoreCalculatorTest {
                 .fileEfforts(Lists.newArrayList(List.of(fileEffort)))
                 .build();
     }
+    /**
+     * A block billed {@code billedInvocations} calls. A MODIFY block with a body is billed the deleted lines anchored
+     * from its body start to one line past its end, as a unit whose location is its body would be under
+     * NestedBlockRanges.billsDeletion; a test that needs a block billed other anchors sets them itself.
+     */
     private static CodeBlockEffort invocationBlock(String file, String name, Operation operation, int billedInvocations,
             double scaledLines, double scaledInvocations, int bodyStart, int bodyEnd, int bodyCodeLines) {
         double divisor = operation == Operation.MODIFY
@@ -1614,8 +1620,9 @@ class FinalScoreCalculatorTest {
                 /*deviationNcss*/ 0.0, /*deviationInvocations*/ 0.0, /*ratioOutlier*/ false,
                 /*effortShare*/ 0.5, /*globalCapDriver*/ false,
                 bodyStart, bodyEnd, bodyCodeLines, /*isConfig*/ false,
-                /*deletedCallAnchors: a MODIFY block billed every anchor of its body, none nested in it*/
-                operation == Operation.MODIFY ? IntStream.rangeClosed(bodyStart, bodyEnd + 1).boxed().collect(Collectors.toSet()) : Set.of());
+                /*deletedCallAnchors*/ BooleanUtils.and(new boolean[] { operation == Operation.MODIFY, bodyStart > 0 })
+                        ? IntStream.rangeClosed(bodyStart, bodyEnd + 1).boxed().collect(Collectors.toSet())
+                        : Set.of());
     }
     private static CodeBlockEffort blockEffort(String file, String name, int effLinesChanged, int bodyStart, int bodyEnd, int bodyCodeLines) {
         return blockEffort(file, name, Operation.MODIFY, effLinesChanged, bodyStart, bodyEnd, bodyCodeLines);

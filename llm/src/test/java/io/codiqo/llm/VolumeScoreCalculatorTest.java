@@ -51,6 +51,25 @@ class VolumeScoreCalculatorTest {
         assertEquals(10.0, efforts.get(0).getBucketBaseline(), 0.01,
                 "prod block must contribute prod quantile (10) × addMult (1.0) × testWeight (1.0) to the baseline budget");
     }
+    /**
+     * The scorer takes a moved-out line's calls back from the blocks whose effort carries its anchor, so an effort that
+     * dropped the anchors its request block recorded would silently take no moved call back from any block.
+     */
+    @Test
+    void aBlockEffortCarriesTheDeletionAnchorsItWasBilled() {
+        DriverScaler scaler = uniformScaler(1, 100);
+        CodeBlockChange block = newModifyBlock(20, 20, 4);
+        block.setDeletedCallAnchors(Set.of(11, 40));
+
+        List<CodeBlockEffort> efforts = VolumeScoreCalculator.calculateCodeBlockEfforts(
+                List.of(block),
+                scaler, scaler, scaler, scaler,
+                /*methodCapQProd*/ 10, /*methodCapQTest*/ 100,
+                /*ctorCapQProd*/ 0, /*ctorCapQTest*/ 0,
+                ADD_MULT, MODIFY_MULT, TEST_MULT, NO_CLAMP, false);
+
+        assertEquals(Set.of(11, 40), efforts.iterator().next().getDeletedCallAnchors());
+    }
     @Test
     void testMethodBlockBucketBaselineUsesTestQuantileAndTestWeight() {
         DriverScaler scaler = uniformScaler(1, 100);

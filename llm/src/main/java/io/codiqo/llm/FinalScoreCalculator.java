@@ -426,8 +426,8 @@ public class FinalScoreCalculator {
                 String content = diffLines.getCandidateDeletedContent().get(line);
                 /**
                  * Taken back from exactly the blocks that were billed the line's calls (deletedCallAnchors, recorded by
-                 * the billing rule itself), so a line anchored on an annotation or between two adjacent blocks lowers
-                 * the blocks it was billed to and no other.
+                 * the rule the client billed them with), so a line anchored on an annotation or between two adjacent
+                 * blocks lowers the blocks it was billed to and no other.
                  */
                 if (Objects.nonNull(anchor) && Objects.nonNull(content)) {
                     for (int i = 0; i < blocks.size(); i++) {

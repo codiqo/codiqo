@@ -37,14 +37,15 @@ public class NestedBlockRanges {
     }
     /**
      * Whether a unit spanning {@code startLine..endLine} is billed the deleted line anchored at {@code anchor}: the anchor
-     * lies in the unit's range, up to one line past its end, and in none of the units nested in it. The client bills a
-     * deleted line's calls to a unit by this rule (EffectiveChangePopulator), and the scorer takes a moved-out line's
-     * calls back from the units it says (FinalScoreCalculator, through the anchors SubmissionToRequestMapper records on
-     * each block); deciding the two apart placed the discount on a unit that was never billed for it. The end slack lets
-     * two adjacent units both claim the line between them, and both are billed.
+     * lies in the unit's range or on the line just after it, and neither in a unit nested in it nor on the line just
+     * after one (see {@link #coversAnchor}). The client bills a deleted line's calls to a unit by this rule
+     * (EffectiveChangePopulator), and the scorer takes a moved-out line's calls back from the units it names
+     * (FinalScoreCalculator, through the anchors SubmissionToRequestMapper records on each block): deciding the two apart
+     * placed the discount on a unit that was never billed for it. Through the end slack, an anchor on the first line of
+     * a unit that directly follows another is billed to both units.
      */
     public static boolean billsDeletion(int startLine, int endLine, List<int[]> nestedRanges, int anchor) {
-        return anchor >= startLine && anchor <= endLine + 1 && BooleanUtils.negate(coversAnchor(nestedRanges, anchor));
+        return BooleanUtils.and(new boolean[] { anchor >= startLine, anchor <= endLine + 1, BooleanUtils.negate(coversAnchor(nestedRanges, anchor)) });
     }
     /** Deletion anchors point at the next surviving line, so a range claims anchors up to endLine + 1. */
     public static boolean coversAnchor(List<int[]> nestedRanges, int anchor) {
