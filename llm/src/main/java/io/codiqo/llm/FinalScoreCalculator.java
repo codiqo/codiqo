@@ -164,6 +164,7 @@ public class FinalScoreCalculator {
         DiffAdjustment adjustment = computeDiffAdjustment(response, preComputed, request);
         PreComputedScores effective = adjustment.getScores();
         Map<String, FileDiffClassification> classificationByFile = buildClassificationByFile(response);
+        Map<String, Map<Integer, Integer>> cosmeticDeletedAnchors = cosmeticDeletedAnchors(request, classificationByFile);
 
         double baseEffort = effective.getBaseEffort();
         EffortBreakdown breakdown = response.getEffortBreakdown();
@@ -172,7 +173,7 @@ public class FinalScoreCalculator {
             breakdown.setVolumeScore(toVolumeScore(effective, adjustment));
             breakdown.setFileEfforts(
                     effective.getFileEfforts().stream()
-                            .map(fe -> toFileEffortView(fe, classificationByFile))
+                            .map(fe -> toFileEffortView(fe, classificationByFile, cosmeticDeletedAnchors))
                             .collect(Collectors.toList()));
         }
 
@@ -766,10 +767,11 @@ public class FinalScoreCalculator {
         toReturn.setMovedLinesDiscounted(bookkeeping.getMovedLinesDiscounted());
         return toReturn;
     }
-    private static FileEffortView toFileEffortView(FileEffort fe, Map<String, FileDiffClassification> classificationByFile) {
+    private static FileEffortView toFileEffortView(FileEffort fe, Map<String, FileDiffClassification> classificationByFile,
+            Map<String, Map<Integer, Integer>> cosmeticDeletedAnchors) {
         FileDiffClassification fileClassification = classificationByFile.get(fe.getFile());
         List<CodeBlockEffort> blocks = fe.getCodeBlockEfforts();
-        int[] collapsed = collapsedLinesPerBlock(fileClassification, blocks);
+        int[] collapsed = collapsedLinesPerBlock(fileClassification, blocks, cosmeticDeletedAnchors.getOrDefault(fe.getFile(), Map.of()));
 
         List<CodeBlockEffortView> blockViews = Lists.newArrayListWithCapacity(blocks.size());
         for (int i = 0; i < blocks.size(); i++) {
@@ -820,7 +822,23 @@ public class FinalScoreCalculator {
                 .globalCapDriver(cbe.isGlobalCapDriver())
                 .build();
     }
-    private static int[] collapsedLinesPerBlock(FileDiffClassification fileClassification, List<CodeBlockEffort> blocks) {
+    /**
+     * The new-file anchor of each cosmetic deleted line, per file that has any: the per-block view places those lines
+     * where a block counted them. Empty without a request, since only the request carries the diffs.
+     */
+    private static Map<String, Map<Integer, Integer>> cosmeticDeletedAnchors(LlmScoringRequest request, Map<String, FileDiffClassification> classificationByFile) {
+        Map<String, Map<Integer, Integer>> toReturn = Maps.newHashMap();
+        if (Objects.nonNull(request)) {
+            for (FileChange fc : CollectionUtils.emptyIfNull(request.getFileChanges())) {
+                FileDiffClassification classification = classificationByFile.get(fc.getPath());
+                if (Objects.nonNull(classification) && CollectionUtils.isNotEmpty(classification.getCosmeticDeleted()) && StringUtils.isNotBlank(fc.getDiff())) {
+                    toReturn.put(fc.getPath(), UnifiedDiffLines.parse(fc.getDiff(), fc.getLineFilter()).getCandidateDeletedAnchor());
+                }
+            }
+        }
+        return toReturn;
+    }
+    private static int[] collapsedLinesPerBlock(FileDiffClassification fileClassification, List<CodeBlockEffort> blocks, Map<Integer, Integer> cosmeticDeletedAnchors) {
         int[] toReturn = new int[blocks.size()];
         if (Objects.isNull(fileClassification)) {
             return toReturn;
@@ -831,16 +849,23 @@ public class FinalScoreCalculator {
         /**
          * A cosmetic line costs nothing, so both of its sides leave the block's changed lines, where a pair leaves one:
          * left in, a line whose only change is its spacing showed as two changed lines in a block whose effort it no
-         * longer adds to. A deleted line is placed by its old-file number, as a pair's deleted side is.
+         * longer adds to. A cosmetic deleted line is placed where the block counted it, by its new-file anchor, in MODIFY
+         * units only and with an end slack of one line, as EffectiveChangePopulator bills deleted lines; its old-file
+         * number would land in another block once lines were added above it.
          */
         for (Integer line : Iterables.concat(
                 CollectionUtils.emptyIfNull(fileClassification.getInPlaceCollapsedAdded()),
-                CollectionUtils.emptyIfNull(fileClassification.getCosmeticAdded()),
-                CollectionUtils.emptyIfNull(fileClassification.getCosmeticDeleted()))) {
+                CollectionUtils.emptyIfNull(fileClassification.getCosmeticAdded()))) {
             int innermost = innermostBlockForLine(blocks, line, 0, false);
             if (innermost >= 0) {
                 toReturn[innermost]++;
             }
+        }
+        for (Integer line : CollectionUtils.emptyIfNull(fileClassification.getCosmeticDeleted())) {
+            Optional.ofNullable(cosmeticDeletedAnchors.get(line))
+                    .map(anchor -> innermostBlockForLine(blocks, anchor, 1, true))
+                    .filter(innermost -> innermost >= 0)
+                    .ifPresent(innermost -> toReturn[innermost]++);
         }
         return toReturn;
     }

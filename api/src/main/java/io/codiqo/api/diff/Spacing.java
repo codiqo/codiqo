@@ -14,15 +14,18 @@ import lombok.experimental.UtilityClass;
  * table ({@code FileKinds} in lang-config), not here: in Python, YAML or a Makefile the same whitespace changes what the
  * file means.
  *
- * <p>A run of whitespace outside a literal is dropped, except between two word characters or two operator characters,
- * where it becomes one space: removing it there would join two tokens into one ({@code new Builder} into
- * {@code newBuilder}, {@code j + ++k} into {@code j+++k}), which a compiler reads as something else.
+ * <p>A run of whitespace outside a literal is dropped, except where removing it would join two tokens into one, which
+ * a compiler reads as something else: between two word characters ({@code new Builder} is not {@code newBuilder}) and
+ * between two operator characters that begin a longer operator ({@code j + ++k} is not {@code j+++k}, {@code a - > b}
+ * is not {@code a -> b}). There it becomes one space. Operators that never join ({@code x = -1}, {@code a && !b}) lose
+ * it, so the usual formatter edits around them read as spacing.
  *
  * <p>A literal is read exactly as hidden-source mode reads one ({@code MovedLineDetector.WORD_TOKEN},
  * {@code SourceHiding}): a quote opens it and the next same quote closes it, with no escapes, and its content is kept
  * whole, since {@code "a  b"} and {@code "a b"} are different strings. A hidden submission keeps every quote,
- * whitespace character and the word or operator class of every character, so a pair of lines reads the same here
- * exactly when its hidden pair does, and both score alike. A backtick opens a literal too, which hidden-source mode
+ * whitespace character, every operator, and every character's word class (an identifier becomes a hash of ASCII word
+ * characters, a non-ASCII run private-use characters, both read as word characters here), so a pair of lines reads the
+ * same here exactly when its hidden pair does, and both score alike. A backtick opens a literal too, which hidden-source mode
  * reads as plain text but keeps character for character. A quote left open runs to the end of the line.
  *
  * <p>Reading literals without escapes errs in one place: after an escaped quote ({@code "say \" a  b"}) the rest of a
@@ -34,7 +37,12 @@ import lombok.experimental.UtilityClass;
 @UtilityClass
 public class Spacing {
     private static final Set<Character> QUOTES = Set.of('"', '\'', '`');
-    private static final String OPERATORS = "+-*/%=<>!&|^~?:";
+    /**
+     * The two-character starts of the longer operators of the brace-delimited languages (Java, Kotlin, JavaScript, Go,
+     * the C family), comments included: two operator characters a space keeps apart join only when they make one of these.
+     */
+    private static final Set<String> JOINING_OPERATORS = Set.of("++", "--", "->", "=>", "&&", "||", "==", "!=", "<=", ">=", "<<", ">>", "::", "+=", "-=",
+            "*=", "/=", "%=", "&=", "|=", "^=", "//", "/*", "*/", "**", "??", "?:", "!!", "<-", ":=", "=~", "!~");
     private static final Set<Character> WORD_SYMBOLS = Set.of('_', '$');
     /** The quote of the literal being read, or this outside every literal. */
     private static final char OUTSIDE_LITERALS = '\0';
@@ -50,7 +58,10 @@ public class Spacing {
                 if (Character.isWhitespace(c)) {
                     spaced = toReturn.length() > 0;
                 } else {
-                    /** short-circuit: a run of whitespace is only marked after a character, which joins reads */
+                    /**
+                     * && rather than BooleanUtils.and, whose arguments are all evaluated: spaced is only set once a
+                     * character was kept, and before that the last kept character, which joins reads, does not exist.
+                     */
                     if (spaced && joins(toReturn.charAt(toReturn.length() - 1), c)) {
                         toReturn.append(StringUtils.SPACE);
                     }
@@ -73,13 +84,17 @@ public class Spacing {
     private static boolean joins(char before, char after) {
         return BooleanUtils.or(new boolean[] {
                 BooleanUtils.and(new boolean[] { isWord(before), isWord(after) }),
-                BooleanUtils.and(new boolean[] { isOperator(before), isOperator(after) }) });
+                JOINING_OPERATORS.contains(String.valueOf(new char[] { before, after })) });
     }
-    /** the characters hidden-source mode hashes an identifier or a number into, ASCII only as its tokens are */
+    /**
+     * A character of an identifier, a number or a keyword: an ASCII letter, digit, underscore or dollar, or any other
+     * character outside ASCII that is not whitespace, since a language may name things in any script and hidden-source
+     * mode turns such a run into private-use characters, which then read alike.
+     */
     private static boolean isWord(char c) {
-        return BooleanUtils.or(new boolean[] { CharUtils.isAsciiAlphanumeric(c), WORD_SYMBOLS.contains(c) });
-    }
-    private static boolean isOperator(char c) {
-        return StringUtils.contains(OPERATORS, c);
+        return BooleanUtils.or(new boolean[] {
+                CharUtils.isAsciiAlphanumeric(c),
+                WORD_SYMBOLS.contains(c),
+                BooleanUtils.and(new boolean[] { BooleanUtils.negate(CharUtils.isAscii(c)), BooleanUtils.negate(Character.isWhitespace(c)) }) });
     }
 }

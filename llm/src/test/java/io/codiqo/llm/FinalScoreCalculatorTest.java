@@ -794,6 +794,27 @@ class FinalScoreCalculatorTest {
                 "trueModify pairs collapse effectiveLinesChanged the same way as in-place pairs");
     }
     @Test
+    void aRespacedLineLeavesTheBlockWhereItWasCountedEvenBelowAddedLines() {
+        RunArgs args = new RunArgs();
+        FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);
+        PreComputedScores preComputed = scoresWithBlockBody("Foo.java", 100.0, 2, 55, 67, 13);
+        LlmScoringRequest request = requestWithFileChangeAndDiff("Foo.java", 1, 1, Joiner.on(StringUtils.LF).join(
+                "--- a/Foo.java",
+                "+++ b/Foo.java",
+                "@@ -30,3 +60,3 @@",
+                " context",
+                "-return  process(a,b);",
+                "+return process(a, b);",
+                " context2"));
+        LlmScoringResponse response = responseWithClassification(FileDiffClassification.builder().file("Foo.java").build());
+
+        calculator.apply(response, preComputed, request);
+
+        LlmScoringResponse.CodeBlockEffortView block = response.getEffortBreakdown().getFileEfforts().get(0).getCodeBlockEfforts().get(0);
+        assertEquals(0, block.getEffectiveLinesChanged(),
+                "both sides of a cosmetic line leave the block, the deleted one placed by its new-file anchor 61, not its old-file 31");
+    }
+    @Test
     void pairWithSideOutsideBlockDoesNotCollapse() {
         RunArgs args = new RunArgs();
         FinalScoreCalculator calculator = new FinalScoreCalculator(args, NoopLog.INSTANCE);

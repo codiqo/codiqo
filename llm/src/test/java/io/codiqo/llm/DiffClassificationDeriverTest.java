@@ -416,6 +416,42 @@ class DiffClassificationDeriverTest {
         assertEquals(List.of(pair(13, 11)), entry.getTrueModifyPairs());
     }
     @Test
+    void aLineAReorderingLeavesUnpairedKeepsItsMove() {
+        LlmScoringResponse response = new LlmScoringResponse();
+        response.setEffortBreakdown(EffortBreakdown.builder()
+                .diffClassification(DiffClassification.builder().confirmedMoveIds(Lists.newArrayList(List.of("M1", "M2", "M3"))).build())
+                .build());
+
+        new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, requestWithDiff("Foo.java", REORDERED_DIFF), List.of(
+                candidate("M1", "Foo.java", 11, "Foo.java", 12), candidate("M2", "Foo.java", 12, "Foo.java", 13), candidate("M3", "Foo.java", 13, "Foo.java", 11)));
+
+        FileDiffClassification entry = soleEntry(response);
+        assertEquals(List.of(11, 12), entry.getCosmeticDeleted(), "a( ) and b( ) are respaced in place");
+        assertEquals(List.of(13), entry.getMovedDeleted(), "c( ) moved ahead of them and stays a move, not a full modification");
+        assertEquals(List.of(11), entry.getMovedAdded());
+        assertTrue(entry.getTrueModifyPairs().isEmpty());
+        assertEquals(List.of("M3"), response.getEffortBreakdown().getDiffClassification().getConfirmedMoveIds());
+    }
+    @Test
+    void aBlockTooLargeToCompareWholePairsLineByLine() {
+        int size = 1_001;
+        List<String> lines = Lists.newArrayList("--- a/Foo.java", "+++ b/Foo.java", "@@ -10," + (size + 2) + " +10," + (size + 2) + " @@", " context");
+        for (int i = 0; i < size; i++) {
+            lines.add("-int  v" + i + " = compute(a" + i + ",b" + i + ");");
+        }
+        for (int i = 0; i < size; i++) {
+            lines.add("+int v" + i + " = compute(a" + i + ", b" + i + ");");
+        }
+        lines.add(" context2");
+        LlmScoringResponse response = new LlmScoringResponse();
+
+        new DiffClassificationDeriver(NoopLog.INSTANCE).derive(response, requestWithDiff("Foo.java", Joiner.on(StringUtils.LF).join(lines)));
+
+        FileDiffClassification entry = soleEntry(response);
+        assertEquals(size, entry.getCosmeticAdded().size(), "a formatter pass over a whole file is respaced line by line");
+        assertTrue(entry.getTrueModifyPairs().isEmpty());
+    }
+    @Test
     void derivingAgainFromItsOwnOutputFindsTheSamePairs() {
         LlmScoringResponse first = new LlmScoringResponse();
         new DiffClassificationDeriver(NoopLog.INSTANCE).derive(first, requestWithDiff("Foo.java", REORDERED_DIFF));

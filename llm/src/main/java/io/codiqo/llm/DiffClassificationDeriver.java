@@ -15,6 +15,8 @@ import java.util.regex.Pattern;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.apache.commons.lang3.tuple.Pair;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -57,8 +59,8 @@ public class DiffClassificationDeriver {
     private static final Pattern NON_LETTER_CHARS = Pattern.compile("[^a-z]");
 
     /**
-     * The most deleted-by-added line comparisons a block's spacing pairs are looked for in: a thousand lines on each
-     * side, an int matrix of about four megabytes, held only while one block is read.
+     * The most cells of the table a block's respaced lines are paired in: about a thousand lines on each side, an int
+     * array of about four megabytes, held only while one block is read.
      */
     private static final long MAX_PAIRING_CELLS = 1_000_000L;
 
@@ -82,7 +84,11 @@ public class DiffClassificationDeriver {
             diffLinesByFile.put(fc.getPath(), UnifiedDiffLines.parse(fc.getDiff(), fc.getLineFilter()));
         }
 
-        ConfirmedMoves confirmed = resolveConfirmedMoves(classification, moveCandidates, diffLinesByFile);
+        Map<String, RespacedLines> respacedByFile = Maps.newHashMap();
+        for (FileChange fc : eligible) {
+            respacedByFile.put(fc.getPath(), respacedLines(fc.getPath(), diffLinesByFile.get(fc.getPath())));
+        }
+        ConfirmedMoves confirmed = resolveConfirmedMoves(classification, moveCandidates, diffLinesByFile, respacedByFile);
         Map<String, FileDiffClassification> llmByFile = Maps.newHashMap();
         for (FileDiffClassification entry : CollectionUtils.emptyIfNull(classification.getPerFile())) {
             llmByFile.put(entry.getFile(), entry);
@@ -92,7 +98,7 @@ public class DiffClassificationDeriver {
         int totalAdded = 0;
         int totalDeleted = 0;
         for (FileChange fc : eligible) {
-            derived.add(deriveFile(fc, diffLinesByFile.get(fc.getPath()), llmByFile.get(fc.getPath()), confirmed));
+            derived.add(deriveFile(fc, diffLinesByFile.get(fc.getPath()), llmByFile.get(fc.getPath()), confirmed, respacedByFile.get(fc.getPath())));
             totalAdded += fc.getLinesAdded();
             totalDeleted += fc.getLinesDeleted();
         }
@@ -102,7 +108,7 @@ public class DiffClassificationDeriver {
         classification.setTotalLinesAddedRaw(totalAdded);
         classification.setTotalLinesDeletedRaw(totalDeleted);
     }
-    private FileDiffClassification deriveFile(FileChange fc, UnifiedDiffLines diffLines, FileDiffClassification llm, ConfirmedMoves confirmed) {
+    private FileDiffClassification deriveFile(FileChange fc, UnifiedDiffLines diffLines, FileDiffClassification llm, ConfirmedMoves confirmed, RespacedLines respaced) {
         Collection<Integer> citedCosmeticAdded = Collections.emptyList();
         Collection<Integer> citedCosmeticDeleted = Collections.emptyList();
         Collection<Integer> citedInPlaceCollapsedAdded = Collections.emptyList();
@@ -129,9 +135,9 @@ public class DiffClassificationDeriver {
         dropMovedLines(cosmeticAdded, movedAdded, fc.getPath(), "cosmeticAdded");
         dropMovedLines(cosmeticDeleted, movedDeleted, fc.getPath(), "cosmeticDeleted");
         dropMovedLines(inPlaceCollapsedAdded, movedAdded, fc.getPath(), "inPlaceCollapsedAdded");
-        if (FileKinds.of(fc.getPath()).filter(FileKind::isFreeFormWhitespace).isPresent()) {
-            addSpacingOnlyPairs(diffLines, movedDeleted, movedAdded, cosmeticDeleted, cosmeticAdded);
-        }
+        /** a respaced line a kept move claims stays moved; the moves that were respaced in place were never kept */
+        respaced.getDeleted().stream().filter(not(movedDeleted::contains)).forEach(cosmeticDeleted::add);
+        respaced.getAdded().stream().filter(not(movedAdded::contains)).forEach(cosmeticAdded::add);
         inPlaceCollapsedAdded.removeAll(cosmeticAdded);
 
         List<LinePair> inPlacePairs = Lists.newArrayList();
@@ -181,7 +187,8 @@ public class DiffClassificationDeriver {
      * materializes ALL confirmed relocations (candidates first, then extra pairs), so the field
      * written back to the response is the complete persisted linkage.
      */
-    private ConfirmedMoves resolveConfirmedMoves(DiffClassification classification, List<MoveCandidate> moveCandidates, Map<String, UnifiedDiffLines> diffLinesByFile) {
+    private ConfirmedMoves resolveConfirmedMoves(DiffClassification classification, List<MoveCandidate> moveCandidates, Map<String, UnifiedDiffLines> diffLinesByFile,
+            Map<String, RespacedLines> respacedByFile) {
         Map<String, MoveCandidate> byId = Maps.newHashMap();
         for (MoveCandidate candidate : moveCandidates) {
             byId.put(candidate.getId(), candidate);
@@ -194,7 +201,7 @@ public class DiffClassificationDeriver {
         for (String id : CollectionUtils.emptyIfNull(classification.getConfirmedMoveIds())) {
             MoveCandidate candidate = byId.get(id);
             if (Objects.nonNull(candidate)) {
-                if (relocatesItsLine(candidate, diffLinesByFile)) {
+                if (relocatesItsLine(candidate, respacedByFile)) {
                     ids.add(candidate.getId());
                     pairs.add(new MovedPair(candidate.getFromFile(), candidate.getFromLine(), candidate.getToFile(), candidate.getToLine()).format());
                     deletedByFile.computeIfAbsent(candidate.getFromFile(), k -> Sets.newTreeSet()).add(candidate.getFromLine());
@@ -274,66 +281,87 @@ public class DiffClassificationDeriver {
         return false;
     }
     /**
-     * Sets aside, as cosmetic, each deleted and added line of a block that read the same once their spacing is set aside
-     * ({@link Spacing}), so a line whose only change is {@code foo(a,  b)} to {@code foo(a, b)} costs no effort. The diff
-     * ignores a re-indent of a free-form file but not the spacing inside a line, and nothing else marks such a line.
+     * The lines of a free-form file whose only change is their spacing ({@link Spacing}): a deleted and an added line of
+     * one block that read the same once their spacing is set aside, so {@code foo(a,  b)} to {@code foo(a, b)} costs no
+     * effort. The diff ignores a re-indent of a free-form file but not the spacing inside a line, and nothing else marks
+     * such a line. A file of any other kind has none: in Python or YAML the same whitespace changes the program.
      *
-     * <p>A block's lines pair by the longest run they share in diff order, so a block that reorders lines keeps the
-     * reordering as work, and as many tidied lines as possible pair. A moved line takes no part. Lines already cited as
-     * cosmetic do take part, so a classification derived again from its own output finds the same pairs. A block with
-     * more than {@link #MAX_PAIRING_CELLS} line pairs to compare is left as it is: it rewrites far more than its spacing,
-     * and comparing it whole would hold a matrix of that size for each such block. Only a free-form file's lines are
-     * read this way, since in Python or YAML the same whitespace changes the program.
+     * <p>Every line of a block takes part, moved or already cited as cosmetic, so the move detector's offers are judged
+     * against them ({@link #relocatesItsLine}) and a classification derived again from its own output finds the same
+     * lines. A block's lines pair by the longest run they share in diff order, so a block that reorders lines keeps the
+     * reordering as work. A block with more than {@link #MAX_PAIRING_CELLS} cells to compare pairs only in diff order,
+     * line by line, and only when both sides have as many lines, which is what a formatter pass over a whole file is.
      */
-    private static void addSpacingOnlyPairs(UnifiedDiffLines diffLines, Set<Integer> movedDeleted, Set<Integer> movedAdded,
-            Set<Integer> cosmeticDeleted, Set<Integer> cosmeticAdded) {
-        for (ChangeBlock block : diffLines.getBlocks()) {
-            List<Integer> deleted = block.getDeletedLines().stream().filter(not(movedDeleted::contains)).toList();
-            List<Integer> added = block.getAddedLines().stream().filter(not(movedAdded::contains)).toList();
-            if ((long) deleted.size() * added.size() <= MAX_PAIRING_CELLS) {
-                List<String> deletedReads = deleted.stream().map(diffLines.getCandidateDeletedContent()::get).map(Spacing::withoutSpacing).toList();
-                List<String> addedReads = added.stream().map(diffLines.getCandidateAddedContent()::get).map(Spacing::withoutSpacing).toList();
-                int[][] common = new int[deleted.size() + 1][added.size() + 1];
-                for (int i = deleted.size() - 1; i >= 0; i--) {
-                    for (int j = added.size() - 1; j >= 0; j--) {
-                        common[i][j] = deletedReads.get(i).equals(addedReads.get(j)) ? common[i + 1][j + 1] + 1 : Math.max(common[i + 1][j], common[i][j + 1]);
-                    }
-                }
-
-                int i = 0;
-                int j = 0;
-                while (BooleanUtils.and(new boolean[] { i < deleted.size(), j < added.size() })) {
-                    if (deletedReads.get(i).equals(addedReads.get(j))) {
-                        cosmeticDeleted.add(deleted.get(i++));
-                        cosmeticAdded.add(added.get(j++));
-                    } else if (common[i + 1][j] >= common[i][j + 1]) {
-                        i++;
-                    } else {
-                        j++;
-                    }
+    private static RespacedLines respacedLines(String file, UnifiedDiffLines diffLines) {
+        RespacedLines toReturn = new RespacedLines(Sets.newTreeSet(), Sets.newTreeSet());
+        if (FileKinds.of(file).filter(FileKind::isFreeFormWhitespace).isPresent()) {
+            for (ChangeBlock block : diffLines.getBlocks()) {
+                List<String> deletedReads = block.getDeletedLines().stream().map(diffLines.getCandidateDeletedContent()::get).map(Spacing::withoutSpacing).toList();
+                List<String> addedReads = block.getAddedLines().stream().map(diffLines.getCandidateAddedContent()::get).map(Spacing::withoutSpacing).toList();
+                for (Pair<Integer, Integer> pair : pairReads(deletedReads, addedReads)) {
+                    toReturn.getDeleted().add(block.getDeletedLines().get(pair.getLeft()));
+                    toReturn.getAdded().add(block.getAddedLines().get(pair.getRight()));
                 }
             }
         }
+        return toReturn;
     }
     /**
-     * Whether a confirmed move candidate relocates its line, rather than being a line whose only change is its spacing,
-     * deleted and added in the same block of a free-form file. The move detector compares a line's tokens, so it offers
-     * such a line as moved onto itself, and a run of them, each with a neighbour, was confirmed as a relocation, at a
-     * fraction of a line's effort rather than none. Left out of the confirmed moves, it is set aside as cosmetic with the
-     * block's other spacing-only lines ({@link #addSpacingOnlyPairs}).
+     * The indexes of the deleted and added lines that read the same, paired by their longest common subsequence, or, above
+     * {@link #MAX_PAIRING_CELLS}, in diff order when both sides are as long. The comparison table is one flat array of
+     * {@code (deleted + 1) * (added + 1)} cells, and a side with no line pairs nothing without one.
      */
-    private static boolean relocatesItsLine(MoveCandidate candidate, Map<String, UnifiedDiffLines> diffLinesByFile) {
-        UnifiedDiffLines diffLines = diffLinesByFile.get(candidate.getFromFile());
-        boolean sameFreeFormFile = BooleanUtils.and(new boolean[] {
-                candidate.getFromFile().equals(candidate.getToFile()),
-                Objects.nonNull(diffLines),
-                FileKinds.of(candidate.getFromFile()).filter(FileKind::isFreeFormWhitespace).isPresent() });
-        boolean respacedInPlace = sameFreeFormFile
-                && diffLines.getBlocks().stream().anyMatch(block -> BooleanUtils.and(new boolean[] {
-                        block.getDeletedLines().contains(candidate.getFromLine()),
-                        block.getAddedLines().contains(candidate.getToLine()) }))
-                && Spacing.withoutSpacing(diffLines.getCandidateDeletedContent().get(candidate.getFromLine()))
-                        .equals(Spacing.withoutSpacing(diffLines.getCandidateAddedContent().get(candidate.getToLine())));
+    private static List<Pair<Integer, Integer>> pairReads(List<String> deleted, List<String> added) {
+        List<Pair<Integer, Integer>> toReturn = Lists.newArrayList();
+        long cells = (long) (deleted.size() + 1) * (added.size() + 1);
+        if (BooleanUtils.or(new boolean[] { deleted.isEmpty(), added.isEmpty() })) {
+            return toReturn;
+        }
+        if (cells > MAX_PAIRING_CELLS) {
+            if (deleted.size() == added.size()) {
+                for (int i = 0; i < deleted.size(); i++) {
+                    if (deleted.get(i).equals(added.get(i))) {
+                        toReturn.add(Pair.of(i, i));
+                    }
+                }
+            }
+            return toReturn;
+        }
+
+        int width = added.size() + 1;
+        int[] common = new int[(int) cells];
+        for (int i = deleted.size() - 1; i >= 0; i--) {
+            for (int j = added.size() - 1; j >= 0; j--) {
+                common[i * width + j] = deleted.get(i).equals(added.get(j)) ? common[(i + 1) * width + j + 1] + 1 : Math.max(common[(i + 1) * width + j], common[i * width + j + 1]);
+            }
+        }
+
+        int i = 0;
+        int j = 0;
+        while (BooleanUtils.and(new boolean[] { i < deleted.size(), j < added.size() })) {
+            if (deleted.get(i).equals(added.get(j))) {
+                toReturn.add(Pair.of(i++, j++));
+            } else if (common[(i + 1) * width + j] >= common[i * width + j + 1]) {
+                i++;
+            } else {
+                j++;
+            }
+        }
+        return toReturn;
+    }
+    /**
+     * Whether a confirmed move candidate relocates its line, rather than being a line whose two sides are both respaced
+     * lines of its file ({@link #respacedLines}). The move detector compares a line's tokens, so it offers a line re-spaced
+     * in place as moved onto itself, and a run of them, each with a neighbour, was confirmed as a relocation, at a fraction
+     * of a line's effort rather than none. A candidate whose sides are not both respaced (a block too large to pair, a
+     * line a reordering left unpaired) stays a move.
+     */
+    private static boolean relocatesItsLine(MoveCandidate candidate, Map<String, RespacedLines> respacedByFile) {
+        RespacedLines respaced = respacedByFile.get(candidate.getFromFile());
+        boolean respacedInPlace = candidate.getFromFile().equals(candidate.getToFile())
+                && Objects.nonNull(respaced)
+                && respaced.getDeleted().contains(candidate.getFromLine())
+                && respaced.getAdded().contains(candidate.getToLine());
         return BooleanUtils.negate(respacedInPlace);
     }
     private static DiffClassification ensureClassification(LlmScoringResponse response) {
@@ -349,6 +377,21 @@ public class DiffClassificationDeriver {
             breakdown.setDiffClassification(classification);
         }
         return classification;
+    }
+
+    /** the deleted (old-file) and added (new-file) lines of a file whose only change is their spacing */
+    private static final class RespacedLines extends ImmutablePair<Set<Integer>, Set<Integer>> {
+        private static final long serialVersionUID = 1L;
+
+        private RespacedLines(Set<Integer> deleted, Set<Integer> added) {
+            super(deleted, added);
+        }
+        private Set<Integer> getDeleted() {
+            return getLeft();
+        }
+        private Set<Integer> getAdded() {
+            return getRight();
+        }
     }
 
     @Value

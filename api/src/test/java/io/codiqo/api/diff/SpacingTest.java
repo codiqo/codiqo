@@ -19,6 +19,13 @@ class SpacingTest {
         assertNotEquals(Spacing.withoutSpacing("i = j + ++k;"), Spacing.withoutSpacing("i = j++ + k;"));
         assertNotEquals(Spacing.withoutSpacing("a - > b"), Spacing.withoutSpacing("a -> b"));
         assertEquals(Spacing.withoutSpacing("final  int x;"), Spacing.withoutSpacing("final int x;"), "two spaces keep the words apart as one does");
+        assertNotEquals(Spacing.withoutSpacing("return é;"), Spacing.withoutSpacing("returné;"), "a non-ASCII identifier is a word too");
+    }
+    @Test
+    void operatorsThatNeverJoinLoseTheirSpacing() {
+        assertEquals(Spacing.withoutSpacing("x = -1;"), Spacing.withoutSpacing("x=-1;"));
+        assertEquals(Spacing.withoutSpacing("if (a && !b) {"), Spacing.withoutSpacing("if(a&&!b){"));
+        assertNotEquals(Spacing.withoutSpacing("a - -b"), Spacing.withoutSpacing("a --b"), "two minus signs make a decrement");
     }
     @Test
     void whitespaceInsideALiteralIsKept() {
