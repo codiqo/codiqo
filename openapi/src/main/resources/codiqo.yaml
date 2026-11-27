@@ -343,7 +343,9 @@ paths:
         engine treats the working tree as if it were a commit — but the result is stored separately, expires,
         and is addressed by its own share link rather than by a commit sha. The submission is attributed to the
         developer behind the local git identity; if that identity maps to no user in the organization the
-        request is rejected rather than stored unattributed.
+        request is rejected rather than stored unattributed. The commit's `timestamp`, optional in the schema, is
+        required here: the analysis is scored from what was stored, and scoring reads it, so a submission
+        without one is rejected with 400.
       requestBody:
         required: true
         content:
